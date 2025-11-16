@@ -75,3 +75,13 @@ clients/android-mediaplayer/*.aab
 !clients/android-mediaplayer/settings.gradle
 *.apk
 logs/
+backups/
+backups/
+*.log
+.DS_Store
+.git-remotes-cheatsheet
+
+# Biography module database
+config/biographies.db
+config/biographies.db-shm
+config/biographies.db-wal

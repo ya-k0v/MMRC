@@ -93,8 +93,8 @@ if (!device_id || !device_id.trim()) {
       try {
         vjsPlayer = videojs('v', {
           controls: false,
-          autoplay: false,
-          preload: 'metadata', // КРИТИЧНО: metadata вместо auto - меньше нагрузки
+          autoplay: preview ? 'muted' : false, // SAFARI: autoplay только в preview режиме и только если muted
+          preload: preview ? 'auto' : 'metadata', // В preview загружаем сразу для Safari
           muted: true,
           loop: false,
           playsinline: true,
@@ -130,6 +130,9 @@ if (!device_id || !device_id.trim()) {
           } else if (unmuteBtn && !forceMuted && !preview) {
             // Показываем unmute кнопку если звук не включен автоматически
             unmuteBtn.style.display = 'inline-block';
+          } else if (preview) {
+            // SAFARI: В preview режиме ВСЕГДА скрываем кнопку unmute
+            if (unmuteBtn) unmuteBtn.style.display = 'none';
           }
           
           // Обработчик окончания видео
@@ -279,6 +282,19 @@ if (!device_id || !device_id.trim()) {
                       console.log('[Player] ℹ️ Preview видео загружен (autoplay заблокирован браузером - это нормально для фоновых вкладок)');
                     } else {
                       console.warn('[Player] ⚠️ Preview ошибка:', err.name, err.message);
+                    }
+                    
+                    // SAFARI FIX: Если autoplay не сработал, пробуем запустить при клике
+                    if (preview) {
+                      const startOnInteraction = () => {
+                        vjsPlayer.play().then(() => {
+                          console.log('[Player] ✅ Safari: видео запущено после user interaction');
+                        }).catch(e => console.log('[Player] Safari play error:', e));
+                        document.removeEventListener('click', startOnInteraction);
+                        document.removeEventListener('touchstart', startOnInteraction);
+                      };
+                      document.addEventListener('click', startOnInteraction, { once: true });
+                      document.addEventListener('touchstart', startOnInteraction, { once: true });
                     }
                   });
                 }, 150);

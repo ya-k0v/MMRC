@@ -2,7 +2,7 @@
 
 **Система управления медиаконтентом для цифровых дисплеев**
 
-![Version](https://img.shields.io/badge/version-2.6.2-blue)
+![Version](https://img.shields.io/badge/version-2.6.3-blue)
 ![Node](https://img.shields.io/badge/node-20.x-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
@@ -35,7 +35,19 @@ node server.js
 
 **По умолчанию:**
 - Сервер: `http://localhost:3000`
-- Админ: `admin / Admin123!`
+- Админ: `admin / admin123`
+
+### Быстрая установка (production, с Nginx и systemd)
+
+```bash
+sudo bash scripts/quick-install.sh
+# Во время установки можно выбрать режим хранения контента:
+# - local (public/content)
+# - external (symlink → CONTENT_DIR)
+# - external_fstab (запись в /etc/fstab + symlink)
+```
+
+См. также: `docs/MANUAL.md` — полезные команды (SQLite, systemd, Nginx, бэкапы).
 
 ### Systemd (для production)
 
@@ -270,4 +282,4 @@ MIT License - свободное использование
 
 **ya-k0v** - [GitHub](https://github.com/ya-k0v/VideoControl)
 
-**Версия:** 2.6.2
+**Версия:** 2.6.3

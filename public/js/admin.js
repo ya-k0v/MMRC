@@ -71,7 +71,7 @@ setupSocketListeners(socket, {
     }
   },
   onPreviewRefresh: async () => {
-    if (currentDeviceId) await renderFilesPane(currentDeviceId);
+
   },
   onPlayerOnline: (device_id) => {
     readyDevices.add(device_id);
@@ -129,8 +129,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     usersBtn.onclick = () => {
       showUsersModal(adminFetch);
     };
-  } else if (usersBtn) {
-    usersBtn.style.display = 'none';
   }
   
   // Обработчик выхода (теперь это span)

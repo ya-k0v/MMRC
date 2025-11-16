@@ -313,7 +313,7 @@ VALUES (
   1,
   'admin',
   'Администратор',
-  '$2b$10$YQj9q0ZJ5BX5XK5K5K5K5.5K5K5K5K5K5K5K5K5K5K5K5K5K5K5K5',
+  '$2b$10$jgHKNtHUKUhkftKlOfDqOulY9LFBVi/AirOu0YSKfzDlvFD60QI/W',
   'admin',
   1
 );

@@ -102,12 +102,15 @@ export function setupControlHandlers(socket, deps) {
     if (d.current.type === 'pdf') {
       d.current.page = Math.max(1, (d.current.page || 1) - 1);
       io.to(`device:${device_id}`).emit('player/pdfPage', d.current.page);
+      io.emit('player/pdfPage', d.current.page); // Для спикера
     } else if (d.current.type === 'pptx') {
       d.current.page = Math.max(1, (d.current.page || 1) - 1);
       io.to(`device:${device_id}`).emit('player/pptxPage', d.current.page);
+      io.emit('player/pptxPage', d.current.page); // Для спикера
     } else if (d.current.type === 'folder') {
       d.current.page = Math.max(1, (d.current.page || 1) - 1);
       io.to(`device:${device_id}`).emit('player/folderPage', d.current.page);
+      io.emit('player/folderPage', d.current.page); // Для спикера
     }
   });
 
@@ -123,6 +126,7 @@ export function setupControlHandlers(socket, deps) {
         if (nextPage !== d.current.page) {
           d.current.page = nextPage;
           io.to(`device:${device_id}`).emit('player/pdfPage', d.current.page);
+          io.emit('player/pdfPage', d.current.page); // Для спикера
         }
       }
     } else if (d.current.type === 'pptx' && d.current.file) {
@@ -132,6 +136,7 @@ export function setupControlHandlers(socket, deps) {
         if (nextSlide !== d.current.page) {
           d.current.page = nextSlide;
           io.to(`device:${device_id}`).emit('player/pptxPage', d.current.page);
+          io.emit('player/pptxPage', d.current.page); // Для спикера
         }
       }
     } else if (d.current.type === 'folder' && d.current.file) {
@@ -143,6 +148,7 @@ export function setupControlHandlers(socket, deps) {
         if (nextImage !== d.current.page) {
           d.current.page = nextImage;
           io.to(`device:${device_id}`).emit('player/folderPage', d.current.page);
+          io.emit('player/folderPage', d.current.page); // Для спикера
         }
       }
     }

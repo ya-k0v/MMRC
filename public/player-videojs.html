@@ -246,19 +246,29 @@
     
     document.addEventListener('DOMContentLoaded', () => {
       try {
+        const url = new URL(location.href);
+        const isPreview = url.searchParams.get('preview') === '1';
         const ok = localStorage.getItem('vc_sound') === '1';
         const btn = document.getElementById('unmute');
-        if (btn) btn.classList.toggle('hidden', !!ok);
+        
+        // В preview режиме ВСЕГДА скрываем кнопку (видео всегда без звука)
+        if (btn) {
+          if (isPreview) {
+            btn.classList.add('hidden'); // Preview режим - кнопка скрыта
+          } else {
+            btn.classList.toggle('hidden', !!ok); // Обычный режим - по localStorage
+          }
+        }
       } catch {}
     });
   </script>
-  <script type="module" src="/js/player-videojs.js?v=2.6.0"></script>
+  <script type="module" src="/js/player-videojs.js?v=2.8.0"></script>
 </head>
 <body>
   <div id="stage">
     <div id="idle" class="layer"></div>
     <div id="videoContainer" class="layer">
-      <video id="v" class="video-js" playsinline webkit-playsinline muted preload="metadata" disablePictureInPicture x5-video-player-type="h5" x5-video-player-fullscreen="true" x5-video-orientation="landscape"></video>
+      <video id="v" class="video-js" playsinline webkit-playsinline muted autoplay preload="auto" disablePictureInPicture x5-video-player-type="h5" x5-video-player-fullscreen="true" x5-video-orientation="landscape"></video>
     </div>
     <!-- Двойная буферизация для плавных переходов слайдов (ping-pong buffer) -->
     <img id="img1" class="layer img-buffer" alt="image" decoding="async"/>
