@@ -49,7 +49,7 @@ sudo bash scripts/quick-install.sh
 - ✅ Создаёт systemd service
 - ✅ Автозапуск при загрузке
 
-### **Хранение контента (новое):**
+### **Хранение контента:**
 - При установке можно выбрать один из режимов:
   - `local` — хранить файлы в `public/content` (внутри проекта)
   - `external` — внешний каталог через symlink (`public/content -> $CONTENT_DIR`)
