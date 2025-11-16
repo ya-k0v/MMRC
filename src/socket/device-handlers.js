@@ -106,6 +106,23 @@ export function setupDeviceHandlers(socket, deps) {
     }
   });
   
+  // player/progress - Прогресс воспроизведения (ретрансляция для панелей)
+  socket.on('player/progress', (payload) => {
+    try {
+      // Нормализуем device_id из сессии, если отсутствует в payload
+      const device_id = payload?.device_id || socket.data?.device_id;
+      if (!device_id) return;
+      const currentTime = Number(payload?.currentTime) || 0;
+      const duration = Number(payload?.duration) || 0;
+      const file = payload?.file || null;
+      
+      // Отправляем всем слушателям (speaker UI) агрегированный прогресс
+      io.emit('player/progress', { device_id, type: 'video', file, currentTime, duration });
+    } catch (e) {
+      // swallow
+    }
+  });
+  
   // Таймер неактивности для автоматического отключения
   socket.data.lastPing = Date.now();
   socket.data.inactivityTimeout = setInterval(() => {

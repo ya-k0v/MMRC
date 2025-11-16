@@ -21,6 +21,10 @@ let currentFile = null;    // имя файла из /api/devices/:id/files
 let tvPage = 0;
 let filePage = 0;
 let nodeNames = {}; // { device_id: name }
+// Запоминаем последний выбор превью (для корректного подсвета после refresh)
+let lastPreviewSelection = { file: null, page: null };
+// Прогресс воспроизведения по устройству
+const playbackProgressByDevice = new Map(); // device_id -> { file, currentTime, duration }
 
 // Обрезка текста с многоточием (адаптивно для мобильных)
 function truncateText(text, maxLength = 40) {
@@ -270,6 +274,9 @@ async function loadFiles() {
   if (title) title.textContent = `Файлы на ${deviceName}`;
   if (meta) meta.textContent = 'Загрузка...';
   
+  // Обновим информацию о прогрессе под заголовком панели превью
+  updatePlaybackInfoUI();
+  
   try {
     // КРИТИЧНО: Используем files-with-status для получения разрешения видео
     const res = await speakerFetch(`/api/devices/${encodeURIComponent(currentDevice)}/files-with-status`);
@@ -318,6 +325,9 @@ async function loadFiles() {
   // Обновляем счетчик файлов
   const totalFilesCount = allFiles.length;
   if (meta) meta.textContent = `${totalFilesCount} файл${totalFilesCount === 1 ? '' : totalFilesCount > 1 && totalFilesCount < 5 ? 'а' : 'ов'}`;
+  
+  // Обновляем отображение прогресса из кэша (если есть)
+  updatePlaybackInfoUI();
 
   // Пагинация файлов
   const pageSize = SPEAKER_PAGE_SIZE; // Фиксированное значение 10
@@ -584,6 +594,9 @@ async function loadFiles() {
               
               console.log(`[Speaker] 🎯 Клик на миниатюру: ${fileName}, страница ${page}, тип ${type}`);
               
+              // Сохраняем последний выбор, чтобы не терять номер страницы при автообновлении превью
+              lastPreviewSelection = { file: fileName, page };
+              
               // Отправляем команду на воспроизведение конкретной страницы/изображения
               socket.emit('control/play', { 
                 device_id: deviceId, 
@@ -715,6 +728,34 @@ function setCurrentFileSelection(filename, itemEl) {
     itemEl.classList.add('active');
   }
 }
+
+// Форматирование времени в mm:ss
+function formatTime(sec) {
+  const s = Math.max(0, Math.floor(sec || 0));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${r.toString().padStart(2, '0')}`;
+}
+
+function updatePlaybackInfoUI() {
+  const infoEl = document.getElementById('previewPlaybackInfo');
+  if (!infoEl || !currentDevice) return;
+  const prog = playbackProgressByDevice.get(currentDevice);
+  if (!prog) { infoEl.textContent = ''; return; }
+  const displayName = (prog.file || '').replace(/\.[^.]+$/, '');
+  const total = (prog.duration && prog.duration > 0) ? formatTime(prog.duration) : '--:--';
+  infoEl.textContent = `Сейчас: ${displayName} — ${formatTime(prog.currentTime)} / ${total}`;
+}
+
+// Прием прогресса от плееров
+socket.on('player/progress', ({ device_id, type, file, currentTime, duration }) => {
+  if (!device_id) return;
+  playbackProgressByDevice.set(device_id, { file, currentTime: Number(currentTime)||0, duration: Number(duration)||0 });
+  console.log('[Speaker] ⏱ progress:', { device_id, file, currentTime, duration, currentDevice });
+  if (device_id === currentDevice) {
+    updatePlaybackInfoUI();
+  }
+});
 
 /* Верхняя панель управления */
 document.getElementById('playBtn').onclick = () => {
@@ -901,7 +942,11 @@ socket.on('preview/refresh', async ({ device_id }) => {
   
   // Если воспроизводится PDF/PPTX/FOLDER - открываем превью с выделением текущего слайда
   if (type === 'pdf' || type === 'pptx' || type === 'folder') {
-    console.log('[Speaker] 🖼️ Автооткрытие превью для:', type, file, 'страница:', page);
+    // Если сервер ещё не прислал актуальную страницу, используем последний локальный выбор
+    const effectivePage = (page && Number(page) > 0)
+      ? Number(page)
+      : (lastPreviewSelection.file === file && lastPreviewSelection.page ? lastPreviewSelection.page : 1);
+    console.log('[Speaker] 🖼️ Автооткрытие превью для:', type, file, 'страница:', effectivePage);
     
     // Проверяем какой файл сейчас отображается в превью
     const currentPreviewFile = filePreview.querySelector('.thumbnail-preview')?.getAttribute('data-file');
@@ -923,12 +968,12 @@ socket.on('preview/refresh', async ({ device_id }) => {
         
         // Ждём рендеринга сетки и выделяем текущий слайд
         setTimeout(() => {
-          highlightCurrentThumbnail(page || 1);
+          highlightCurrentThumbnail(effectivePage);
         }, 250);
       }, 50);
     } else if (filePreview.querySelector('.thumbnail-preview')) {
       // Сетка уже открыта для ЭТОГО файла - просто выделяем нужный слайд
-      highlightCurrentThumbnail(page || 1);
+      highlightCurrentThumbnail(effectivePage);
     }
   }
 });

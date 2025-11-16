@@ -147,6 +147,113 @@ ffmpeg -version
 sqlite3 config/main.db "SELECT * FROM file_statuses WHERE status='error' ORDER BY updated_at DESC LIMIT 20;"
 ```
 
+## Android: сбор логов и диагностика
+
+```bash
+# Список устройств
+adb devices -l
+
+# Снять логи с девайса (замените SERIAL на ip:port)
+adb -s SERIAL logcat -d | grep -iE "VCMediaPlayer|ExoPlayer|Playback|VideoControl|player error|MediaCodec|okhttp" | tail -n 200
+
+# Онлайн просмотр логов
+adb -s SERIAL logcat | grep -iE "VCMediaPlayer|ExoPlayer|Playback|VideoControl|player error|MediaCodec|okhttp"
+
+# Перезапуск приложения
+adb -s SERIAL shell am force-stop com.videocontrol.mediaplayer
+adb -s SERIAL shell monkey -p com.videocontrol.mediaplayer -c android.intent.category.LAUNCHER 1
+
+# Проверить, что процесс запущен
+adb -s SERIAL shell ps -A | grep videocontrol
+
+# Проверить доступность сервера с устройства
+adb -s SERIAL shell ping -c 3 192.168.1.1
+
+# Проверить свободное место/кэш
+adb -s SERIAL shell df -h /sdcard /data
+
+# Полный системный отчёт (долго)
+adb -s SERIAL bugreport bugreport-$(date +%F_%H%M).zip
+```
+
+Заметки:
+- Если в браузере видите MEDIA_ERR_SRC_NOT_SUPPORTED — проверьте HEAD/GET трейлера/видео и заголовки Range на сервере.
+- На Android следите за MediaCodec/ExoPlayer ошибками и таймаутами HTTP (60s).
+- Убедитесь, что URL воспроизведения идёт через `/api/files/resolve/<device>/<file>`.
+
+## Проверка видео-эндпоинтов (сервер)
+
+```bash
+# HEAD трейлера (должен быть 200 когда готов, иначе 404)
+curl -I "http://HOST/api/files/trailer/DEVICE/FILE.mp4"
+
+# Проверка Range (частичный контент 206, корректный Content-Range/Length)
+curl -I -H "Range: bytes=0-524287" "http://HOST/api/files/resolve/DEVICE/FILE.mp4"
+```
+
+## Логи сервера и Nginx
+
+```bash
+# Node.js ошибки приложения
+tail -n 200 logs/error-*.log
+
+# Последние записи systemd
+journalctl -u videocontrol -n 200 --no-pager
+
+# Фильтр по конкретному файлу/резолверу
+journalctl -u videocontrol -n 500 --no-pager | grep -i "resolve.*FILE.mp4"
+
+# Логи Nginx
+sudo tail -n 200 /var/log/nginx/videocontrol-error.log
+sudo tail -n 200 /var/log/nginx/videocontrol-access.log
+```
+
+## ffprobe диагностика (сервер)
+
+```bash
+ffprobe -v error \
+  -select_streams v:0 \
+  -show_entries stream=codec_name,width,height,r_frame_rate,bit_rate,profile,level \
+  -show_entries format=duration \
+  -of json "/path/to/file.mp4"
+```
+
+## Android: дополнительные команды
+
+```bash
+# Сброс данных приложения
+adb -s SERIAL shell pm clear com.videocontrol.mediaplayer
+
+# Логи только нашего пакета
+adb -s SERIAL logcat -d | grep -i "com.videocontrol.mediaplayer" | tail -n 200
+
+# Сетевые сокеты/подключения
+adb -s SERIAL shell netstat -an | grep -E "3000|80|443"
+
+# DNS на устройстве
+adb -s SERIAL shell getprop net.dns1; adb -s SERIAL shell getprop net.dns2
+
+# Проверка выданных разрешений
+adb -s SERIAL shell dumpsys package com.videocontrol.mediaplayer | grep -i granted
+```
+
+## Socket.IO быстрый тест
+
+```bash
+# Ожидаем ответ вида: 0{"sid":...} или аналогичный (EIO=4)
+curl -s "http://HOST/socket.io/?EIO=4&transport=polling" | head -n1
+```
+
+## Кэш трейлеров (сервер)
+
+```bash
+# Список трейлеров (5s MP4 по md5)
+ls -lh CONVERTED_CACHE/trailers/
+
+# Очистка старше 7 дней
+find CONVERTED_CACHE/trailers -type f -mtime +7 -print -delete
+```
+
 ## Обновление приложения
 
 ```bash

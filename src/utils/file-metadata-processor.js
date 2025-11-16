@@ -8,6 +8,8 @@ import path from 'path';
 import { calculateMD5, saveFileMetadata, findDuplicateFile, getFileMetadata } from '../database/files-metadata.js';
 import { checkVideoParameters } from '../video/ffmpeg-wrapper.js';
 import logger, { logFile } from '../utils/logger.js';
+import { ensureTrailerForFile } from '../video/trailer-generator.js';
+import { CONVERTED_CACHE } from '../config/constants.js';
 
 /**
  * Обработать загруженный файл: вычислить MD5, получить метаданные, сохранить в БД
@@ -190,6 +192,11 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
       deduplicated: deduplicationApplied,
       resolution: videoParams.width ? `${videoParams.width}x${videoParams.height}` : null
     });
+    
+    // Фоновая генерация трейлера для видео (не блокирует ответ)
+    if (['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext) && md5Hash && filePath) {
+      ensureTrailerForFile(md5Hash, filePath, { seconds: 5 }).catch(() => {});
+    }
     
     // Возвращаем информацию о дедупликации
     return {

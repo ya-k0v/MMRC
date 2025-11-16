@@ -35,6 +35,8 @@ let registerInFlight = false; // Предотвращаем одновремен
 let slidesCache = {}; // Кэш предзагруженных слайдов PPTX/PDF: { 'filename': { count: N, images: [Image, ...] } }
 let currentImgBuffer = 1; // Текущий активный буфер изображений (1 или 2) для двойной буферизации
 let wakeLock = null; // Wake Lock для предотвращения suspend
+let lastProgressEmitTs = 0; // троттлинг отправки прогресса
+let progressInterval = null; // периодическая отправка прогресса (fallback)
 
 function ensureSocketConnected(reason = 'manual') {
   const isActive = typeof socket.active === 'boolean' ? socket.active : false;
@@ -206,6 +208,53 @@ if (!device_id || !device_id.trim()) {
             }
           });
           
+          // Отправка прогресса на спикер-панель
+          const emitProgress = () => {
+            // Не шлем прогресс из превью и не для не-видео контента
+            if (!vjsPlayer || !device_id || preview || (currentFileState && currentFileState.type !== 'video')) return;
+            const now = Date.now();
+            // троттлим до ~2 раза в секунду
+            if (now - lastProgressEmitTs < 500) return;
+            lastProgressEmitTs = now;
+            try {
+              const cur = Number.isFinite(vjsPlayer.currentTime()) ? vjsPlayer.currentTime() : 0;
+              const dur = Number.isFinite(vjsPlayer.duration()) ? vjsPlayer.duration() : 0;
+              socket.emit('player/progress', {
+                device_id,
+                type: 'video',
+                file: currentFileState?.file || null,
+                currentTime: Math.max(0, Math.floor(cur)),
+                duration: Math.max(0, Math.floor(dur))
+              });
+            } catch (e) {
+              // ignore
+            }
+          };
+          
+          vjsPlayer.on('timeupdate', emitProgress);
+          vjsPlayer.on('loadedmetadata', emitProgress);
+          vjsPlayer.on('seeking', emitProgress);
+          vjsPlayer.on('seeked', emitProgress);
+          
+          // Дополнительно: регулярная отправка прогресса раз в 1с, пока идёт воспроизведение
+          const startProgressInterval = () => {
+            if (progressInterval || preview) return;
+            progressInterval = setInterval(() => {
+              if (!vjsPlayer || vjsPlayer.paused()) return;
+              emitProgress();
+            }, 1000);
+          };
+          const stopProgressInterval = () => {
+            if (progressInterval) {
+              clearInterval(progressInterval);
+              progressInterval = null;
+            }
+          };
+          vjsPlayer.on('playing', startProgressInterval);
+          vjsPlayer.on('pause', stopProgressInterval);
+          vjsPlayer.on('ended', stopProgressInterval);
+          vjsPlayer.on('dispose', stopProgressInterval);
+          
           vjsPlayer.on('progress', () => {
             // Логируем только изменения процента (не спамим)
             const buffered = vjsPlayer.buffered();
@@ -267,7 +316,25 @@ if (!device_id || !device_id.trim()) {
                 vjsPlayer.loop(true);
                 vjsPlayer.muted(true);
                 vjsPlayer.volume(0);
-                vjsPlayer.src({ src: content(previewFile), type: 'video/mp4' });
+                // Пытаемся отдать предсгенерированный трейлер (5s). Если его нет (404) — сразу используем on-the-fly превью
+                const trailerSrc = `/api/files/trailer/${encodeURIComponent(device_id)}/${encodeURIComponent(previewFile)}`;
+                const fallbackPreviewSrc = `/api/files/preview/${encodeURIComponent(device_id)}/${encodeURIComponent(previewFile)}?start=0&seconds=5`;
+                
+                // HEAD-проверка наличия трейлера, чтобы избежать MEDIA_ERR_SRC_NOT_SUPPORTED при 404
+                (async () => {
+                  try {
+                    const head = await fetch(trailerSrc, { method: 'HEAD', cache: 'no-store' });
+                    if (head.ok) {
+                      vjsPlayer.src({ src: trailerSrc, type: 'video/mp4' });
+                    } else {
+                      console.log('[Player] ℹ️ Трейлер 404, используем on-the-fly превью (5s)');
+                      vjsPlayer.src({ src: fallbackPreviewSrc, type: 'video/mp4' });
+                    }
+                  } catch {
+                    console.log('[Player] ℹ️ Ошибка HEAD трейлера, используем on-the-fly превью (5s)');
+                    vjsPlayer.src({ src: fallbackPreviewSrc, type: 'video/mp4' });
+                  }
+                })();
                 videoContainer.style.display = ''; // КРИТИЧНО: Сбрасываем display:none
                 show(videoContainer);
                 
