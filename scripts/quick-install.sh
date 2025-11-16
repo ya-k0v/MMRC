@@ -48,6 +48,38 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 0
 fi
 
+# Настройки хранения контента (можно переопределить переменными окружения)
+# STORAGE_MODE: local | external | external_fstab
+#   local           - хранить в $INSTALL_DIR/public/content (как было)
+#   external        - внешний каталог + симлинк $INSTALL_DIR/public/content -> $CONTENT_DIR
+#   external_fstab  - внешний диск монтируется в $CONTENT_DIR через /etc/fstab + симлинк
+STORAGE_MODE="${STORAGE_MODE:-}"
+CONTENT_DIR="${CONTENT_DIR:-/mnt/vc-content}"
+CONTENT_SOURCE="${CONTENT_SOURCE:-}"        # Например: /dev/sdb1 или UUID=xxxx-xxxx
+CONTENT_FSTAB_OPTS="${CONTENT_FSTAB_OPTS:-ext4 defaults,noatime 0 2}"
+
+# Интерактивный выбор, если не задано через переменные
+if [ -z "$STORAGE_MODE" ]; then
+    echo ""
+    echo "Select content storage mode:"
+    echo "  [1] Local (inside project at public/content)"
+    echo "  [2] External directory via symlink (CONTENT_DIR=$CONTENT_DIR)"
+    echo "  [3] External device via /etc/fstab -> $CONTENT_DIR + symlink"
+    read -p "Choose [1-3]: " -n 1 -r
+    echo ""
+    case "$REPLY" in
+        1) STORAGE_MODE="local" ;;
+        2) STORAGE_MODE="external" ;;
+        3) STORAGE_MODE="external_fstab" ;;
+        *) echo "Invalid choice, defaulting to local"; STORAGE_MODE="local" ;;
+    esac
+fi
+
+# Для режима external_fstab запросим источник, если не задан
+if [ "$STORAGE_MODE" = "external_fstab" ] && [ -z "$CONTENT_SOURCE" ]; then
+    read -p "Enter content device/UUID for /etc/fstab (e.g., /dev/sdb1 or UUID=xxxx): " CONTENT_SOURCE
+fi
+
 # ==========================================
 # PHASE 1: SYSTEM DEPENDENCIES
 # ==========================================
@@ -119,13 +151,54 @@ echo -e "${GREEN}✅ NPM packages installed${NC}"
 echo ""
 echo -e "${BLUE}[4/7] Creating project structure...${NC}"
 
-mkdir -p public/content
 mkdir -p config
+mkdir -p logs
 mkdir -p .converted
 mkdir -p temp/nginx_upload
+mkdir -p "$INSTALL_DIR/public"
+
+# Настройка хранения контента согласно выбранному режиму
+case "$STORAGE_MODE" in
+    local)
+        mkdir -p "$INSTALL_DIR/public/content"
+        ;;
+    external)
+        mkdir -p "$CONTENT_DIR"
+        # Перенос существующего контента, если есть
+        if [ -d "$INSTALL_DIR/public/content" ] && [ ! -L "$INSTALL_DIR/public/content" ]; then
+            rsync -aH --delete "$INSTALL_DIR/public/content/" "$CONTENT_DIR/" 2>/dev/null || true
+            rm -rf "$INSTALL_DIR/public/content"
+        fi
+        ln -sfn "$CONTENT_DIR" "$INSTALL_DIR/public/content"
+        ;;
+    external_fstab)
+        mkdir -p "$CONTENT_DIR"
+        if [ -n "$CONTENT_SOURCE" ]; then
+            # Добавим запись в /etc/fstab, если её ещё нет
+            if ! grep -qE "^[^#]*[[:space:]]+$CONTENT_DIR[[:space:]]" /etc/fstab; then
+                echo "$CONTENT_SOURCE $CONTENT_DIR $CONTENT_FSTAB_OPTS" >> /etc/fstab
+                echo "  Added to /etc/fstab: $CONTENT_SOURCE -> $CONTENT_DIR ($CONTENT_FSTAB_OPTS)"
+            fi
+            mount -a || true
+        fi
+        # Перенос существующего контента, если есть
+        if [ -d "$INSTALL_DIR/public/content" ] && [ ! -L "$INSTALL_DIR/public/content" ]; then
+            rsync -aH --delete "$INSTALL_DIR/public/content/" "$CONTENT_DIR/" 2>/dev/null || true
+            rm -rf "$INSTALL_DIR/public/content"
+        fi
+        ln -sfn "$CONTENT_DIR" "$INSTALL_DIR/public/content"
+        ;;
+    *)
+        # Защита по умолчанию
+        mkdir -p "$INSTALL_DIR/public/content"
+        ;;
+esac
 
 # Устанавливаем права
 chown -R $CURRENT_USER:$CURRENT_USER "$INSTALL_DIR"
+if [ "$STORAGE_MODE" != "local" ]; then
+    chown -R $CURRENT_USER:$CURRENT_USER "$CONTENT_DIR"
+fi
 chmod 755 temp/nginx_upload
 
 # Создаем .env с JWT secret
@@ -273,7 +346,7 @@ StandardError=journal
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=$INSTALL_DIR/public/content $INSTALL_DIR/config $INSTALL_DIR/logs $INSTALL_DIR/temp $INSTALL_DIR/.converted /home/$CURRENT_USER/.cache /home/$CURRENT_USER/.config
+ReadWritePaths=$INSTALL_DIR/public/content $INSTALL_DIR/config $INSTALL_DIR/logs $INSTALL_DIR/temp $INSTALL_DIR/.converted /home/$CURRENT_USER/.cache /home/$CURRENT_USER/.config $CONTENT_DIR
 
 # Environment
 Environment=NODE_ENV=production
@@ -309,6 +382,15 @@ echo ""
 echo "📂 Installation directory: $INSTALL_DIR"
 echo "📊 Database: config/main.db (SQLite)"
 echo "🌐 Server: http://$(hostname -I | awk '{print $1}')"
+echo ""
+echo "📦 Content storage:"
+echo "  Mode: $STORAGE_MODE"
+if [ "$STORAGE_MODE" = "local" ]; then
+echo "  Path: $INSTALL_DIR/public/content"
+else
+echo "  Target: $CONTENT_DIR"
+echo "  Symlink: $INSTALL_DIR/public/content -> $CONTENT_DIR"
+fi
 echo ""
 echo "🔐 Default Admin Credentials:"
 echo "  Username: admin"

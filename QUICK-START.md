@@ -49,6 +49,14 @@ sudo bash scripts/quick-install.sh
 - ✅ Создаёт systemd service
 - ✅ Автозапуск при загрузке
 
+### **Хранение контента (новое):**
+- При установке можно выбрать один из режимов:
+  - `local` — хранить файлы в `public/content` (внутри проекта)
+  - `external` — внешний каталог через symlink (`public/content -> $CONTENT_DIR`)
+  - `external_fstab` — запись в `/etc/fstab` для диска → `$CONTENT_DIR` → symlink
+
+Подробнее команды и примеры — в `docs/MANUAL.md`.
+
 ---
 
 ## 🎯 После установки:
@@ -297,12 +305,10 @@ sudo systemctl start videocontrol
 
 ## 📚 Документация:
 
-- **README.md** - общее описание
-- **plan/ROADMAP.md** - планы развития
-- **plan/SECURITY_LEVELS.md** - безопасность
-- **docs/HARDWARE_REQUIREMENTS.md** - требования к железу
-- **docs/FOLDERS_FEATURE.md** - работа с папками
-- **docs/ANDROID.md** - Android клиент
+- **README.md** — общее описание и быстрый старт
+- **docs/MANUAL.md** — команды для SQLite, systemd, Nginx, бэкапы и хранение контента
+- **clients/android-mediaplayer/** — документация Android‑клиента
+- **clients/mpv/** — документация MPV‑клиента
 
 ---
 
