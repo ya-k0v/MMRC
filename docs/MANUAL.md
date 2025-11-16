@@ -274,4 +274,34 @@ export CONTENT_SOURCE=/dev/sdb1         # или UUID=xxxx-xxxx (для external
 export CONTENT_FSTAB_OPTS="ext4 defaults,noatime 0 2"
 ```
 
+## Быстрая установка на чистый сервер
+
+```bash
+# 1) Подготовка диска под контент (пример: /dev/sdb1 → /mnt/vc-content)
+sudo mkfs.ext4 /dev/sdb1
+sudo mkdir -p /mnt/vc-content
+echo '/dev/sdb1 /mnt/vc-content ext4 defaults,noatime 0 2' | sudo tee -a /etc/fstab
+sudo mount -a
+
+# 2) Клонирование проекта
+sudo mkdir -p /vid/videocontrol
+cd /vid/videocontrol
+sudo apt-get update -y && sudo apt-get install -y git
+sudo git clone https://github.com/ya-k0v/VideoControl.git .   # или ваш форк/ветка
+
+# 3) Non-interactive параметры для инсталлятора
+export STORAGE_MODE=external_fstab
+export CONTENT_DIR=/mnt/vc-content
+export CONTENT_SOURCE=/dev/sdb1
+export CONTENT_FSTAB_OPTS="ext4 defaults,noatime 0 2"
+
+# 4) Установка (автоподтверждения)
+printf 'y\ny\n' | sudo bash scripts/quick-install.sh /vid/videocontrol
+
+# 5) Проверка
+sudo systemctl status videocontrol
+sudo nginx -t && sudo systemctl restart nginx
+echo "URL: http://$(hostname -I | awk '{print $1}')"
+```
+
 
