@@ -584,6 +584,15 @@ async function loadFiles() {
             </div>
           `;
           
+          // Если это тот же файл — сразу подсветим ранее выбранную страницу после рендера
+          if (lastPreviewSelection.file === safeName && lastPreviewSelection.page) {
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                highlightCurrentThumbnail(Number(lastPreviewSelection.page) || 1);
+              });
+            });
+          }
+          
           // Добавляем обработчики кликов на миниатюры
           filePreview.querySelectorAll('.thumbnail-preview').forEach(thumb => {
             thumb.addEventListener('click', () => {
@@ -596,6 +605,10 @@ async function loadFiles() {
               
               // Сохраняем последний выбор, чтобы не терять номер страницы при автообновлении превью
               lastPreviewSelection = { file: fileName, page };
+              
+              // Обозначаем выбранную миниатюру явно (устойчиво к перерендерам)
+              filePreview.querySelectorAll('.thumbnail-preview').forEach(t => t.removeAttribute('data-selected'));
+              thumb.setAttribute('data-selected', '1');
               
               // Отправляем команду на воспроизведение конкретной страницы/изображения
               socket.emit('control/play', { 
@@ -687,9 +700,12 @@ async function loadFiles() {
             Object.defineProperty(clickEvent, 'target', { value: item, enumerable: true });
             item.onclick(clickEvent);
             
-            // Выделяем первый слайд через 300ms
+            // Выделяем актуальный слайд через 300ms
             setTimeout(() => {
-              highlightCurrentThumbnail(1);
+              const initialPage = (lastPreviewSelection.file === safeName && lastPreviewSelection.page)
+                ? Number(lastPreviewSelection.page) || 1
+                : 1;
+              highlightCurrentThumbnail(initialPage);
             }, 300);
           }, 50);
         }
@@ -740,8 +756,19 @@ function formatTime(sec) {
 function updatePlaybackInfoUI() {
   const infoEl = document.getElementById('previewPlaybackInfo');
   if (!infoEl || !currentDevice) return;
+
+  // Показываем таймер ТОЛЬКО когда реально играет видео
+  const device = devices.find(d => d.device_id === currentDevice);
+  if (!device || !device.current || device.current.type !== 'video') {
+    infoEl.textContent = '';
+    return;
+  }
+
   const prog = playbackProgressByDevice.get(currentDevice);
-  if (!prog) { infoEl.textContent = ''; return; }
+  if (!prog) {
+    infoEl.textContent = '';
+    return;
+  }
   const displayName = (prog.file || '').replace(/\.[^.]+$/, '');
   const total = (prog.duration && prog.duration > 0) ? formatTime(prog.duration) : '--:--';
   infoEl.textContent = `Сейчас: ${displayName} — ${formatTime(prog.currentTime)} / ${total}`;
@@ -802,14 +829,40 @@ document.getElementById('restartBtn').onclick = () => {
 document.getElementById('stopBtn').onclick = () => {
   if (!currentDevice) return;
   socket.emit('control/stop', { device_id: currentDevice });
+  // Мгновенно убираем таймер при стопе
+  playbackProgressByDevice.delete(currentDevice);
+  updatePlaybackInfoUI();
 };
 document.getElementById('pdfPrevBtn').onclick = () => {
   if (!currentDevice) return;
   socket.emit('control/pdfPrev', { device_id: currentDevice });
+  // Локально обновим подсветку сразу (без ожидания сокета)
+  const thumbs = filePreview.querySelectorAll('.thumbnail-preview');
+  if (thumbs.length) {
+    // Сбрасываем прежний явный выбор, чтобы не залипал
+    filePreview.querySelectorAll('.thumbnail-preview[data-selected="1"]').forEach(t => t.removeAttribute('data-selected'));
+    const selected = filePreview.querySelector('.thumbnail-preview[data-selected="1"]');
+    let cur = selected ? parseInt(selected.getAttribute('data-page'), 10) : (Number(lastPreviewSelection.page) || 1);
+    cur = Math.max(1, cur - 1);
+    lastPreviewSelection.page = cur;
+    requestAnimationFrame(() => highlightCurrentThumbnail(cur));
+  }
 };
 document.getElementById('pdfNextBtn').onclick = () => {
   if (!currentDevice) return;
   socket.emit('control/pdfNext', { device_id: currentDevice });
+  // Локально обновим подсветку сразу (без ожидания сокета)
+  const thumbs = filePreview.querySelectorAll('.thumbnail-preview');
+  if (thumbs.length) {
+    // Сбрасываем прежний явный выбор, чтобы не залипал
+    filePreview.querySelectorAll('.thumbnail-preview[data-selected="1"]').forEach(t => t.removeAttribute('data-selected'));
+    const selected = filePreview.querySelector('.thumbnail-preview[data-selected="1"]');
+    const total = thumbs.length;
+    let cur = selected ? parseInt(selected.getAttribute('data-page'), 10) : (Number(lastPreviewSelection.page) || 1);
+    cur = Math.min(total, cur + 1);
+    lastPreviewSelection.page = cur;
+    requestAnimationFrame(() => highlightCurrentThumbnail(cur));
+  }
 };
 document.getElementById('pdfCloseBtn').onclick = () => {
   if (!currentDevice) return;
@@ -983,6 +1036,15 @@ function highlightCurrentThumbnail(pageNumber) {
   const thumbnails = filePreview.querySelectorAll('.thumbnail-preview');
   if (!thumbnails.length) return;
   
+  // Если пользователь недавно кликал — приоритет у явно выбранной миниатюры
+  const explicitlySelected = filePreview.querySelector('.thumbnail-preview[data-selected="1"]');
+  if (explicitlySelected) {
+    const selPage = parseInt(explicitlySelected.getAttribute('data-page'), 10);
+    if (!Number.isNaN(selPage)) {
+      pageNumber = selPage;
+    }
+  }
+  
   thumbnails.forEach((thumb) => {
     const thumbPage = parseInt(thumb.getAttribute('data-page'), 10);
     
@@ -991,6 +1053,8 @@ function highlightCurrentThumbnail(pageNumber) {
     thumb.onmouseout = null;
     
     if (thumbPage === pageNumber) {
+      // Обновляем флаг выбранности
+      thumb.setAttribute('data-selected', '1');
       // Выделяем активную миниатюру - яркая синяя рамка
       thumb.style.cssText = `
         aspect-ratio: 16/9;
@@ -1010,6 +1074,8 @@ function highlightCurrentThumbnail(pageNumber) {
       
       console.log('[Speaker] 🎯 Выделена миниатюра:', thumbPage);
     } else {
+      // Сбрасываем флаг выбранности
+      thumb.removeAttribute('data-selected');
       // Неактивные миниатюры - обычные с hover эффектом
       thumb.style.cssText = `
         aspect-ratio: 16/9;
@@ -1052,7 +1118,17 @@ socket.on('player/pptxPage', (pageNumber) => {
 
 socket.on('player/folderPage', (pageNumber) => {
   console.log('[Speaker] 🖼️ Изображение в папке изменено:', pageNumber);
-  highlightCurrentThumbnail(pageNumber);
+  const p = Math.max(1, Number(pageNumber) || 1);
+  // Запоминаем актуальную страницу
+  lastPreviewSelection.page = p;
+  // Сбрасываем явную выбранность — приоритет отдаем номеру страницы
+  filePreview.querySelectorAll('.thumbnail-preview[data-selected="1"]').forEach(t => t.removeAttribute('data-selected'));
+  // Дождёмся возможного перерендера сетки, затем подсветим
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      highlightCurrentThumbnail(p);
+    });
+  });
 });
 
 /* ===== Жесты для тач: свайп по превью PDF (Prev/Next) ===== */

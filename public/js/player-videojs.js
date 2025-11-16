@@ -26,6 +26,7 @@ const img2 = document.getElementById('img2');
 const img = img1; // Для обратной совместимости со старым кодом
 const pdf = document.getElementById('pdf');
 const unmuteBtn = document.getElementById('unmute');
+const brandBg = document.getElementById('brandBg');
 
 let currentFileState = { type: null, file: null, page: 1 };
 let soundUnlocked = false;
@@ -37,6 +38,43 @@ let currentImgBuffer = 1; // Текущий активный буфер изоб
 let wakeLock = null; // Wake Lock для предотвращения suspend
 let lastProgressEmitTs = 0; // троттлинг отправки прогресса
 let progressInterval = null; // периодическая отправка прогресса (fallback)
+
+// Режим фона: 'logo' для видео, 'black' для слайдов/папок/статического контента
+function setBrandBackgroundMode(mode) {
+  if (!brandBg) return;
+  if (mode === 'logo') {
+    brandBg.style.backgroundImage = `url('/branding/logo.svg?t=${Date.now()}')`;
+    brandBg.style.backgroundRepeat = 'no-repeat';
+    brandBg.style.backgroundPosition = 'center';
+    brandBg.style.backgroundSize = 'contain';
+    brandBg.style.backgroundColor = '#000';
+  } else {
+    brandBg.style.backgroundImage = 'none';
+    brandBg.style.backgroundColor = '#000';
+  }
+}
+
+// Утилита: ожидание завершения CSS-перехода opacity у элемента (глобально)
+function waitForOpacityTransitionEnd(el, expectedProperty = 'opacity', timeoutMs = 600) {
+  return new Promise(resolve => {
+    let done = false;
+    const onEnd = (evt) => {
+      if (evt && evt.target !== el) return;
+      if (evt && evt.propertyName && evt.propertyName !== expectedProperty) return;
+      if (done) return;
+      done = true;
+      el.removeEventListener('transitionend', onEnd);
+      resolve();
+    };
+    el.addEventListener('transitionend', onEnd, { once: true });
+    setTimeout(() => {
+      if (done) return;
+      done = true;
+      el.removeEventListener('transitionend', onEnd);
+      resolve();
+    }, timeoutMs);
+  });
+}
 
 function ensureSocketConnected(reason = 'manual') {
   const isActive = typeof socket.active === 'boolean' ? socket.active : false;
@@ -85,8 +123,10 @@ function hideVideoJsControls() {
 
 if (!device_id || !device_id.trim()) {
   [idle, v, img1, img2, pdf].forEach(el => el && el.classList.remove('visible'));
-  document.documentElement.style.background = '#000 !important';
-  document.body.style.background = '#000 !important';
+  document.documentElement.style.background = 'transparent';
+  document.body.style.background = 'transparent';
+  // В режиме без device_id используем черный фон без логотипа
+  setBrandBackgroundMode('black');
   if (unmuteBtn) unmuteBtn.style.display = 'none';
 } else {
   // Инициализация Video.js
@@ -116,6 +156,8 @@ if (!device_id || !device_id.trim()) {
         // Ждем полной готовности Video.js
         vjsPlayer.ready(function() {
           console.log('[Player] ✅ Video.js готов к работе');
+          // По умолчанию для видео включаем логотип на фоне
+          setBrandBackgroundMode('logo');
           
           // КРИТИЧНО: Скрываем все контролы при инициализации
           hideVideoJsControls();
@@ -335,7 +377,6 @@ if (!device_id || !device_id.trim()) {
                     vjsPlayer.src({ src: fallbackPreviewSrc, type: 'video/mp4' });
                   }
                 })();
-                videoContainer.style.display = ''; // КРИТИЧНО: Сбрасываем display:none
                 show(videoContainer);
                 
                 // Даем время для загрузки src
@@ -400,8 +441,8 @@ if (!device_id || !device_id.trim()) {
     console.log('[Player] 🔍 Element visibility before:', el.classList.contains('visible'));
     
     // Убедимся что body черный
-    document.body.style.background = '#000';
-    document.documentElement.style.background = '#000';
+    document.body.style.background = 'transparent';
+    document.documentElement.style.background = 'transparent';
     
     // Если нужен мгновенный показ (например для слайдов презентации)
     if (skipTransition) {
@@ -631,6 +672,8 @@ if (!device_id || !device_id.trim()) {
       
       const showImagePlaceholder = () => {
         console.log('[Player] ✅ Заглушка-изображение загружена, показываем');
+        // КРИТИЧНО: Убираем черный экран перед показом заглушки
+        idle.classList.remove('visible');
         img.src = src;
         show(img);
       };
@@ -726,7 +769,7 @@ if (!device_id || !device_id.trim()) {
             
             console.log('[Player] ✅ Финальная проверка пройдена, файл доступен');
             
-            console.log('[Player] 🔍 Установка параметров Video.js...');
+            console.log('[Player] 🔍 Установка параметров Video.js для заглушки...');
             vjsPlayer.loop(true);
             vjsPlayer.muted(true);
             vjsPlayer.volume(0);
@@ -734,28 +777,40 @@ if (!device_id || !device_id.trim()) {
             // КРИТИЧНО: Скрываем контролы
             hideVideoJsControls();
             
-            // Переводим в режим предзагрузки
-            preload(videoContainer);
+            // Делаем плавный переход как видео→видео: слой уходит в прозрачность, под ним виден бренд-фон
+            const TRANSITION_MS_PLACEHOLDER = 500;
+            const needFadeOutPlaceholder = videoContainer.classList.contains('visible');
+            videoContainer.classList.remove('visible');
+            videoContainer.classList.add('preloading');
             
-            console.log('[Player] 🔍 Установка src:', src);
-            vjsPlayer.src({ src: src, type: 'video/mp4' });
-            
-            // Ждем готовности метаданных
-            vjsPlayer.one('loadedmetadata', () => {
-              console.log('[Player] 📊 Заглушка: метаданные готовы, показываем с fade in');
-              hideVideoJsControls();
+            const setPlaceholderSrcAndShow = () => {
+              console.log('[Player] 🔍 Установка src заглушки:', src);
+              vjsPlayer.src({ src: src, type: 'video/mp4' });
               
-              // Показываем с плавным появлением
-              videoContainer.style.display = ''; // КРИТИЧНО: Сбрасываем display:none
-              show(videoContainer);
-              
-              // Запускаем воспроизведение
-              vjsPlayer.play().then(() => {
-                console.log('[Player] ✅ Заглушка запущена успешно!');
-              }).catch(err => {
-                console.error('[Player] ❌ Ошибка запуска заглушки:', err);
+              // Ждем готовности метаданных, затем показываем новый слой с fade-in
+              vjsPlayer.one('loadedmetadata', () => {
+                console.log('[Player] 📊 Заглушка: метаданные готовы, показываем поверх бренда');
+                hideVideoJsControls();
+                requestAnimationFrame(() => {
+                  videoContainer.classList.remove('preloading');
+                  videoContainer.classList.add('visible');
+                  console.log('[Player] ✅ Плавный переход: бренд → заглушка');
+                  vjsPlayer.play().then(() => {
+                    console.log('[Player] ✅ Заглушка запущена успешно!');
+                  }).catch(err => {
+                    console.error('[Player] ❌ Ошибка запуска заглушки:', err);
+                  });
+                });
               });
-            });
+            };
+            
+            // Если слой был видимым — дождёмся завершения fade-out, иначе сразу ставим заглушку
+            if (needFadeOutPlaceholder) {
+              waitForOpacityTransitionEnd(videoContainer, 'opacity', TRANSITION_MS_PLACEHOLDER + 150)
+                .then(() => setPlaceholderSrcAndShow());
+            } else {
+              setPlaceholderSrcAndShow();
+            }
           } catch (e) {
             console.error('[Player] ❌ Ошибка проверки или загрузки заглушки:', e);
           }
@@ -897,11 +952,12 @@ if (!device_id || !device_id.trim()) {
     }
     pdf.removeAttribute('src');
     
-    // Убеждаемся что videoContainer полностью скрыт
+    // Убеждаемся что videoContainer скрыт классами (без display:none)
     videoContainer.classList.remove('visible', 'preloading');
-    videoContainer.style.display = 'none';
     
     const { current, next } = getImageBuffers();
+    // Для папок (слайд-шоу) фон ДОЛЖЕН быть черным, без логотипа
+    setBrandBackgroundMode('black');
     
     // Определяем, это первый показ папки или переключение изображений
     const isFirstShow = !current.classList.contains('visible') && !next.classList.contains('visible');
@@ -918,23 +974,22 @@ if (!device_id || !device_id.trim()) {
         // Загружаем в следующий буфер
         next.src = cachedImage.src;
         
-        // Первый показ - сразу черный, потом fade in; переключение - мгновенно
         if (isFirstShow) {
+          // Первый показ папки - через черный, с фиксированным временем
           console.log(`[Player] 🎬 Первый показ папки - через черный`);
-          // Сразу черный экран
-          [videoContainer, img1, img2, pdf].forEach(e => {
+          [videoContainer, current, next].forEach(e => {
             if (e) e.classList.remove('visible', 'preloading');
           });
           idle.classList.add('visible');
           
-          // Затем fade in изображения
           setTimeout(() => {
             next.classList.add('visible');
             idle.classList.remove('visible');
-          }, 300);
+          }, 500);
         } else {
-          console.log(`[Player] ⚡ Переключение изображения - мгновенно`);
-          show(next, true); // skipTransition = true для мгновенной смены
+          // Переключение внутри папки - МГНОВЕННО, без плавного перехода
+          console.log(`[Player] ⚡ Переключение изображения в папке - мгновенно`);
+          show(next, true); // skipTransition = true
         }
         
         // Переключаем активный буфер
@@ -956,23 +1011,22 @@ if (!device_id || !device_id.trim()) {
       // Устанавливаем в следующий буфер
       next.src = imageUrl;
       
-      // Первый показ - сразу черный, потом fade in; переключение - мгновенно
       if (isFirstShow) {
+        // Первый показ папки - через черный, с фиксированным временем
         console.log(`[Player] 🎬 Первый показ папки - через черный`);
-        // Сразу черный экран
-        [videoContainer, img1, img2, pdf].forEach(e => {
+        [videoContainer, current, next].forEach(e => {
           if (e) e.classList.remove('visible', 'preloading');
         });
         idle.classList.add('visible');
         
-        // Затем fade in изображения
         setTimeout(() => {
           next.classList.add('visible');
           idle.classList.remove('visible');
-        }, 300);
+        }, 500);
       } else {
-        console.log(`[Player] ⚡ Переключение изображения - мгновенно`);
-        show(next, true); // skipTransition = true для мгновенной смены
+        // Переключение внутри папки - МГНОВЕННО
+        console.log(`[Player] ⚡ Переключение изображения в папке - мгновенно`);
+        show(next, true);
       }
       
       // Переключаем активный буфер
@@ -982,7 +1036,15 @@ if (!device_id || !device_id.trim()) {
     tempImg.onerror = () => {
       console.error(`[Player] ❌ Ошибка загрузки изображения ${num}`);
       next.src = imageUrl;
-      show(next, isFirstShow ? false : true);
+      // При ошибке тоже используем черный экран
+      [videoContainer, current, next].forEach(e => {
+        if (e) e.classList.remove('visible', 'preloading');
+      });
+      idle.classList.add('visible');
+      setTimeout(() => {
+        next.classList.add('visible');
+        idle.classList.remove('visible');
+      }, 500);
       currentImgBuffer = currentImgBuffer === 1 ? 2 : 1;
     };
     tempImg.src = imageUrl;
@@ -998,11 +1060,12 @@ if (!device_id || !device_id.trim()) {
     }
     pdf.removeAttribute('src');
     
-    // Убеждаемся что videoContainer полностью скрыт
+    // Убеждаемся что videoContainer скрыт классами (без display:none)
     videoContainer.classList.remove('visible', 'preloading');
-    videoContainer.style.display = 'none';
     
     const { current, next } = getImageBuffers();
+    // Для презентаций фон ДОЛЖЕН быть черным, без логотипа
+    setBrandBackgroundMode('black');
     
     // Определяем, это первый показ презентации или переключение слайдов
     const isFirstShow = !current.classList.contains('visible') && !next.classList.contains('visible');
@@ -1019,7 +1082,7 @@ if (!device_id || !device_id.trim()) {
         // Загружаем в следующий буфер
         next.src = cachedImage.src;
         
-        // Первый показ - сразу черный, потом fade in; переключение слайдов - мгновенно
+        // Первый показ - сразу черный, потом фиксированный fade in; переключение слайдов - мгновенно
         if (isFirstShow) {
           console.log(`[Player] 🎬 Первый показ презентации - через черный`);
           // Сразу черный экран
@@ -1028,11 +1091,11 @@ if (!device_id || !device_id.trim()) {
           });
           idle.classList.add('visible');
           
-          // Затем fade in слайда
+          // Затем fade in слайда (фиксированное время)
           setTimeout(() => {
             next.classList.add('visible');
             idle.classList.remove('visible');
-          }, 300);
+          }, 500);
         } else {
           console.log(`[Player] ⚡ Переключение слайда - мгновенно`);
           show(next, true); // skipTransition = true для мгновенной смены
@@ -1057,7 +1120,7 @@ if (!device_id || !device_id.trim()) {
       // Устанавливаем в следующий буфер
       next.src = imageUrl;
       
-      // Первый показ - сразу черный, потом fade in; переключение слайдов - мгновенно
+      // Первый показ - сразу черный, потом фиксированный fade in; переключение слайдов - мгновенно
       if (isFirstShow) {
         console.log(`[Player] 🎬 Первый показ презентации - через черный`);
         // Сразу черный экран
@@ -1066,11 +1129,11 @@ if (!device_id || !device_id.trim()) {
         });
         idle.classList.add('visible');
         
-        // Затем fade in слайда
+        // Затем fade in слайда (фиксированное время)
         setTimeout(() => {
           next.classList.add('visible');
           idle.classList.remove('visible');
-        }, 300);
+        }, 500);
       } else {
         console.log(`[Player] ⚡ Переключение слайда - мгновенно`);
         show(next, true); // skipTransition = true для мгновенной смены
@@ -1132,9 +1195,8 @@ if (!device_id || !device_id.trim()) {
           vjsPlayer.muted(soundUnlocked && !forceMuted ? false : true);
           vjsPlayer.volume(soundUnlocked && !forceMuted ? 1.0 : 0.0);
           
-          // Показываем videoContainer если он скрыт
+          // Показываем videoContainer если он скрыт (без трогания display)
           if (!videoContainer.classList.contains('visible')) {
-            videoContainer.style.display = ''; // Сбрасываем display:none
             show(videoContainer);
           }
           
@@ -1154,58 +1216,56 @@ if (!device_id || !device_id.trim()) {
         console.log('[Player] 🎬 Загрузка НОВОГО видео:', fileUrl);
         currentFileState = { type: 'video', file, page: 1 };
         
-        // КРИТИЧНО: СРАЗУ показываем черный экран (мгновенная реакция на кнопку)
-        [videoContainer, img1, img2, pdf].forEach(e => {
-          if (e) e.classList.remove('visible', 'preloading');
-        });
-        idle.classList.add('visible');
-        console.log('[Player] 🖤 Черный экран - немедленная реакция на Play');
+        // Плавный переход через бренд‑фон (без черного экрана)
+        // Шаг 1: уводим текущий видео-слой в прозрачность (старое видео продолжает играть во время fade-out)
+        const TRANSITION_MS = 500;
+        const needFadeOut = videoContainer.classList.contains('visible');
+        videoContainer.classList.remove('visible');
+        videoContainer.classList.add('preloading');
         
         if (vjsPlayer) {
           vjsPlayer.loop(false);
           vjsPlayer.muted(soundUnlocked && !forceMuted ? false : true);
           vjsPlayer.volume(soundUnlocked && !forceMuted ? 1.0 : 0.0);
           
-          // КРИТИЧНО: Скрываем big play button ДО установки src
+          // Скрываем контролы ДО установки src
           hideVideoJsControls();
           
-          // Загружаем src в фоне (пока показан черный)
-          vjsPlayer.src({ src: fileUrl, type: 'video/mp4' });
-          
-          // Ждем готовности метаданных, затем показываем с fade in из черного
-          vjsPlayer.one('loadedmetadata', () => {
-            console.log('[Player] 📊 Метаданные загружены, показываем из черного');
-            hideVideoJsControls();
-            
-            // Переводим в preloading для плавного перехода из черного
-            videoContainer.style.display = ''; // КРИТИЧНО: Сбрасываем display:none
-            videoContainer.classList.remove('visible');
-            videoContainer.classList.add('preloading');
-            
-            // Небольшая задержка для гарантии что черный экран виден
-            setTimeout(() => {
-              // Fade out черного, fade in video (одновременно)
-              videoContainer.classList.remove('preloading');
-              videoContainer.classList.add('visible');
-              idle.classList.remove('visible');
-              
-              console.log('[Player] ✅ Плавный переход: черный → видео');
-              
-              // Запускаем воспроизведение
-              vjsPlayer.play().then(() => {
-                console.log('[Player] ✅ Видео запущено');
-                if (soundUnlocked && !forceMuted) {
-                  setTimeout(() => {
-                    vjsPlayer.muted(false);
-                    vjsPlayer.volume(1.0);
-                  }, 200);
-                }
-              }).catch(err => {
-                console.error('[Player] ❌ Ошибка воспроизведения:', err);
-                hideVideoJsControls();
+          const setSrcAndShow = () => {
+            // Шаг 2: меняем источник ПОСЛЕ завершения fade-out
+            vjsPlayer.src({ src: fileUrl, type: 'video/mp4' });
+            // Шаг 3: ждём готовности и показываем новый слой с fade-in
+            vjsPlayer.one('loadedmetadata', () => {
+              console.log('[Player] 📊 Метаданные загружены, показываем поверх бренда');
+              hideVideoJsControls();
+              requestAnimationFrame(() => {
+                videoContainer.classList.remove('preloading');
+                videoContainer.classList.add('visible');
+                console.log('[Player] ✅ Плавный переход: бренд → видео');
+                vjsPlayer.play().then(() => {
+                  console.log('[Player] ✅ Видео запущено');
+                  if (soundUnlocked && !forceMuted) {
+                    setTimeout(() => {
+                      vjsPlayer.muted(false);
+                      vjsPlayer.volume(1.0);
+                    }, 200);
+                  }
+                }).catch(err => {
+                  console.error('[Player] ❌ Ошибка воспроизведения:', err);
+                  hideVideoJsControls();
+                });
               });
-            }, 300); // Минимальная задержка для показа черного
-          });
+            });
+          };
+          
+          // Если был видимым — дождёмся завершения CSS fade-out (transitionend с таймаутом)
+          if (needFadeOut) {
+            waitForOpacityTransitionEnd(videoContainer, 'opacity', TRANSITION_MS + 150).then(() => {
+              setSrcAndShow();
+            });
+          } else {
+            setSrcAndShow();
+          }
         }
       }
     } else if (type === 'image' && file) {
@@ -1301,24 +1361,39 @@ if (!device_id || !device_id.trim()) {
     }
   });
 
+  // Плавное завершение воспроизведения: контент уходит в прозрачность, под ним виден бренд-фон
   socket.on('player/stop', () => {
     console.log('[Player] ⏹️ player/stop');
     if (vjsPlayer) vjsPlayer.pause();
-    img1.removeAttribute('src');
-    img2.removeAttribute('src');
-    pdf.removeAttribute('src');
-    currentFileState = { type: null, file: null, page: 1 };
-    currentImgBuffer = 1; // Сброс буфера при остановке
+    const layers = [videoContainer, img1, img2, pdf].filter(Boolean);
+    const active = layers.find(el => el.classList.contains('visible'));
+    const TRANSITION_MS = 800;
     
-    // КРИТИЧНО: Сразу показываем черный экран (без дополнительного перехода)
-    [videoContainer, img1, img2, pdf].forEach(e => {
-      if (e) e.classList.remove('visible', 'preloading');
-    });
-    idle.classList.add('visible');
-    console.log('[Player] 🖤 Черный экран показан мгновенно');
+    // КРИТИЧНО: Убираем черный экран сразу, чтобы не было перехода в черный
+    idle.classList.remove('visible');
     
-    // Затем загружаем заглушку в фоне
-    setTimeout(() => showPlaceholder(true), 100);
+    const afterFade = () => {
+      // Очистка источников после завершения fade-out
+      img1.removeAttribute('src');
+      img2.removeAttribute('src');
+      pdf.removeAttribute('src');
+      currentFileState = { type: null, file: null, page: 1 };
+      currentImgBuffer = 1;
+      
+      // Не показываем black/idle — оставляем бренд-фон видимым
+      layers.forEach(e => e.classList.remove('visible', 'preloading'));
+      
+      // Загружаем заглушку в фоне, затем мягко показываем (без черного экрана)
+      setTimeout(() => showPlaceholder(true), 100);
+    };
+    
+    if (active) {
+      // Запускаем fade-out текущего слоя
+      active.classList.remove('visible');
+      setTimeout(afterFade, TRANSITION_MS);
+    } else {
+      afterFade();
+    }
   });
 
   socket.on('placeholder/refresh', () => {
