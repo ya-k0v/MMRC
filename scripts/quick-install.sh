@@ -11,7 +11,7 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${BLUE}============================================${NC}"
-echo -e "${BLUE}  VideoControl v2.6.3 - Quick Install${NC}"
+echo -e "${BLUE}  VideoControl v2.7.0 - Quick Install${NC}"
 echo -e "${BLUE}============================================${NC}"
 echo ""
 
@@ -94,8 +94,8 @@ apt-get install -y curl wget git build-essential sqlite3
 
 # Node.js (если еще не установлен)
 if ! command -v node &> /dev/null; then
-    echo "  Installing Node.js 18..."
-    curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+    echo "  Installing Node.js 20 LTS..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
     apt-get install -y nodejs
     echo -e "  ${GREEN}✅ Node.js $(node --version)${NC}"
 else
@@ -377,7 +377,7 @@ echo -e "${GREEN}============================================${NC}"
 echo -e "${GREEN}  ✅ Installation Complete!${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo ""
-echo "🎉 VideoControl v2.6.3 successfully installed!"
+echo "🎉 VideoControl v2.7.0 successfully installed!"
 echo ""
 echo "📂 Installation directory: $INSTALL_DIR"
 echo "📊 Database: config/main.db (SQLite)"

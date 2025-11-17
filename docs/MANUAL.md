@@ -1,6 +1,6 @@
 # MANUAL — Операционные команды и рецепты
 
-Версия проекта: 2.6.3
+Версия проекта: 2.7.0
 
 ## Сервис (systemd)
 
@@ -272,6 +272,11 @@ export STORAGE_MODE=external            # local | external | external_fstab
 export CONTENT_DIR=/mnt/vc-content
 export CONTENT_SOURCE=/dev/sdb1         # или UUID=xxxx-xxxx (для external_fstab)
 export CONTENT_FSTAB_OPTS="ext4 defaults,noatime 0 2"
+
+# Неблокирующий запуск (Node.js 20 ставится автоматически)
+sudo STORAGE_MODE=external \
+     CONTENT_DIR=/mnt/vc-content \
+     bash scripts/quick-install.sh /vid/videocontrol
 ```
 
 ## Быстрая установка на чистый сервер
@@ -303,5 +308,25 @@ sudo systemctl status videocontrol
 sudo nginx -t && sudo systemctl restart nginx
 echo "URL: http://$(hostname -I | awk '{print $1}')"
 ```
+
+## Speaker-panel / preview sync
+
+- Вся подсветка и выбранные страницы на панели спикера теперь берутся из состояния плееров.  
+- Для диагностики попросите устройство сменить слайд и проверьте события:
+  ```bash
+  # В браузере devtools или с сервера
+  journalctl -u videocontrol -n 200 --no-pager | grep "player/folderPage"
+  ```
+- API для контроля:
+  ```bash
+  curl -s http://HOST/api/devices | jq '.[] | {device_id, current}'
+  ```
+- Если превью «зависло», выполните:
+  ```bash
+  # Перезапустить панель спикера
+  npm run build-frontend   # при изменениях
+  # На устройстве
+  adb shell pm clear com.videocontrol.mediaplayer
+  ```
 
 

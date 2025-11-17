@@ -2,7 +2,7 @@
 
 **Система управления медиаконтентом для цифровых дисплеев**
 
-![Version](https://img.shields.io/badge/version-2.6.3-blue)
+![Version](https://img.shields.io/badge/version-2.7.0-blue)
 ![Node](https://img.shields.io/badge/node-20.x-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
@@ -37,15 +37,27 @@ node server.js
 - Сервер: `http://localhost:3000`
 - Админ: `admin / admin123`
 
+### Что нового (2.7.0)
+
+- 🖥️ **Speaker-panel = state of real player** — превью/подсветка слайдов теперь берётся из событий плеера, без локальных «догадок».
+- 📺 **Android клиент 24/7** — плавные переходы через бренд-фон, обработка OutOfMemory, lifecycle-aware корутины, безопасные placeholder’ы.
+- ⚙️ **Обновлённый quick-install** — ставит Node.js 20 LTS и позволяет выбрать режим хранения (local/external/external_fstab) через ENV.
+
 ### Быстрая установка (production, с Nginx и systemd)
 
 ```bash
+# Интерактивная установка
 sudo bash scripts/quick-install.sh
-# Во время установки можно выбрать режим хранения контента:
-# - local (public/content)
-# - external (symlink → CONTENT_DIR)
-# - external_fstab (запись в /etc/fstab + symlink)
+
+# Или non-interactive с выбором хранилища
+STORAGE_MODE=external CONTENT_DIR=/mnt/vc-content \
+  sudo bash scripts/quick-install.sh /vid/videocontrol
 ```
+
+Доступные режимы хранения:
+- `local` — данные остаются в `public/content`
+- `external` — симлинк на внешний каталог `CONTENT_DIR`
+- `external_fstab` — внешний диск монтируется в `CONTENT_DIR` через `/etc/fstab`, далее симлинк
 
 См. также: `docs/MANUAL.md` — полезные команды (SQLite, systemd, Nginx, бэкапы).
 
@@ -78,16 +90,21 @@ cd scripts
 **Вручную:**
 
 ```bash
-# 1. Установить APK
-adb install -r VCMplayer-v2.5.5.apk
+# 1. Установить актуальный APK (v2.7.0)
+adb install -r VCMplayer-v2.7.0.apk
 
 # 2. Запустить
 adb shell am start -n com.videocontrol.mediaplayer/.MainActivity
 
 # 3. Настроить через админ панель
-# Server URL: http://your-server:3000
-# Device ID: DEVICE001
+#    Server URL: http://your-server:3000
+#    Device ID: DEVICE001
 ```
+
+**Новые улучшения Android-клиента:**
+- Переходы изображений/PDF/PPTX строго поверх бренд-фона (без чёрного экрана)
+- Placeholder крутится всегда, socket-команды не прерываются
+- Lifecycle-aware корутины, перехват OutOfMemory, WakeLock safety, retry logic
 
 ---
 
@@ -106,6 +123,7 @@ adb shell am start -n com.videocontrol.mediaplayer/.MainActivity
 ### Frontend
 - **Админ панель** - управление устройствами и файлами
 - **Спикер панель** - воспроизведение контента
+- **Sync-preview** - превью/подсветка слайдов берётся из фактического состояния плееров
 - **JWT Auth UI** - безопасная авторизация
 - **Drag & Drop** - перемещение файлов между устройствами
 - **Live Preview** - предпросмотр контента
@@ -267,7 +285,7 @@ npm install
 sudo systemctl start videocontrol
 
 # 5. Обновить Android APK
-adb install -r VCMplayer-v2.5.5.apk
+adb install -r VCMplayer-v2.7.0.apk
 ```
 
 ---
