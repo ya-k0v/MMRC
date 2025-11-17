@@ -9,7 +9,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { DEVICES, ALLOWED_EXT } from '../config/constants.js';
 import { sanitizeDeviceId, isSystemFile } from '../utils/sanitize.js';
-import { extractZipToFolder } from '../converters/folder-converter.js';
+import { extractZipToFolder, getFolderImagesCount } from '../converters/folder-converter.js';
 import { makeSafeFolderName } from '../utils/transliterate.js';
 import { scanDeviceFiles } from '../utils/file-scanner.js';
 import { uploadLimiter, deleteLimiter } from '../middleware/rate-limit.js';
@@ -1028,6 +1028,7 @@ export function createFilesRouter(deps) {
     
     const files = d.files || [];
     const fileNames = d.fileNames || files;
+    const deviceFolderPath = path.join(DEVICES, d.folder || id);
     
     const response = files.map((safeName, index) => ({
       safeName,
@@ -1062,6 +1063,8 @@ export function createFilesRouter(deps) {
       
       let resolution = null;
       let isPlaceholder = false;
+      let durationSeconds = null;
+      let folderImageCount = null;
       
       // Получаем метаданные из БД (разрешение + флаг заглушки + originalName)
       const ext = path.extname(safeName).toLowerCase();
@@ -1079,23 +1082,51 @@ export function createFilesRouter(deps) {
         // Флаг заглушки
         isPlaceholder = !!metadata.is_placeholder;
         
+        if (metadata.video_duration) {
+          durationSeconds = Math.round(metadata.video_duration);
+        }
+        
         // Разрешение для видео файлов
-      if (['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) {
+        if (['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) {
           if (metadata.video_width && metadata.video_height) {
-                resolution = {
+            resolution = {
               width: metadata.video_width,
               height: metadata.video_height
-                };
-          } else if (fileStatus.status !== 'processing' && fileStatus.status !== 'checking') {
-            // Fallback: если метаданных нет в БД - используем кэш с FFmpeg
-            // (для файлов загруженных до миграции БД)
-            try {
-              const filePath = metadata.file_path || path.join(DEVICES, safeName);
-              resolution = await getCachedResolution(filePath, checkVideoParameters);
-            } catch (e) {
-              // Игнорируем ошибки
-            }
+            };
           }
+        }
+      }
+
+      // Дополнительный ffprobe fallback для старых файлов
+      if (['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) {
+        const filePath = (metadata && metadata.file_path) || path.join(deviceFolderPath, safeName);
+        if (
+          (fileStatus.status !== 'processing' && fileStatus.status !== 'checking') &&
+          ((!resolution || !resolution.width || !resolution.height) || !durationSeconds)
+        ) {
+          try {
+            const params = await getCachedResolution(filePath, checkVideoParameters);
+            if (params) {
+              if ((!resolution || !resolution.width || !resolution.height) && params.width && params.height) {
+                resolution = { width: params.width, height: params.height };
+              }
+              if (!durationSeconds && params.duration) {
+                durationSeconds = Number(params.duration);
+              }
+            }
+          } catch (e) {
+            // ignore ffprobe errors
+          }
+        }
+      }
+      
+      // Если это папка (без расширения или .zip) — считаем количество изображений
+      if (!ext || ext === '' || ext === '.zip') {
+        const folderName = safeName.replace(/\.zip$/i, '');
+        try {
+          folderImageCount = await getFolderImagesCount(id, folderName);
+        } catch (error) {
+          folderImageCount = null;
         }
       }
       
@@ -1107,7 +1138,9 @@ export function createFilesRouter(deps) {
         canPlay: fileStatus.canPlay !== false,
         error: fileStatus.error || null,
         resolution,
-        isPlaceholder  // НОВОЕ: Флаг заглушки
+        isPlaceholder,  // НОВОЕ: Флаг заглушки
+        durationSeconds,
+        folderImageCount
       });
     }
     

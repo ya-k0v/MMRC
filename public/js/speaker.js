@@ -13,6 +13,13 @@ const filePreview = document.getElementById('filePreview');
 
 const STATIC_CONTENT_TYPES = new Set(['pdf', 'pptx', 'folder']);
 let previewLoadToken = 0;
+const formatDuration = (value) => {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${String(mins).padStart(2, '0')}:${String(secs).toString().padStart(2, '0')}`;
+};
 
 const THUMB_STYLE_ID = 'speaker-thumbnail-styles';
 function ensureThumbnailStyles() {
@@ -481,26 +488,22 @@ async function loadFiles() {
     }
     const filesData = await res.json();
 
-  // Поддержка старого формата (массив строк) и нового формата (массив объектов)
-  // ВАЖНО: Фильтруем заглушки - спикеру они не нужны в списке файлов
-  allFiles = filesData
-    .filter(item => {
-      // Убираем заглушки из списка
-      if (typeof item === 'object' && item.isPlaceholder) {
-        return false;
-      }
-      return true;
-    })
-    .map(item => {
-      if (typeof item === 'string') {
-        return { safeName: item, originalName: item, resolution: null };
-      }
-      return { 
-        safeName: item.name || item.safeName || item.originalName, 
-        originalName: item.originalName || item.name || item.safeName,
-        resolution: item.resolution || null
-      };
-    });
+    // Поддержка старого формата (массив строк) и нового формата (массив объектов)
+    // ВАЖНО: Фильтруем заглушки - спикеру они не нужны в списке файлов
+    allFiles = filesData
+      .filter(item => !(typeof item === 'object' && item.isPlaceholder))
+      .map(item => {
+        if (typeof item === 'string') {
+          return { safeName: item, originalName: item, resolution: null, durationSeconds: null, folderImageCount: null };
+        }
+        return { 
+          safeName: item.name || item.safeName || item.originalName, 
+          originalName: item.originalName || item.name || item.safeName,
+          resolution: item.resolution || null,
+          durationSeconds: typeof item.durationSeconds === 'number' ? item.durationSeconds : null,
+          folderImageCount: typeof item.folderImageCount === 'number' ? item.folderImageCount : null
+        };
+      });
 
   if (!allFiles || allFiles.length === 0) {
     fileList.innerHTML = `
@@ -530,7 +533,7 @@ async function loadFiles() {
   const end = Math.min(start + pageSize, allFiles.length);
   const files = allFiles.slice(start, end);
 
-  fileList.innerHTML = files.map(({ safeName, originalName, resolution }) => {
+  fileList.innerHTML = files.map(({ safeName, originalName, resolution, durationSeconds, folderImageCount }) => {
     // Определяем расширение файла
     const hasExtension = safeName.includes('.');
     const ext = hasExtension ? safeName.split('.').pop().toLowerCase() : '';
@@ -576,6 +579,17 @@ async function loadFiles() {
     // Убираем расширение из отображаемого имени (как в админке)
     const displayName = originalName.replace(/\.[^.]+$/, '');
     
+    const metaBadges = [];
+    if (type === 'FOLDER' && typeof folderImageCount === 'number') {
+      metaBadges.push(`${folderImageCount} фото`);
+    }
+    if (type === 'VID' && typeof durationSeconds === 'number' && durationSeconds > 0) {
+      const mins = Math.floor(durationSeconds / 60);
+      const secs = Math.floor(durationSeconds % 60);
+      metaBadges.push(`${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`);
+    }
+    const typeBadgeLabel = metaBadges.length ? `${typeLabel} · ${metaBadges.join(' · ')}` : typeLabel;
+    
     return `
       <li class="file-item ${active ? 'active' : ''}" 
           data-safe="${encodeURIComponent(safeName)}" 
@@ -618,7 +632,7 @@ async function loadFiles() {
               background:rgba(255,255,255,0.05);
               white-space:nowrap;
               line-height:1.2;
-            ">${typeLabel}</span>
+            ">${typeBadgeLabel}</span>
             ${resolutionLabel ? `
               <span class="resolution-badge" style="
                 display:inline-block;

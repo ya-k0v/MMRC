@@ -1,6 +1,14 @@
 // files-manager.js - ПОЛНЫЙ код управления файлами из admin.js
 import { adminFetch } from './auth.js';
 
+const formatDuration = (value) => {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+};
+
 export async function loadFilesWithStatus(deviceId) {
   const res = await adminFetch(`/api/devices/${deviceId}/files-with-status`);
   return await res.json();
@@ -15,7 +23,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
   const allFiles = filesData.map(item => {
     if (typeof item === 'string') {
       // Старый формат (для обратной совместимости)
-      return { safeName: item, originalName: item, status: 'ready', progress: 100, canPlay: true, resolution: null, isPlaceholder: false };
+      return { safeName: item, originalName: item, status: 'ready', progress: 100, canPlay: true, resolution: null, isPlaceholder: false, durationSeconds: null, folderImageCount: null };
     }
     return { 
       safeName: item.safeName || item.name || '',
@@ -25,7 +33,9 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       canPlay: item.canPlay !== false,
       error: item.error || null,
       resolution: item.resolution || null,
-      isPlaceholder: !!item.isPlaceholder  // НОВОЕ: Флаг заглушки
+      isPlaceholder: !!item.isPlaceholder,  // НОВОЕ: Флаг заглушки
+      durationSeconds: typeof item.durationSeconds === 'number' ? item.durationSeconds : null,
+      folderImageCount: typeof item.folderImageCount === 'number' ? item.folderImageCount : null
     };
   }).filter(f => f.safeName); // Фильтруем пустые имена
   
@@ -58,7 +68,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
   
   panelEl.innerHTML = `
     <ul class="list" style="display:grid; gap:var(--space-sm)">
-      ${files.map(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder }) => {
+      ${files.map(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount }) => {
         // placeholders allowed only for image/video (no pdf/pptx/folders)
         const isEligible = /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp)$/i.test(safeName);
         
@@ -129,6 +139,16 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           }
         }
         
+        const metaBadges = [];
+        if (typeLabel === 'FOLDER' && folderImageCount !== null) {
+          metaBadges.push(`${folderImageCount} фото`);
+        }
+        if (isVideo && durationSeconds) {
+          const formatted = formatDuration(durationSeconds);
+          if (formatted) metaBadges.push(formatted);
+        }
+        const typeBadge = `${typeLabel}${metaBadges.length ? ` · ${metaBadges.join(' · ')}` : ''}`;
+        
         return `
           <li class="file-item" 
               draggable="${canPlay ? 'true' : 'false'}" 
@@ -147,9 +167,9 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
               </div>
               <div style="display:flex; align-items:center; gap:var(--space-sm);">
                 ${statusText ? `<span style="font-size:var(--font-size-sm); color:${statusColor}; white-space:nowrap; display:flex; align-items:center; gap:var(--space-xs);">${statusIcon} ${statusText}</span>` : ''}
-                <div style="display:flex; align-items:center; gap:4px;">
+                <div style="display:flex; align-items:center; gap:4px; flex-wrap:wrap;">
                   ${resolutionLabel ? `<span style="font-size:10px; opacity:0.7;">${resolutionLabel}</span>` : ''}
-                  <span class="file-item-type">${typeLabel}</span>
+                  <span class="file-item-type">${typeBadge}</span>
                 </div>
               </div>
             </div>

@@ -7,7 +7,7 @@
 import fs from 'fs';
 import path from 'path';
 
-// In-memory кэш: { filePath: { width, height, mtime } }
+// In-memory кэш: { filePath: { width, height, duration, mtime } }
 const resolutionCache = new Map();
 
 /**
@@ -31,7 +31,7 @@ export async function getCachedResolution(filePath, checkVideoParameters) {
     const cached = resolutionCache.get(filePath);
     if (cached && cached.mtime === mtime) {
       // Файл не изменился - возвращаем из кэша
-      return { width: cached.width, height: cached.height };
+      return { width: cached.width, height: cached.height, duration: cached.duration ?? null };
     }
 
     // Файл изменился или еще не в кэше - вызываем FFmpeg
@@ -41,9 +41,10 @@ export async function getCachedResolution(filePath, checkVideoParameters) {
       resolutionCache.set(filePath, {
         width: params.width,
         height: params.height,
+        duration: params.duration ?? null,
         mtime: mtime
       });
-      return { width: params.width, height: params.height };
+      return { width: params.width, height: params.height, duration: params.duration ?? null };
     }
 
     return null;
