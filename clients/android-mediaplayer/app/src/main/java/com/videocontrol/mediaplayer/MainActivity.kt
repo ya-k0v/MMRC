@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import android.view.WindowManager
@@ -32,7 +33,11 @@ import io.socket.client.Socket
 import org.json.JSONObject
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.DiskCacheStrategy
+import android.graphics.drawable.TransitionDrawable
 import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions
+import com.bumptech.glide.request.target.CustomTarget
+import com.bumptech.glide.request.transition.DrawableCrossFadeFactory
+import com.bumptech.glide.request.transition.Transition
 import java.net.URISyntaxException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,6 +46,8 @@ import kotlinx.coroutines.withContext
 import androidx.lifecycle.lifecycleScope
 import android.animation.ObjectAnimator
 import android.animation.AnimatorListenerAdapter
+import kotlin.math.max
+import kotlin.math.min
 
 class MainActivity : AppCompatActivity() {
 
@@ -57,6 +64,7 @@ class MainActivity : AppCompatActivity() {
     private val retryHandler = Handler(Looper.getMainLooper())
     private val progressHandler = Handler(Looper.getMainLooper())
     private val logoRefreshHandler = Handler(Looper.getMainLooper())
+    private val connectionWatchdogHandler = Handler(Looper.getMainLooper())
     private var retryRunnable: Runnable? = null
     private var placeholderJob: Job? = null
     private var isPlayingPlaceholder: Boolean = false
@@ -79,6 +87,9 @@ class MainActivity : AppCompatActivity() {
     private var cachedPlaceholderFile: String? = null
     private var cachedPlaceholderType: String? = null
     private var placeholderTimestamp: Long = 0 // Для обхода кэша при смене заглушки
+    private var lastSocketReconnectAttempt = 0L
+    private var isSocketReconnecting = false
+    private var socketBackoffMs = 2000L
 
     private val TAG = "VCMediaPlayer"
     private var SERVER_URL = ""
@@ -148,6 +159,7 @@ class MainActivity : AppCompatActivity() {
 
         initializePlayer()
         connectSocket()
+        startConnectionWatchdog()
         
         // КРИТИЧНО: Загружаем заглушку при старте (постоянно показываем заглушку)
         loadPlaceholder()
@@ -156,34 +168,8 @@ class MainActivity : AppCompatActivity() {
     private fun initializePlayer() {
         try {
             // Освобождаем старый кэш если был
-            try {
-                simpleCache?.release()
-                simpleCache = null
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to release old cache: ${e.message}")
-            }
-            
-            // Инициализация кэша для больших видео (используем config)
-            val cacheDir = File(cacheDir, "video_cache")
-            
-            try {
-                simpleCache = SimpleCache(
-                    cacheDir,
-                    LeastRecentlyUsedCacheEvictor(config.cacheSize),
-                    StandaloneDatabaseProvider(this)
-                )
-            } catch (e: IllegalStateException) {
-                // Папка занята - удаляем и создаем заново
-                Log.w(TAG, "Cache folder locked, recreating...")
-                cacheDir.deleteRecursively()
-                cacheDir.mkdirs()
-                
-                simpleCache = SimpleCache(
-                    cacheDir,
-                    LeastRecentlyUsedCacheEvictor(config.cacheSize),
-                    StandaloneDatabaseProvider(this)
-                )
-            }
+            releaseSimpleCache()
+            initializeSimpleCache()
 
             // Настройки буферизации для тяжелых видео (используем config)
             val loadControl = DefaultLoadControl.Builder()
@@ -325,6 +311,40 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun releaseSimpleCache() {
+        try {
+            simpleCache?.release()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to release cache: ${e.message}")
+        } finally {
+            simpleCache = null
+        }
+    }
+
+    private fun initializeSimpleCache() {
+        if (simpleCache != null) return
+
+        val videoCacheDir = File(cacheDir, "video_cache")
+        try {
+            simpleCache = SimpleCache(
+                videoCacheDir,
+                LeastRecentlyUsedCacheEvictor(config.cacheSize),
+                StandaloneDatabaseProvider(this)
+            )
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "Cache folder locked, recreating...")
+            videoCacheDir.deleteRecursively()
+            videoCacheDir.mkdirs()
+            simpleCache = SimpleCache(
+                videoCacheDir,
+                LeastRecentlyUsedCacheEvictor(config.cacheSize),
+                StandaloneDatabaseProvider(this)
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Unable to initialize cache: ${e.message}", e)
+        }
+    }
+
     private fun connectSocket() {
         try {
             val opts = IO.Options().apply {
@@ -337,6 +357,8 @@ class MainActivity : AppCompatActivity() {
             socket = IO.socket(SERVER_URL, opts)
 
             socket?.on(Socket.EVENT_CONNECT) {
+                isSocketReconnecting = false
+                socketBackoffMs = 2000L
                 Log.i(TAG, "✅ Socket connected")
                 runOnUiThread {
                     showStatus("Подключено", autohideSeconds = 2)  // Скрываем через 2 сек
@@ -371,6 +393,10 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     showStatus("⚠️ Нет связи с сервером...", autohideSeconds = 0)  // Не скрываем до переподключения
                     stopPingTimer()
+                    isSocketReconnecting = false
+                    increaseSocketBackoff()
+                    scheduleConnectionWatchdog()
+                    ensureSocketConnected("EVENT_DISCONNECT")
                     
                     // КРИТИЧНО: При потере связи НЕ останавливаем контент!
                     // ExoPlayer продолжит воспроизведение из кэша и автоматически подгрузит при reconnect
@@ -386,8 +412,11 @@ class MainActivity : AppCompatActivity() {
             socket?.on(Socket.EVENT_CONNECT_ERROR) { args ->
                 val error = if (args.isNotEmpty()) args[0].toString() else "unknown"
                 Log.e(TAG, "❌ Socket connect error: $error")
+                isSocketReconnecting = false
+                increaseSocketBackoff()
                 runOnUiThread {
                     showStatus("Ошибка подключения", autohideSeconds = 5)  // Скрываем через 5 сек
+                    ensureSocketConnected("EVENT_CONNECT_ERROR")
                 }
             }
             
@@ -470,13 +499,13 @@ class MainActivity : AppCompatActivity() {
                     stopProgressUpdates() // Останавливаем отправку прогресса
                     Log.i(TAG, "⏹️ Stop - возврат на заглушку")
                     
-                    // КРИТИЧНО: Логика как в JS плеере - fade-out 800ms, затем заглушка БЕЗ черного экрана
+                    // КРИТИЧНО: Логика как в JS плеере - fade-out 500ms, затем заглушка БЕЗ черного экрана
                     // Определяем активный контент (видео или изображение)
                     val hasVideo = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
                     val hasImage = imageView.alpha > 0f && imageView.visibility == View.VISIBLE
                     
                     if (hasVideo || hasImage) {
-                        Log.d(TAG, "🎬 Fade-out текущего контента (800ms как в JS)...")
+                        Log.d(TAG, "🎬 Fade-out текущего контента (500ms как в JS)...")
                         
                         val afterFade = {
                             // После fade-out загружаем заглушку БЕЗ черного экрана (как в JS)
@@ -497,9 +526,9 @@ class MainActivity : AppCompatActivity() {
                         
                         if (hasVideo) {
                             player?.pause()
-                            fadeOutView(playerView, 800, afterFade)
+                            fadeOutView(playerView, 500, afterFade)
                         } else if (hasImage) {
-                            fadeOutView(imageView, 800, afterFade)
+                            fadeOutView(imageView, 500, afterFade)
                         }
                     } else {
                         // Контента не было - сразу загружаем заглушку поверх логотипа
@@ -676,6 +705,18 @@ class MainActivity : AppCompatActivity() {
         }
         animator.start()
     }
+
+    private fun fadeOutVideoWithLogo(durationMs: Long = 500, onComplete: () -> Unit) {
+        showLogoBackground(durationMs)
+        player?.pause()
+        fadeOutView(playerView, durationMs) {
+            player?.stop()
+            player?.clearMediaItems()
+            playerView.alpha = 0f
+            playerView.visibility = View.GONE
+            onComplete()
+        }
+    }
     
     // Флаг для отслеживания готовности видео перед показом
     private var isVideoReadyToShow = false
@@ -697,8 +738,16 @@ class MainActivity : AppCompatActivity() {
         playerView.visibility = View.VISIBLE
         playerView.alpha = 0f
         
-        // КРИТИЧНО: Если это заглушка - скрываем логотип (логотип только для переходов)
-        if (isPlaceholder) {
+        // КРИТИЧНО: Скрываем логотип для любого видео-контента после fade-in
+        if (brandBg.visibility == View.VISIBLE && brandBg.alpha > 0f) {
+            brandBg.animate()
+                .alpha(0f)
+                .setDuration(200)
+                .withEndAction {
+                    brandBg.visibility = View.GONE
+                }
+                .start()
+        } else {
             brandBg.visibility = View.GONE
             brandBg.alpha = 0f
         }
@@ -782,18 +831,18 @@ class MainActivity : AppCompatActivity() {
 
             // Шаг 1: Fade-out старого видео (если оно было видимым)
             val needFadeOut = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
-            if (needFadeOut) {
-                Log.d(TAG, "🎬 Fade-out старого видео...")
-                fadeOutView(playerView, 500) {
-                    // После fade-out скрываем и сбрасываем alpha
-                    playerView.alpha = 0f
-                    loadNewVideo(videoUrl, isPlaceholder)
-                }
-            } else {
-                // Старого видео не было - сразу загружаем новое
-                playerView.alpha = 0f
+        if (needFadeOut) {
+            Log.d(TAG, "🎬 Fade-out старого видео с логотипом (как при stop)...")
+            fadeOutVideoWithLogo(500) {
                 loadNewVideo(videoUrl, isPlaceholder)
             }
+        } else {
+            // Старого видео не было - показываем логотип и плавно загружаем новое
+            showLogoBackground()
+            playerView.visibility = View.GONE
+            playerView.alpha = 0f
+            loadNewVideo(videoUrl, isPlaceholder)
+        }
             
         } catch (e: OutOfMemoryError) {
             Log.e(TAG, "❌ OutOfMemoryError playing video: $fileName", e)
@@ -959,17 +1008,29 @@ class MainActivity : AppCompatActivity() {
     
     // Функция для показа логотипа через brandBg (вместо черного экрана)
     // Контент будет делать fade-in/fade-out поверх логотипа через прозрачность
-    private fun showLogoBackground() {
+    private fun showLogoBackground(fadeDurationMs: Long = 500L) {
         // Показываем brandBg с логотипом (если еще не загружен - загрузится)
-        brandBg.alpha = 1f
-        brandBg.visibility = View.VISIBLE
+        brandBg.animate().cancel()
+        
+        if (fadeDurationMs > 0) {
+            brandBg.alpha = 0f
+            brandBg.visibility = View.VISIBLE
+            brandBg.animate()
+                .alpha(1f)
+                .setDuration(fadeDurationMs)
+                .setListener(null)
+                .start()
+        } else {
+            brandBg.alpha = 1f
+            brandBg.visibility = View.VISIBLE
+        }
         
         // Убеждаемся что логотип загружен (если еще не загружен - загружаем)
         if (brandBg.drawable == null) {
             loadBrandLogo()
         }
         
-        Log.d(TAG, "🎨 Логотип показан (brandBg) - переходы через прозрачность")
+        Log.d(TAG, "🎨 Логотип показан (brandBg) - переходы через прозрачность (fade=${fadeDurationMs}ms)")
     }
 
     private fun showPdfPage(fileName: String?, page: Int) {
@@ -1019,8 +1080,8 @@ class MainActivity : AppCompatActivity() {
                         showLogoBackground()
                         loadImageToView(pageUrl, useFadeFromLogo = true, delayMs = 300)
                     } else {
-                        // Переключение слайдов - мгновенно
-                        loadImageToView(pageUrl, useFadeFromLogo = false, delayMs = 0)
+                        // Переключение слайдов - мягкий crossfade
+                        loadImageToView(pageUrl, useFadeFromLogo = false, delayMs = 0, crossFadeFromCurrent = true)
                     }
                 }
             } else {
@@ -1037,8 +1098,8 @@ class MainActivity : AppCompatActivity() {
                     showLogoBackground()
                     loadImageToView(pageUrl, useFadeFromLogo = true, delayMs = 300)
                 } else {
-                    // Переключение слайдов - мгновенно (skipTransition как в JS)
-                    loadImageToView(pageUrl, useFadeFromLogo = false, delayMs = 0)
+                    // Переключение слайдов - мягкий crossfade
+                    loadImageToView(pageUrl, useFadeFromLogo = false, delayMs = 0, crossFadeFromCurrent = true)
                 }
             }
             
@@ -1177,8 +1238,8 @@ class MainActivity : AppCompatActivity() {
                         showLogoBackground()
                         loadImageToView(imageUrl, useFadeFromLogo = true, delayMs = 300)
                     } else {
-                        // Переключение изображений - мгновенно
-                        loadImageToView(imageUrl, useFadeFromLogo = false, delayMs = 0)
+                        // Переключение изображений - мягкий crossfade
+                        loadImageToView(imageUrl, useFadeFromLogo = false, delayMs = 0, crossFadeFromCurrent = true)
                     }
                 }
             } else {
@@ -1195,8 +1256,8 @@ class MainActivity : AppCompatActivity() {
                     showLogoBackground()
                     loadImageToView(imageUrl, useFadeFromLogo = true, delayMs = 300)
                 } else {
-                    // Переключение изображений - мгновенно (skipTransition как в JS)
-                    loadImageToView(imageUrl, useFadeFromLogo = false, delayMs = 0)
+                    // Переключение изображений - мягкий crossfade
+                    loadImageToView(imageUrl, useFadeFromLogo = false, delayMs = 0, crossFadeFromCurrent = true)
                 }
             }
             
@@ -1209,13 +1270,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadImageToView(imageUrl: String, useFadeFromLogo: Boolean = false, delayMs: Int = 0) {
+    private fun loadImageToView(
+        imageUrl: String,
+        useFadeFromLogo: Boolean = false,
+        delayMs: Int = 0,
+        crossFadeFromCurrent: Boolean = false
+    ) {
         try {
             // Glide для быстрой загрузки изображений
             Log.d(TAG, "🖼️ Loading image with Glide: $imageUrl (useFadeFromLogo=$useFadeFromLogo, delayMs=$delayMs)")
             
             imageView.visibility = View.VISIBLE
-            imageView.alpha = 0f  // Всегда начинаем с прозрачности для fade-in
+            if (useFadeFromLogo) {
+                imageView.alpha = 0f  // Всегда начинаем с прозрачности для fade-in
+            } else {
+                imageView.alpha = 1f
+            }
             
             val request = Glide.with(this)
                 .load(imageUrl)
@@ -1223,44 +1293,74 @@ class MainActivity : AppCompatActivity() {
                 .skipMemoryCache(false)  // Используем memory cache для мгновенного показа
                 .timeout(10000)
                 .error(android.R.drawable.ic_dialog_alert)
-                .listener(object : com.bumptech.glide.request.RequestListener<android.graphics.drawable.Drawable> {
-                    override fun onResourceReady(
-                        resource: android.graphics.drawable.Drawable,
-                        model: Any,
-                        target: com.bumptech.glide.request.target.Target<android.graphics.drawable.Drawable>,
-                        dataSource: com.bumptech.glide.load.DataSource,
-                        isFirstResource: Boolean
-                    ): Boolean {
-                        // Изображение загружено - делаем fade-in поверх логотипа (как в JS плеере)
-                        if (useFadeFromLogo) {
+            
+            when {
+                useFadeFromLogo -> {
+                    request.listener(object : com.bumptech.glide.request.RequestListener<android.graphics.drawable.Drawable> {
+                        override fun onResourceReady(
+                            resource: android.graphics.drawable.Drawable,
+                            model: Any,
+                            target: com.bumptech.glide.request.target.Target<android.graphics.drawable.Drawable>,
+                            dataSource: com.bumptech.glide.load.DataSource,
+                            isFirstResource: Boolean
+                        ): Boolean {
                             Handler(Looper.getMainLooper()).postDelayed({
-                                // Показываем изображение с fade-in поверх логотипа (500ms как в JS)
-                                // brandBg остается видимым под изображением
                                 fadeInView(imageView, 500) {
                                     Log.d(TAG, "✅ Fade-in изображения поверх логотипа завершен")
                                 }
                             }, delayMs.toLong())
-                        } else {
-                            // Без fade - сразу показываем (для мгновенных переходов слайдов)
-                            // brandBg остается видимым под изображением
-                            imageView.alpha = 1f
+                            return false
                         }
-                        return false
-                    }
-                    
-                    override fun onLoadFailed(
-                        e: com.bumptech.glide.load.engine.GlideException?,
-                        model: Any?,
-                        target: com.bumptech.glide.request.target.Target<android.graphics.drawable.Drawable>,
-                        isFirstResource: Boolean
-                    ): Boolean {
-                        Log.e(TAG, "❌ Glide failed to load image: $imageUrl", e)
-                        // При ошибке логотип остается видимым
-                        return false
-                    }
-                })
-            
-            request.into(imageView)
+                        
+                        override fun onLoadFailed(
+                            e: com.bumptech.glide.load.engine.GlideException?,
+                            model: Any?,
+                            target: com.bumptech.glide.request.target.Target<android.graphics.drawable.Drawable>,
+                            isFirstResource: Boolean
+                        ): Boolean {
+                            Log.e(TAG, "❌ Glide failed to load image: $imageUrl", e)
+                            return false
+                        }
+                    }).into(imageView)
+                }
+                crossFadeFromCurrent -> {
+                    Glide.with(this).clear(imageView)
+                    request.into(object : CustomTarget<android.graphics.drawable.Drawable>() {
+                        override fun onResourceReady(
+                            resource: android.graphics.drawable.Drawable,
+                            transition: Transition<in android.graphics.drawable.Drawable>?
+                        ) {
+                            val previousDrawable = imageView.drawable
+                            if (previousDrawable == null) {
+                                imageView.alpha = 0f
+                                imageView.setImageDrawable(resource)
+                                imageView.animate().alpha(1f).setDuration(500).start()
+                                return
+                            }
+
+                            val transitionDrawable = TransitionDrawable(arrayOf(previousDrawable, resource))
+                            transitionDrawable.isCrossFadeEnabled = true
+                            imageView.setImageDrawable(transitionDrawable)
+                            transitionDrawable.startTransition(500)
+                            
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                imageView.setImageDrawable(resource)
+                            }, 500)
+                        }
+
+                        override fun onLoadCleared(placeholder: android.graphics.drawable.Drawable?) {
+                            // no-op
+                        }
+                    })
+                }
+                else -> {
+                    val crossFadeFactory = DrawableCrossFadeFactory.Builder(500)
+                        .setCrossFadeEnabled(true)
+                        .build()
+                    request.transition(DrawableTransitionOptions.with(crossFadeFactory))
+                        .into(imageView)
+                }
+            }
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error loading image with Glide", e)
@@ -1565,11 +1665,24 @@ class MainActivity : AppCompatActivity() {
                 Log.d(TAG, "🏓 Ping sent")
             } else {
                 Log.w(TAG, "Socket not connected, skipping ping")
+                ensureSocketConnected("ping watchdog")
             }
             
             // Планируем следующий ping
             val interval = config.pingInterval.toLong()
             pingHandler.postDelayed(this, interval)
+        }
+    }
+    
+    private val connectionWatchdogRunnable = object : Runnable {
+        override fun run() {
+            if (isDestroyed || isFinishing) {
+                Log.d(TAG, "Activity destroyed, stopping connection watchdog")
+                return
+            }
+            
+            ensureSocketConnected("watchdog")
+            scheduleConnectionWatchdog()
         }
     }
     
@@ -1585,6 +1698,63 @@ class MainActivity : AppCompatActivity() {
     private fun stopPingTimer() {
         pingHandler.removeCallbacks(pingRunnable)
         Log.d(TAG, "⏹️ Ping timer stopped")
+    }
+
+    private fun startConnectionWatchdog() {
+        connectionWatchdogHandler.removeCallbacks(connectionWatchdogRunnable)
+        scheduleConnectionWatchdog()
+        Log.d(TAG, "🔍 Connection watchdog started")
+    }
+    
+    private fun stopConnectionWatchdog() {
+        connectionWatchdogHandler.removeCallbacks(connectionWatchdogRunnable)
+        Log.d(TAG, "🔍 Connection watchdog stopped")
+    }
+    
+    private fun scheduleConnectionWatchdog() {
+        connectionWatchdogHandler.removeCallbacks(connectionWatchdogRunnable)
+        val interval = max(5000L, config.reconnectDelay.toLong())
+        connectionWatchdogHandler.postDelayed(connectionWatchdogRunnable, interval)
+    }
+
+    private fun increaseSocketBackoff() {
+        socketBackoffMs = min(socketBackoffMs * 2, 60000L)
+        Log.d(TAG, "Socket reconnect backoff increased to ${socketBackoffMs}ms")
+    }
+    
+    private fun ensureSocketConnected(reason: String) {
+        if (isDestroyed || isFinishing || isSocketReconnecting) return
+        
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastSocketReconnectAttempt < socketBackoffMs) {
+            return
+        }
+        
+        val currentSocket = socket
+        if (currentSocket != null && currentSocket.connected()) {
+            socketBackoffMs = 2000L
+            return
+        }
+        
+        isSocketReconnecting = true
+        lastSocketReconnectAttempt = now
+        
+        if (currentSocket != null) {
+            Log.w(TAG, "Socket disconnected, forcing reconnect ($reason)")
+            try {
+                currentSocket.off()
+                currentSocket.disconnect()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to clean socket before reconnect: ${e.message}")
+            }
+            socket = null
+        } else {
+            Log.w(TAG, "Socket instance is null, reconnecting ($reason)")
+        }
+        
+        connectionWatchdogHandler.postDelayed({
+            connectSocket()
+        }, 200) // небольшая задержка, чтобы disconnect завершился
     }
     
     // Отправка прогресса воспроизведения на сервер
@@ -1744,6 +1914,7 @@ class MainActivity : AppCompatActivity() {
         
         // Очищаем все Handler
         stopPingTimer()
+        stopConnectionWatchdog()
         stopProgressUpdates()
         stopLogoRefreshTimer()
         statusHandler.removeCallbacks(hideStatusRunnable)
@@ -1851,38 +2022,15 @@ class MainActivity : AppCompatActivity() {
     private fun handleOutOfMemory() {
         Log.e(TAG, "⚠️ Handling OutOfMemoryError - clearing caches and restarting")
         try {
-            // Очищаем Glide полностью
             Glide.get(this).clearMemory()
             Glide.get(this).clearDiskCache()
-            
-            // Очищаем кэш ExoPlayer (вынужденная мера)
-            try {
-                simpleCache?.release()
-                simpleCache = null
-                
-                // Пересоздаем кэш
-                val cacheDir = File(cacheDir, "video_cache")
-                cacheDir.deleteRecursively()
-                cacheDir.mkdirs()
-                
-                simpleCache = SimpleCache(
-                    cacheDir,
-                    LeastRecentlyUsedCacheEvictor(config.cacheSize),
-                    StandaloneDatabaseProvider(this)
-                )
-                Log.d(TAG, "ExoPlayer cache recreated after OOM")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to recreate cache after OOM: ${e.message}", e)
-            }
-            
-            // Перезагружаем заглушку (она пересоздаст кэш при необходимости)
+            releaseSimpleCache()
+            initializeSimpleCache()
             if (isPlayingPlaceholder) {
                 loadPlaceholder()
             }
-            
         } catch (e: Exception) {
             Log.e(TAG, "Error handling OOM: ${e.message}", e)
-            // В критической ситуации - просто логируем
         }
     }
 }

@@ -1,11 +1,16 @@
-# MANUAL — Операционные команды и рецепты
+# MANUAL — Командные блоки VideoControl
 
 Версия проекта: 2.7.0
 
-## Сервис (systemd)
+Справочник разделён по областям: Videocontrol (systemd/Node.js), Nginx, SQL/SQLite, хранилище контента, бэкапы, Android/ADB, быстрые установки и дополнительные проверки.
 
+---
+
+## Блок A — Videocontrol (systemd/Node.js)
+
+### Сервис и логи
 ```bash
-# Статус/логи
+# Статус и логи
 sudo systemctl status videocontrol
 sudo journalctl -u videocontrol -n 200 --no-pager
 sudo journalctl -u videocontrol -f
@@ -14,78 +19,81 @@ sudo journalctl -u videocontrol -f
 sudo systemctl restart videocontrol
 sudo systemctl stop videocontrol
 sudo systemctl start videocontrol
-sudo systemctl daemon-reload  # после изменения unit
-```
+sudo systemctl daemon-reload   # после изменения unit
 
-## Логи приложения
-
-```bash
+# Логи приложения
 tail -f logs/combined-*.log
 tail -f logs/error-*.log
 ```
 
-## Nginx
+### Обновление и диагностика
+```bash
+# Обновление Node.js-приложения
+sudo systemctl stop videocontrol
+git pull --rebase
+npm ci || npm install
+sudo systemctl start videocontrol
+sudo journalctl -u videocontrol -n 100 --no-pager
 
+# Диагностика FFmpeg и статусов файлов
+ffmpeg -version
+sqlite3 config/main.db "SELECT * FROM file_statuses WHERE status='error' ORDER BY updated_at DESC LIMIT 20;"
+
+# Проверка видео-эндпоинтов
+curl -I "http://HOST/api/files/trailer/DEVICE/FILE.mp4"
+curl -I -H "Range: bytes=0-524287" "http://HOST/api/files/resolve/DEVICE/FILE.mp4"
+
+# Socket.IO sanity-check
+curl -s "http://HOST/socket.io/?EIO=4&transport=polling" | head -n 1
+```
+
+---
+
+## Блок B — Nginx
 ```bash
 sudo nginx -t
 sudo systemctl restart nginx
 sudo journalctl -u nginx -n 100 --no-pager
+
+# Логи виртуального хоста
+sudo tail -n 200 /var/log/nginx/videocontrol-access.log
+sudo tail -n 200 /var/log/nginx/videocontrol-error.log
 ```
 
-## Хранилище контента
+---
 
-По умолчанию: `public/content`. При установке можно выбрать режим хранения:
-- local — внутри проекта (`public/content`)
-- external — внешний каталог через symlink (`public/content -> $CONTENT_DIR`)
-- external_fstab — внешний диск монтируется в `$CONTENT_DIR` через `/etc/fstab`, далее symlink
+## Блок C — SQL / SQLite
 
-Полезные команды:
+### Консоль и настройки
 ```bash
-# Проверить место и права
-df -h public/content
-ls -al public/content
-
-# Перенести данные вручную (пример)
-rsync -aH --delete public/content/ /mnt/vc-content/
-
-# Пример записи в /etc/fstab (ext4)
-echo '/dev/sdb1 /mnt/vc-content ext4 defaults,noatime 0 2' | sudo tee -a /etc/fstab
-sudo mkdir -p /mnt/vc-content
-sudo mount -a
-```
-
-## SQLite (консоль)
-
-```bash
-# Открыть БД
+# Запуск
 sqlite3 config/main.db
 
-# Важные pragma/инфо
+# Полезные pragma
 PRAGMA journal_mode;       -- ожидается WAL
 PRAGMA integrity_check;
 .tables
 .schema users
 
-# Быстрый экспорт (dump)
+# Экспорт / обслуживание
 .output backup.sql
 .dump
 .output stdout
-
-# VACUUM и статистика
 VACUUM;
 ANALYZE;
 ```
 
-## Частые запросы
-
+### Частые запросы
 ```sql
 -- Последние действия (аудит)
 SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 50;
 
 -- Все устройства
-SELECT device_id, name, folder, last_seen FROM devices ORDER BY updated_at DESC;
+SELECT device_id, name, folder, last_seen
+FROM devices
+ORDER BY updated_at DESC;
 
--- Файлы на устройстве
+-- Файлы конкретного устройства
 SELECT safe_name, file_size, created_at
 FROM files_metadata
 WHERE device_id = 'DEVICE001'
@@ -93,240 +101,171 @@ ORDER BY created_at DESC
 LIMIT 50;
 ```
 
-## Сброс пароля admin (через SQL с готовым bcrypt-хешем "admin123")
-
-Хэш из init.sql:
-```
-$2b$10$jgHKNtHUKUhkftKlOfDqOulY9LFBVi/AirOu0YSKfzDlvFD60QI/W
-```
-
+### Сброс пароля admin
 ```sql
 UPDATE users
 SET password_hash='$2b$10$jgHKNtHUKUhkftKlOfDqOulY9LFBVi/AirOu0YSKfzDlvFD60QI/W',
     updated_at=CURRENT_TIMESTAMP
 WHERE username='admin';
 ```
-
-Или задать новый пароль через Node.js (bcryptjs):
+Генерация нового bcrypt-хэша:
 ```bash
-node -e "import('bcryptjs').then(b=>b.hash('NEW_STRONG_PASSWORD',10).then(h=>console.log(h)))"
+node -e "import('bcryptjs').then(b=>b.hash('NEW_STRONG_PASSWORD',10).then(console.log))"
 ```
-Подставьте сгенерированный хэш в UPDATE.
 
-## Бэкап/восстановление
+---
 
+## Блок D — Хранилище контента
+По умолчанию: `public/content`. Режимы: `local`, `external`, `external_fstab`.
 ```bash
-# Бэкап SQLite (консистентный)
+# Проверка места и прав
+df -h public/content
+ls -al public/content
+
+# Перенос данных
+rsync -aH --delete public/content/ /mnt/vc-content/
+
+# /etc/fstab пример
+echo '/dev/sdb1 /mnt/vc-content ext4 defaults,noatime 0 2' | sudo tee -a /etc/fstab
+sudo mkdir -p /mnt/vc-content
+sudo mount -a
+
+# Кэш трейлеров
+ls -lh CONVERTED_CACHE/trailers/
+find CONVERTED_CACHE/trailers -type f -mtime +7 -print -delete
+```
+
+---
+
+## Блок E — Бэкапы и восстановление
+
+### SQLite
+```bash
+# Консистентный бэкап
 sqlite3 config/main.db '.backup config/main-$(date +%F_%H%M).db'
 
-# Бэкап через dump
+# Dump
 sqlite3 config/main.db '.timeout 5000' '.once backup-$(date +%F_%H%M).sql' '.dump'
 
-# Восстановление из dump
+# Восстановление
 sqlite3 config/main-restored.db < backup-YYYY-MM-DD_HHMM.sql
 mv config/main.db config/main.db.bak
 mv config/main-restored.db config/main.db
 ```
 
-Контент:
+### Контент
 ```bash
 rsync -aH --delete public/content/ /backup/vc-content/
 rsync -aH --delete /backup/vc-content/ public/content/
 ```
 
-## Диагностика загрузок/FFmpeg
+---
 
+## Блок F — Android / ADB
+
+### Подготовка и подключение
 ```bash
-# Проверить TCP/сеть
-ss -tulpn | grep -E '3000|80|443'
-
-# FFmpeg версия
-ffmpeg -version
-
-# Ошибки оптимизации
-sqlite3 config/main.db "SELECT * FROM file_statuses WHERE status='error' ORDER BY updated_at DESC LIMIT 20;"
-```
-
-## Android: сбор логов и диагностика
-
-```bash
-# Список устройств
+sudo apt-get install -y android-sdk-platform-tools
+adb kill-server && adb start-server
+adb connect 192.168.1.50:5555
 adb devices -l
+```
+Используйте `adb -s SERIAL ...` для конкретного устройства (SERIAL = USB ID или `ip:port`).
 
-# Снять логи с девайса (замените SERIAL на ip:port)
-adb -s SERIAL logcat -d | grep -iE "VCMediaPlayer|ExoPlayer|Playback|VideoControl|player error|MediaCodec|okhttp" | tail -n 200
-
-# Онлайн просмотр логов
-adb -s SERIAL logcat | grep -iE "VCMediaPlayer|ExoPlayer|Playback|VideoControl|player error|MediaCodec|okhttp"
-
-# Перезапуск приложения
+### Установка и перезапуск плеера
+```bash
+adb -s SERIAL install -r app-release.apk
 adb -s SERIAL shell am force-stop com.videocontrol.mediaplayer
 adb -s SERIAL shell monkey -p com.videocontrol.mediaplayer -c android.intent.category.LAUNCHER 1
+adb -s SERIAL shell pm clear com.videocontrol.mediaplayer   # полный сброс
+adb -s SERIAL shell pidof com.videocontrol.mediaplayer
+```
 
-# Проверить, что процесс запущен
-adb -s SERIAL shell ps -A | grep videocontrol
-
-# Проверить доступность сервера с устройства
+### Сети, память, файлы
+```bash
+adb -s SERIAL shell getprop net.dns1
 adb -s SERIAL shell ping -c 3 192.168.1.1
-
-# Проверить свободное место/кэш
-adb -s SERIAL shell df -h /sdcard /data
-
-# Полный системный отчёт (долго)
-adb -s SERIAL bugreport bugreport-$(date +%F_%H%M).zip
-```
-
-Заметки:
-- Если в браузере видите MEDIA_ERR_SRC_NOT_SUPPORTED — проверьте HEAD/GET трейлера/видео и заголовки Range на сервере.
-- На Android следите за MediaCodec/ExoPlayer ошибками и таймаутами HTTP (60s).
-- Убедитесь, что URL воспроизведения идёт через `/api/files/resolve/<device>/<file>`.
-
-## Проверка видео-эндпоинтов (сервер)
-
-```bash
-# HEAD трейлера (должен быть 200 когда готов, иначе 404)
-curl -I "http://HOST/api/files/trailer/DEVICE/FILE.mp4"
-
-# Проверка Range (частичный контент 206, корректный Content-Range/Length)
-curl -I -H "Range: bytes=0-524287" "http://HOST/api/files/resolve/DEVICE/FILE.mp4"
-```
-
-## Логи сервера и Nginx
-
-```bash
-# Node.js ошибки приложения
-tail -n 200 logs/error-*.log
-
-# Последние записи systemd
-journalctl -u videocontrol -n 200 --no-pager
-
-# Фильтр по конкретному файлу/резолверу
-journalctl -u videocontrol -n 500 --no-pager | grep -i "resolve.*FILE.mp4"
-
-# Логи Nginx
-sudo tail -n 200 /var/log/nginx/videocontrol-error.log
-sudo tail -n 200 /var/log/nginx/videocontrol-access.log
-```
-
-## ffprobe диагностика (сервер)
-
-```bash
-ffprobe -v error \
-  -select_streams v:0 \
-  -show_entries stream=codec_name,width,height,r_frame_rate,bit_rate,profile,level \
-  -show_entries format=duration \
-  -of json "/path/to/file.mp4"
-```
-
-## Android: дополнительные команды
-
-```bash
-# Сброс данных приложения
-adb -s SERIAL shell pm clear com.videocontrol.mediaplayer
-
-# Логи только нашего пакета
-adb -s SERIAL logcat -d | grep -i "com.videocontrol.mediaplayer" | tail -n 200
-
-# Сетевые сокеты/подключения
 adb -s SERIAL shell netstat -an | grep -E "3000|80|443"
-
-# DNS на устройстве
-adb -s SERIAL shell getprop net.dns1; adb -s SERIAL shell getprop net.dns2
-
-# Проверка выданных разрешений
-adb -s SERIAL shell dumpsys package com.videocontrol.mediaplayer | grep -i granted
+adb -s SERIAL shell df -h /sdcard /data
+adb -s SERIAL shell ls -lh /sdcard/VideoControl/files
 ```
 
-## Socket.IO быстрый тест
-
+### Логи и диагностика
 ```bash
-# Ожидаем ответ вида: 0{"sid":...} или аналогичный (EIO=4)
-curl -s "http://HOST/socket.io/?EIO=4&transport=polling" | head -n1
+adb -s SERIAL logcat -d | grep -iE "VCMediaPlayer|VideoControl|ExoPlayer|MediaCodec" | tail -n 200
+adb -s SERIAL logcat | grep -iE "player error"
+adb -s SERIAL bugreport bugreport-$(date +%F_%H%M).zip
+adb -s SERIAL shell dumpsys package com.videocontrol.mediaplayer | grep granted
 ```
 
-## Кэш трейлеров (сервер)
-
+### Типовые сценарии
 ```bash
-# Список трейлеров (5s MP4 по md5)
-ls -lh CONVERTED_CACHE/trailers/
+# Быстрая переустановка
+adb -s SERIAL uninstall com.videocontrol.mediaplayer || true
+adb -s SERIAL install app-release.apk
+adb -s SERIAL shell monkey -p com.videocontrol.mediaplayer -c android.intent.category.LAUNCHER 1
 
-# Очистка старше 7 дней
-find CONVERTED_CACHE/trailers -type f -mtime +7 -print -delete
+# Чистка зависшего плеера
+adb -s SERIAL shell am force-stop com.videocontrol.mediaplayer
+adb -s SERIAL shell pm clear com.videocontrol.mediaplayer
+adb -s SERIAL shell settings put global stay_on_while_plugged_in 3
+adb -s SERIAL shell svc power stayon true
+adb -s SERIAL shell monkey -p com.videocontrol.mediaplayer -c android.intent.category.LAUNCHER 1
 ```
 
-## Обновление приложения
+---
 
+## Блок G — Быстрая установка и переменные
 ```bash
-sudo systemctl stop videocontrol
-git pull --rebase
-npm ci || npm install
-sudo systemctl start videocontrol
-sudo journalctl -u videocontrol -n 100 --no-pager
-```
-
-## Полезные переменные для quick-install.sh
-
-```bash
-# Режим хранения контента
+# Переменные для quick-install.sh
 export STORAGE_MODE=external            # local | external | external_fstab
 export CONTENT_DIR=/mnt/vc-content
-export CONTENT_SOURCE=/dev/sdb1         # или UUID=xxxx-xxxx (для external_fstab)
+export CONTENT_SOURCE=/dev/sdb1         # или UUID=xxxx-xxxx
 export CONTENT_FSTAB_OPTS="ext4 defaults,noatime 0 2"
 
-# Неблокирующий запуск (Node.js 20 ставится автоматически)
-sudo STORAGE_MODE=external \
-     CONTENT_DIR=/mnt/vc-content \
+# Неблокирующий запуск
+sudo STORAGE_MODE=external CONTENT_DIR=/mnt/vc-content \
      bash scripts/quick-install.sh /vid/videocontrol
 ```
 
-## Быстрая установка на чистый сервер
-
+### Чистый сервер за 5 шагов
 ```bash
-# 1) Подготовка диска под контент (пример: /dev/sdb1 → /mnt/vc-content)
 sudo mkfs.ext4 /dev/sdb1
 sudo mkdir -p /mnt/vc-content
 echo '/dev/sdb1 /mnt/vc-content ext4 defaults,noatime 0 2' | sudo tee -a /etc/fstab
 sudo mount -a
 
-# 2) Клонирование проекта
-sudo mkdir -p /vid/videocontrol
-cd /vid/videocontrol
+sudo mkdir -p /vid/videocontrol && cd /vid/videocontrol
 sudo apt-get update -y && sudo apt-get install -y git
-sudo git clone https://github.com/ya-k0v/VideoControl.git .   # или ваш форк/ветка
+sudo git clone https://github.com/ya-k0v/VideoControl.git .
 
-# 3) Non-interactive параметры для инсталлятора
 export STORAGE_MODE=external_fstab
 export CONTENT_DIR=/mnt/vc-content
 export CONTENT_SOURCE=/dev/sdb1
 export CONTENT_FSTAB_OPTS="ext4 defaults,noatime 0 2"
 
-# 4) Установка (автоподтверждения)
 printf 'y\ny\n' | sudo bash scripts/quick-install.sh /vid/videocontrol
 
-# 5) Проверка
 sudo systemctl status videocontrol
 sudo nginx -t && sudo systemctl restart nginx
 echo "URL: http://$(hostname -I | awk '{print $1}')"
 ```
 
-## Speaker-panel / preview sync
+---
 
-- Вся подсветка и выбранные страницы на панели спикера теперь берутся из состояния плееров.  
-- Для диагностики попросите устройство сменить слайд и проверьте события:
-  ```bash
-  # В браузере devtools или с сервера
-  journalctl -u videocontrol -n 200 --no-pager | grep "player/folderPage"
-  ```
-- API для контроля:
-  ```bash
-  curl -s http://HOST/api/devices | jq '.[] | {device_id, current}'
-  ```
-- Если превью «зависло», выполните:
-  ```bash
-  # Перезапустить панель спикера
-  npm run build-frontend   # при изменениях
-  # На устройстве
-  adb shell pm clear com.videocontrol.mediaplayer
-  ```
+## Блок H — Дополнительные проверки
+```bash
+# Проверка синхронизации панели спикера
+journalctl -u videocontrol -n 200 --no-pager | grep "player/folderPage"
+curl -s http://HOST/api/devices | jq '.[] | {device_id, current}'
 
+# Проверка доступности сервера с Android-устройства
+adb -s SERIAL shell ping -c 3 <SERVER_IP>
+```
 
+- Убедитесь, что ссылки на воспроизведение идут через `/api/files/resolve/<device>/<file>` с ответом `206 Partial Content`.
+- MEDIA_ERR_SRC_NOT_SUPPORTED чаще всего связано с отсутствием трейлера/видео или неправильными Range-заголовками на сервере.
+
+---
+
+Документ обновлен: 2025-11-17.
