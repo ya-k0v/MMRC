@@ -110,7 +110,9 @@ export function setupControlHandlers(socket, deps) {
     } else if (d.current.type === 'folder') {
       d.current.page = Math.max(1, (d.current.page || 1) - 1);
       io.to(`device:${device_id}`).emit('player/folderPage', d.current.page);
-      io.emit('player/folderPage', d.current.page); // Для спикера
+      // КРИТИЧНО: НЕ отправляем всем - только конкретному устройству!
+      // Спикер обновится через preview/refresh
+      io.emit('preview/refresh', { device_id });
     }
   });
 
@@ -148,7 +150,9 @@ export function setupControlHandlers(socket, deps) {
         if (nextImage !== d.current.page) {
           d.current.page = nextImage;
           io.to(`device:${device_id}`).emit('player/folderPage', d.current.page);
-          io.emit('player/folderPage', d.current.page); // Для спикера
+          // КРИТИЧНО: НЕ отправляем всем - только конкретному устройству!
+          // Спикер обновится через preview/refresh
+          io.emit('preview/refresh', { device_id });
         }
       }
     }

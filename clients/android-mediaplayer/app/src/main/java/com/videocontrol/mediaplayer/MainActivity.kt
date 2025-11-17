@@ -557,7 +557,15 @@ class MainActivity : AppCompatActivity() {
             socket?.on("player/folderPage") { args ->
                 if (args.isNotEmpty()) {
                     val imageNum = args[0] as? Int ?: 1
-                    runOnUiThread { showFolderImage(null, imageNum) }
+                    runOnUiThread {
+                        // КРИТИЧНО: Обрабатываем команду только если устройство воспроизводит папку
+                        // Это защита от случайных команд, предназначенных другим устройствам
+                        if (currentFolderName != null) {
+                            showFolderImage(null, imageNum)
+                        } else {
+                            Log.d(TAG, "⚠️ player/folderPage игнорируется - устройство не воспроизводит папку")
+                        }
+                    }
                 }
             }
             
@@ -682,11 +690,18 @@ class MainActivity : AppCompatActivity() {
         
         isVideoReadyToShow = true
         val fileName = pendingVideoFileName!!
-        Log.d(TAG, "📸 Начинаем fade-in видео: $fileName (hasVideoSize=$hasVideoSize)")
+        val isPlaceholder = pendingVideoIsPlaceholder
+        Log.d(TAG, "📸 Начинаем fade-in видео: $fileName (hasVideoSize=$hasVideoSize, isPlaceholder=$isPlaceholder)")
         
         // Убеждаемся что playerView видим и alpha = 0 перед fade-in
         playerView.visibility = View.VISIBLE
         playerView.alpha = 0f
+        
+        // КРИТИЧНО: Если это заглушка - скрываем логотип (логотип только для переходов)
+        if (isPlaceholder) {
+            brandBg.visibility = View.GONE
+            brandBg.alpha = 0f
+        }
         
         // Аналогично JS плееру: двойной post для гарантии готовности рендеринга (как requestAnimationFrame)
         Handler(Looper.getMainLooper()).post {
@@ -875,8 +890,23 @@ class MainActivity : AppCompatActivity() {
             currentVideoFile = null
             savedPosition = 0
 
+            // КРИТИЧНО: Для заглушки НЕ показываем логотип - заглушка должна быть всегда видна
+            // Логотип только для переходов между контентом
+            if (isPlaceholder) {
+                // Заглушка - сразу показываем изображение без логотипа
+                player?.stop()
+                player?.clearMediaItems()
+                playerView.visibility = View.GONE
+                playerView.alpha = 0f
+                brandBg.visibility = View.GONE
+                brandBg.alpha = 0f
+                // Загружаем изображение заглушки сразу (без fade, без логотипа)
+                loadImageToView(imageUrl, useFadeFromLogo = false, delayMs = 0)
+                return
+            }
+
             // КРИТИЧНО: Логика переходов как в JS плеере
-            // Для изображений ВСЕГДА показываем логотип сначала (через brandBg)
+            // Для обычных изображений показываем логотип сначала (через brandBg)
             val needFadeOut = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
             
             if (needFadeOut) {
@@ -1334,11 +1364,12 @@ class MainActivity : AppCompatActivity() {
         imageView.setImageDrawable(null)
         imageView.visibility = View.GONE
         imageView.alpha = 0f
-        playerView.visibility = View.GONE
-        playerView.alpha = 0f
         
-        // КРИТИЧНО: Логотип всегда остается видимым (если не skipLogoTransition)
-        // При skipLogoTransition логотип уже видим, при обычном переходе показываем его
+        // КРИТИЧНО: НЕ скрываем playerView - заглушка должна сразу показаться
+        // playerView будет показан когда заглушка загрузится через playVideo
+        
+        // КРИТИЧНО: Логотип показываем ТОЛЬКО для переходов (если не skipLogoTransition)
+        // После загрузки заглушки логотип скроется, заглушка будет видна
         if (!skipLogoTransition) {
             showLogoBackground()
         }
@@ -1421,17 +1452,15 @@ class MainActivity : AppCompatActivity() {
                             isLoadingPlaceholder = false  // Сбрасываем флаг после успешной загрузки
                         }
                     } else {
-                        Log.i(TAG, "ℹ️ No placeholder set for this device")
-                        // КРИТИЧНО: Проверяем состояние Activity перед переключением на Main
+                        Log.i(TAG, "ℹ️ No placeholder set for this device, retrying in 10s...")
+                        // КРИТИЧНО: Если заглушки нет - retry, а не показываем логотип
+                        // Заглушка ДОЛЖНА быть, поэтому продолжаем попытки
                         if (!isDestroyed && !isFinishing) {
                             withContext(Dispatchers.Main) {
                                 if (isDestroyed || isFinishing) return@withContext
-                                // Показываем логотип (без контента)
-                                playerView.visibility = View.GONE
-                                imageView.visibility = View.GONE
-                                showLogoBackground()
-                                isLoadingPlaceholder = false  // Сбрасываем флаг даже если заглушки нет
+                                isLoadingPlaceholder = false  // Сбрасываем флаг перед retry
                             }
+                            scheduleRetryPlaceholder()
                         }
                     }
                 } else {

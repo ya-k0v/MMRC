@@ -11,6 +11,50 @@ const tvList = document.getElementById('tvList');
 const fileList = document.getElementById('fileList');
 const filePreview = document.getElementById('filePreview');
 
+const STATIC_CONTENT_TYPES = new Set(['pdf', 'pptx', 'folder']);
+let previewLoadToken = 0;
+
+const THUMB_STYLE_ID = 'speaker-thumbnail-styles';
+function ensureThumbnailStyles() {
+  if (document.getElementById(THUMB_STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = THUMB_STYLE_ID;
+  style.textContent = `
+    #filePreview .thumbnail-preview {
+      aspect-ratio: 16 / 9;
+      background: var(--panel-2);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      position: relative;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    #filePreview .thumbnail-preview.is-active {
+      border: 4px solid var(--brand);
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3), 0 4px 12px rgba(59, 130, 246, 0.5);
+      transform: scale(1.06);
+    }
+    #filePreview .thumbnail-preview:not(.is-active):hover {
+      transform: scale(1.03);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+function escapeAttr(value = '') {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function isStaticContent(type = '') {
+  return STATIC_CONTENT_TYPES.has(type);
+}
+
 // Флаг что пользователь явно закрыл превью (не автооткрывать)
 let previewManuallyClosed = false;
 
@@ -22,10 +66,137 @@ let tvPage = 0;
 let filePage = 0;
 let nodeNames = {}; // { device_id: name }
 let allFiles = []; // Список всех файлов для текущего устройства (для отображения названий в прогресс-баре)
-// Запоминаем последний выбор превью (для корректного подсвета после refresh)
-let lastPreviewSelection = { file: null, page: null };
 // Прогресс воспроизведения по устройству
 const playbackProgressByDevice = new Map(); // device_id -> { file, currentTime, duration }
+const playerStateByDevice = new Map(); // device_id -> { type, file, page }
+let currentPreviewContext = { deviceId: null, file: null, page: null };
+
+function resetPreviewHighlightState() {
+  currentPreviewContext = { deviceId: null, file: null, page: null };
+  filePreview.querySelectorAll('.thumbnail-preview').forEach((thumb) => {
+    thumb.classList.remove('is-active');
+    thumb.removeAttribute('data-selected');
+  });
+}
+
+function getPreviewContext() {
+  const sampleThumb = filePreview.querySelector('.thumbnail-preview');
+  return {
+    deviceId: sampleThumb?.getAttribute('data-device-id') || currentPreviewContext.deviceId,
+    file: sampleThumb?.getAttribute('data-file') || currentPreviewContext.file,
+    page: currentPreviewContext.page,
+  };
+}
+
+async function fetchStaticPreviewImages(deviceId, safeName, contentType) {
+  if (!deviceId || !safeName) return [];
+  try {
+    if (contentType === 'folder') {
+      const res = await speakerFetch(`/api/devices/${encodeURIComponent(deviceId)}/folder/${encodeURIComponent(safeName)}/images`);
+      if (!res.ok) return [];
+      const data = await res.json();
+      const items = data.images || [];
+      return items.map((_, idx) =>
+        `/api/devices/${encodeURIComponent(deviceId)}/folder/${encodeURIComponent(safeName)}/image/${idx + 1}`
+      );
+    }
+    if (contentType === 'pdf' || contentType === 'pptx') {
+      const res = await speakerFetch(`/api/devices/${encodeURIComponent(deviceId)}/slides-count?file=${encodeURIComponent(safeName)}`);
+      if (!res.ok) return [];
+      const data = await res.json();
+      const count = Math.min(Number(data.count) || 0, 20);
+      const urlType = contentType === 'pdf' ? 'page' : 'slide';
+      return Array.from({ length: count }, (_, idx) =>
+        `/api/devices/${encodeURIComponent(deviceId)}/converted/${encodeURIComponent(safeName)}/${urlType}/${idx + 1}`
+      );
+    }
+  } catch (error) {
+    console.error('[Speaker] Ошибка загрузки статического превью', error);
+  }
+  return [];
+}
+
+function renderThumbnailGrid(deviceId, safeName, contentType, imageUrls) {
+  ensureThumbnailStyles();
+  currentPreviewContext = { deviceId, file: safeName, page: null };
+  if (!imageUrls.length) {
+    filePreview.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary)">Нет миниатюр для этого файла</div>`;
+    return;
+  }
+
+  filePreview.innerHTML = `
+    <div style="width:100%; height:100%; overflow-y:auto; padding:var(--space-md); background:var(--panel)">
+      <div class="thumbnail-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); gap:var(--space-sm)">
+        ${imageUrls.map((url, idx) => `
+          <div class="thumbnail-preview"
+               data-device-id="${escapeAttr(deviceId)}"
+               data-file="${escapeAttr(safeName)}"
+               data-page="${idx + 1}"
+               data-type="${escapeAttr(contentType)}">
+            <img src="${url}"
+                 alt="${idx + 1}"
+                 loading="lazy"
+                 style="width:100%; height:100%; object-fit:cover; display:block; pointer-events:none"
+                 onerror="this.parentElement.innerHTML='<div style=&quot;display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);font-size:10px&quot;>✗</div>'" />
+            <div style="position:absolute; bottom:2px; right:4px; background:rgba(0,0,0,0.7); color:#fff; padding:2px 4px; border-radius:3px; font-size:10px; pointer-events:none">${idx + 1}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+
+  filePreview.querySelectorAll('.thumbnail-preview').forEach((thumb, idx) => {
+    thumb.addEventListener('click', () => {
+      const page = idx + 1;
+      socket.emit('control/play', {
+        device_id: deviceId,
+        file: safeName,
+        page,
+      });
+    });
+  });
+}
+
+async function showStaticPreview(deviceId, safeName, contentType, { initiatedByUser = false } = {}) {
+  if (!deviceId || !safeName || !isStaticContent(contentType)) return;
+  if (initiatedByUser) {
+    previewManuallyClosed = false;
+  }
+
+  const loadToken = ++previewLoadToken;
+  filePreview.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary)">Загрузка превью…</div>`;
+
+  const images = await fetchStaticPreviewImages(deviceId, safeName, contentType);
+  if (loadToken !== previewLoadToken) return;
+
+  renderThumbnailGrid(deviceId, safeName, contentType, images);
+  currentPreviewContext = { deviceId, file: safeName, page: null };
+
+  const state = playerStateByDevice.get(deviceId);
+  if (state && state.file === safeName && state.page) {
+    highlightCurrentThumbnail(state.page, currentPreviewContext);
+  }
+}
+
+async function syncPreviewWithPlayerState() {
+  if (!currentDevice || previewManuallyClosed) return;
+  const state = playerStateByDevice.get(currentDevice);
+  if (!state || !state.file || !isStaticContent(state.type)) {
+    showLivePreviewForTV(currentDevice, true);
+    return;
+  }
+
+  const currentPreviewFile = filePreview.querySelector('.thumbnail-preview')?.getAttribute('data-file');
+  if (currentPreviewFile !== state.file) {
+    await showStaticPreview(currentDevice, state.file, state.type);
+  }
+
+  highlightCurrentThumbnail(state.page || 1, { deviceId: currentDevice, file: state.file });
+}
+
+function requestPreviewSync() {
+  syncPreviewWithPlayerState().catch(err => console.error('[Speaker] Ошибка синхронизации превью', err));
+}
 
 // Обрезка текста с многоточием (адаптивно для мобильных)
 function truncateText(text, maxLength = 40) {
@@ -107,6 +278,15 @@ async function loadDevices() {
     devices = newDevices;
     // Сортируем устройства по алфавиту: А-Я, A-Z, 0-9
     devices = sortDevices(devices, nodeNames);
+    devices.forEach(d => {
+      if (d.current && d.current.file) {
+        playerStateByDevice.set(d.device_id, {
+          type: d.current.type,
+          file: d.current.file,
+          page: Number(d.current.page) || 1,
+        });
+      }
+    });
     const pageSize = SPEAKER_PAGE_SIZE; // Фиксированное значение 10
     const totalPages = Math.max(1, Math.ceil(devices.length / pageSize));
     if (tvPage >= totalPages) tvPage = totalPages - 1;
@@ -199,6 +379,8 @@ function showLivePreviewForTV(deviceId, force = false) {
   // Это используется при явном переключении устройства
   if (force) {
     console.log('[Speaker] 🔄 Принудительное обновление превью для устройства:', deviceId);
+    resetPreviewHighlightState();
+    currentPreviewContext = { deviceId, file: null, page: null };
     filePreview.innerHTML = `<iframe src="/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&muted=1" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
     return;
   }
@@ -206,13 +388,14 @@ function showLivePreviewForTV(deviceId, force = false) {
   // Не переключаем превью если показана сетка миниатюр (только при НЕ принудительном вызове)
   const hasThumbnails = filePreview.querySelector('.thumbnail-preview');
   if (hasThumbnails) {
-    console.log('[Speaker] ℹ️ Превью показывает миниатюры, не переключаем на заглушку');
+    console.debug('[Speaker] ℹ️ Превью показывает миниатюры, не переключаем на заглушку');
     return;
   }
   
   // Показываем превью с живым состоянием устройства (всегда без звука)
   const device = devices.find(d => d.device_id === deviceId);
   if (!device) {
+    resetPreviewHighlightState();
     filePreview.innerHTML = `<iframe src="/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&muted=1" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
     return;
   }
@@ -224,7 +407,11 @@ function showLivePreviewForTV(deviceId, force = false) {
   const frame = filePreview.querySelector('iframe');
   if (frame && !frame.src.includes(placeholderUrl)) {
     frame.src = placeholderUrl;
+    resetPreviewHighlightState();
+    currentPreviewContext = { deviceId, file: null, page: null };
   } else if (!frame) {
+    resetPreviewHighlightState();
+    currentPreviewContext = { deviceId, file: null, page: null };
     filePreview.innerHTML = `<iframe src="${placeholderUrl}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
   }
 }
@@ -237,6 +424,14 @@ async function selectDevice(id, resetPage = true) {
   if (resetPage) {
     filePage = 0; // Сброс пагинации файлов при смене устройства
     currentFile = null; // Сброс выбранного файла
+    // КРИТИЧНО: Очищаем выделение миниатюр (состояние хранится по устройствам)
+    // Сбрасываем выделение миниатюр
+    filePreview.querySelectorAll('.thumbnail-preview[data-selected="1"]').forEach(t => t.removeAttribute('data-selected'));
+    filePreview.querySelectorAll('.thumbnail-preview').forEach(t => {
+      t.style.border = '';
+      t.style.borderColor = '';
+      t.style.boxShadow = '';
+    });
   }
   
   // Обновляем URL при переключении устройства
@@ -254,11 +449,8 @@ async function selectDevice(id, resetPage = true) {
   }
   
   await loadFiles();
+  await syncPreviewWithPlayerState();
   
-  // ИСПРАВЛЕНО: ВСЕГДА показываем live preview выбранного устройства
-  // force=resetPage означает принудительное обновление при явном выборе
-  // Это гарантирует что превью переключается при смене устройства
-  showLivePreviewForTV(currentDevice, resetPage);
 }
 
 /* Загрузка и рендер файлов для текущего ТВ */
@@ -516,11 +708,8 @@ async function loadFiles() {
       const safeName = decodeURIComponent(item.getAttribute('data-safe'));
       const originalName = decodeURIComponent(item.getAttribute('data-original'));
       
-      // Сбрасываем флаг закрытия при ручном открытии превью
-      previewManuallyClosed = false;
-      
-      // Сохраняем safeName для операций
       setCurrentFileSelection(safeName, item);
+      previewManuallyClosed = false;
       
       // Определяем тип файла
       const hasExtension = safeName.includes('.');
@@ -528,116 +717,7 @@ async function loadFiles() {
       
       // Для папок, PDF и PPTX показываем сетку миниатюр
       if (!hasExtension || ext === 'pdf' || ext === 'pptx') {
-        let images = [];
-        
-        if (!hasExtension) {
-          // Это папка с изображениями
-          try {
-            const res = await speakerFetch(`/api/devices/${encodeURIComponent(currentDevice)}/folder/${encodeURIComponent(safeName)}/images`);
-            const data = await res.json();
-            images = data.images || [];
-            // Создаем URLs для изображений из папки
-            images = images.map((_, idx) => 
-              `/api/devices/${encodeURIComponent(currentDevice)}/folder/${encodeURIComponent(safeName)}/image/${idx + 1}`
-            );
-          } catch (e) {
-            console.error('[Speaker] Ошибка загрузки изображений папки:', e);
-          }
-        } else if (ext === 'pdf' || ext === 'pptx') {
-          // Это презентация
-          try {
-            const urlType = ext === 'pdf' ? 'page' : 'slide';
-            const res = await speakerFetch(`/api/devices/${encodeURIComponent(currentDevice)}/slides-count?file=${encodeURIComponent(safeName)}`);
-            const data = await res.json();
-            const count = data.count || 0;
-            // Создаем URLs для слайдов
-            for (let i = 1; i <= Math.min(count, 20); i++) { // Максимум 20 миниатюр
-              images.push(`/api/devices/${encodeURIComponent(currentDevice)}/converted/${encodeURIComponent(safeName)}/${urlType}/${i}`);
-            }
-          } catch (e) {
-            console.error('[Speaker] Ошибка загрузки слайдов:', e);
-          }
-        }
-        
-        // Показываем сетку миниатюр
-        if (images.length > 0) {
-          filePreview.innerHTML = `
-            <div style="width:100%; height:100%; overflow-y:auto; padding:var(--space-md); background:var(--panel)">
-              <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(100px, 1fr)); gap:var(--space-sm)">
-                ${images.map((url, idx) => `
-                  <div class="thumbnail-preview" 
-                       data-device-id="${currentDevice}"
-                       data-file="${safeName}"
-                       data-page="${idx + 1}"
-                       data-type="${!hasExtension ? 'folder' : ext}"
-                       style="aspect-ratio:16/9; background:var(--panel-2); border-radius:var(--radius-sm); overflow:hidden; position:relative; cursor:pointer; transition:transform 0.2s, box-shadow 0.2s"
-                       onmouseover="this.style.transform='scale(1.05)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.3)'"
-                       onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='none'">
-                    <img src="${url}" 
-                         alt="${idx + 1}" 
-                         loading="lazy"
-                         style="width:100%; height:100%; object-fit:cover; display:block; pointer-events:none"
-                         onerror="this.parentElement.innerHTML='<div style=\\'display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);font-size:10px\\'>✗</div>'">
-                    <div style="position:absolute; bottom:2px; right:4px; background:rgba(0,0,0,0.7); color:#fff; padding:2px 4px; border-radius:3px; font-size:10px; pointer-events:none">${idx + 1}</div>
-                  </div>
-                `).join('')}
-              </div>
-            </div>
-          `;
-          
-          // Если это тот же файл — сразу подсветим ранее выбранную страницу после рендера
-          if (lastPreviewSelection.file === safeName && lastPreviewSelection.page) {
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => {
-                highlightCurrentThumbnail(Number(lastPreviewSelection.page) || 1);
-              });
-            });
-          }
-          
-          // Добавляем обработчики кликов на миниатюры
-          filePreview.querySelectorAll('.thumbnail-preview').forEach(thumb => {
-            thumb.addEventListener('click', () => {
-              const deviceId = thumb.getAttribute('data-device-id');
-              const fileName = thumb.getAttribute('data-file');
-              const page = parseInt(thumb.getAttribute('data-page'), 10);
-              const type = thumb.getAttribute('data-type');
-              
-              console.log(`[Speaker] 🎯 Клик на миниатюру: ${fileName}, страница ${page}, тип ${type}`);
-              
-              // Сохраняем последний выбор, чтобы не терять номер страницы при автообновлении превью
-              lastPreviewSelection = { file: fileName, page };
-              
-              // Обозначаем выбранную миниатюру явно (устойчиво к перерендерам)
-              filePreview.querySelectorAll('.thumbnail-preview').forEach(t => t.removeAttribute('data-selected'));
-              thumb.setAttribute('data-selected', '1');
-              
-              // Отправляем команду на воспроизведение конкретной страницы/изображения
-              socket.emit('control/play', { 
-                device_id: deviceId, 
-                file: fileName,
-                page: page
-              });
-              
-              // Визуальная обратная связь - используем общую функцию выделения
-              highlightCurrentThumbnail(page);
-              
-              // НЕ переключаем превью на плеер - оставляем сетку миниатюр!
-              // Превью остается как есть, пользователь может выбрать другую миниатюру
-            });
-            
-            // Показываем hint при наведении
-            thumb.addEventListener('mouseenter', (e) => {
-              const hint = e.currentTarget.querySelector('.play-hint');
-              if (hint) hint.style.opacity = '1';
-            });
-            thumb.addEventListener('mouseleave', (e) => {
-              const hint = e.currentTarget.querySelector('.play-hint');
-              if (hint) hint.style.opacity = '0';
-            });
-          });
-        } else {
-          filePreview.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary)">Нет изображений для превью</div>`;
-        }
+        await showStaticPreview(currentDevice, safeName, !hasExtension ? 'folder' : ext, { initiatedByUser: true });
       } else {
         // Для видео и обычных изображений показываем в iframe
         let src = `/player-videojs.html?device_id=${encodeURIComponent(currentDevice)}&preview=1&muted=1&file=${encodeURIComponent(safeName)}`;
@@ -669,15 +749,6 @@ async function loadFiles() {
       // Сбрасываем флаг закрытия при новом воспроизведении
       previewManuallyClosed = false;
       
-      // КРИТИЧНО: Обновляем локальное состояние устройства
-      const device = devices.find(d => d.device_id === currentDevice);
-      if (device) {
-        if (!device.current) device.current = {};
-        device.current.file = safeName;
-        device.current.state = 'playing';
-        console.log(`[Speaker] ▶️ Воспроизведение: ${safeName} на ${currentDevice}`);
-      }
-      
       socket.emit('control/play', { device_id: currentDevice, file: safeName });
       
       // Определяем тип файла
@@ -688,28 +759,6 @@ async function loadFiles() {
       // Для PDF/PPTX/FOLDER - открываем превью автоматически
       if (isStaticContent) {
         console.log('[Speaker] 📊 Открываем превью для статичного контента:', safeName);
-        
-        // КРИТИЧНО: Сначала очищаем превью чтобы избежать вложенности
-        filePreview.innerHTML = '';
-        
-        // Кликаем по карточке чтобы открыть превью
-        const item = btn.closest('.file-item');
-        if (item) {
-          setTimeout(() => {
-            // Симулируем клик по карточке для открытия превью
-            const clickEvent = new MouseEvent('click', { bubbles: false });
-            Object.defineProperty(clickEvent, 'target', { value: item, enumerable: true });
-            item.onclick(clickEvent);
-            
-            // Выделяем актуальный слайд через 300ms
-            setTimeout(() => {
-              const initialPage = (lastPreviewSelection.file === safeName && lastPreviewSelection.page)
-                ? Number(lastPreviewSelection.page) || 1
-                : 1;
-              highlightCurrentThumbnail(initialPage);
-            }, 300);
-          }, 50);
-        }
       } else {
       // Для видео и обычных изображений - показываем заглушку
         // Чтобы не было двойной загрузки (preview + основной плеер)
@@ -730,6 +779,8 @@ async function loadFiles() {
     console.error('Failed to render files:', error);
     fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-xl)"><div class="meta">Ошибка загрузки файлов</div></li>';
   }
+
+  await syncPreviewWithPlayerState();
 }
 
 /* Установка выбранного файла и подсветка строки */
@@ -794,7 +845,6 @@ function updatePlaybackInfoUI() {
 socket.on('player/progress', ({ device_id, type, file, currentTime, duration }) => {
   if (!device_id) return;
   playbackProgressByDevice.set(device_id, { file, currentTime: Number(currentTime)||0, duration: Number(duration)||0 });
-  console.log('[Speaker] ⏱ progress:', { device_id, file, currentTime, duration, currentDevice });
   if (device_id === currentDevice) {
     updatePlaybackInfoUI();
   }
@@ -852,33 +902,10 @@ document.getElementById('stopBtn').onclick = () => {
 document.getElementById('pdfPrevBtn').onclick = () => {
   if (!currentDevice) return;
   socket.emit('control/pdfPrev', { device_id: currentDevice });
-  // Локально обновим подсветку сразу (без ожидания сокета)
-  const thumbs = filePreview.querySelectorAll('.thumbnail-preview');
-  if (thumbs.length) {
-    // Сбрасываем прежний явный выбор, чтобы не залипал
-    filePreview.querySelectorAll('.thumbnail-preview[data-selected="1"]').forEach(t => t.removeAttribute('data-selected'));
-    const selected = filePreview.querySelector('.thumbnail-preview[data-selected="1"]');
-    let cur = selected ? parseInt(selected.getAttribute('data-page'), 10) : (Number(lastPreviewSelection.page) || 1);
-    cur = Math.max(1, cur - 1);
-    lastPreviewSelection.page = cur;
-    requestAnimationFrame(() => highlightCurrentThumbnail(cur));
-  }
 };
 document.getElementById('pdfNextBtn').onclick = () => {
   if (!currentDevice) return;
   socket.emit('control/pdfNext', { device_id: currentDevice });
-  // Локально обновим подсветку сразу (без ожидания сокета)
-  const thumbs = filePreview.querySelectorAll('.thumbnail-preview');
-  if (thumbs.length) {
-    // Сбрасываем прежний явный выбор, чтобы не залипал
-    filePreview.querySelectorAll('.thumbnail-preview[data-selected="1"]').forEach(t => t.removeAttribute('data-selected'));
-    const selected = filePreview.querySelector('.thumbnail-preview[data-selected="1"]');
-    const total = thumbs.length;
-    let cur = selected ? parseInt(selected.getAttribute('data-page'), 10) : (Number(lastPreviewSelection.page) || 1);
-    cur = Math.min(total, cur + 1);
-    lastPreviewSelection.page = cur;
-    requestAnimationFrame(() => highlightCurrentThumbnail(cur));
-  }
 };
 document.getElementById('pdfCloseBtn').onclick = () => {
   if (!currentDevice) return;
@@ -949,201 +976,70 @@ socket.on('players/onlineSnapshot', (list) => {
 
 socket.on('devices/updated', onDevicesUpdated);
 const onPreviewRefresh = debounce(async ({ device_id }) => {
-  await speakerFetch('/api/devices')
-    .then(res => res.json())
-    .then(data => {
-      devices = sortDevices(data);
-      
-      if (currentDevice && (device_id === currentDevice || !device_id)) {
-        const device = devices.find(d => d.device_id === currentDevice);
-        if (device && device.current && device.current.type) {
-          // Для видео обновляем превью только при первом воспроизведении или смене файла
-          // Для статичного контента обновляем всегда
-          const isVideo = device.current.type === 'video';
-          const frame = filePreview.querySelector('iframe');
-          const currentUrl = frame ? new URL(frame.src).searchParams.get('file') : null;
-          const currentFile = device.current.file;
-          
-          if (!isVideo || currentFile !== currentUrl) {
-            showLivePreviewForTV(currentDevice);
-          }
-          // Для видео с тем же файлом - не обновляем превью, чтобы избежать множественных запросов
-        } else {
-          showLivePreviewForTV(currentDevice);
-        }
-      }
-    })
-    .catch(err => console.error('Failed to refresh devices:', err));
-  
-  const prevFile = currentFile;
-  if (currentDevice) {
-    await loadFiles();
-    if (prevFile) {
-      const btn = fileList.querySelector(`.previewBtn[data-safe='${encodeURIComponent(prevFile)}']`);
-      if (btn) {
-        const itemEl = btn.closest('.file-item');
-        if (itemEl) itemEl.classList.add('active');
-        currentFile = prevFile;
-      } else {
-        currentFile = null;
-        showLivePreviewForTV(currentDevice);
-      }
-    }
+  try {
+    const res = await speakerFetch('/api/devices');
+    if (!res.ok) return;
+    devices = sortDevices(await res.json());
+  } catch (err) {
+    console.error('Failed to refresh devices:', err);
+    return;
   }
-}, 300); // Увеличил задержку с 150 до 300ms для уменьшения частоты обновлений
+
+  if (!device_id) return;
+  const device = devices.find(d => d.device_id === device_id);
+  if (!device || !device.current) return;
+
+  playerStateByDevice.set(device_id, {
+    type: device.current.type,
+    file: device.current.file,
+    page: Number(device.current.page) || 1,
+  });
+
+  if (device_id === currentDevice) {
+    requestPreviewSync();
+  }
+}, 200);
 
 socket.on('preview/refresh', onPreviewRefresh);
 
-// Автоматически открываем превью при воспроизведении PDF/PPTX/FOLDER
-socket.on('preview/refresh', async ({ device_id }) => {
-  if (device_id !== currentDevice) return;
-  
-  const device = devices.find(d => d.device_id === device_id);
-  if (!device || !device.current) return;
-  
-  const { type, file, page } = device.current;
-  
-  // КРИТИЧНО: Не автооткрываем если пользователь явно закрыл превью
-  if (previewManuallyClosed) {
-    console.log('[Speaker] ℹ️ Превью закрыто пользователем, не автооткрываем');
-    return;
-  }
-  
-  // Если воспроизводится PDF/PPTX/FOLDER - открываем превью с выделением текущего слайда
-  if (type === 'pdf' || type === 'pptx' || type === 'folder') {
-    // Если сервер ещё не прислал актуальную страницу, используем последний локальный выбор
-    const effectivePage = (page && Number(page) > 0)
-      ? Number(page)
-      : (lastPreviewSelection.file === file && lastPreviewSelection.page ? lastPreviewSelection.page : 1);
-    console.log('[Speaker] 🖼️ Автооткрытие превью для:', type, file, 'страница:', effectivePage);
-    
-    // Проверяем какой файл сейчас отображается в превью
-    const currentPreviewFile = filePreview.querySelector('.thumbnail-preview')?.getAttribute('data-file');
-    const needToReopen = currentPreviewFile !== file;
-    
-    // Находим файл в списке
-    const fileItem = fileList.querySelector(`.file-item[data-safe="${encodeURIComponent(file)}"]`);
-    
-    if (fileItem && (!filePreview.querySelector('.thumbnail-preview') || needToReopen)) {
-      // КРИТИЧНО: Сначала полностью очищаем превью
-      filePreview.innerHTML = '';
-      
-      // Открываем новую сетку превью (файл изменился или превью закрыто)
-      console.log('[Speaker] 🔄 Открываем превью для нового файла:', file);
-      
-      // Используем setTimeout чтобы избежать конфликтов
-      setTimeout(() => {
-        fileItem.click();
-        
-        // Ждём рендеринга сетки и выделяем текущий слайд
-        setTimeout(() => {
-          highlightCurrentThumbnail(effectivePage);
-        }, 250);
-      }, 50);
-    } else if (filePreview.querySelector('.thumbnail-preview')) {
-      // Сетка уже открыта для ЭТОГО файла - просто выделяем нужный слайд
-      highlightCurrentThumbnail(effectivePage);
-    }
-  }
-});
-
 // Функция для выделения текущей миниатюры
-function highlightCurrentThumbnail(pageNumber) {
+function highlightCurrentThumbnail(pageNumber, context) {
+  const normalizedPage = Math.max(1, Number(pageNumber) || 1);
+  const previewContext = context || getPreviewContext();
+  if (!previewContext.deviceId || !previewContext.file) return;
+
+  currentPreviewContext = { ...previewContext, page: normalizedPage };
+
   const thumbnails = filePreview.querySelectorAll('.thumbnail-preview');
   if (!thumbnails.length) return;
-  
-  // Если пользователь недавно кликал — приоритет у явно выбранной миниатюры
-  const explicitlySelected = filePreview.querySelector('.thumbnail-preview[data-selected="1"]');
-  if (explicitlySelected) {
-    const selPage = parseInt(explicitlySelected.getAttribute('data-page'), 10);
-    if (!Number.isNaN(selPage)) {
-      pageNumber = selPage;
-    }
-  }
-  
+
   thumbnails.forEach((thumb) => {
     const thumbPage = parseInt(thumb.getAttribute('data-page'), 10);
-    
-    // Сбрасываем inline стили onmouseover/onmouseout
-    thumb.onmouseover = null;
-    thumb.onmouseout = null;
-    
-    if (thumbPage === pageNumber) {
-      // Обновляем флаг выбранности
+    thumb.classList.toggle('is-active', thumbPage === normalizedPage);
+    if (thumbPage === normalizedPage) {
       thumb.setAttribute('data-selected', '1');
-      // Выделяем активную миниатюру - яркая синяя рамка
-      thumb.style.cssText = `
-        aspect-ratio: 16/9;
-        background: var(--panel-2);
-        border-radius: var(--radius-sm);
-        overflow: hidden;
-        position: relative;
-        cursor: pointer;
-        transition: all 0.2s;
-        border: 4px solid var(--brand);
-        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3), 0 4px 12px rgba(59, 130, 246, 0.5);
-        transform: scale(1.08);
-      `;
-      
-      // Прокручиваем к ней
-      thumb.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      
-      console.log('[Speaker] 🎯 Выделена миниатюра:', thumbPage);
     } else {
-      // Сбрасываем флаг выбранности
       thumb.removeAttribute('data-selected');
-      // Неактивные миниатюры - обычные с hover эффектом
-      thumb.style.cssText = `
-        aspect-ratio: 16/9;
-        background: var(--panel-2);
-        border-radius: var(--radius-sm);
-        overflow: hidden;
-        position: relative;
-        cursor: pointer;
-        transition: all 0.2s;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-      `;
-      
-      // Добавляем hover эффект
-      thumb.onmouseover = function() {
-        if (parseInt(this.getAttribute('data-page')) !== pageNumber) {
-          this.style.transform = 'scale(1.03)';
-          this.style.borderColor = 'rgba(255, 255, 255, 0.2)';
-        }
-      };
-      thumb.onmouseout = function() {
-        if (parseInt(this.getAttribute('data-page')) !== pageNumber) {
-          this.style.transform = '';
-          this.style.borderColor = 'rgba(255, 255, 255, 0.1)';
-        }
-      };
     }
   });
+
+  const targetThumb = Array.from(thumbnails).find(
+    (thumb) => parseInt(thumb.getAttribute('data-page'), 10) === normalizedPage
+  );
+  if (targetThumb) {
+    targetThumb.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    console.log('[Speaker] 🎯 Выделена миниатюра:', normalizedPage);
+  }
 }
 
 // Слушаем события смены страниц для выделения активной миниатюры
-socket.on('player/pdfPage', (pageNumber) => {
-  console.log('[Speaker] 📄 PDF страница изменена:', pageNumber);
-  highlightCurrentThumbnail(pageNumber);
-});
-
-socket.on('player/pptxPage', (pageNumber) => {
-  console.log('[Speaker] 📊 PPTX слайд изменён:', pageNumber);
-  highlightCurrentThumbnail(pageNumber);
-});
-
-socket.on('player/folderPage', (pageNumber) => {
-  console.log('[Speaker] 🖼️ Изображение в папке изменено:', pageNumber);
-  const p = Math.max(1, Number(pageNumber) || 1);
-  // Запоминаем актуальную страницу
-  lastPreviewSelection.page = p;
-  // Сбрасываем явную выбранность — приоритет отдаем номеру страницы
-  filePreview.querySelectorAll('.thumbnail-preview[data-selected="1"]').forEach(t => t.removeAttribute('data-selected'));
-  // Дождёмся возможного перерендера сетки, затем подсветим
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      highlightCurrentThumbnail(p);
-    });
+['pdfPage', 'pptxPage', 'folderPage'].forEach(eventName => {
+  socket.on(`player/${eventName}`, (pageNumber) => {
+    const page = Math.max(1, Number(pageNumber) || 1);
+    const state = playerStateByDevice.get(currentDevice) || {};
+    if (!state.file) return;
+    playerStateByDevice.set(currentDevice, { ...state, page });
+    requestPreviewSync();
   });
 });
 
