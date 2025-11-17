@@ -12,6 +12,8 @@ const fileList = document.getElementById('fileList');
 const filePreview = document.getElementById('filePreview');
 
 const STATIC_CONTENT_TYPES = new Set(['pdf', 'pptx', 'folder']);
+const FOLDER_INTERVAL_OPTIONS = [5, 10, 15, 20];
+const DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS = 10;
 let previewLoadToken = 0;
 const formatDuration = (value) => {
   const seconds = Number(value);
@@ -85,6 +87,10 @@ let allFiles = []; // Список всех файлов для текущего
 const playbackProgressByDevice = new Map(); // device_id -> { file, currentTime, duration }
 const playerStateByDevice = new Map(); // device_id -> { type, file, page }
 let currentPreviewContext = { deviceId: null, file: null, page: null };
+let folderPlaylistTimer = null;
+let folderPlaylistState = null;
+let folderPlaylistGuard = false;
+let folderPlaylistIntervalSeconds = DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS;
 
 function resetPreviewHighlightState() {
   currentPreviewContext = { deviceId: null, file: null, page: null };
@@ -101,6 +107,223 @@ function getPreviewContext() {
     file: sampleThumb?.getAttribute('data-file') || currentPreviewContext.file,
     page: currentPreviewContext.page,
   };
+}
+
+function isFolderPlaylistActiveFor(deviceId, file) {
+  return (
+    !!folderPlaylistState &&
+    folderPlaylistState.deviceId === deviceId &&
+    folderPlaylistState.file === file
+  );
+}
+
+function updateFolderPlaylistIntervalButtons(value = folderPlaylistIntervalSeconds) {
+  const buttons = document.querySelectorAll('.folder-playlist-interval-btn');
+  if (!buttons.length) return;
+  const normalizedValue = Math.max(1, Number(value) || DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS);
+  let matched = false;
+  buttons.forEach((btn) => {
+    const interval = Number(btn.getAttribute('data-interval'));
+    const isActive = interval === normalizedValue;
+    btn.classList.toggle('is-active', isActive);
+    if (isActive) {
+      folderPlaylistIntervalSeconds = interval;
+      matched = true;
+    }
+  });
+  if (!matched) {
+    buttons.forEach((btn, idx) => {
+      const shouldActivate = idx === 1; // по умолчанию 10 секунд
+      btn.classList.toggle('is-active', shouldActivate);
+      if (shouldActivate) {
+        folderPlaylistIntervalSeconds = Number(btn.getAttribute('data-interval'));
+      }
+    });
+  }
+}
+
+function updateFolderPlaylistButtonState() {
+  const btn = document.getElementById('folderPlaylistBtn');
+  if (!btn) return;
+  const deviceId = btn.getAttribute('data-device');
+  const file = btn.getAttribute('data-file');
+  const isActive = isFolderPlaylistActiveFor(deviceId, file);
+  btn.classList.toggle('is-active', isActive);
+  btn.textContent = isActive ? 'Остановить плейлист' : 'Плейлист';
+}
+
+function clearFolderPlaylistTimer() {
+  if (folderPlaylistTimer) {
+    clearTimeout(folderPlaylistTimer);
+    folderPlaylistTimer = null;
+  }
+}
+
+function sendPlaylistPlayCommand(payload) {
+  folderPlaylistGuard = true;
+  socket.emit('control/play', payload);
+  folderPlaylistGuard = false;
+}
+
+function scheduleFolderPlaylistTick() {
+  clearFolderPlaylistTimer();
+  if (!folderPlaylistState) return;
+  folderPlaylistTimer = setTimeout(() => {
+    if (!folderPlaylistState) return;
+    const { deviceId, file, imageCount } = folderPlaylistState;
+    if (!deviceId || !file || !imageCount) {
+      stopFolderPlaylist('нет кадров для плейлиста');
+      return;
+    }
+    let nextIndex = (folderPlaylistState.currentIndex || 1) + 1;
+    if (nextIndex > imageCount) nextIndex = 1;
+    folderPlaylistState.currentIndex = nextIndex;
+    sendPlaylistPlayCommand({ device_id: deviceId, file, page: nextIndex });
+    scheduleFolderPlaylistTick();
+  }, Math.max(1, (folderPlaylistState.intervalSeconds || folderPlaylistIntervalSeconds || DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS)) * 1000);
+}
+
+function startFolderPlaylist(deviceId, file, imageCount, intervalSeconds = folderPlaylistIntervalSeconds) {
+  if (!deviceId || !file || imageCount < 1) return;
+  const initialPage = 1;
+  folderPlaylistIntervalSeconds = Math.max(1, intervalSeconds || DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS);
+  folderPlaylistState = {
+    deviceId,
+    file,
+    imageCount,
+    currentIndex: initialPage,
+    intervalSeconds: folderPlaylistIntervalSeconds,
+  };
+  // Сохраняем состояние плейлиста в localStorage
+  try {
+    localStorage.setItem('folderPlaylistState', JSON.stringify({
+      deviceId,
+      file,
+      intervalSeconds: folderPlaylistIntervalSeconds,
+    }));
+  } catch (e) {
+    console.warn('[Speaker] Не удалось сохранить состояние плейлиста:', e);
+  }
+  console.log('[Speaker] ▶️ Запуск плейлиста папки:', file, '(', imageCount, 'кадров )');
+  sendPlaylistPlayCommand({ device_id: deviceId, file, page: initialPage });
+  scheduleFolderPlaylistTick();
+  updateFolderPlaylistButtonState();
+}
+
+function stopFolderPlaylist(reason = '') {
+  if (!folderPlaylistState) {
+    clearFolderPlaylistTimer();
+    return;
+  }
+  clearFolderPlaylistTimer();
+  console.log('[Speaker] ⏹️ Плейлист папки остановлен', reason || '');
+  folderPlaylistState = null;
+  // Удаляем состояние плейлиста из localStorage
+  try {
+    localStorage.removeItem('folderPlaylistState');
+  } catch (e) {
+    console.warn('[Speaker] Не удалось удалить состояние плейлиста:', e);
+  }
+  updateFolderPlaylistButtonState();
+}
+
+function stopFolderPlaylistIfNeeded(reason = '', context = {}) {
+  if (!folderPlaylistState || folderPlaylistGuard) return;
+  const { deviceId, file } = context;
+  if (deviceId && folderPlaylistState.deviceId !== deviceId) return;
+  if (file && folderPlaylistState.file === file) return;
+  stopFolderPlaylist(reason);
+}
+
+function toggleFolderPlaylist(deviceId, file, imageCount) {
+  if (!deviceId || !file) return;
+  if (isFolderPlaylistActiveFor(deviceId, file)) {
+    stopFolderPlaylist('manual toggle');
+    return;
+  }
+  const activeBtn = document.querySelector('.folder-playlist-interval-btn.is-active');
+  const intervalValue = activeBtn ? Number(activeBtn.getAttribute('data-interval')) : folderPlaylistIntervalSeconds;
+  startFolderPlaylist(deviceId, file, imageCount, intervalValue);
+}
+
+async function restoreFolderPlaylist() {
+  try {
+    const savedState = localStorage.getItem('folderPlaylistState');
+    if (!savedState) return;
+    
+    const state = JSON.parse(savedState);
+    const { deviceId, file, intervalSeconds } = state;
+    
+    if (!deviceId || !file) return;
+    
+    // Проверяем, что устройство существует
+    const device = devices.find(d => d.device_id === deviceId);
+    if (!device) {
+      localStorage.removeItem('folderPlaylistState');
+      return;
+    }
+    
+    // Получаем количество изображений в папке
+    const res = await speakerFetch(`/api/devices/${encodeURIComponent(deviceId)}/folder/${encodeURIComponent(file)}/images`);
+    if (!res.ok) {
+      localStorage.removeItem('folderPlaylistState');
+      return;
+    }
+    
+    const data = await res.json();
+    const imageCount = (data.images || []).length;
+    
+    if (imageCount < 1) {
+      localStorage.removeItem('folderPlaylistState');
+      return;
+    }
+    
+    // Восстанавливаем плейлист
+    folderPlaylistIntervalSeconds = intervalSeconds || DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS;
+    
+    // Проверяем текущую страницу, если устройство уже воспроизводит этот файл
+    let currentPage = 1;
+    if (device.current && device.current.type === 'folder' && device.current.file === file) {
+      currentPage = Number(device.current.page) || 1;
+    }
+    
+    folderPlaylistState = {
+      deviceId,
+      file,
+      imageCount,
+      currentIndex: currentPage,
+      intervalSeconds: folderPlaylistIntervalSeconds,
+    };
+    
+    // Сохраняем состояние плейлиста в localStorage
+    try {
+      localStorage.setItem('folderPlaylistState', JSON.stringify({
+        deviceId,
+        file,
+        intervalSeconds: folderPlaylistIntervalSeconds,
+      }));
+    } catch (e) {
+      console.warn('[Speaker] Не удалось сохранить состояние плейлиста:', e);
+    }
+    
+    // Если это текущее устройство, переключаемся на него и показываем превью
+    if (deviceId === currentDevice) {
+      await showStaticPreview(deviceId, file, 'folder');
+      updateFolderPlaylistIntervalButtons(folderPlaylistIntervalSeconds);
+    }
+    
+    // Запускаем плейлист с текущей страницы
+    sendPlaylistPlayCommand({ device_id: deviceId, file, page: currentPage });
+    scheduleFolderPlaylistTick();
+    updateFolderPlaylistButtonState();
+    
+    console.log('[Speaker] ✅ Плейлист восстановлен:', file, 'страница:', currentPage);
+  } catch (e) {
+    console.warn('[Speaker] Не удалось восстановить плейлист:', e);
+    try {
+      localStorage.removeItem('folderPlaylistState');
+    } catch {}
+  }
 }
 
 async function fetchStaticPreviewImages(deviceId, safeName, contentType) {
@@ -138,31 +361,64 @@ function renderThumbnailGrid(deviceId, safeName, contentType, imageUrls) {
     filePreview.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary)">Нет миниатюр для этого файла</div>`;
     return;
   }
+  const showPlaylistButton = contentType === 'folder' && imageUrls.length > 1;
+  const playlistIntervalSeconds = Math.max(1, folderPlaylistIntervalSeconds || DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS);
 
   filePreview.innerHTML = `
-    <div style="width:100%; height:100%; overflow-y:auto; padding:var(--space-md); background:var(--panel)">
-      <div class="thumbnail-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); gap:var(--space-sm)">
-        ${imageUrls.map((url, idx) => `
-          <div class="thumbnail-preview"
-               data-device-id="${escapeAttr(deviceId)}"
-               data-file="${escapeAttr(safeName)}"
-               data-page="${idx + 1}"
-               data-type="${escapeAttr(contentType)}">
-            <img src="${url}"
-                 alt="${idx + 1}"
-                 loading="lazy"
-                 style="width:100%; height:100%; object-fit:cover; display:block; pointer-events:none"
-                 onerror="this.parentElement.innerHTML='<div style=&quot;display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);font-size:10px&quot;>✗</div>'" />
-            <div style="position:absolute; bottom:2px; right:4px; background:rgba(0,0,0,0.7); color:#fff; padding:2px 4px; border-radius:3px; font-size:10px; pointer-events:none">${idx + 1}</div>
-          </div>
-        `).join('')}
+    <div class="static-preview-layout">
+      <div class="static-preview-scroll">
+        <div class="thumbnail-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); gap:var(--space-sm)">
+          ${imageUrls.map((url, idx) => `
+            <div class="thumbnail-preview"
+                 data-device-id="${escapeAttr(deviceId)}"
+                 data-file="${escapeAttr(safeName)}"
+                 data-page="${idx + 1}"
+                 data-type="${escapeAttr(contentType)}">
+              <img src="${url}"
+                   alt="${idx + 1}"
+                   loading="lazy"
+                   style="width:100%; height:100%; object-fit:cover; display:block; pointer-events:none"
+                   onerror="this.parentElement.innerHTML='<div style=&quot;display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);font-size:10px&quot;>✗</div>'" />
+              <div style="position:absolute; bottom:2px; right:4px; background:rgba(0,0,0,0.7); color:#fff; padding:2px 4px; border-radius:3px; font-size:10px; pointer-events:none">${idx + 1}</div>
+            </div>
+          `).join('')}
+        </div>
       </div>
+      ${
+        showPlaylistButton
+          ? `
+        <div class="folder-playlist-toolbar">
+          <button 
+            id="folderPlaylistBtn"
+            class="secondary folder-playlist-btn"
+            data-device="${escapeAttr(deviceId)}"
+            data-file="${escapeAttr(safeName)}"
+            data-count="${imageUrls.length}">
+            Плейлист
+          </button>
+          <div class="folder-playlist-hint">
+            <span class="folder-playlist-interval-label">Интервал:</span>
+            <div class="folder-playlist-interval-options">
+              ${FOLDER_INTERVAL_OPTIONS.map(val => `
+                <button
+                  type="button"
+                  class="folder-playlist-interval-btn ${playlistIntervalSeconds === val ? 'is-active' : ''}"
+                  data-interval="${val}"
+                >${val}</button>
+              `).join('')}
+              <span class="folder-playlist-interval-label">сек.</span>
+            </div>
+          </div>
+        </div>`
+          : ''
+      }
     </div>
   `;
 
   filePreview.querySelectorAll('.thumbnail-preview').forEach((thumb, idx) => {
     thumb.addEventListener('click', () => {
       const page = idx + 1;
+      stopFolderPlaylistIfNeeded('manual thumbnail click', { deviceId, file: safeName });
       socket.emit('control/play', {
         device_id: deviceId,
         file: safeName,
@@ -170,6 +426,34 @@ function renderThumbnailGrid(deviceId, safeName, contentType, imageUrls) {
       });
     });
   });
+
+  const playlistBtn = document.getElementById('folderPlaylistBtn');
+  if (playlistBtn) {
+    playlistBtn.addEventListener('click', () => {
+      const btnDevice = playlistBtn.getAttribute('data-device');
+      const btnFile = playlistBtn.getAttribute('data-file');
+      const count = Number(playlistBtn.getAttribute('data-count')) || imageUrls.length;
+      toggleFolderPlaylist(btnDevice, btnFile, count);
+      updateFolderPlaylistButtonState();
+    });
+    updateFolderPlaylistButtonState();
+  }
+  const intervalButtons = document.querySelectorAll('.folder-playlist-interval-btn');
+  if (intervalButtons.length) {
+    intervalButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const nextValue = Number(btn.getAttribute('data-interval'));
+        if (!Number.isFinite(nextValue)) return;
+        folderPlaylistIntervalSeconds = nextValue;
+        updateFolderPlaylistIntervalButtons(nextValue);
+        if (folderPlaylistState) {
+          folderPlaylistState.intervalSeconds = nextValue;
+          scheduleFolderPlaylistTick();
+        }
+      });
+    });
+    updateFolderPlaylistIntervalButtons();
+  }
 }
 
 async function showStaticPreview(deviceId, safeName, contentType, { initiatedByUser = false } = {}) {
@@ -198,6 +482,11 @@ async function syncPreviewWithPlayerState() {
   const state = playerStateByDevice.get(currentDevice);
   if (!state || !state.file || !isStaticContent(state.type)) {
     showLivePreviewForTV(currentDevice, true);
+    return;
+  }
+
+  // Если пользователь явно выбрал другой файл для превью, не переключать автоматически
+  if (currentFile && currentFile !== state.file) {
     return;
   }
 
@@ -266,6 +555,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   } else if (devices[0]) {
     await selectDevice(devices[0].device_id);
   }
+  
+  // Восстанавливаем плейлист после загрузки устройств
+  await restoreFolderPlaylist();
 });
 
 /* Загрузка списка устройств */
@@ -770,6 +1062,7 @@ async function loadFiles() {
       
       // Сбрасываем флаг закрытия при новом воспроизведении
       previewManuallyClosed = false;
+      stopFolderPlaylistIfNeeded('manual play button', { deviceId: currentDevice, file: safeName });
       
       socket.emit('control/play', { device_id: currentDevice, file: safeName });
       
@@ -896,6 +1189,7 @@ document.getElementById('playBtn').onclick = () => {
   // Если выбран файл из списка - воспроизводим его
   else if (currentFile) {
     console.log(`[Speaker] ▶️ Play файл: ${currentFile}`);
+    stopFolderPlaylistIfNeeded('toolbar play', { deviceId: currentDevice, file: currentFile });
     socket.emit('control/play', { device_id: currentDevice, file: currentFile });
   }
   // Иначе пробуем resume (если было что-то до перезапуска сервера)
@@ -924,6 +1218,7 @@ document.getElementById('restartBtn').onclick = () => {
 };
 document.getElementById('stopBtn').onclick = () => {
   if (!currentDevice) return;
+  stopFolderPlaylist('toolbar stop');
   socket.emit('control/stop', { device_id: currentDevice });
   // Мгновенно убираем таймер при стопе
   playbackProgressByDevice.delete(currentDevice);
@@ -944,6 +1239,7 @@ document.getElementById('pdfCloseBtn').onclick = () => {
   previewManuallyClosed = true;
   
   // Останавливаем воспроизведение
+  stopFolderPlaylist('preview closed');
   socket.emit('control/stop', { device_id: currentDevice });
   
   // Сбрасываем выбранный файл
@@ -1025,6 +1321,14 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
     page: Number(device.current.page) || 1,
   });
 
+  if (folderPlaylistState && folderPlaylistState.deviceId === device_id) {
+    if (!device.current || device.current.type !== 'folder' || device.current.file !== folderPlaylistState.file) {
+      stopFolderPlaylist('контент сменился');
+    } else if (device.current.page) {
+      folderPlaylistState.currentIndex = Number(device.current.page) || folderPlaylistState.currentIndex;
+    }
+  }
+
   if (device_id === currentDevice) {
     requestPreviewSync();
   }
@@ -1039,6 +1343,10 @@ function highlightCurrentThumbnail(pageNumber, context) {
   if (!previewContext.deviceId || !previewContext.file) return;
 
   currentPreviewContext = { ...previewContext, page: normalizedPage };
+
+  if (isFolderPlaylistActiveFor(previewContext.deviceId, previewContext.file)) {
+    folderPlaylistState.currentIndex = normalizedPage;
+  }
 
   const thumbnails = filePreview.querySelectorAll('.thumbnail-preview');
   if (!thumbnails.length) return;

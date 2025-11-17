@@ -177,6 +177,83 @@ h1, h2, h3, h4, h5, h6 {
   min-width: 0;
 }
 
+#filePreview .static-preview-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--panel);
+  border-radius: var(--radius-lg);
+}
+
+#filePreview .static-preview-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-md);
+}
+
+.folder-playlist-toolbar {
+  border-top: 1px solid var(--border);
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  align-items: center;
+  background: var(--panel-2);
+}
+
+.folder-playlist-btn {
+  width: 100%;
+  justify-content: center;
+  text-transform: none;
+}
+
+.folder-playlist-btn.is-active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+.folder-playlist-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+}
+
+.folder-playlist-interval-label {
+  color: var(--muted);
+}
+
+.folder-playlist-interval-options {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.folder-playlist-interval-btn {
+  width: 40px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: all var(--transition-base);
+}
+
+.folder-playlist-interval-btn.is-active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+.folder-playlist-note {
+  margin-top: 2px;
+}
+
 /* ===== Lists ===== */
 ul, ol {
   margin: 0;
@@ -605,10 +682,47 @@ body.light .file-item.active {
 }
 
 .preview-controls button {
-  flex: 1;
   min-width: 80px;
   padding: var(--button-padding);
   height: var(--button-height);
+}
+
+#pdfPrevBtn,
+#pdfNextBtn {
+  flex: 0 0 auto;
+  width: 140px;
+  height: 60px;
+  min-width: 140px;
+  padding: 0;
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+}
+
+#pdfCloseBtn {
+  flex: 0 0 auto;
+  width: 60px;
+  height: 60px;
+  min-width: 60px;
+  padding: 0;
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--danger);
+  color: #fff;
+  border-color: var(--danger-2);
+}
+
+#pdfCloseBtn:hover:not(:disabled) {
+  background: var(--danger-2);
+  border-color: var(--danger-2);
+  color: #fff;
 }
 
 /* ===== Upload Zone - Стандартизированная ===== */
