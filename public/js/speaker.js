@@ -306,16 +306,38 @@ async function restoreFolderPlaylist() {
       console.warn('[Speaker] Не удалось сохранить состояние плейлиста:', e);
     }
     
+    // Обновляем состояние устройства в массиве devices
+    if (device) {
+      device.current = {
+        type: 'folder',
+        file: file,
+        state: 'playing',
+        page: currentPage,
+      };
+    }
+    
+    // Обновляем состояние устройства в playerStateByDevice
+    playerStateByDevice.set(deviceId, {
+      type: 'folder',
+      file: file,
+      page: currentPage,
+    });
+    
     // Если это текущее устройство, переключаемся на него и показываем превью
     if (deviceId === currentDevice) {
       await showStaticPreview(deviceId, file, 'folder');
       updateFolderPlaylistIntervalButtons(folderPlaylistIntervalSeconds);
+      // Синхронизируем превью с текущим состоянием
+      requestPreviewSync();
     }
     
     // Запускаем плейлист с текущей страницы
     sendPlaylistPlayCommand({ device_id: deviceId, file, page: currentPage });
     scheduleFolderPlaylistTick();
     updateFolderPlaylistButtonState();
+    
+    // Обновляем рендер списка устройств, чтобы показать текущее состояние
+    renderTVList();
     
     console.log('[Speaker] ✅ Плейлист восстановлен:', file, 'страница:', currentPage);
   } catch (e) {
