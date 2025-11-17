@@ -789,16 +789,32 @@ if (!device_id || !device_id.trim()) {
               
               // Ждем готовности метаданных, затем показываем новый слой с fade-in
               vjsPlayer.one('loadedmetadata', () => {
-                console.log('[Player] 📊 Заглушка: метаданные готовы, показываем поверх бренда');
+                console.log('[Player] 📊 Заглушка: метаданные готовы, ждём первый кадр');
                 hideVideoJsControls();
-                requestAnimationFrame(() => {
-                  videoContainer.classList.remove('preloading');
-                  videoContainer.classList.add('visible');
-                  console.log('[Player] ✅ Плавный переход: бренд → заглушка');
-                  vjsPlayer.play().then(() => {
-                    console.log('[Player] ✅ Заглушка запущена успешно!');
-                  }).catch(err => {
-                    console.error('[Player] ❌ Ошибка запуска заглушки:', err);
+                
+                // Ждём loadeddata (первый кадр загружен) перед показом
+                vjsPlayer.one('loadeddata', () => {
+                  console.log('[Player] 📸 Заглушка: первый кадр загружен, начинаем fade-in');
+                  
+                  // Двойной requestAnimationFrame для гарантии, что браузер готов к рендерингу
+                  requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                      videoContainer.classList.remove('preloading');
+                      videoContainer.classList.add('visible');
+                      console.log('[Player] ✅ Fade-in начат: бренд → заглушка');
+                      
+                      // Ждём canplay перед запуском воспроизведения
+                      vjsPlayer.one('canplay', () => {
+                        // Задержка для завершения CSS fade-in (500ms transition)
+                        setTimeout(() => {
+                          vjsPlayer.play().then(() => {
+                            console.log('[Player] ✅ Заглушка запущена после canplay');
+                          }).catch(err => {
+                            console.error('[Player] ❌ Ошибка запуска заглушки:', err);
+                          });
+                        }, 200); // Задержка для завершения fade-in
+                      });
+                    });
                   });
                 });
               });
@@ -1236,23 +1252,39 @@ if (!device_id || !device_id.trim()) {
             vjsPlayer.src({ src: fileUrl, type: 'video/mp4' });
             // Шаг 3: ждём готовности и показываем новый слой с fade-in
             vjsPlayer.one('loadedmetadata', () => {
-              console.log('[Player] 📊 Метаданные загружены, показываем поверх бренда');
+              console.log('[Player] 📊 Метаданные загружены, ждём первый кадр');
               hideVideoJsControls();
-              requestAnimationFrame(() => {
-                videoContainer.classList.remove('preloading');
-                videoContainer.classList.add('visible');
-                console.log('[Player] ✅ Плавный переход: бренд → видео');
-                vjsPlayer.play().then(() => {
-                  console.log('[Player] ✅ Видео запущено');
-                  if (soundUnlocked && !forceMuted) {
-                    setTimeout(() => {
-                      vjsPlayer.muted(false);
-                      vjsPlayer.volume(1.0);
-                    }, 200);
-                  }
-                }).catch(err => {
-                  console.error('[Player] ❌ Ошибка воспроизведения:', err);
-                  hideVideoJsControls();
+              
+              // Ждём loadeddata (первый кадр загружен) перед показом
+              vjsPlayer.one('loadeddata', () => {
+                console.log('[Player] 📸 Первый кадр загружен, начинаем fade-in');
+                
+                // Двойной requestAnimationFrame для гарантии, что браузер готов к рендерингу
+                requestAnimationFrame(() => {
+                  requestAnimationFrame(() => {
+                    videoContainer.classList.remove('preloading');
+                    videoContainer.classList.add('visible');
+                    console.log('[Player] ✅ Fade-in начат: бренд → видео');
+                    
+                    // Ждём canplay перед запуском воспроизведения
+                    vjsPlayer.one('canplay', () => {
+                      // Задержка для завершения CSS fade-in (500ms transition)
+                      setTimeout(() => {
+                        vjsPlayer.play().then(() => {
+                          console.log('[Player] ✅ Видео запущено после canplay');
+                          if (soundUnlocked && !forceMuted) {
+                            setTimeout(() => {
+                              vjsPlayer.muted(false);
+                              vjsPlayer.volume(1.0);
+                            }, 200);
+                          }
+                        }).catch(err => {
+                          console.error('[Player] ❌ Ошибка воспроизведения:', err);
+                          hideVideoJsControls();
+                        });
+                      }, 200); // Задержка для завершения fade-in
+                    });
+                  });
                 });
               });
             });

@@ -4,6 +4,7 @@
  */
 
 import { getActiveConnections, getDeviceSockets } from './connection-manager.js';
+import { getFileMetadata } from '../database/files-metadata.js';
 
 /**
  * Настраивает обработчики регистрации и пингов устройств
@@ -107,14 +108,26 @@ export function setupDeviceHandlers(socket, deps) {
   });
   
   // player/progress - Прогресс воспроизведения (ретрансляция для панелей)
-  socket.on('player/progress', (payload) => {
+  socket.on('player/progress', async (payload) => {
     try {
       // Нормализуем device_id из сессии, если отсутствует в payload
       const device_id = payload?.device_id || socket.data?.device_id;
       if (!device_id) return;
       const currentTime = Number(payload?.currentTime) || 0;
-      const duration = Number(payload?.duration) || 0;
+      let duration = Number(payload?.duration) || 0;
       const file = payload?.file || null;
+      
+      // Если длительность не пришла от клиента (0), пытаемся получить из БД
+      if (duration === 0 && file) {
+        try {
+          const metadata = getFileMetadata(device_id, file);
+          if (metadata && metadata.video_duration) {
+            duration = Math.floor(metadata.video_duration); // Округляем до секунд
+          }
+        } catch (e) {
+          // Игнорируем ошибки получения метаданных
+        }
+      }
       
       // Отправляем всем слушателям (speaker UI) агрегированный прогресс
       io.emit('player/progress', { device_id, type: 'video', file, currentTime, duration });

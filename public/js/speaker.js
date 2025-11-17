@@ -21,6 +21,7 @@ let currentFile = null;    // имя файла из /api/devices/:id/files
 let tvPage = 0;
 let filePage = 0;
 let nodeNames = {}; // { device_id: name }
+let allFiles = []; // Список всех файлов для текущего устройства (для отображения названий в прогресс-баре)
 // Запоминаем последний выбор превью (для корректного подсвета после refresh)
 let lastPreviewSelection = { file: null, page: null };
 // Прогресс воспроизведения по устройству
@@ -290,7 +291,7 @@ async function loadFiles() {
 
   // Поддержка старого формата (массив строк) и нового формата (массив объектов)
   // ВАЖНО: Фильтруем заглушки - спикеру они не нужны в списке файлов
-  const allFiles = filesData
+  allFiles = filesData
     .filter(item => {
       // Убираем заглушки из списка
       if (typeof item === 'object' && item.isPlaceholder) {
@@ -769,7 +770,22 @@ function updatePlaybackInfoUI() {
     infoEl.textContent = '';
     return;
   }
-  const displayName = (prog.file || '').replace(/\.[^.]+$/, '');
+  
+  // Находим файл в списке по имени файла (может быть safeName или originalName)
+  let displayName = (prog.file || '').replace(/\.[^.]+$/, ''); // Fallback на имя файла без расширения
+  if (prog.file && allFiles && allFiles.length > 0) {
+    const fileInfo = allFiles.find(f => 
+      f.safeName === prog.file || 
+      f.originalName === prog.file ||
+      f.safeName === prog.file.replace(/\.[^.]+$/, '') ||
+      f.originalName === prog.file.replace(/\.[^.]+$/, '')
+    );
+    if (fileInfo && fileInfo.originalName) {
+      // Используем originalName из списка файлов (как в списке на панели)
+      displayName = fileInfo.originalName.replace(/\.[^.]+$/, '');
+    }
+  }
+  
   const total = (prog.duration && prog.duration > 0) ? formatTime(prog.duration) : '--:--';
   infoEl.textContent = `Сейчас: ${displayName} — ${formatTime(prog.currentTime)} / ${total}`;
 }

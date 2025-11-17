@@ -629,10 +629,20 @@ export function createFilesRouter(deps) {
         }
         
       // 3. ⚡ МГНОВЕННОЕ КОПИРОВАНИЕ: просто INSERT метаданных с тем же file_path!
+      // КРИТИЧНО: Определяем правильное original_name - приоритет у fileNamesMap (может быть актуальнее)
+      let targetOriginalName = fileName;
+      if (fileNamesMap[sourceId] && fileNamesMap[sourceId][fileName]) {
+        // Используем из fileNamesMap если есть (более актуальное)
+        targetOriginalName = fileNamesMap[sourceId][fileName];
+      } else if (sourceMetadata.original_name) {
+        // Иначе используем из метаданных
+        targetOriginalName = sourceMetadata.original_name;
+      }
+      
       saveFileMetadata({
         deviceId: targetId,
         safeName: targetSafeName,
-        originalName: sourceMetadata.original_name,
+        originalName: targetOriginalName,
         filePath: sourceMetadata.file_path,  // ✅ ТОТ ЖЕ физический файл!
         fileSize: sourceMetadata.file_size,
         md5Hash: sourceMetadata.md5_hash,
@@ -653,12 +663,10 @@ export function createFilesRouter(deps) {
         fileMtime: sourceMetadata.file_mtime
       });
       
-      // 4. Копируем маппинг имени
-      if (fileNamesMap[sourceId] && fileNamesMap[sourceId][fileName]) {
-        if (!fileNamesMap[targetId]) fileNamesMap[targetId] = {};
-        fileNamesMap[targetId][targetSafeName] = fileNamesMap[sourceId][fileName];
-        saveFileNamesMap(fileNamesMap);
-      }
+      // 4. КРИТИЧНО: Обновляем fileNamesMap для нового устройства, чтобы отображение работало правильно
+      if (!fileNamesMap[targetId]) fileNamesMap[targetId] = {};
+      fileNamesMap[targetId][targetSafeName] = targetOriginalName;
+      saveFileNamesMap(fileNamesMap);
       
       // 5. Если move - удаляем из источника (только из БД!)
       if (move) {

@@ -11,8 +11,8 @@ android {
         applicationId "com.videocontrol.mediaplayer"
         minSdk 21
         targetSdk 34
-        versionCode 254
-        versionName "2.5.4"
+        versionCode 256
+        versionName "2.5.6"
     }
 
     buildTypes {
@@ -50,6 +50,9 @@ dependencies {
 
     // Coroutines
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    
+    // Lifecycle для lifecycleScope (предотвращение утечек памяти)
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.6.2'
 
     // Gson для JSON
     implementation 'com.google.code.gson:gson:2.10.1'
