@@ -58,6 +58,14 @@ function escapeAttr(value = '') {
     .replace(/>/g, '&gt;');
 }
 
+function escapeHtml(value = '') {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 function isStaticContent(type = '') {
   return STATIC_CONTENT_TYPES.has(type);
 }
@@ -826,13 +834,13 @@ function updatePlaybackInfoUI() {
   // Показываем таймер ТОЛЬКО когда реально играет видео
   const device = devices.find(d => d.device_id === currentDevice);
   if (!device || !device.current || device.current.type !== 'video') {
-    infoEl.textContent = '';
+    infoEl.innerHTML = '';
     return;
   }
 
   const prog = playbackProgressByDevice.get(currentDevice);
   if (!prog) {
-    infoEl.textContent = '';
+    infoEl.innerHTML = '';
     return;
   }
   
@@ -851,8 +859,16 @@ function updatePlaybackInfoUI() {
     }
   }
   
+  const safeName = escapeHtml(truncateText(displayName, 50)) || '—';
+  const currentTimeLabel = formatTime(prog.currentTime);
   const total = (prog.duration && prog.duration > 0) ? formatTime(prog.duration) : '--:--';
-  infoEl.textContent = `Сейчас: ${displayName} — ${formatTime(prog.currentTime)} / ${total}`;
+  
+  infoEl.innerHTML = `
+    <div class="meta-line">
+      <span class="meta-title">${safeName}</span>
+      <span class="meta-value">${currentTimeLabel} / ${total}</span>
+    </div>
+  `;
 }
 
 // Прием прогресса от плееров

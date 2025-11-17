@@ -149,6 +149,34 @@ h1, h2, h3, h4, h5, h6 {
   line-height: 1.4;
 }
 
+.meta-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.meta-label {
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+  font-weight: var(--font-weight-medium);
+}
+
+.meta-value {
+  font-size: var(--font-size-sm);
+  color: var(--text);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+.meta-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
 /* ===== Lists ===== */
 ul, ol {
   margin: 0;
