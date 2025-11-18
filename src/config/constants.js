@@ -22,10 +22,19 @@ if (useExternalDataDisk) {
   console.log(`[Config] ℹ️ Using local storage (DATA_ROOT not found: ${DATA_ROOT})`);
 }
 
-// DEVICES - папка с контентом устройств
-export const DEVICES = useExternalDataDisk 
+// DEVICES - папка с контентом устройств (может переопределяться настройками)
+export const DEFAULT_DEVICES_PATH = useExternalDataDisk 
   ? path.join(DATA_ROOT, 'content')
   : path.join(PUBLIC, 'content');
+
+export let DEVICES = process.env.CONTENT_ROOT || DEFAULT_DEVICES_PATH;
+
+export function setDevicesPath(newPath) {
+  if (!newPath || typeof newPath !== 'string') {
+    return;
+  }
+  DEVICES = newPath;
+}
 
 // CONVERTED_CACHE - кэш конвертированных PDF/PPTX
 export const CONVERTED_CACHE = useExternalDataDisk

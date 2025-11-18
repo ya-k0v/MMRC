@@ -40,6 +40,7 @@ import logger, { httpLoggerMiddleware } from './src/utils/logger.js';
 import { cleanupResolutionCache, getResolutionCacheSize } from './src/video/resolution-cache.js';
 import { getDatabase } from './src/database/database.js';
 import { circuitBreakers } from './src/utils/circuit-breaker.js';
+import { getSettings, updateContentRootPath } from './src/config/settings-manager.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -249,6 +250,43 @@ app.get('/api/admin/export-database', requireAuth, requireAdmin, (req, res) => {
   } catch (error) {
     logger.error('[Admin] Error exporting database:', error);
     res.status(500).json({ error: 'Failed to export database' });
+  }
+});
+
+// Настройки администратора
+app.get('/api/admin/settings', requireAuth, requireAdmin, (req, res) => {
+  try {
+    const settings = getSettings();
+    res.json(settings);
+  } catch (error) {
+    logger.error('[Admin] Failed to load settings:', error);
+    res.status(500).json({ error: 'Не удалось загрузить настройки' });
+  }
+});
+
+app.post('/api/admin/settings/content-root', requireAuth, requireAdmin, (req, res) => {
+  try {
+    const { path: newPath } = req.body || {};
+    if (!newPath) {
+      return res.status(400).json({ error: 'Укажите путь' });
+    }
+
+    const normalizedPath = updateContentRootPath(newPath);
+
+    // Пересканируем устройства, чтобы обновить список файлов
+    Object.keys(devices).forEach((deviceId) => {
+      updateDeviceFilesFromDB(deviceId, devices, fileNamesMap);
+    });
+    saveDevicesToDB(devices);
+    io.emit('devices/updated');
+
+    res.json({
+      ok: true,
+      contentRoot: normalizedPath
+    });
+  } catch (error) {
+    logger.error('[Admin] Failed to update content root:', error);
+    res.status(400).json({ error: error.message || 'Не удалось обновить путь' });
   }
 });
 

@@ -61,6 +61,9 @@ STORAGE_MODE=external CONTENT_DIR=/mnt/vc-content \
 - `external` — симлинк на внешний каталог `CONTENT_DIR`
 - `external_fstab` — внешний диск монтируется в `CONTENT_DIR` через `/etc/fstab`, далее симлинк
 
+> После установки путь к хранилищу можно менять через админ‑панель: `⚙️ Настройки → Хранилище контента`.  
+> Все загрузки/воспроизведение идут через backend, поэтому Nginx alias для `/content/` не используется.
+
 См. также: `docs/MANUAL.md` — полезные команды (SQLite, systemd, Nginx, бэкапы).
 
 ### Systemd (для production)

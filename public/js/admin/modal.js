@@ -386,7 +386,49 @@ async function loadModalUsersList(adminFetch) {
 
 export function showSettingsModal() {
   const content = `
-    <div style="display:flex; flex-direction:column; gap:var(--space-lg);">
+    <div id="settingsModalContainer" style="display:flex; flex-direction:column; gap:var(--space-lg);">
+      <div class="meta" style="text-align:center;">Загрузка настроек...</div>
+    </div>
+  `;
+  
+  showModal('⚙️ Настройки', content);
+  
+  setTimeout(async () => {
+    const container = document.getElementById('settingsModalContainer');
+    if (!container) return;
+    
+    let adminFetch;
+    let settingsData = null;
+    
+    try {
+      ({ adminFetch } = await import('./auth.js'));
+      const response = await adminFetch('/api/admin/settings');
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Ошибка загрузки настроек' }));
+        throw new Error(error.error || 'Ошибка загрузки настроек');
+      }
+      settingsData = await response.json();
+    } catch (err) {
+      container.innerHTML = `<div class="meta" style="color:var(--danger); text-align:center;">${err.message}</div>`;
+      return;
+    }
+    
+    const currentContentRoot = settingsData?.runtime?.contentRoot || settingsData?.contentRoot || '';
+    const defaultContentRoot = settingsData?.defaults?.contentRoot || '';
+    
+    container.innerHTML = `
+      <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm); display:flex; flex-direction:column; gap:var(--space-sm);">
+        <div style="font-weight:600;">Хранилище контента</div>
+        <div class="meta" style="color:var(--text-secondary); line-height:1.4;">
+          Укажите абсолютный путь до папки, где лежат папки устройств. Папка должна быть доступна для записи пользователю, от которого запущен сервис.
+        </div>
+        <input id="contentRootInput" class="input" spellcheck="false" />
+        <div class="meta" style="font-size:0.85rem; color:var(--text-secondary);">
+          По умолчанию: <code style="font-family:monospace;">${defaultContentRoot}</code>
+        </div>
+        <div id="contentRootStatus" class="meta" style="min-height:1.2em;"></div>
+        <button id="contentRootSaveBtn" class="primary" style="align-self:flex-start;">Сохранить путь</button>
+      </div>
       <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm);">
         <div style="margin-bottom:var(--space-md); font-weight:600;">База данных</div>
         <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
@@ -398,24 +440,74 @@ export function showSettingsModal() {
           </button>
         </div>
       </div>
-    </div>
-  `;
-  
-  showModal('⚙️ Настройки', content);
-  
-  // Обработчик экспорта базы данных
-  setTimeout(() => {
+    `;
+    
+    const inputEl = document.getElementById('contentRootInput');
+    const saveBtn = document.getElementById('contentRootSaveBtn');
+    const statusEl = document.getElementById('contentRootStatus');
     const exportBtn = document.getElementById('exportDatabaseBtn');
-    if (!exportBtn) return;
+    
+    if (!inputEl || !saveBtn || !statusEl || !exportBtn) return;
+    
+    let lastSavedValue = currentContentRoot;
+    inputEl.value = currentContentRoot;
+    
+    const toggleSaveState = () => {
+      const same = inputEl.value.trim() === lastSavedValue;
+      saveBtn.disabled = same;
+      if (!same) {
+        statusEl.textContent = '';
+        statusEl.style.color = 'var(--text-secondary)';
+      }
+    };
+    
+    toggleSaveState();
+    inputEl.addEventListener('input', toggleSaveState);
+    
+    saveBtn.onclick = async () => {
+      const newPath = inputEl.value.trim();
+      if (!newPath) {
+        statusEl.textContent = 'Укажите абсолютный путь';
+        statusEl.style.color = 'var(--danger)';
+        return;
+      }
+      
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Сохранение...';
+      statusEl.textContent = 'Проверяем путь...';
+      statusEl.style.color = 'var(--text-secondary)';
+      
+      try {
+        const response = await adminFetch('/api/admin/settings/content-root', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: newPath })
+        });
+        
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ error: 'Не удалось сохранить' }));
+          throw new Error(error.error || 'Не удалось сохранить');
+        }
+        
+        const data = await response.json();
+        lastSavedValue = data.contentRoot || newPath;
+        inputEl.value = lastSavedValue;
+        statusEl.textContent = 'Путь сохранён. Контент будет загружаться и читаться из новой папки.';
+        statusEl.style.color = 'var(--success, #22c55e)';
+      } catch (err) {
+        statusEl.textContent = err.message;
+        statusEl.style.color = 'var(--danger)';
+      } finally {
+        saveBtn.textContent = 'Сохранить путь';
+        toggleSaveState();
+      }
+    };
     
     exportBtn.onclick = async () => {
       exportBtn.disabled = true;
       exportBtn.textContent = 'Экспорт...';
       
       try {
-        // Импортируем adminFetch для правильной авторизации
-        const { adminFetch } = await import('./auth.js');
-        
         const response = await adminFetch('/api/admin/export-database');
         
         if (!response.ok) {
@@ -423,7 +515,6 @@ export function showSettingsModal() {
           throw new Error(error.error || 'Ошибка экспорта');
         }
         
-        // Скачиваем файл через blob
         const blob = await response.blob();
         const url = window.URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -433,7 +524,6 @@ export function showSettingsModal() {
         document.body.appendChild(link);
         link.click();
         
-        // Очищаем после скачивания
         setTimeout(() => {
           document.body.removeChild(link);
           window.URL.revokeObjectURL(url);
