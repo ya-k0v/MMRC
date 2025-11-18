@@ -346,7 +346,6 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       }));
       
       fileItem.style.opacity = '0.5';
-      console.log(`[DragDrop] 🎬 Начало перетаскивания: ${fileName} (${sourceDeviceId})`);
     });
     
     fileItem.addEventListener('dragend', (e) => {

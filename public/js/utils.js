@@ -111,7 +111,6 @@ export async function loadNodeNames() {
     
     return nodeNames;
   } catch (e) {
-    console.warn('Не удалось загрузить имена устройств из API', e);
     return {};
   }
 }

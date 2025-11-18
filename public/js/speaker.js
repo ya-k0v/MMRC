@@ -202,9 +202,8 @@ function startFolderPlaylist(deviceId, file, imageCount, intervalSeconds = folde
       intervalSeconds: folderPlaylistIntervalSeconds,
     }));
   } catch (e) {
-    console.warn('[Speaker] Не удалось сохранить состояние плейлиста:', e);
+    // Failed to save playlist state
   }
-  console.log('[Speaker] ▶️ Запуск плейлиста папки:', file, '(', imageCount, 'кадров )');
   sendPlaylistPlayCommand({ device_id: deviceId, file, page: initialPage });
   scheduleFolderPlaylistTick();
   updateFolderPlaylistButtonState();
@@ -216,13 +215,12 @@ function stopFolderPlaylist(reason = '') {
     return;
   }
   clearFolderPlaylistTimer();
-  console.log('[Speaker] ⏹️ Плейлист папки остановлен', reason || '');
   folderPlaylistState = null;
   // Удаляем состояние плейлиста из localStorage
   try {
     localStorage.removeItem('folderPlaylistState');
   } catch (e) {
-    console.warn('[Speaker] Не удалось удалить состояние плейлиста:', e);
+    // Failed to remove playlist state
   }
   updateFolderPlaylistButtonState();
 }
@@ -303,7 +301,7 @@ async function restoreFolderPlaylist() {
         intervalSeconds: folderPlaylistIntervalSeconds,
       }));
     } catch (e) {
-      console.warn('[Speaker] Не удалось сохранить состояние плейлиста:', e);
+      // Failed to save playlist state
     }
     
     // Обновляем состояние устройства в массиве devices
@@ -338,10 +336,8 @@ async function restoreFolderPlaylist() {
     
     // Обновляем рендер списка устройств, чтобы показать текущее состояние
     renderTVList();
-    
-    console.log('[Speaker] ✅ Плейлист восстановлен:', file, 'страница:', currentPage);
   } catch (e) {
-    console.warn('[Speaker] Не удалось восстановить плейлист:', e);
+    // Failed to restore playlist
     try {
       localStorage.removeItem('folderPlaylistState');
     } catch {}
@@ -707,7 +703,6 @@ function showLivePreviewForTV(deviceId, force = false) {
   // ИСПРАВЛЕНО: Если force=true - принудительно очищаем превью
   // Это используется при явном переключении устройства
   if (force) {
-    console.log('[Speaker] 🔄 Принудительное обновление превью для устройства:', deviceId);
     resetPreviewHighlightState();
     currentPreviewContext = { deviceId, file: null, page: null };
     filePreview.innerHTML = `<iframe src="/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&muted=1" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
@@ -717,7 +712,6 @@ function showLivePreviewForTV(deviceId, force = false) {
   // Не переключаем превью если показана сетка миниатюр (только при НЕ принудительном вызове)
   const hasThumbnails = filePreview.querySelector('.thumbnail-preview');
   if (hasThumbnails) {
-    console.debug('[Speaker] ℹ️ Превью показывает миниатюры, не переключаем на заглушку');
     return;
   }
   
@@ -1095,7 +1089,6 @@ async function loadFiles() {
       
       // Для PDF/PPTX/FOLDER - открываем превью автоматически
       if (isStaticContent) {
-        console.log('[Speaker] 📊 Открываем превью для статичного контента:', safeName);
       } else {
       // Для видео и обычных изображений - показываем заглушку
         // Чтобы не было двойной загрузки (preview + основной плеер)
@@ -1154,9 +1147,35 @@ function updatePlaybackInfoUI() {
   }
 
   const prog = playbackProgressByDevice.get(currentDevice);
-  if (!prog) {
+  if (!prog || !prog.file) {
     infoEl.innerHTML = '';
     return;
+  }
+  
+  // Проверяем, что файл в прогрессе совпадает с текущим файлом устройства
+  if (prog.file !== device.current.file) {
+    infoEl.innerHTML = '';
+    return;
+  }
+  
+  // Проверяем, не закончилось ли видео (с небольшой погрешностью)
+  if (prog.duration > 0 && prog.currentTime >= prog.duration - 0.5) {
+    infoEl.innerHTML = '';
+    return;
+  }
+  
+  // Проверяем, не является ли файл заглушкой
+  if (prog.file && allFiles && allFiles.length > 0) {
+    const fileInfo = allFiles.find(f => 
+      f.safeName === prog.file || 
+      f.originalName === prog.file ||
+      f.safeName === prog.file.replace(/\.[^.]+$/, '') ||
+      f.originalName === prog.file.replace(/\.[^.]+$/, '')
+    );
+    if (fileInfo && fileInfo.isPlaceholder) {
+      infoEl.innerHTML = '';
+      return;
+    }
   }
   
   // Находим файл в списке по имени файла (может быть safeName или originalName)
@@ -1203,20 +1222,17 @@ document.getElementById('playBtn').onclick = () => {
   
   // Если устройство на паузе - продолжаем воспроизведение (resume)
   if (device && device.current && device.current.state === 'paused') {
-    console.log(`[Speaker] ▶️ Resume: ${currentDevice} (файл: ${device.current.file || 'unknown'})`);
     socket.emit('control/play', { device_id: currentDevice }); // Сервер отправит player/resume
     // Обновляем локальное состояние
     device.current.state = 'playing';
   } 
   // Если выбран файл из списка - воспроизводим его
   else if (currentFile) {
-    console.log(`[Speaker] ▶️ Play файл: ${currentFile}`);
     stopFolderPlaylistIfNeeded('toolbar play', { deviceId: currentDevice, file: currentFile });
     socket.emit('control/play', { device_id: currentDevice, file: currentFile });
   }
   // Иначе пробуем resume (если было что-то до перезапуска сервера)
   else {
-    console.log(`[Speaker] ▶️ Resume (нет currentFile)`);
     socket.emit('control/play', { device_id: currentDevice });
   }
 };
@@ -1229,7 +1245,6 @@ document.getElementById('pauseBtn').onclick = () => {
   // Обновляем локальное состояние устройства на "пауза"
   if (device && device.current) {
     device.current.state = 'paused';
-    console.log(`[Speaker] ⏸️ Пауза: ${currentDevice} (файл: ${device.current.file || 'unknown'})`);
   }
   
   socket.emit('control/pause', { device_id: currentDevice });
@@ -1274,8 +1289,6 @@ document.getElementById('pdfCloseBtn').onclick = () => {
   
   // Возвращаем preview в исходное состояние (показываем live preview устройства)
   showLivePreviewForTV(currentDevice, true);
-  
-  console.log('[Speaker] ✕ Закрыть: preview возвращён в исходное состояние, автооткрытие отключено');
 };
 
 /* Реакция на обновления с сервера — дебаунс + сохранение выбора */
@@ -1335,7 +1348,23 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
 
   if (!device_id) return;
   const device = devices.find(d => d.device_id === device_id);
-  if (!device || !device.current) return;
+  if (!device || !device.current) {
+    // Если устройство не воспроизводит ничего, очищаем прогресс
+    playbackProgressByDevice.delete(device_id);
+    if (device_id === currentDevice) {
+      updatePlaybackInfoUI();
+    }
+    return;
+  }
+
+  // Если тип контента изменился или файл изменился, очищаем старый прогресс
+  const oldState = playerStateByDevice.get(device_id);
+  if (oldState && (oldState.type !== device.current.type || oldState.file !== device.current.file)) {
+    playbackProgressByDevice.delete(device_id);
+    if (device_id === currentDevice) {
+      updatePlaybackInfoUI();
+    }
+  }
 
   playerStateByDevice.set(device_id, {
     type: device.current.type,
@@ -1388,7 +1417,6 @@ function highlightCurrentThumbnail(pageNumber, context) {
   );
   if (targetThumb) {
     targetThumb.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    console.log('[Speaker] 🎯 Выделена миниатюра:', normalizedPage);
   }
 }
 

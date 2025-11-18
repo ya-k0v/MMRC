@@ -10,7 +10,6 @@ let fetchFunction = null;
  * Инициализация системного монитора
  */
 export function initSystemMonitor(adminFetch) {
-  console.log('Initializing system monitor...');
   
   fetchFunction = adminFetch;
   
@@ -36,7 +35,6 @@ function createSystemMonitorUI() {
   // Находим специальный контейнер для монитора
   const centerDiv = document.getElementById('systemMonitorContainer');
   if (!centerDiv) {
-    console.warn('System monitor container not found');
     return;
   }
 
@@ -84,7 +82,6 @@ function createSystemMonitorUI() {
  */
 async function loadSystemInfo() {
   if (!fetchFunction) {
-    console.warn('System monitor: fetchFunction not set');
     return;
   }
   

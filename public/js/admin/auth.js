@@ -10,11 +10,9 @@ export async function ensureAuth() {
   const token = localStorage.getItem('accessToken');
   const userStr = localStorage.getItem('user');
   
-  console.log('[Admin Auth] Checking auth - token:', !!token, 'user:', !!userStr);
   
   // ИСПРАВЛЕНО: Если нет токена - редирект на login
   if (!token || !userStr) {
-    console.log('[Admin Auth] No token or user - redirecting to /index.html');
     localStorage.clear();
     window.location.href = '/index.html';
     return false;
@@ -23,22 +21,18 @@ export async function ensureAuth() {
   // Проверяем роль
   try {
     const user = JSON.parse(userStr);
-    console.log('[Admin Auth] User role:', user.role);
   
     if (user.role === 'speaker') {
-      console.log('[Admin Auth] Speaker trying to access admin - redirecting to /speaker.html');
       window.location.href = '/speaker.html';
       return false;
     }
   
     if (user.role !== 'admin') {
-      console.log('[Admin Auth] Invalid role - clearing and redirecting');
       localStorage.clear();
       window.location.href = '/index.html';
       return false;
     }
 
-    console.log('[Admin Auth] Access granted');
     return true;
   } catch (e) {
     console.error('[Admin Auth] Error parsing user data:', e);

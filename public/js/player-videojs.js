@@ -81,7 +81,6 @@ function ensureSocketConnected(reason = 'manual') {
   if (socket.connected || isActive) {
     return;
   }
-  console.log(`[Player] 🔄 ensureSocketConnected → connect (${reason})`);
   try {
     socket.connect();
   } catch (err) {
@@ -115,9 +114,7 @@ function hideVideoJsControls() {
       loadingSpinner.el().style.display = 'none';
     }
     
-    console.log('[Player] 🚫 Все контролы Video.js скрыты');
   } catch (e) {
-    console.warn('[Player] ⚠️ Ошибка скрытия контролов:', e);
   }
 }
 
@@ -155,7 +152,6 @@ if (!device_id || !device_id.trim()) {
         
         // Ждем полной готовности Video.js
         vjsPlayer.ready(function() {
-          console.log('[Player] ✅ Video.js готов к работе');
           // По умолчанию для видео включаем логотип на фоне
           setBrandBackgroundMode('logo');
           
@@ -164,11 +160,9 @@ if (!device_id || !device_id.trim()) {
           
           // Автовключение звука ПОСЛЕ готовности Video.js
           if (!preview && forceSound && !forceMuted) {
-            console.log('[Player] 🔊 Автовключение звука (sound=1)');
             setTimeout(() => enableSound(), 500);
             if (unmuteBtn) unmuteBtn.style.display = 'none';
           } else if (!preview && localStorage.getItem('vc_sound') === '1' && !forceMuted) {
-            console.log('[Player] 🔊 Автовключение звука (из localStorage)');
             setTimeout(() => enableSound(), 500);
             if (unmuteBtn) unmuteBtn.style.display = 'none';
           } else if (unmuteBtn && !forceMuted && !preview) {
@@ -181,7 +175,6 @@ if (!device_id || !device_id.trim()) {
           
           // Обработчик окончания видео
           vjsPlayer.on('ended', () => {
-            console.log('[Player] 🎬 Video.js ended event');
             
             // КРИТИЧНО: Android WebView может генерировать 'ended' при паузе (баг)
             // Проверяем, что видео ДЕЙСТВИТЕЛЬНО закончилось
@@ -190,23 +183,18 @@ if (!device_id || !device_id.trim()) {
             const isActuallyEnded = duration > 0 && currentTime >= duration - 0.5;
             const isLooping = vjsPlayer.loop();
             
-            console.log('[Player] 🔍 Проверка ended:', { currentTime, duration, isActuallyEnded, paused: vjsPlayer.paused(), loop: isLooping });
             
             // КРИТИЧНО: Если включен loop - НЕ показываем placeholder!
             if (isLooping && isActuallyEnded) {
-              console.log('[Player] 🔄 Loop видео, начинаем сначала БЕЗ черного экрана');
               vjsPlayer.currentTime(0);
               vjsPlayer.play();
               return;
             }
             
             if (!preview && isActuallyEnded && (currentFileState.type === null || currentFileState.type === 'video')) {
-              console.log('[Player] ✅ Видео закончилось, показываем заглушку');
               showPlaceholder();
             } else if (!isActuallyEnded) {
-              console.log('[Player] ⚠️ Ложное ended событие (Android WebView bug), игнорируем');
             } else {
-              console.log('[Player] ⚠️ Не показываем заглушку:', { preview, isActuallyEnded, currentFileStateType: currentFileState.type });
             }
           });
           
@@ -224,28 +212,22 @@ if (!device_id || !device_id.trim()) {
           let lastLoggedPercent = -1;
           
           vjsPlayer.on('stalled', () => {
-            console.warn('[Player] ⚠️ Video stalled');
           });
           
           vjsPlayer.on('waiting', () => {
-            console.log('[Player] ⏳ Video waiting');
           });
           
           vjsPlayer.on('playing', () => {
-            console.log('[Player] ▶️ Video playing');
             
             // КРИТИЧНО: Запрашиваем Wake Lock для предотвращения suspend
             if ('wakeLock' in navigator && !wakeLock) {
               navigator.wakeLock.request('screen').then(wl => {
                 wakeLock = wl;
-                console.log('[Player] 🔒 Wake Lock получен - предотвращаем suspend');
                 
                 wakeLock.addEventListener('release', () => {
-                  console.log('[Player] 🔓 Wake Lock освобожден');
                   wakeLock = null;
                 });
               }).catch(e => {
-                console.debug('[Player] Wake Lock недоступен:', e);
               });
             }
           });
@@ -305,7 +287,6 @@ if (!device_id || !device_id.trim()) {
               const duration = vjsPlayer.duration();
               const percent = duration > 0 ? Math.round((bufferedEnd / duration) * 100) : 0;
               if (percent !== lastLoggedPercent && percent % 10 === 0) {
-                console.log(`[Player] 📊 Буферизовано: ${percent}%`);
                 lastLoggedPercent = percent;
               }
             }
@@ -314,15 +295,12 @@ if (!device_id || !device_id.trim()) {
           vjsPlayer.on('suspend', () => {
             // НИЧЕГО НЕ ДЕЛАЕМ - Android сам управляет буферизацией
             // videoEl.load() ПРЕРЫВАЕТ воспроизведение - это создает цикл ошибок
-            console.debug('[Player] Video suspend (игнорируем, Android сам управляет буферизацией)');
           });
           
           vjsPlayer.on('canplay', () => {
-            console.log('[Player] ✅ canplay - достаточно данных для воспроизведения');
           });
           
           vjsPlayer.on('canplaythrough', () => {
-            console.log('[Player] ✅ canplaythrough - весь файл может быть воспроизведен');
           });
           
           // Загружаем заглушку или preview файл после готовности
@@ -333,28 +311,23 @@ if (!device_id || !device_id.trim()) {
               const previewPage = url.searchParams.get('page');
               const ext = previewFile.split('.').pop().toLowerCase();
               
-              console.log('[Player] 🔍 Preview режим:', { previewFile, previewType, previewPage, ext });
               
               if (previewType === 'pdf' && previewPage) {
                 // PDF preview
                 const imageUrl = `/api/devices/${encodeURIComponent(device_id)}/converted/${encodeURIComponent(previewFile)}/page/${previewPage}`;
-                console.log('[Player] 📄 Preview PDF:', imageUrl);
                 img.src = imageUrl;
                 show(img);
               } else if (previewType === 'pptx' && previewPage) {
                 // PPTX preview
                 const imageUrl = `/api/devices/${encodeURIComponent(device_id)}/converted/${encodeURIComponent(previewFile)}/slide/${previewPage}`;
-                console.log('[Player] 📊 Preview PPTX:', imageUrl);
                 img.src = imageUrl;
                 show(img);
               } else if (previewType === 'image' || ['png','jpg','jpeg','gif','webp'].includes(ext)) {
                 // Изображение preview
-                console.log('[Player] 🖼️ Preview изображение:', previewFile);
                 img.src = content(previewFile);
                 show(img);
               } else if (['mp4','webm','ogg','mkv','mov','avi'].includes(ext) || previewType === 'video') {
                 // Видео preview
-                console.log('[Player] 🎬 Preview видео:', previewFile);
                 vjsPlayer.loop(true);
                 vjsPlayer.muted(true);
                 vjsPlayer.volume(0);
@@ -369,11 +342,9 @@ if (!device_id || !device_id.trim()) {
                     if (head.ok) {
                       vjsPlayer.src({ src: trailerSrc, type: 'video/mp4' });
                     } else {
-                      console.log('[Player] ℹ️ Трейлер 404, используем on-the-fly превью (5s)');
                       vjsPlayer.src({ src: fallbackPreviewSrc, type: 'video/mp4' });
                     }
                   } catch {
-                    console.log('[Player] ℹ️ Ошибка HEAD трейлера, используем on-the-fly превью (5s)');
                     vjsPlayer.src({ src: fallbackPreviewSrc, type: 'video/mp4' });
                   }
                 })();
@@ -382,22 +353,17 @@ if (!device_id || !device_id.trim()) {
                 // Даем время для загрузки src
                 setTimeout(() => {
                   vjsPlayer.play().then(() => {
-                    console.log('[Player] ✅ Preview видео запущено:', previewFile);
                   }).catch(err => {
                     // КРИТИЧНО: Игнорируем AbortError - браузер блокирует autoplay на фоновых вкладках
                     // Видео всё равно загружено и показан первый кадр
                     if (err.name === 'AbortError') {
-                      console.log('[Player] ℹ️ Preview видео загружен (autoplay заблокирован браузером - это нормально для фоновых вкладок)');
                     } else {
-                      console.warn('[Player] ⚠️ Preview ошибка:', err.name, err.message);
                     }
                     
                     // SAFARI FIX: Если autoplay не сработал, пробуем запустить при клике
                     if (preview) {
                       const startOnInteraction = () => {
                         vjsPlayer.play().then(() => {
-                          console.log('[Player] ✅ Safari: видео запущено после user interaction');
-                        }).catch(e => console.log('[Player] Safari play error:', e));
                         document.removeEventListener('click', startOnInteraction);
                         document.removeEventListener('touchstart', startOnInteraction);
                       };
@@ -407,7 +373,6 @@ if (!device_id || !device_id.trim()) {
                   });
                 }, 150);
               } else {
-                console.warn('[Player] ⚠️ Неизвестный тип preview:', ext, previewType);
               }
             }, 100);
           } else {
@@ -433,12 +398,9 @@ if (!device_id || !device_id.trim()) {
   // Плавный показ элемента с ОБЯЗАТЕЛЬНЫМ переходом через черный экран
   function show(el, skipTransition = false) {
     if (!el) {
-      console.warn('[Player] ⚠️ show() вызван с null/undefined element!');
       return;
     }
     
-    console.log('[Player] 🎬 show() с плавным переходом для:', el.id || el.className, 'skipTransition:', skipTransition);
-    console.log('[Player] 🔍 Element visibility before:', el.classList.contains('visible'));
     
     // Убедимся что body черный
     document.body.style.background = 'transparent';
@@ -457,12 +419,10 @@ if (!device_id || !device_id.trim()) {
         }
       });
       
-      console.log('[Player] ⚡ Мгновенный показ (без transition)');
       return;
     }
     
     // ПЕРЕХОД ЧЕРЕЗ ЧЕРНЫЙ: Сначала показываем черный экран
-    console.log('[Player] 🖤 Переход через черный экран...');
     
     // 1. Скрываем все кроме idle
     [videoContainer, img1, img2, pdf].forEach(e => {
@@ -485,7 +445,6 @@ if (!device_id || !device_id.trim()) {
           el.classList.add('visible'); // Fade in нового контента
           idle.classList.remove('visible'); // Fade out черного экрана
           
-          console.log('[Player] ✅ Переход из черного в контент');
           
           setTimeout(() => {
             if (el) el.style.zIndex = '';
@@ -498,7 +457,6 @@ if (!device_id || !device_id.trim()) {
   // Предзагрузка элемента (скрыто)
   function preload(el) {
     if (!el) return;
-    console.log('[Player] 📥 Предзагрузка:', el.id || el.className);
     el.classList.remove('visible');
     el.classList.add('preloading');
   }
@@ -569,43 +527,32 @@ if (!device_id || !device_id.trim()) {
               // Возвращаем URL с cache-busting если force=true
               return url + cacheBuster;
             } else {
-              console.warn(`[Player] ⚠️ API вернул ${data.placeholder}, но файл недоступен (${checkRes.status})`);
             }
           } catch (e) {
-            console.warn(`[Player] ⚠️ Ошибка проверки файла ${url}:`, e);
           }
         }
       }
     } catch (e) {
-      console.warn('[Player] ⚠️ Ошибка запроса placeholder API:', e);
     }
     
     // НОВОЕ: Fallback больше не используется с новой архитектурой
     // Заглушки управляются через БД (is_placeholder flag)
     // Если API не вернул заглушку - значит её нет, и не должно быть fallback поиска
-    console.warn('[Player] ❌ Заглушка не установлена для устройства');
-    console.log('[Player] 💡 Установите заглушку через админ панель: выберите файл → "Заглушка"');
     return null;
   }
 
   let currentPlaceholderSrc = null; // Отслеживаем текущую заглушку
   
   async function showPlaceholder(forceRefresh = false) {
-    console.log('[Player] 🔍 showPlaceholder вызван, forceRefresh=', forceRefresh);
-    console.log('[Player] 🔍 currentFileState:', currentFileState);
     
     // При force refresh сбрасываем текущую заглушку для принудительной перезагрузки
     if (forceRefresh) {
       currentPlaceholderSrc = null;
-      console.log('[Player] 🔄 Force refresh: сбросили currentPlaceholderSrc');
     }
     
     const src = await resolvePlaceholder(forceRefresh);
-    console.log('[Player] 🔍 Заглушка найдена:', src);
-    console.log('[Player] 🔍 src type:', typeof src, 'length:', src?.length);
     
     if (!src) {
-      console.warn('[Player] ⚠️ Заглушка не найдена!');
       
       // Показываем сообщение об отсутствии заглушки
       if (preview) {
@@ -651,7 +598,6 @@ if (!device_id || !device_id.trim()) {
     
     // КРИТИЧНО: Если та же заглушка уже играет - не перезагружаем (кроме force refresh)
     if (!forceRefresh && currentPlaceholderSrc === src && vjsPlayer && !vjsPlayer.paused()) {
-      console.log('[Player] ℹ️ Та же заглушка уже играет, пропускаем');
       return;
     }
     
@@ -659,10 +605,8 @@ if (!device_id || !device_id.trim()) {
     currentFileState = { type: 'placeholder', file: src, page: 1 }; // КРИТИЧНО: Сбрасываем состояние
     
     const isImage = /\.(png|jpg|jpeg|gif|webp)$/i.test(src);
-    console.log('[Player] 🔍 Тип заглушки:', isImage ? 'изображение' : 'видео', 'src:', src);
     
     if (isImage) {
-      console.log('[Player] 🖼️ Загрузка изображения заглушки');
       if (vjsPlayer) vjsPlayer.pause();
       pdf.removeAttribute('src');
       
@@ -671,7 +615,6 @@ if (!device_id || !device_id.trim()) {
       const tempImg = new Image();
       
       const showImagePlaceholder = () => {
-        console.log('[Player] ✅ Заглушка-изображение загружена, показываем');
         // КРИТИЧНО: Убираем черный экран перед показом заглушки
         idle.classList.remove('visible');
         img.src = src;
@@ -720,13 +663,10 @@ if (!device_id || !device_id.trim()) {
       // КРИТИЧНО: Если изображение уже загружено (например из кэша),
       // событие onload НЕ сработает! Проверяем и показываем сразу
       if (tempImg.complete && tempImg.naturalWidth > 0) {
-        console.log('[Player] ⚡ Заглушка-изображение из кэша, показываем сразу');
         showImagePlaceholder();
       }
     } else {
       // Видео заглушка через Video.js
-      console.log('[Player] 🎬 Загрузка видео заглушки через Video.js');
-      console.log('[Player] 🔍 vjsPlayer существует:', !!vjsPlayer);
       
       if (vjsPlayer) {
         // КРИТИЧНО: Финальная проверка доступности ПЕРЕД установкой src в Video.js
@@ -767,9 +707,7 @@ if (!device_id || !device_id.trim()) {
               return;
             }
             
-            console.log('[Player] ✅ Финальная проверка пройдена, файл доступен');
             
-            console.log('[Player] 🔍 Установка параметров Video.js для заглушки...');
             vjsPlayer.loop(true);
             vjsPlayer.muted(true);
             vjsPlayer.volume(0);
@@ -784,31 +722,26 @@ if (!device_id || !device_id.trim()) {
             videoContainer.classList.add('preloading');
             
             const setPlaceholderSrcAndShow = () => {
-              console.log('[Player] 🔍 Установка src заглушки:', src);
               vjsPlayer.src({ src: src, type: 'video/mp4' });
               
               // Ждем готовности метаданных, затем показываем новый слой с fade-in
               vjsPlayer.one('loadedmetadata', () => {
-                console.log('[Player] 📊 Заглушка: метаданные готовы, ждём первый кадр');
                 hideVideoJsControls();
                 
                 // Ждём loadeddata (первый кадр загружен) перед показом
                 vjsPlayer.one('loadeddata', () => {
-                  console.log('[Player] 📸 Заглушка: первый кадр загружен, начинаем fade-in');
                   
                   // Двойной requestAnimationFrame для гарантии, что браузер готов к рендерингу
                   requestAnimationFrame(() => {
                     requestAnimationFrame(() => {
                       videoContainer.classList.remove('preloading');
                       videoContainer.classList.add('visible');
-                      console.log('[Player] ✅ Fade-in начат: бренд → заглушка');
                       
                       // Ждём canplay перед запуском воспроизведения
                       vjsPlayer.one('canplay', () => {
                         // Задержка для завершения CSS fade-in (500ms transition)
                         setTimeout(() => {
                           vjsPlayer.play().then(() => {
-                            console.log('[Player] ✅ Заглушка запущена после canplay');
                           }).catch(err => {
                             console.error('[Player] ❌ Ошибка запуска заглушки:', err);
                           });
@@ -840,12 +773,10 @@ if (!device_id || !device_id.trim()) {
   // Предзагрузка всех слайдов PPTX/PDF в кэш
   async function preloadAllSlides(file, type) {
     try {
-      console.log(`[Player] 🔄 Предзагрузка слайдов: ${file}`);
       
       // Получаем количество слайдов через API (используем query параметр для поддержки пробелов в именах)
       const response = await fetch(`/api/devices/${encodeURIComponent(device_id)}/slides-count?file=${encodeURIComponent(file)}`);
       if (!response.ok) {
-        console.warn('[Player] ⚠️ Не удалось получить количество слайдов');
         return;
       }
       
@@ -853,11 +784,9 @@ if (!device_id || !device_id.trim()) {
       const count = data.count || 0;
       
       if (count === 0) {
-        console.warn('[Player] ⚠️ Нет слайдов для предзагрузки');
         return;
       }
       
-      console.log(`[Player] 📊 Найдено слайдов: ${count}. Начинаем предзагрузку...`);
       
       // Создаем массив Image объектов
       const images = [];
@@ -872,11 +801,9 @@ if (!device_id || !device_id.trim()) {
         
         const promise = new Promise((resolve, reject) => {
           imgObj.onload = () => {
-            console.log(`[Player] ✅ Слайд ${i}/${count} загружен`);
             resolve();
           };
           imgObj.onerror = () => {
-            console.warn(`[Player] ⚠️ Ошибка загрузки слайда ${i}/${count}`);
             resolve(); // Не прерываем весь процесс из-за одного слайда
           };
           imgObj.src = imageUrl;
@@ -890,7 +817,6 @@ if (!device_id || !device_id.trim()) {
       
       // Сохраняем в кэш
       slidesCache[file] = { count, images, type };
-      console.log(`[Player] 🎉 Все слайды загружены в кэш: ${file} (${count} слайдов)`);
       
     } catch (error) {
       console.error('[Player] ❌ Ошибка предзагрузки слайдов:', error);
@@ -900,12 +826,10 @@ if (!device_id || !device_id.trim()) {
   // Предзагрузка всех изображений из папки в кэш
   async function preloadAllFolderImages(folderName) {
     try {
-      console.log(`[Player] 🔄 Предзагрузка изображений из папки: ${folderName}`);
       
       // Получаем список изображений через API
       const response = await fetch(`/api/devices/${encodeURIComponent(device_id)}/folder/${encodeURIComponent(folderName)}/images`);
       if (!response.ok) {
-        console.warn('[Player] ⚠️ Не удалось получить список изображений из папки');
         return;
       }
       
@@ -914,11 +838,9 @@ if (!device_id || !device_id.trim()) {
       const count = imageList.length;
       
       if (count === 0) {
-        console.warn('[Player] ⚠️ Нет изображений для предзагрузки');
         return;
       }
       
-      console.log(`[Player] 📊 Найдено изображений: ${count}. Начинаем предзагрузку...`);
       
       // Создаем массив Image объектов
       const images = [];
@@ -932,11 +854,9 @@ if (!device_id || !device_id.trim()) {
         
         const promise = new Promise((resolve, reject) => {
           imgObj.onload = () => {
-            console.log(`[Player] ✅ Изображение ${i}/${count} загружено`);
             resolve();
           };
           imgObj.onerror = () => {
-            console.warn(`[Player] ⚠️ Ошибка загрузки изображения ${i}/${count}`);
             resolve(); // Не прерываем весь процесс из-за одного изображения
           };
           imgObj.src = imageUrl;
@@ -950,7 +870,6 @@ if (!device_id || !device_id.trim()) {
       
       // Сохраняем в кэш
       slidesCache[folderName] = { count, images, type: 'folder' };
-      console.log(`[Player] 🎉 Все изображения загружены в кэш: ${folderName} (${count} изображений)`);
       
     } catch (error) {
       console.error('[Player] ❌ Ошибка предзагрузки изображений из папки:', error);
@@ -985,14 +904,12 @@ if (!device_id || !device_id.trim()) {
       const cachedImage = cached.images[index];
       
       if (cachedImage && cachedImage.complete && cachedImage.naturalWidth > 0) {
-        console.log(`[Player] ⚡ Изображение ${num} из кэша (двойная буферизация)`);
         
         // Загружаем в следующий буфер
         next.src = cachedImage.src;
         
         if (isFirstShow) {
           // Первый показ папки - через черный, с фиксированным временем
-          console.log(`[Player] 🎬 Первый показ папки - через черный`);
           [videoContainer, current, next].forEach(e => {
             if (e) e.classList.remove('visible', 'preloading');
           });
@@ -1004,32 +921,27 @@ if (!device_id || !device_id.trim()) {
           }, 500);
         } else {
           // Переключение внутри папки - МГНОВЕННО, без плавного перехода
-          console.log(`[Player] ⚡ Переключение изображения в папке - мгновенно`);
           show(next, true); // skipTransition = true
         }
         
         // Переключаем активный буфер
         currentImgBuffer = currentImgBuffer === 1 ? 2 : 1;
-        console.log(`[Player] 🔄 Переключен буфер на: ${currentImgBuffer}`);
         return;
       }
     }
     
     // Fallback: загружаем через API если нет в кэше
-    console.log(`[Player] 🌐 Изображение ${num} загружается через API (двойная буферизация)`);
     const imageUrl = `/api/devices/${encodeURIComponent(device_id)}/folder/${encodeURIComponent(folderName)}/image/${num}`;
     
     // Предзагружаем в следующий буфер
     const tempImg = new Image();
     tempImg.onload = () => {
-      console.log(`[Player] ✅ Изображение ${num} загружено в буфер ${currentImgBuffer === 1 ? 2 : 1}`);
       
       // Устанавливаем в следующий буфер
       next.src = imageUrl;
       
       if (isFirstShow) {
         // Первый показ папки - через черный, с фиксированным временем
-        console.log(`[Player] 🎬 Первый показ папки - через черный`);
         [videoContainer, current, next].forEach(e => {
           if (e) e.classList.remove('visible', 'preloading');
         });
@@ -1041,13 +953,11 @@ if (!device_id || !device_id.trim()) {
         }, 500);
       } else {
         // Переключение внутри папки - МГНОВЕННО
-        console.log(`[Player] ⚡ Переключение изображения в папке - мгновенно`);
         show(next, true);
       }
       
       // Переключаем активный буфер
       currentImgBuffer = currentImgBuffer === 1 ? 2 : 1;
-      console.log(`[Player] 🔄 Переключен буфер на: ${currentImgBuffer}`);
     };
     tempImg.onerror = () => {
       console.error(`[Player] ❌ Ошибка загрузки изображения ${num}`);
@@ -1093,14 +1003,12 @@ if (!device_id || !device_id.trim()) {
       const cachedImage = cached.images[index];
       
       if (cachedImage && cachedImage.complete && cachedImage.naturalWidth > 0) {
-        console.log(`[Player] ⚡ Слайд ${num} из кэша (двойная буферизация)`);
         
         // Загружаем в следующий буфер
         next.src = cachedImage.src;
         
         // Первый показ - сразу черный, потом фиксированный fade in; переключение слайдов - мгновенно
         if (isFirstShow) {
-          console.log(`[Player] 🎬 Первый показ презентации - через черный`);
           // Сразу черный экран
           [videoContainer, img1, img2, pdf].forEach(e => {
             if (e) e.classList.remove('visible', 'preloading');
@@ -1113,32 +1021,27 @@ if (!device_id || !device_id.trim()) {
             idle.classList.remove('visible');
           }, 500);
         } else {
-          console.log(`[Player] ⚡ Переключение слайда - мгновенно`);
           show(next, true); // skipTransition = true для мгновенной смены
         }
         
         // Переключаем активный буфер
         currentImgBuffer = currentImgBuffer === 1 ? 2 : 1;
-        console.log(`[Player] 🔄 Переключен буфер на: ${currentImgBuffer}`);
         return;
       }
     }
     
     // Fallback: загружаем через API если нет в кэше
-    console.log(`[Player] 🌐 Слайд ${num} загружается через API (двойная буферизация)`);
     const imageUrl = `/api/devices/${encodeURIComponent(device_id)}/converted/${encodeURIComponent(file)}/${type}/${num}`;
     
     // Предзагружаем в следующий буфер
     const tempImg = new Image();
     tempImg.onload = () => {
-      console.log(`[Player] ✅ Слайд ${num} загружен в буфер ${currentImgBuffer === 1 ? 2 : 1}`);
       
       // Устанавливаем в следующий буфер
       next.src = imageUrl;
       
       // Первый показ - сразу черный, потом фиксированный fade in; переключение слайдов - мгновенно
       if (isFirstShow) {
-        console.log(`[Player] 🎬 Первый показ презентации - через черный`);
         // Сразу черный экран
         [videoContainer, img1, img2, pdf].forEach(e => {
           if (e) e.classList.remove('visible', 'preloading');
@@ -1151,13 +1054,11 @@ if (!device_id || !device_id.trim()) {
           idle.classList.remove('visible');
         }, 500);
       } else {
-        console.log(`[Player] ⚡ Переключение слайда - мгновенно`);
         show(next, true); // skipTransition = true для мгновенной смены
       }
       
       // Переключаем активный буфер
       currentImgBuffer = currentImgBuffer === 1 ? 2 : 1;
-      console.log(`[Player] 🔄 Переключен буфер на: ${currentImgBuffer}`);
     };
     tempImg.onerror = () => {
       console.error(`[Player] ❌ Ошибка загрузки слайда ${num}`);
@@ -1170,7 +1071,6 @@ if (!device_id || !device_id.trim()) {
 
   // WebSocket обработчики
   socket.on('player/play', ({ type, file, page }) => {
-    console.log('[Player] 📡 player/play:', { type, file, page });
     
     if (type === 'video') {
       img1.removeAttribute('src');
@@ -1179,7 +1079,6 @@ if (!device_id || !device_id.trim()) {
       
       if (!file && vjsPlayer) {
         // Resume текущего видео (нет файла = продолжить с паузы)
-        console.log('[Player] ⏯️ Resume с текущей позиции');
         currentFileState = { type: 'video', file: currentFileState.file, page: 1 };
         
         vjsPlayer.muted(soundUnlocked && !forceMuted ? false : true);
@@ -1187,7 +1086,6 @@ if (!device_id || !device_id.trim()) {
         
         // Не трогаем currentTime - продолжаем с места паузы
         vjsPlayer.play().then(() => {
-          console.log('[Player] ✅ Resume успешен');
         }).catch(err => {
           console.error('[Player] ❌ Ошибка resume:', err);
         });
@@ -1201,11 +1099,9 @@ if (!device_id || !device_id.trim()) {
         const currentSrc = vjsPlayer ? vjsPlayer.currentSrc() : '';
         const isSameFile = currentSrc.includes(encodeURIComponent(file)) || currentSrc.endsWith(fileUrl);
         
-        console.log('[Player] 🔍 Проверка файла:', { file, currentSrc, isSameFile });
         
         if (isSameFile && vjsPlayer) {
           // Тот же файл - просто возобновляем (это нажатие Play после паузы)
-          console.log('[Player] ⏯️ Тот же файл, возобновляем с текущей позиции');
           currentFileState = { type: 'video', file, page: 1 };
           
           vjsPlayer.muted(soundUnlocked && !forceMuted ? false : true);
@@ -1220,7 +1116,6 @@ if (!device_id || !device_id.trim()) {
           // Просто возобновляем с текущей позиции (currentTime сохраняется)
           if (vjsPlayer.paused()) {
             vjsPlayer.play().then(() => {
-              console.log('[Player] ✅ Resume с позиции:', vjsPlayer.currentTime());
             }).catch(err => {
               console.error('[Player] ❌ Ошибка resume:', err);
             });
@@ -1229,7 +1124,6 @@ if (!device_id || !device_id.trim()) {
         }
         
         // Новый файл - загружаем с начала
-        console.log('[Player] 🎬 Загрузка НОВОГО видео:', fileUrl);
         currentFileState = { type: 'video', file, page: 1 };
         
         // Плавный переход через бренд‑фон (без черного экрана)
@@ -1252,26 +1146,22 @@ if (!device_id || !device_id.trim()) {
             vjsPlayer.src({ src: fileUrl, type: 'video/mp4' });
             // Шаг 3: ждём готовности и показываем новый слой с fade-in
             vjsPlayer.one('loadedmetadata', () => {
-              console.log('[Player] 📊 Метаданные загружены, ждём первый кадр');
               hideVideoJsControls();
               
               // Ждём loadeddata (первый кадр загружен) перед показом
               vjsPlayer.one('loadeddata', () => {
-                console.log('[Player] 📸 Первый кадр загружен, начинаем fade-in');
                 
                 // Двойной requestAnimationFrame для гарантии, что браузер готов к рендерингу
                 requestAnimationFrame(() => {
                   requestAnimationFrame(() => {
                     videoContainer.classList.remove('preloading');
                     videoContainer.classList.add('visible');
-                    console.log('[Player] ✅ Fade-in начат: бренд → видео');
                     
                     // Ждём canplay перед запуском воспроизведения
                     vjsPlayer.one('canplay', () => {
                       // Задержка для завершения CSS fade-in (500ms transition)
                       setTimeout(() => {
                         vjsPlayer.play().then(() => {
-                          console.log('[Player] ✅ Видео запущено после canplay');
                           if (soundUnlocked && !forceMuted) {
                             setTimeout(() => {
                               vjsPlayer.muted(false);
@@ -1310,7 +1200,6 @@ if (!device_id || !device_id.trim()) {
         if (e) e.classList.remove('visible', 'preloading');
       });
       idle.classList.add('visible');
-      console.log('[Player] 🖤 Черный экран - загрузка изображения');
       
       const { next } = getImageBuffers();
       const imageUrl = content(file);
@@ -1318,7 +1207,6 @@ if (!device_id || !device_id.trim()) {
       // Предзагружаем в фоне (пока черный экран)
       const tempImg = new Image();
       tempImg.onload = () => {
-        console.log('[Player] ✅ Изображение загружено, fade in из черного');
         next.src = imageUrl;
         
         // Плавный переход из черного в изображение
@@ -1329,7 +1217,6 @@ if (!device_id || !device_id.trim()) {
         }, 300);
       };
       tempImg.onerror = () => {
-        console.warn('[Player] ⚠️ Ошибка загрузки изображения');
         next.src = imageUrl;
         next.classList.add('visible');
         idle.classList.remove('visible');
@@ -1369,24 +1256,19 @@ if (!device_id || !device_id.trim()) {
   });
 
   socket.on('player/pause', () => {
-    console.log('[Player] ⏸️ player/pause');
     if (vjsPlayer && !vjsPlayer.paused()) {
       vjsPlayer.pause();
-      console.log('[Player] ⏸️ Видео на паузе, последний кадр остается на экране');
     }
   });
   
   socket.on('player/resume', () => {
-    console.log('[Player] ▶️ player/resume');
     // Продолжаем воспроизведение с текущей позиции (не сбрасываем!)
     if (vjsPlayer && vjsPlayer.paused()) {
       vjsPlayer.play();
-      console.log('[Player] ▶️ Продолжение воспроизведения с текущей позиции');
     }
   });
 
   socket.on('player/restart', () => {
-    console.log('[Player] 🔄 player/restart');
     if (vjsPlayer) {
       vjsPlayer.currentTime(0);
       vjsPlayer.play();
@@ -1395,7 +1277,6 @@ if (!device_id || !device_id.trim()) {
 
   // Плавное завершение воспроизведения: контент уходит в прозрачность, под ним виден бренд-фон
   socket.on('player/stop', () => {
-    console.log('[Player] ⏹️ player/stop');
     if (vjsPlayer) vjsPlayer.pause();
     const layers = [videoContainer, img1, img2, pdf].filter(Boolean);
     const active = layers.find(el => el.classList.contains('visible'));
@@ -1429,7 +1310,6 @@ if (!device_id || !device_id.trim()) {
   });
 
   socket.on('placeholder/refresh', () => {
-    console.log('[Player] 🔄 placeholder/refresh - перезагрузка заглушки');
     
     // Очищаем slidesCache при смене заглушки
     slidesCache = {};
@@ -1442,7 +1322,6 @@ if (!device_id || !device_id.trim()) {
     
     // СРАЗУ показываем черный экран (мгновенная реакция)
     // Это предотвращает показ старой/поврежденной заглушки
-    console.log('[Player] 🖤 Переход на черный экран...');
     [videoContainer, img1, img2, pdf].forEach(e => {
       if (e) e.classList.remove('visible', 'preloading');
     });
@@ -1451,20 +1330,16 @@ if (!device_id || !device_id.trim()) {
     // Останавливаем плеер (НЕ очищаем src - это вызывает ошибку, просто паузим)
     if (vjsPlayer) {
       try {
-        console.log('[Player] ⏸️ Остановка плеера...');
         vjsPlayer.pause();
         // НЕ вызываем vjsPlayer.src('') - это генерирует ошибку
         // Новый src установится автоматически при загрузке заглушки
-        console.log('[Player] ✅ Плеер остановлен');
       } catch (e) {
-        console.warn('[Player] ⚠️ Ошибка остановки плеера:', e);
       }
     }
     
     // Небольшая задержка, затем ВСЕГДА загружаем новую заглушку
     setTimeout(() => {
       // УБРАЛИ УСЛОВИЕ - всегда загружаем новую заглушку при placeholder/refresh
-      console.log('[Player] 🔄 Загрузка новой заглушки с cache-busting...');
       showPlaceholder(true); // Принудительная перезагрузка с ?t=timestamp
     }, 300); // Даем время на переход к черному экрану
   });
@@ -1506,16 +1381,13 @@ if (!device_id || !device_id.trim()) {
   function registerPlayer() {
     if (preview || !device_id) return;
     if (!socket.connected) {
-      console.warn('[Player] ⚠️ Нельзя зарегистрироваться: нет соединения');
       ensureSocketConnected('register');
       return;
     }
     if (registerInFlight) {
-      console.log('[Player] ⏳ Регистрация уже выполняется, пропуск');
       return;
     }
     registerInFlight = true;
-    console.log('[Player] 📡 Попытка регистрации устройства:', device_id);
     
     // Отправляем запрос на регистрацию
     socket.emit('player/register', { 
@@ -1537,7 +1409,6 @@ if (!device_id || !device_id.trim()) {
     registrationTimeout = setTimeout(() => {
       registerInFlight = false;
       if (!isRegistered && socket.connected && device_id && !preview) {
-        console.warn('[Player] ⚠️ Нет подтверждения регистрации через 3с, повторная попытка...');
         registerPlayer();
       }
     }, 3000);
@@ -1547,10 +1418,8 @@ if (!device_id || !device_id.trim()) {
   socket.on('player/registered', ({ device_id: registeredId, current }) => {
     if (registrationTimeout) clearTimeout(registrationTimeout);
     registerInFlight = false;
-    console.log('[Player] ✅ Регистрация ПОДТВЕРЖДЕНА сервером:', registeredId);
     isRegistered = true;
     startHeartbeat();
-    console.log('[Player] 💓 Heartbeat запущен');
   });
   
   function startHeartbeat() {
@@ -1570,7 +1439,6 @@ if (!device_id || !device_id.trim()) {
       socket.emit('player/ping');
       
       pingTimeout = setTimeout(() => {
-        console.warn('⚠️ Heartbeat timeout');
         isRegistered = false;
         clearInterval(heartbeatInterval);
         heartbeatInterval = null;
@@ -1583,7 +1451,6 @@ if (!device_id || !device_id.trim()) {
       clearTimeout(pingTimeout);
       pingTimeout = null;
     }
-    console.log('[Player] 💓 Pong получен, соединение активно');
   });
   
   socket.on('player/reject', ({ reason }) => {
@@ -1593,14 +1460,12 @@ if (!device_id || !device_id.trim()) {
   });
 
   socket.on('connect', () => {
-    console.log('✅ Connected');
     isRegistered = false; // Сбрасываем при каждом connect
     registerInFlight = false;
     registerPlayer();
   });
 
   socket.on('disconnect', (reason) => {
-    console.warn('⚠️ Disconnected, reason:', reason);
     isRegistered = false;
     registerInFlight = false;
     if (heartbeatInterval) {
@@ -1618,7 +1483,6 @@ if (!device_id || !device_id.trim()) {
     
     // КРИТИЧНО: Для Android - явное переподключение после disconnect
     if (reason === 'transport close' || reason === 'transport error') {
-      console.log('🔄 Transport закрыт, попытка переподключения через 2с...');
       setTimeout(() => {
         if (!preview && device_id) {
           ensureSocketConnected('disconnect-transport');
@@ -1631,7 +1495,6 @@ if (!device_id || !device_id.trim()) {
   });
 
   socket.on('reconnect', () => {
-    console.log('🔄 Reconnected');
     isRegistered = false;
     registerInFlight = false;
     registerPlayer();
@@ -1639,11 +1502,9 @@ if (!device_id || !device_id.trim()) {
   
   // НОВОЕ: Обработчики попыток переподключения
   socket.on('reconnect_attempt', (attemptNumber) => {
-    console.log(`🔄 Попытка переподключения #${attemptNumber}`);
   });
   
   socket.on('reconnect_error', (error) => {
-    console.warn('⚠️ Ошибка переподключения:', error);
   });
   
   socket.on('reconnect_failed', () => {
@@ -1669,11 +1530,9 @@ if (!device_id || !device_id.trim()) {
     if (!preview && device_id) {
       // Проверяем подключение
       if (!socket.connected) {
-        console.warn('🔄 Watchdog: socket disconnected, пытаемся переподключиться...');
         ensureSocketConnected('watchdog-disconnected');
       } else if (!isRegistered && !registerInFlight) {
         // Подключены, но не зарегистрированы
-        console.log('🔄 Watchdog: re-registering (device not registered)');
         registerPlayer();
       }
     }

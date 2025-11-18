@@ -262,7 +262,6 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
         const progressEl = queue.querySelector(`#p_${deviceId}_${i}`);
         fileIndexMap.set(file, i); // Запоминаем индекс
         
-        console.log(`[Upload] Processing file ${i+1}/${pending.length}: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`);
         
         // Вычисляем MD5 (первые 10MB для больших файлов)
         if (progressEl) progressEl.textContent = 'MD5...';
@@ -272,11 +271,9 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
         });
         const md5Time = Date.now() - startTime;
         
-        console.log(`[Upload] MD5 calculated in ${md5Time}ms: ${md5} (file: ${file.name})`);
         
         // Проверяем дубликат на сервере
         if (progressEl) progressEl.textContent = 'Проверка...';
-        console.log(`[Upload] Checking duplicate: md5=${md5}, size=${file.size}`);
         
         const checkRes = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/check-duplicate`, {
           method: 'POST',
@@ -289,7 +286,6 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
         });
         
         const checkData = await checkRes.json();
-        console.log(`[Upload] Server response:`, checkData);
         
         if (checkData.duplicate) {
           // Дубликат найден! Копируем с другого устройства
@@ -343,7 +339,6 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
             return relativePath.includes('/') ? relativePath.split('/').pop() : relativePath;
           });
           form.append('expectedFiles', JSON.stringify(allFileNamesInFolder));
-          console.log('[Upload] 📝 Ожидаемые файлы в папке:', allFileNamesInFolder);
           
           filesToUpload.forEach(f => {
             const relativePath = f.webkitRelativePath || f.name;

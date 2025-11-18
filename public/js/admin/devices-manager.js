@@ -94,12 +94,10 @@ export function renderTVList(devicesCache, readyDevices, currentDeviceId, nodeNa
         const move = !e.ctrlKey;
         
         if (!sourceDeviceId || !fileName) {
-          console.warn('[DragDrop] ⚠️ Неверные данные');
           return;
         }
         
         if (sourceDeviceId === targetDeviceId) {
-          console.log('[DragDrop] ℹ️ Источник и цель совпадают');
           return;
         }
         
@@ -110,7 +108,6 @@ export function renderTVList(devicesCache, readyDevices, currentDeviceId, nodeNa
         
         const action = move ? 'Переместить' : 'Скопировать';
         
-        console.log(`[DragDrop] 📦 ${action}: ${fileName} (${sourceDeviceId} → ${targetDeviceId})`);
         
         const response = await adminFetch(`/api/devices/${encodeURIComponent(targetDeviceId)}/copy-file`, {
           method: 'POST',
@@ -125,7 +122,6 @@ export function renderTVList(devicesCache, readyDevices, currentDeviceId, nodeNa
         const result = await response.json();
         
         if (result.ok) {
-          console.log(`[DragDrop] ✅ Файл ${result.action === 'moved' ? 'перемещен' : 'скопирован'}: "${decodeURIComponent(fileName)}" → "${targetName}"`);
           
           // КРИТИЧНО: Перезагружаем список устройств через Socket.IO событие
           // Socket.IO сервер отправит devices/updated, который обновит devicesCache
