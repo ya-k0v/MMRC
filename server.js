@@ -223,6 +223,35 @@ app.get('/favicon.ico', (req, res) => {
 });
 
 // ========================================
+// ADMIN ENDPOINTS
+// ========================================
+// Экспорт базы данных (только для админов)
+app.get('/api/admin/export-database', requireAuth, requireAdmin, (req, res) => {
+  try {
+    const dbFilePath = path.join(ROOT, 'config', 'main.db');
+    
+    if (!fs.existsSync(dbFilePath)) {
+      return res.status(404).json({ error: 'Database file not found' });
+    }
+    
+    const stats = fs.statSync(dbFilePath);
+    const filename = `main_${new Date().toISOString().split('T')[0]}.db`;
+    
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', stats.size);
+    
+    const fileStream = fs.createReadStream(dbFilePath);
+    fileStream.pipe(res);
+    
+    logger.info(`[Admin] Database exported by user: ${req.user?.username || 'unknown'}`);
+  } catch (error) {
+    logger.error('[Admin] Error exporting database:', error);
+    res.status(500).json({ error: 'Failed to export database' });
+  }
+});
+
+// ========================================
 // HEALTH CHECK ENDPOINT
 // ========================================
 app.get('/health', (req, res) => {

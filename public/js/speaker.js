@@ -680,8 +680,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     logoutBtn.style.cursor = 'pointer';
   }
   
-  nodeNames = await loadNodeNames();
-  await loadDevices();
+  // Загружаем данные параллельно для ускорения
+  [nodeNames] = await Promise.all([
+    loadNodeNames(),
+    loadDevices()
+  ]);
   
   // Синхронизируем состояние плейлиста с сервера после загрузки устройств
   devices.forEach(device => {
@@ -694,17 +697,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   attachTouchGestures();
 
-  // Автовыбор из URL, если есть
-  const url = new URL(location.href);
-  const qid = url.searchParams.get('device_id');
-  if (qid && devices.find(d => d.device_id === qid)) {
-    await selectDevice(qid);
-  } else if (devices[0]) {
-    await selectDevice(devices[0].device_id);
-  }
-  
-  // Восстанавливаем плейлист после загрузки устройств
-  await restoreFolderPlaylist();
+  // Автовыбор из URL, если есть - откладываем на следующий тик для неблокирующей загрузки
+  setTimeout(async () => {
+    const url = new URL(location.href);
+    const qid = url.searchParams.get('device_id');
+    if (qid && devices.find(d => d.device_id === qid)) {
+      await selectDevice(qid);
+    } else if (devices[0]) {
+      await selectDevice(devices[0].device_id);
+    }
+    
+    // Восстанавливаем плейлист после загрузки устройств
+    await restoreFolderPlaylist();
+  }, 0);
 });
 
 /* Загрузка списка устройств */
@@ -1160,7 +1165,7 @@ async function loadFiles() {
 
   // Клик по карточке файла (кроме кнопки) - показать превью
   fileList.querySelectorAll('.file-item').forEach(item => {
-    item.onclick = async (e) => {
+    item.onclick = (e) => {
       // Если кликнули по кнопке "Воспроизвести" - не обрабатываем (у кнопки свой обработчик)
       if (e.target.closest('.playBtn')) return;
       
@@ -1174,11 +1179,20 @@ async function loadFiles() {
       const hasExtension = safeName.includes('.');
       const ext = hasExtension ? safeName.split('.').pop().toLowerCase() : '';
       
-      // Для папок, PDF и PPTX показываем сетку миниатюр
+      // Для папок, PDF и PPTX показываем сетку миниатюр - откладываем тяжелую операцию
       if (!hasExtension || ext === 'pdf' || ext === 'pptx') {
-        await showStaticPreview(currentDevice, safeName, !hasExtension ? 'folder' : ext, { initiatedByUser: true });
+        // Используем requestIdleCallback для неблокирующей загрузки, fallback на setTimeout
+        const loadPreview = async () => {
+          await showStaticPreview(currentDevice, safeName, !hasExtension ? 'folder' : ext, { initiatedByUser: true });
+        };
+        
+        if ('requestIdleCallback' in window) {
+          requestIdleCallback(loadPreview, { timeout: 100 });
+        } else {
+          setTimeout(loadPreview, 0);
+        }
       } else {
-        // Для видео и обычных изображений показываем в iframe
+        // Для видео и обычных изображений показываем в iframe - быстрая операция
         let src = `/player-videojs.html?device_id=${encodeURIComponent(currentDevice)}&preview=1&muted=1&file=${encodeURIComponent(safeName)}`;
         
         if (['png','jpg','jpeg','gif','webp'].includes(ext)) {
@@ -1198,7 +1212,7 @@ async function loadFiles() {
   });
 
   fileList.querySelectorAll('.playBtn').forEach(btn => {
-    btn.onclick = async (e) => {
+    btn.onclick = (e) => {
       e.stopPropagation(); // Останавливаем всплытие, чтобы не вызвался клик по карточке
       
       const safeName = decodeURIComponent(btn.getAttribute('data-safe'));
@@ -1216,8 +1230,17 @@ async function loadFiles() {
       const ext = hasExtension ? safeName.split('.').pop().toLowerCase() : '';
       const isStaticContent = !hasExtension || ext === 'pdf' || ext === 'pptx';
       
-      // Для PDF/PPTX/FOLDER - открываем превью автоматически
+      // Для PDF/PPTX/FOLDER - открываем превью автоматически (откладываем тяжелую операцию)
       if (isStaticContent) {
+        const loadPreview = async () => {
+          await showStaticPreview(currentDevice, safeName, !hasExtension ? 'folder' : ext, { initiatedByUser: true });
+        };
+        
+        if ('requestIdleCallback' in window) {
+          requestIdleCallback(loadPreview, { timeout: 100 });
+        } else {
+          setTimeout(loadPreview, 0);
+        }
       } else {
       // Для видео и обычных изображений - показываем заглушку
         // Чтобы не было двойной загрузки (preview + основной плеер)

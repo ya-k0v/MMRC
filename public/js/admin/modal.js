@@ -384,3 +384,72 @@ async function loadModalUsersList(adminFetch) {
   }
 }
 
+export function showSettingsModal() {
+  const content = `
+    <div style="display:flex; flex-direction:column; gap:var(--space-lg);">
+      <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm);">
+        <div style="margin-bottom:var(--space-md); font-weight:600;">База данных</div>
+        <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
+          <div class="meta" style="color:var(--text-secondary);">
+            Экспортируйте базу данных для резервного копирования или миграции.
+          </div>
+          <button id="exportDatabaseBtn" class="primary" style="width:100%;">
+            📥 Экспорт базы данных
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  showModal('⚙️ Настройки', content);
+  
+  // Обработчик экспорта базы данных
+  setTimeout(() => {
+    const exportBtn = document.getElementById('exportDatabaseBtn');
+    if (!exportBtn) return;
+    
+    exportBtn.onclick = async () => {
+      exportBtn.disabled = true;
+      exportBtn.textContent = 'Экспорт...';
+      
+      try {
+        // Импортируем adminFetch для правильной авторизации
+        const { adminFetch } = await import('./auth.js');
+        
+        const response = await adminFetch('/api/admin/export-database');
+        
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ error: 'Ошибка экспорта' }));
+          throw new Error(error.error || 'Ошибка экспорта');
+        }
+        
+        // Скачиваем файл через blob
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.style.display = 'none';
+        link.href = url;
+        link.download = `main_${new Date().toISOString().split('T')[0]}.db`;
+        document.body.appendChild(link);
+        link.click();
+        
+        // Очищаем после скачивания
+        setTimeout(() => {
+          document.body.removeChild(link);
+          window.URL.revokeObjectURL(url);
+        }, 100);
+        
+        exportBtn.disabled = false;
+        exportBtn.textContent = 'Экспортировано';
+        setTimeout(() => {
+          exportBtn.textContent = 'Экспорт базы данных';
+        }, 2000);
+      } catch (err) {
+        alert(`Ошибка экспорта: ${err.message}`);
+        exportBtn.disabled = false;
+        exportBtn.textContent = 'Экспорт базы данных';
+      }
+    };
+  }, 100);
+}
+

@@ -12,7 +12,7 @@ import { clearDetail, clearFilesPane, openDevice as openDeviceHelper } from './a
 import { renderDeviceCard as renderDeviceCardModule } from './admin/device-card.js';
 import { setupUploadUI as setupUploadUIModule } from './admin/upload-ui.js';
 import { initSystemMonitor } from './admin/system-monitor.js';
-import { showDevicesModal, showUsersModal } from './admin/modal.js';
+import { showDevicesModal, showUsersModal, showSettingsModal } from './admin/modal.js';
 
 const socket = io();
 const grid = document.getElementById('grid');
@@ -129,6 +129,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     usersBtn.onclick = () => {
       showUsersModal(adminFetch);
     };
+  }
+  
+  // Обработчик кнопки Настройки (только для admin)
+  const settingsBtn = document.getElementById('settingsBtn');
+  if (settingsBtn && user.role === 'admin') {
+    settingsBtn.onclick = () => {
+      showSettingsModal();
+    };
+  } else if (settingsBtn) {
+    settingsBtn.style.display = 'none'; // Speaker не может открывать настройки
   }
   
   // Обработчик выхода (теперь это span)
