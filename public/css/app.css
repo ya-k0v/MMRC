@@ -143,6 +143,13 @@ h1, h2, h3, h4, h5, h6 {
   color: var(--text);
 }
 
+/* Заголовок с классом meta - более компактный стиль */
+.title.meta {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-2);
+}
+
 .meta {
   font-size: var(--font-size-sm);
   color: var(--muted);
@@ -321,6 +328,23 @@ button.primary:hover:not(:disabled) {
 button.secondary {
   background: var(--panel-2);
   border-color: var(--border-2);
+}
+
+/* Кнопки с классом meta - более компактный стиль */
+button.meta {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  padding: 6px 12px;
+  min-height: 32px;
+  height: 32px;
+}
+
+button.primary.meta {
+  font-size: var(--font-size-sm);
+}
+
+button.secondary.meta {
+  font-size: var(--font-size-sm);
 }
 
 button.danger {
@@ -690,9 +714,9 @@ body.light .file-item.active {
 #pdfPrevBtn,
 #pdfNextBtn {
   flex: 0 0 auto;
-  width: 140px;
+  width: 130px;
   height: 60px;
-  min-width: 140px;
+  min-width: 130px;
   padding: 0;
   font-weight: var(--font-weight-bold);
   font-size: var(--font-size-lg);
