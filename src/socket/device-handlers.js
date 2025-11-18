@@ -17,6 +17,11 @@ export function setupDeviceHandlers(socket, deps) {
   const { devices, io } = deps;
   const activeConnections = getActiveConnections();
   const deviceSockets = getDeviceSockets();
+  const ensureCurrentState = (deviceId) => {
+    if (!devices[deviceId].current) {
+      devices[deviceId].current = { type: 'idle', file: null, state: 'idle' };
+    }
+  };
   
   // player/register - Регистрация устройства
   socket.on('player/register', ({ device_id, device_type, capabilities, platform }) => {
@@ -69,7 +74,7 @@ export function setupDeviceHandlers(socket, deps) {
           if (socket.data) socket.data.lastPing = Date.now();
           
           // Сбрасываем состояние
-          devices[device_id].current = { type: 'idle', file: null, state: 'idle' };
+          ensureCurrentState(device_id);
           socket.emit('player/state', devices[device_id].current);
           return;
         }
@@ -92,8 +97,8 @@ export function setupDeviceHandlers(socket, deps) {
         io.emit('player/online', { device_id });
       }
       
-      // Сбрасываем состояние устройства
-      devices[device_id].current = { type: 'idle', file: null, state: 'idle' };
+      // Сбрасываем состояние устройства только если его нет
+      ensureCurrentState(device_id);
       socket.emit('player/state', devices[device_id].current);
       
       // КРИТИЧНО: Отправляем подтверждение успешной регистрации

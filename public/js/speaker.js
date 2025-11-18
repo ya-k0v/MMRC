@@ -87,9 +87,7 @@ let allFiles = []; // Список всех файлов для текущего
 const playbackProgressByDevice = new Map(); // device_id -> { file, currentTime, duration }
 const playerStateByDevice = new Map(); // device_id -> { type, file, page }
 let currentPreviewContext = { deviceId: null, file: null, page: null };
-let folderPlaylistTimer = null;
 let folderPlaylistState = null;
-let folderPlaylistGuard = false;
 let folderPlaylistIntervalSeconds = DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS;
 
 function resetPreviewHighlightState() {
@@ -203,56 +201,19 @@ function updateFolderPlaylistButtonStateForDevice(deviceId, file, isActive, inte
   updateFolderPlaylistButtonState();
 }
 
-function clearFolderPlaylistTimer() {
-  if (folderPlaylistTimer) {
-    clearTimeout(folderPlaylistTimer);
-    folderPlaylistTimer = null;
-  }
-}
-
-function sendPlaylistPlayCommand(payload) {
-  folderPlaylistGuard = true;
-  socket.emit('control/play', payload);
-  // Сбрасываем guard с небольшой задержкой, чтобы предотвратить остановку плейлиста
-  // при получении события preview/refresh сразу после отправки команды
-  setTimeout(() => {
-    folderPlaylistGuard = false;
-  }, 500);
-}
-
-function scheduleFolderPlaylistTick() {
-  clearFolderPlaylistTimer();
-  if (!folderPlaylistState) return;
-  folderPlaylistTimer = setTimeout(() => {
-    if (!folderPlaylistState) return;
-    const { deviceId, file, imageCount } = folderPlaylistState;
-    if (!deviceId || !file || !imageCount) {
-      stopFolderPlaylist('нет кадров для плейлиста');
-      return;
-    }
-    let nextIndex = (folderPlaylistState.currentIndex || 1) + 1;
-    if (nextIndex > imageCount) nextIndex = 1;
-    folderPlaylistState.currentIndex = nextIndex;
-    sendPlaylistPlayCommand({ device_id: deviceId, file, page: nextIndex });
-    scheduleFolderPlaylistTick();
-  }, Math.max(1, (folderPlaylistState.intervalSeconds || folderPlaylistIntervalSeconds || DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS)) * 1000);
-}
-
 function startFolderPlaylist(deviceId, file, imageCount, intervalSeconds = folderPlaylistIntervalSeconds) {
   if (!deviceId || !file || imageCount < 1) return;
   
-  // Останавливаем предыдущий плейлист, если он был активен
+  // Останавливаем предыдущий плейлист, если он был активен и запускался для другого файла
   if (folderPlaylistState && folderPlaylistState.deviceId === deviceId && folderPlaylistState.file !== file) {
     stopFolderPlaylist('switching to different folder');
   }
   
-  const initialPage = 1;
   folderPlaylistIntervalSeconds = Math.max(1, intervalSeconds || DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS);
   folderPlaylistState = {
     deviceId,
     file,
-    imageCount,
-    currentIndex: initialPage,
+    currentIndex: 1,
     intervalSeconds: folderPlaylistIntervalSeconds,
   };
   // Сохраняем состояние плейлиста в localStorage
@@ -265,29 +226,21 @@ function startFolderPlaylist(deviceId, file, imageCount, intervalSeconds = folde
   } catch (e) {
     // Failed to save playlist state
   }
-  // Отправляем состояние плейлиста на сервер для синхронизации между панелями
+  
+  // Сообщаем серверу о новом плейлисте (он сам запустит первое изображение)
   socket.emit('control/playlistStart', {
     device_id: deviceId,
     file,
     intervalSeconds: folderPlaylistIntervalSeconds
   });
-  // Отправляем команду воспроизведения с небольшой задержкой, чтобы сервер успел обработать playlistStart
-  setTimeout(() => {
-    if (folderPlaylistState && folderPlaylistState.deviceId === deviceId && folderPlaylistState.file === file) {
-      sendPlaylistPlayCommand({ device_id: deviceId, file, page: initialPage });
-      scheduleFolderPlaylistTick();
-    }
-  }, 100);
   updateFolderPlaylistButtonState();
 }
 
-function stopFolderPlaylist(reason = '') {
+function stopFolderPlaylist(reason = '', notifyServer = true) {
   if (!folderPlaylistState) {
-    clearFolderPlaylistTimer();
     return;
   }
   const { deviceId } = folderPlaylistState;
-  clearFolderPlaylistTimer();
   folderPlaylistState = null;
   // Удаляем состояние плейлиста из localStorage
   try {
@@ -296,14 +249,14 @@ function stopFolderPlaylist(reason = '') {
     // Failed to remove playlist state
   }
   // Отправляем остановку плейлиста на сервер для синхронизации между панелями
-  if (deviceId) {
+  if (notifyServer && deviceId) {
     socket.emit('control/playlistStop', { device_id: deviceId });
   }
   updateFolderPlaylistButtonState();
 }
 
 function stopFolderPlaylistIfNeeded(reason = '', context = {}) {
-  if (!folderPlaylistState || folderPlaylistGuard) return;
+  if (!folderPlaylistState) return;
   const { deviceId, file } = context;
   if (deviceId && folderPlaylistState.deviceId !== deviceId) return;
   if (file && folderPlaylistState.file === file) return;
@@ -350,103 +303,38 @@ async function restoreFolderPlaylist() {
     
     if (!deviceId || !file) return;
     
-    // Проверяем, что устройство существует
     const device = devices.find(d => d.device_id === deviceId);
-    if (!device) {
-      localStorage.removeItem('folderPlaylistState');
+    const playlistStillActive = device &&
+      device.current &&
+      device.current.type === 'folder' &&
+      device.current.playlistActive &&
+      (device.current.playlistFile === file || device.current.file === file);
+    
+    if (!playlistStillActive) {
+      try {
+        localStorage.removeItem('folderPlaylistState');
+      } catch {}
+      folderPlaylistState = null;
       return;
     }
     
-    // Получаем количество изображений в папке
-    const res = await speakerFetch(`/api/devices/${encodeURIComponent(deviceId)}/folder/${encodeURIComponent(file)}/images`);
-    if (!res.ok) {
-      localStorage.removeItem('folderPlaylistState');
-      return;
-    }
-    
-    const data = await res.json();
-    const imageCount = (data.images || []).length;
-    
-    if (imageCount < 1) {
-      localStorage.removeItem('folderPlaylistState');
-      return;
-    }
-    
-    // Восстанавливаем плейлист
     folderPlaylistIntervalSeconds = intervalSeconds || DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS;
-    
-    // Проверяем текущую страницу, если устройство уже воспроизводит этот файл
-    let currentPage = 1;
-    if (device.current && device.current.type === 'folder' && device.current.file === file) {
-      currentPage = Number(device.current.page) || 1;
-    }
+    const currentPage = Number(device.current.page) || 1;
     
     folderPlaylistState = {
       deviceId,
       file,
-      imageCount,
       currentIndex: currentPage,
       intervalSeconds: folderPlaylistIntervalSeconds,
     };
     
-    // Сохраняем состояние плейлиста в localStorage
-    try {
-      localStorage.setItem('folderPlaylistState', JSON.stringify({
-        deviceId,
-        file,
-        intervalSeconds: folderPlaylistIntervalSeconds,
-      }));
-    } catch (e) {
-      // Failed to save playlist state
-    }
-    
-    // Обновляем состояние устройства в массиве devices
-    if (device) {
-      device.current = {
-        type: 'folder',
-        file: file,
-        state: 'playing',
-        page: currentPage,
-        playlistActive: true,
-        playlistInterval: folderPlaylistIntervalSeconds,
-        playlistFile: file,
-      };
-    }
-    
-    // Обновляем состояние устройства в playerStateByDevice
-    playerStateByDevice.set(deviceId, {
-      type: 'folder',
-      file: file,
-      page: currentPage,
-    });
-    
-    // Отправляем состояние плейлиста на сервер для синхронизации
-    socket.emit('control/playlistStart', {
-      device_id: deviceId,
-      file,
-      intervalSeconds: folderPlaylistIntervalSeconds
-    });
-    
-    // Если это текущее устройство, переключаемся на него и показываем превью
-    if (deviceId === currentDevice) {
-      await showStaticPreview(deviceId, file, 'folder');
-      updateFolderPlaylistIntervalButtons(folderPlaylistIntervalSeconds);
-      // Синхронизируем превью с текущим состоянием
-      requestPreviewSync();
-    }
-    
-    // Запускаем плейлист с текущей страницы
-    sendPlaylistPlayCommand({ device_id: deviceId, file, page: currentPage });
-    scheduleFolderPlaylistTick();
+    updateFolderPlaylistIntervalButtons(folderPlaylistIntervalSeconds);
     updateFolderPlaylistButtonState();
-    
-    // Обновляем рендер списка устройств, чтобы показать текущее состояние
-    renderTVList();
   } catch (e) {
-    // Failed to restore playlist
     try {
       localStorage.removeItem('folderPlaylistState');
     } catch {}
+    folderPlaylistState = null;
   }
 }
 
@@ -573,7 +461,6 @@ function renderThumbnailGrid(deviceId, safeName, contentType, imageUrls) {
         updateFolderPlaylistIntervalButtons(nextValue);
         if (folderPlaylistState) {
           folderPlaylistState.intervalSeconds = nextValue;
-          scheduleFolderPlaylistTick();
           // Отправляем обновление интервала на сервер для синхронизации
           socket.emit('control/playlistStart', {
             device_id: folderPlaylistState.deviceId,
@@ -721,18 +608,6 @@ async function loadDevices() {
       return;
     }
     const newDevices = await res.json();
-    
-    // КРИТИЧНО: Сохраняем локальное состояние устройств (current) при обновлении списка
-    // чтобы не потерять информацию о паузе/воспроизведении при переключении
-    if (devices.length > 0) {
-      newDevices.forEach(newDev => {
-        const oldDev = devices.find(d => d.device_id === newDev.device_id);
-        if (oldDev && oldDev.current) {
-          // Сохраняем локальное состояние (state, file, type)
-          newDev.current = oldDev.current;
-        }
-      });
-    }
     
     devices = newDevices;
     // Сортируем устройства по алфавиту: А-Я, A-Z, 0-9
@@ -1545,8 +1420,6 @@ socket.on('playlist/state', ({ device_id, active, file, intervalSeconds }) => {
           folderPlaylistIntervalSeconds = intervalSeconds;
           if (folderPlaylistState) {
             folderPlaylistState.intervalSeconds = intervalSeconds;
-            // Перепланируем таймер с новым интервалом
-            scheduleFolderPlaylistTick();
           }
           updateFolderPlaylistIntervalButtons(intervalSeconds);
         }
@@ -1562,7 +1435,7 @@ socket.on('playlist/state', ({ device_id, active, file, intervalSeconds }) => {
     // Плейлист остановлен - обновляем UI для всех панелей
     if (isFolderPlaylistActiveFor(device_id, file || folderPlaylistState?.file)) {
       // Если это наш локальный плейлист - останавливаем его
-      stopFolderPlaylist('stopped from another panel');
+      stopFolderPlaylist('stopped from another panel', false);
     }
     // Обновляем UI кнопки плейлиста
     updateFolderPlaylistButtonState();
@@ -1644,7 +1517,6 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
         folderPlaylistIntervalSeconds = playlistInterval;
         if (folderPlaylistState) {
           folderPlaylistState.intervalSeconds = playlistInterval;
-          scheduleFolderPlaylistTick();
         }
         updateFolderPlaylistIntervalButtons(playlistInterval);
       }
@@ -1671,19 +1543,18 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
           if (playlistInterval !== folderPlaylistIntervalSeconds) {
             folderPlaylistIntervalSeconds = playlistInterval;
             folderPlaylistState.intervalSeconds = playlistInterval;
-            scheduleFolderPlaylistTick();
             updateFolderPlaylistIntervalButtons(playlistInterval);
           }
         }
       } else {
         // Файл изменился - останавливаем плейлист
-        stopFolderPlaylist('контент сменился');
+        stopFolderPlaylist('контент сменился', false);
       }
     } else if (!device.current || device.current.type !== 'idle') {
       // Устройство не воспроизводит папку - останавливаем плейлист только если это не idle
       // (idle может быть временным состоянием)
       if (device.current && device.current.type !== 'folder') {
-        stopFolderPlaylist('контент сменился');
+        stopFolderPlaylist('контент сменился', false);
       }
     }
     // Обновляем UI кнопки плейлиста
