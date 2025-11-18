@@ -137,13 +137,14 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
   // 3. Фильтруем файлы из БД: исключаем те что находятся в папках устройства
   const filteredMetadata = filesMetadata.filter(f => !filesInFolders.has(f.safe_name));
   
+  const nameMap = fileNamesMap[deviceId] || {};
   let files = filteredMetadata.map(f => f.safe_name);
-  let fileNames = filteredMetadata.map(f => f.original_name);
+  let fileNames = filteredMetadata.map(f => f.original_name || nameMap[f.safe_name] || f.safe_name);
   
   // 4. Добавляем папки
   folders.forEach(folder => {
     files.push(folder);
-    fileNames.push(fileNamesMap[deviceId]?.[folder] || folder);
+    fileNames.push(nameMap[folder] || folder);
   });
   
   device.files = files;

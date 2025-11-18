@@ -84,8 +84,9 @@ const { getDeviceFilesMetadata } = await import('./src/database/files-metadata.j
 for (const deviceId in devices) {
   // 1. Загружаем файлы из БД (обычные файлы)
   const filesMetadata = getDeviceFilesMetadata(deviceId);
+  const nameMap = fileNamesMap[deviceId] || {};
   let files = filesMetadata.map(f => f.safe_name);
-  let fileNames = filesMetadata.map(f => f.original_name);
+  let fileNames = filesMetadata.map(f => f.original_name || nameMap[f.safe_name] || f.safe_name);
   
   // 2. Сканируем папку устройства для PDF/PPTX/image папок (они не в БД)
   const deviceFolder = path.join(DEVICES, devices[deviceId].folder);
@@ -98,7 +99,7 @@ for (const deviceId in devices) {
       if (stat.isDirectory()) {
         // Это папка - добавляем (PPTX/PDF или изображения)
         files.push(entry);
-        fileNames.push(fileNamesMap[deviceId]?.[entry] || entry);
+        fileNames.push(nameMap[entry] || entry);
       }
     }
   }
