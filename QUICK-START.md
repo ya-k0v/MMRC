@@ -22,7 +22,7 @@ sudo bash scripts/quick-install.sh
 ## 📦 Что установится автоматически:
 
 ### **Системные зависимости:**
-- ✅ Node.js 18+ (если не установлен)
+- ✅ Node.js 20.x LTS (если не установлен)
 - ✅ FFmpeg + FFprobe (обработка видео)
 - ✅ LibreOffice (конвертация PDF/PPTX)
 - ✅ ImageMagick (обработка изображений)
@@ -210,7 +210,7 @@ net.ipv4.tcp_wmem = 4096 65536 16777216
 sudo journalctl -u videocontrol -n 100
 
 # Проверить Node.js
-node --version  # Должно быть 18+
+node --version  # Должно быть 20.x
 
 # Проверить порт 3000
 sudo netstat -tulpn | grep 3000
@@ -306,9 +306,29 @@ sudo systemctl start videocontrol
 ## 📚 Документация:
 
 - **README.md** — общее описание и быстрый старт
-- **docs/MANUAL.md** — команды для SQLite, systemd, Nginx, бэкапы и хранение контента
+- **docs/MANUAL.md** — команды для SQLite, systemd, Nginx, бэкапы, health check, metrics
 - **clients/android-mediaplayer/** — документация Android‑клиента
 - **clients/mpv/** — документация MPV‑клиента
+
+## 🔍 Мониторинг и диагностика:
+
+### Health Check
+```bash
+# Проверка состояния сервера
+curl http://YOUR_SERVER_IP/health
+# Возвращает: status, uptime, memory, database, circuitBreakers
+```
+
+### Metrics (требует admin авторизации)
+```bash
+# Получить метрики производительности
+TOKEN=$(curl -s -X POST http://YOUR_SERVER_IP/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}' | jq -r '.accessToken')
+
+curl -H "Authorization: Bearer $TOKEN" http://YOUR_SERVER_IP/api/metrics
+# Возвращает: метрики запросов, БД, Socket.IO, перцентили времени ответа
+```
 
 ---
 

@@ -6,19 +6,28 @@
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
+import { withRetrySync, isRetryableDatabaseError } from '../utils/retry.js';
+import { circuitBreakers } from '../utils/circuit-breaker.js';
+import logger from '../utils/logger.js';
 
 let db = null;
+let dbPath = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_DELAY = 5000;
 
 /**
  * Инициализация базы данных
  * @param {string} dbPath - Путь к файлу БД (по умолчанию: ROOT/config/main.db)
  * @returns {Database} Экземпляр БД
  */
-export function initDatabase(dbPath) {
+export function initDatabase(initialDbPath) {
   if (db) {
-    console.log('[DB] ℹ️ Database already initialized');
+    logger.info('[DB] Database already initialized');
     return db;
   }
+
+  dbPath = initialDbPath;
 
   try {
     const dir = path.dirname(dbPath);
@@ -28,6 +37,9 @@ export function initDatabase(dbPath) {
 
     db = new Database(dbPath);
     
+    // ВАЖНО: better-sqlite3 не поддерживает события (db.on)
+    // Ошибки обрабатываются через try-catch при выполнении запросов
+    
     // Включаем WAL mode для лучшей производительности
     db.pragma('journal_mode = WAL');
     db.pragma('synchronous = NORMAL');
@@ -35,8 +47,8 @@ export function initDatabase(dbPath) {
     db.pragma('temp_store = MEMORY');
     db.pragma('mmap_size = 30000000000'); // 30GB mmap
     
-    console.log(`[DB] ✅ Database initialized: ${dbPath}`);
-    console.log(`[DB] 📊 WAL mode enabled, cache_size=64MB`);
+    logger.info(`[DB] Database initialized: ${dbPath}`);
+    logger.info('[DB] WAL mode enabled, cache_size=64MB');
     
     // Загружаем схему
     const initPath = path.join(path.dirname(new URL(import.meta.url).pathname), 'init.sql');
@@ -44,23 +56,83 @@ export function initDatabase(dbPath) {
     
     // Выполняем схему
     db.exec(initSQL);
-    console.log('[DB] ✅ Database schema initialized');
+    logger.info('[DB] Database schema initialized');
     
+    reconnectAttempts = 0;
     return db;
   } catch (e) {
-    console.error('[DB] ❌ Failed to initialize database:', e);
+    logger.error('[DB] Failed to initialize database:', e);
     throw e;
   }
 }
 
 /**
- * Получить экземпляр БД
+ * Переподключение к БД при сбое
+ */
+function scheduleReconnect() {
+  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    logger.error('[DB] Max reconnect attempts reached, giving up');
+    return;
+  }
+
+  reconnectAttempts++;
+  logger.warn(`[DB] Scheduling reconnect attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} in ${RECONNECT_DELAY}ms`);
+
+  setTimeout(() => {
+    try {
+      if (db) {
+        try {
+          db.close();
+        } catch (e) {
+          // Ignore close errors
+        }
+      }
+      db = null;
+      initDatabase(dbPath);
+    } catch (e) {
+      logger.error('[DB] Reconnect failed:', e);
+      scheduleReconnect();
+    }
+  }, RECONNECT_DELAY);
+}
+
+/**
+ * Получить экземпляр БД с проверкой соединения
  * @returns {Database}
  */
 export function getDatabase() {
   if (!db) {
-    throw new Error('Database not initialized. Call initDatabase() first.');
+    if (dbPath) {
+      // Пытаемся переподключиться
+      try {
+        initDatabase(dbPath);
+      } catch (e) {
+        logger.error('[DB] Failed to reconnect:', e);
+        throw new Error('Database not available. Reconnection failed.');
+      }
+    } else {
+      throw new Error('Database not initialized. Call initDatabase() first.');
+    }
   }
+
+  // Проверяем, что БД еще открыта
+  try {
+    db.prepare('SELECT 1').get();
+  } catch (e) {
+    logger.warn('[DB] Database connection lost, attempting reconnect');
+    db = null;
+    if (dbPath) {
+      try {
+        initDatabase(dbPath);
+      } catch (reconnectError) {
+        logger.error('[DB] Reconnect failed:', reconnectError);
+        throw new Error('Database connection lost and reconnection failed.');
+      }
+    } else {
+      throw new Error('Database connection lost.');
+    }
+  }
+
   return db;
 }
 
@@ -84,35 +156,89 @@ export function closeDatabase() {
  * @returns {Object} Объект {device_id: {...}}
  */
 export function getAllDevices() {
+  // КРИТИЧНО: Эта функция вызывается синхронно при старте сервера
+  // Не используем circuit breaker здесь, так как он асинхронный
+  // Circuit breaker используется только для операций во время работы сервера
   try {
-    const stmt = db.prepare(`
-      SELECT device_id, name, folder, device_type, platform, capabilities, 
-             last_seen, current_state, created_at, updated_at
-      FROM devices
-      ORDER BY device_id
-    `);
-    
-    const rows = stmt.all();
-    const devices = {};
-    
-    for (const row of rows) {
-      devices[row.device_id] = {
-        name: row.name,
-        folder: row.folder,
-        deviceType: row.device_type,
-        platform: row.platform,
-        capabilities: row.capabilities ? JSON.parse(row.capabilities) : null,
-        lastSeen: row.last_seen,
-        current: row.current_state ? JSON.parse(row.current_state) : { type: 'idle', file: null, state: 'idle' },
-        files: [], // Заполняется при сканировании
-        fileNames: [] // Заполняется при сканировании
-      };
-    }
-    
-    return devices;
+    return withRetrySync(() => {
+      const database = getDatabase();
+      const stmt = database.prepare(`
+        SELECT device_id, name, folder, device_type, platform, capabilities, 
+               last_seen, current_state, created_at, updated_at
+        FROM devices
+        ORDER BY device_id
+      `);
+      
+      const rows = stmt.all();
+      const devices = {};
+      
+      for (const row of rows) {
+        try {
+          devices[row.device_id] = {
+            name: row.name,
+            folder: row.folder,
+            deviceType: row.device_type,
+            platform: row.platform,
+            capabilities: row.capabilities ? JSON.parse(row.capabilities) : null,
+            lastSeen: row.last_seen,
+            current: row.current_state ? JSON.parse(row.current_state) : { type: 'idle', file: null, state: 'idle' },
+            files: [], // Заполняется при сканировании
+            fileNames: [] // Заполняется при сканировании
+          };
+        } catch (parseError) {
+          logger.error(`[DB] Error parsing device ${row.device_id}:`, parseError);
+          // Продолжаем загрузку других устройств даже при ошибке парсинга одного
+          devices[row.device_id] = {
+            name: row.name || row.device_id,
+            folder: row.folder || row.device_id,
+            deviceType: row.device_type || 'browser',
+            platform: row.platform || null,
+            capabilities: null,
+            lastSeen: row.last_seen,
+            current: { type: 'idle', file: null, state: 'idle' },
+            files: [],
+            fileNames: []
+          };
+        }
+      }
+      
+      logger.info(`[DB] getAllDevices: loaded ${Object.keys(devices).length} devices`);
+      return devices;
+    }, {
+      maxRetries: 3,
+      delay: 500,
+      shouldRetry: isRetryableDatabaseError,
+      onRetry: (error, attempt, max) => {
+        logger.warn(`[DB] Retry ${attempt}/${max} for getAllDevices:`, error.message);
+      }
+    });
   } catch (e) {
-    console.error('[DB] ❌ Error getting devices:', e);
-    return {};
+    logger.error('[DB] Critical error in getAllDevices:', e);
+    // Последняя попытка - загрузить хотя бы базовые данные
+    try {
+      const database = getDatabase();
+      const stmt = database.prepare('SELECT device_id, name, folder FROM devices');
+      const rows = stmt.all();
+      const devices = {};
+      for (const row of rows) {
+        devices[row.device_id] = {
+          name: row.name,
+          folder: row.folder,
+          deviceType: 'browser',
+          platform: null,
+          capabilities: null,
+          lastSeen: null,
+          current: { type: 'idle', file: null, state: 'idle' },
+          files: [],
+          fileNames: []
+        };
+      }
+      logger.warn(`[DB] Fallback: loaded ${Object.keys(devices).length} devices with minimal data`);
+      return devices;
+    } catch (fallbackError) {
+      logger.error('[DB] Fallback also failed:', fallbackError);
+      return {};
+    }
   }
 }
 
@@ -122,30 +248,42 @@ export function getAllDevices() {
  * @param {Object} data 
  */
 export function saveDevice(deviceId, data) {
-  const stmt = db.prepare(`
-    INSERT INTO devices (device_id, name, folder, device_type, platform, capabilities, last_seen, current_state)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(device_id) DO UPDATE SET
-      name = excluded.name,
-      folder = excluded.folder,
-      device_type = excluded.device_type,
-      platform = excluded.platform,
-      capabilities = excluded.capabilities,
-      last_seen = excluded.last_seen,
-      current_state = excluded.current_state,
-      updated_at = CURRENT_TIMESTAMP
-  `);
-  
-  stmt.run(
-    deviceId,
-    data.name,
-    data.folder,
-    data.deviceType || 'browser',
-    data.platform || null,
-    data.capabilities ? JSON.stringify(data.capabilities) : null,
-    data.lastSeen || null,
-    data.current ? JSON.stringify(data.current) : null
-  );
+  return circuitBreakers.database.execute(() => {
+    return withRetrySync(() => {
+      const database = getDatabase();
+      const stmt = database.prepare(`
+        INSERT INTO devices (device_id, name, folder, device_type, platform, capabilities, last_seen, current_state)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(device_id) DO UPDATE SET
+          name = excluded.name,
+          folder = excluded.folder,
+          device_type = excluded.device_type,
+          platform = excluded.platform,
+          capabilities = excluded.capabilities,
+          last_seen = excluded.last_seen,
+          current_state = excluded.current_state,
+          updated_at = CURRENT_TIMESTAMP
+      `);
+      
+      stmt.run(
+        deviceId,
+        data.name,
+        data.folder,
+        data.deviceType || 'browser',
+        data.platform || null,
+        data.capabilities ? JSON.stringify(data.capabilities) : null,
+        data.lastSeen || null,
+        data.current ? JSON.stringify(data.current) : null
+      );
+    }, {
+      maxRetries: 3,
+      delay: 500,
+      shouldRetry: isRetryableDatabaseError
+    });
+  }).catch((e) => {
+    logger.error('[DB] Error saving device:', e);
+    throw e;
+  });
 }
 
 /**

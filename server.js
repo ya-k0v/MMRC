@@ -38,6 +38,8 @@ import { setupExpressMiddleware, setupStaticFiles } from './src/middleware/expre
 import { setupSocketHandlers } from './src/socket/index.js';
 import logger, { httpLoggerMiddleware } from './src/utils/logger.js';
 import { cleanupResolutionCache, getResolutionCacheSize } from './src/video/resolution-cache.js';
+import { getDatabase } from './src/database/database.js';
+import { circuitBreakers } from './src/utils/circuit-breaker.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -204,6 +206,80 @@ app.use('/api/devices', videoInfoRouter);  // GET открыт для устро
 // System info router
 const systemInfoRouter = createSystemInfoRouter();
 app.use('/api/system', requireAuth, systemInfoRouter);
+
+// ========================================
+// FAVICON HANDLING
+// ========================================
+// Обработка favicon.ico - возвращаем favicon-32.png или 204 No Content
+app.get('/favicon.ico', (req, res) => {
+  const faviconPath = path.join(PUBLIC, 'favicon-32.png');
+  if (fs.existsSync(faviconPath)) {
+    res.setHeader('Content-Type', 'image/png');
+    res.sendFile(faviconPath);
+  } else {
+    // Если файла нет - возвращаем 204 No Content (браузер не будет показывать ошибку)
+    res.status(204).end();
+  }
+});
+
+// ========================================
+// HEALTH CHECK ENDPOINT
+// ========================================
+app.get('/health', (req, res) => {
+  const health = {
+    status: 'ok',
+    timestamp: Date.now(),
+    uptime: Math.floor(process.uptime()),
+    memory: {
+      used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+      total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
+      rss: Math.round(process.memoryUsage().rss / 1024 / 1024)
+    },
+    database: 'unknown',
+    circuitBreakers: {}
+  };
+
+  // Проверка БД
+  try {
+    const db = getDatabase();
+    // Простой запрос для проверки соединения
+    db.prepare('SELECT 1').get();
+    health.database = 'connected';
+  } catch (e) {
+    health.database = 'disconnected';
+    health.status = 'degraded';
+  }
+
+  // Состояние circuit breakers
+  for (const [name, breaker] of Object.entries(circuitBreakers)) {
+    const state = breaker.getState();
+    health.circuitBreakers[name] = {
+      state: state.state,
+      failureCount: state.failureCount
+    };
+    if (state.state === 'OPEN') {
+      health.status = 'degraded';
+    }
+  }
+
+  const statusCode = health.status === 'ok' ? 200 : 503;
+  res.status(statusCode).json(health);
+});
+
+// ========================================
+// METRICS ENDPOINT
+// ========================================
+import { getMetrics } from './src/utils/metrics.js';
+
+app.get('/api/metrics', requireAuth, requireAdmin, (req, res) => {
+  try {
+    const metrics = getMetrics();
+    res.json(metrics);
+  } catch (e) {
+    logger.error('[Metrics] Error getting metrics:', e);
+    res.status(500).json({ error: 'Failed to get metrics' });
+  }
+});
 
 // Duplicates list (admin only)
 app.use('/api/duplicates', requireAuth, deduplicationRouter);

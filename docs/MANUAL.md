@@ -4,6 +4,15 @@
 
 Справочник разделён по областям: Videocontrol (systemd/Node.js), Nginx, SQL/SQLite, хранилище контента, бэкапы, Android/ADB, быстрые установки и дополнительные проверки.
 
+### Новые возможности (v2.7.0)
+- **Health Check** — `/health` endpoint для мониторинга состояния сервера
+- **Metrics** — `/api/metrics` для отслеживания производительности (требует admin авторизации)
+- **Circuit Breaker** — автоматическая защита от каскадных сбоев БД и файловой системы
+- **Retry Logic** — автоматические повторы при ошибках БД с exponential backoff
+- **Request Timeouts** — защита от зависших HTTP запросов (30 сек по умолчанию)
+- **Auto-reconnect DB** — автоматическое переподключение к БД при сбоях
+- **Production-ready** — все компоненты готовы для работы 24/7
+
 ---
 
 ## Блок A — Videocontrol (systemd/Node.js)
@@ -45,6 +54,14 @@ curl -I -H "Range: bytes=0-524287" "http://HOST/api/files/resolve/DEVICE/FILE.mp
 
 # Socket.IO sanity-check
 curl -s "http://HOST/socket.io/?EIO=4&transport=polling" | head -n 1
+
+# Health Check (мониторинг состояния сервера)
+curl http://HOST/health
+# Возвращает: status, uptime, memory, database, circuitBreakers
+
+# Metrics (требует авторизации admin)
+curl -H "Authorization: Bearer TOKEN" http://HOST/api/metrics
+# Возвращает: метрики запросов, БД, Socket.IO, перцентили времени ответа
 ```
 
 ---

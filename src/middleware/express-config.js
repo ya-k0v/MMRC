@@ -7,12 +7,16 @@ import express from 'express';
 import path from 'path';
 import mime from 'mime';
 import { PUBLIC, ROOT, DEVICES } from '../config/constants.js';
+import { requestTimeout } from './timeout.js';
 
 /**
  * Настраивает базовые Express middleware
  * @param {express.Application} app - Express приложение
  */
 export function setupExpressMiddleware(app) {
+  // Таймауты для всех запросов (30 секунд по умолчанию)
+  app.use(requestTimeout(30000));
+  
   // JSON парсинг (увеличенный лимит нужен для загрузки крупных base64 payload)
   app.use(express.json({ limit: '1.5gb' }));  // 1GB файл + 33% base64 overhead
   app.use(express.urlencoded({ extended: true, limit: '1.5gb' }));

@@ -136,6 +136,13 @@ export const httpLoggerMiddleware = (req, res, next) => {
 
     const level = res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info';
     logAPI(level, `${req.method} ${req.originalUrl || req.url}`, logData);
+
+    // Записываем метрики (асинхронно, не блокируем ответ)
+    import('./metrics.js').then(({ recordRequest }) => {
+      recordRequest(req.method, req.originalUrl || req.url, duration, res.statusCode >= 400);
+    }).catch(() => {
+      // Ignore metrics errors
+    });
   });
 
   next();

@@ -40,8 +40,10 @@ node server.js
 ### Что нового (2.7.0)
 
 - 🖥️ **Speaker-panel = state of real player** — превью/подсветка слайдов теперь берётся из событий плеера, без локальных «догадок».
-- 📺 **Android клиент 24/7** — плавные переходы через бренд-фон, обработка OutOfMemory, lifecycle-aware корутины, безопасные placeholder’ы.
+- 📺 **Android клиент 24/7** — плавные переходы через бренд-фон, обработка OutOfMemory в фоне, lifecycle-aware корутины, безопасные placeholder'ы.
 - ⚙️ **Обновлённый quick-install** — ставит Node.js 20 LTS и позволяет выбрать режим хранения (local/external/external_fstab) через ENV.
+- 🔄 **Production-ready 24/7** — health check endpoint, circuit breaker, retry логика для БД, автоматическое восстановление при сбоях, метрики производительности.
+- 🛡️ **Улучшенная надежность** — таймауты для HTTP запросов, улучшенная обработка ошибок БД, автоматическое переподключение к БД.
 
 ### Быстрая установка (production, с Nginx и systemd)
 
@@ -111,14 +113,19 @@ adb shell am start -n com.videocontrol.mediaplayer/.MainActivity
 ## 🎯 Возможности
 
 ### Backend
-- **SQLite** - быстрая БД с WAL mode
+- **SQLite** - быстрая БД с WAL mode и автоматическим переподключением
 - **JWT Auth** - 12h access + 30d refresh tokens
 - **MD5 Deduplication** - экономия места на диске
 - **FFmpeg** - автооптимизация видео (720p/1080p)
 - **PDF/PPTX → изображения** - автоконвертация
 - **Graceful Shutdown** - корректное завершение
-- **Winston Logging** - структурированные логи
+- **Winston Logging** - структурированные логи с ротацией
 - **Rate Limiting** - защита от brute-force
+- **Health Check** - `/health` endpoint для мониторинга
+- **Metrics** - `/api/metrics` для отслеживания производительности
+- **Circuit Breaker** - защита от каскадных сбоев
+- **Retry Logic** - автоматические повторы при ошибках БД
+- **Request Timeouts** - защита от зависших запросов
 
 ### Frontend
 - **Админ панель** - управление устройствами и файлами
@@ -131,10 +138,12 @@ adb shell am start -n com.videocontrol.mediaplayer/.MainActivity
 
 ### Android Player
 - **ExoPlayer** - стабильное воспроизведение + кэш 500 MB
-- **Glide** - плавная загрузка изображений
+- **Glide** - плавная загрузка изображений с crossfade
 - **Презентации** - PDF/PPTX слайды
-- **Папки** - навигация по изображениям
+- **Папки** - навигация по изображениям с плейлистом
 - **Заглушка** - автовоспроизведение при отсутствии контента
+- **24/7 Ready** - обработка OOM в фоне, автоматическое восстановление, watchdog для соединения
+- **Плавные переходы** - fade-in/fade-out для всех типов контента
 
 ---
 
@@ -300,4 +309,4 @@ MIT License - свободное использование
 
 **ya-k0v** - [GitHub](https://github.com/ya-k0v/VideoControl)
 
-**Версия:** 2.6.3
+**Версия:** 2.7.0

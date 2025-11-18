@@ -847,7 +847,7 @@ class MainActivity : AppCompatActivity() {
         } catch (e: OutOfMemoryError) {
             Log.e(TAG, "❌ OutOfMemoryError playing video: $fileName", e)
             handleOutOfMemory()
-            showStatus("Недостаточно памяти")
+            // Не показываем сообщение зрителям - очистка происходит в фоне
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error playing video: $fileName", e)
             if (!isDestroyed && !isFinishing) {
@@ -899,9 +899,7 @@ class MainActivity : AppCompatActivity() {
         } catch (e: OutOfMemoryError) {
             Log.e(TAG, "❌ OutOfMemoryError loading new video", e)
             handleOutOfMemory()
-            if (!isDestroyed && !isFinishing) {
-                showStatus("Недостаточно памяти")
-            }
+            // Не показываем сообщение зрителям - очистка происходит в фоне
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error loading new video", e)
             if (!isDestroyed && !isFinishing) {
@@ -995,9 +993,7 @@ class MainActivity : AppCompatActivity() {
         } catch (e: OutOfMemoryError) {
             Log.e(TAG, "❌ OutOfMemoryError showing image: $fileName", e)
             handleOutOfMemory()
-            if (!isDestroyed && !isFinishing) {
-                showStatus("Недостаточно памяти")
-            }
+            // Не показываем сообщение зрителям - очистка происходит в фоне
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error showing image: $fileName", e)
             if (!isDestroyed && !isFinishing) {
@@ -1625,7 +1621,8 @@ class MainActivity : AppCompatActivity() {
     private val hideStatusRunnable = Runnable {
         // КРИТИЧНО: Проверяем что Activity еще жива
         if (isDestroyed || isFinishing) return@Runnable
-        statusText.visibility = View.GONE
+        // Используем функцию hideStatus() которая проверяет флаг showStatus
+        hideStatus()
     }
     
     private fun showStatus(message: String, autohideSeconds: Int = 3) {
@@ -1995,42 +1992,161 @@ class MainActivity : AppCompatActivity() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         
-        // КРИТИЧНО: Очищаем память при нехватке (для стабильности 24/7)
+        // КРИТИЧНО: Очищаем память в фоне при нехватке (для стабильности 24/7)
+        // Все происходит незаметно для зрителей - воспроизведение не прерывается
         if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
-            Log.w(TAG, "Low memory detected (level $level), clearing caches")
-            try {
-                // Очищаем Glide memory cache
-                Glide.get(this).clearMemory()
-                Log.d(TAG, "Glide memory cache cleared")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to clear Glide memory: ${e.message}", e)
-            }
+            Log.w(TAG, "Low memory detected (level $level), clearing caches in background")
             
-            // КРИТИЧНО: При критической нехватке памяти очищаем и ExoPlayer кэш
-            // (но только если контент не играет, чтобы не прерывать воспроизведение)
-            if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) {
-                Log.w(TAG, "Critical memory level, considering cache cleanup")
-                // Не очищаем ExoPlayer кэш во время воспроизведения - это прервет playback
-                // Вместо этого надеемся что система сама убьет процесс если нужно
+            val isPlaceholderPlaying = isPlayingPlaceholder
+            val isPlayerPlaying = player?.isPlaying == true
+            
+            // Очистка в фоне, чтобы не блокировать воспроизведение
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    // Очищаем Glide memory cache
+                    withContext(Dispatchers.Main) {
+                        try {
+                            Glide.get(this@MainActivity).clearMemory()
+                            Log.d(TAG, "✅ Glide memory cache cleared in background")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to clear Glide memory: ${e.message}", e)
+                        }
+                    }
+                    
+                    // При критической нехватке памяти - более агрессивная очистка
+                    if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) {
+                        Log.w(TAG, "Critical memory level - aggressive cleanup in background")
+                        
+                        // Очищаем disk cache Glide
+                        try {
+                            Glide.get(this@MainActivity).clearDiskCache()
+                            Log.d(TAG, "✅ Glide disk cache cleared in background")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to clear Glide disk cache: ${e.message}", e)
+                        }
+                        
+                        // КРИТИЧНО: Очищаем ExoPlayer кэш только если НЕ играет контент
+                        // Если играет заглушка - НЕ трогаем, она должна продолжать играть
+                        if (!isPlayerPlaying && !isPlaceholderPlaying) {
+                            withContext(Dispatchers.Main) {
+                                try {
+                                    releaseSimpleCache()
+                                    // Переинициализируем через задержку
+                                    Handler(Looper.getMainLooper()).postDelayed({
+                                        try {
+                                            if (!isDestroyed && !isFinishing) {
+                                                initializeSimpleCache()
+                                            }
+                                        } catch (e: Exception) {
+                                            Log.e(TAG, "Error reinitializing cache: ${e.message}", e)
+                                        }
+                                    }, 1000)
+                                    Log.d(TAG, "✅ ExoPlayer cache cleared in background (no playback active)")
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error clearing ExoPlayer cache: ${e.message}", e)
+                                }
+                            }
+                        } else {
+                            Log.d(TAG, "⚠️ Skipping ExoPlayer cache cleanup - playback active (placeholder: $isPlaceholderPlaying)")
+                        }
+                    }
+                    
+                    // Принудительный сбор мусора в фоне
+                    System.gc()
+                    
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in background memory cleanup: ${e.message}", e)
+                }
             }
         }
     }
     
     /**
-     * Обработка OutOfMemoryError - очистка кэшей и перезапуск компонентов
+     * Обработка OutOfMemoryError - очистка кэшей в фоне без прерывания воспроизведения
+     * Все происходит незаметно для зрителей - только контент на экране
      */
     private fun handleOutOfMemory() {
-        Log.e(TAG, "⚠️ Handling OutOfMemoryError - clearing caches and restarting")
-        try {
-            Glide.get(this).clearMemory()
-            Glide.get(this).clearDiskCache()
-            releaseSimpleCache()
-            initializeSimpleCache()
-            if (isPlayingPlaceholder) {
-                loadPlaceholder()
+        Log.e(TAG, "⚠️ Handling OutOfMemoryError - clearing caches in background")
+        
+        // КРИТИЧНО: Если играет заглушка - НЕ останавливаем её, очищаем память в фоне
+        val wasPlayingPlaceholder = isPlayingPlaceholder
+        val wasPlayerPlaying = player?.isPlaying == true
+        
+        // Очистка памяти в фоне (не блокируем UI и воспроизведение)
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                // 1. Очищаем кэши Glide в фоне
+                try {
+                    withContext(Dispatchers.Main) {
+                        Glide.get(this@MainActivity).clearMemory()
+                    }
+                    Glide.get(this@MainActivity).clearDiskCache()
+                    Log.d(TAG, "✅ Glide caches cleared in background")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error clearing Glide cache: ${e.message}", e)
+                }
+                
+                // 2. Очищаем ImageView только если не играет контент
+                if (!wasPlayerPlaying) {
+                    withContext(Dispatchers.Main) {
+                        try {
+                            imageView.setImageDrawable(null)
+                            Glide.with(this@MainActivity).clear(imageView)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error clearing ImageView: ${e.message}", e)
+                        }
+                    }
+                }
+                
+                // 3. Очищаем ExoPlayer кэш только если не играет контент
+                // (если играет заглушка - не трогаем, она должна продолжать играть)
+                if (!wasPlayerPlaying && !wasPlayingPlaceholder) {
+                    withContext(Dispatchers.Main) {
+                        try {
+                            releaseSimpleCache()
+                            // Переинициализируем кэш через небольшую задержку
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                try {
+                                    if (!isDestroyed && !isFinishing) {
+                                        initializeSimpleCache()
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error reinitializing cache: ${e.message}", e)
+                                }
+                            }, 1000)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error releasing cache: ${e.message}", e)
+                        }
+                    }
+                }
+                
+                // 4. Принудительный сбор мусора в фоне
+                System.gc()
+                
+                Log.i(TAG, "✅ Memory cleanup completed in background (placeholder was playing: $wasPlayingPlaceholder)")
+                
+                // 5. Если играла заглушка и она остановилась - восстанавливаем незаметно
+                if (wasPlayingPlaceholder) {
+                    withContext(Dispatchers.Main) {
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            try {
+                                if (isDestroyed || isFinishing) return@postDelayed
+                                // Проверяем, играет ли еще заглушка
+                                if (!isPlayingPlaceholder || player?.isPlaying != true) {
+                                    // Восстанавливаем незаметно, без сообщений
+                                    loadPlaceholder()
+                                    Log.d(TAG, "✅ Placeholder restored silently after OOM cleanup")
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error restoring placeholder: ${e.message}", e)
+                            }
+                        }, 500)
+                    }
+                }
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Critical error in background OOM cleanup: ${e.message}", e)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error handling OOM: ${e.message}", e)
         }
     }
 }

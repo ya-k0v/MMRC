@@ -147,9 +147,60 @@ function updateFolderPlaylistButtonState() {
   if (!btn) return;
   const deviceId = btn.getAttribute('data-device');
   const file = btn.getAttribute('data-file');
-  const isActive = isFolderPlaylistActiveFor(deviceId, file);
-  btn.classList.toggle('is-active', isActive);
-  btn.textContent = isActive ? 'Остановить плейлист' : 'Плейлист';
+  
+  if (!deviceId || !file) return;
+  
+  // Проверяем состояние на сервере
+  const device = devices.find(d => d.device_id === deviceId);
+  const serverPlaylistActive = device && device.current && 
+    device.current.type === 'folder' && 
+    device.current.playlistActive && 
+    (device.current.playlistFile === file || device.current.file === file);
+  
+  // Локальное состояние или состояние с сервера
+  const isActive = isFolderPlaylistActiveFor(deviceId, file) || serverPlaylistActive;
+  
+  // Всегда обновляем и класс, и текст синхронно
+  if (isActive) {
+    btn.classList.add('is-active');
+    btn.textContent = 'Остановить плейлист';
+  } else {
+    btn.classList.remove('is-active');
+    btn.textContent = 'Плейлист';
+  }
+  
+  // Если плейлист активен на сервере, но не локально - обновляем интервал
+  if (serverPlaylistActive && !isFolderPlaylistActiveFor(deviceId, file)) {
+    const playlistInterval = device.current.playlistInterval || 10;
+    if (playlistInterval !== folderPlaylistIntervalSeconds) {
+      folderPlaylistIntervalSeconds = playlistInterval;
+      updateFolderPlaylistIntervalButtons(playlistInterval);
+    }
+  }
+}
+
+function updateFolderPlaylistButtonStateForDevice(deviceId, file, isActive, intervalSeconds) {
+  // Обновляем кнопку плейлиста если она видна для этого устройства
+  const btn = document.getElementById('folderPlaylistBtn');
+  if (!btn) return;
+  
+  const btnDeviceId = btn.getAttribute('data-device');
+  const btnFile = btn.getAttribute('data-file');
+  
+  // Обновляем только если это та же папка
+  if (btnDeviceId === deviceId && btnFile === file) {
+    btn.classList.toggle('is-active', isActive);
+    btn.textContent = isActive ? 'Остановить плейлист' : 'Плейлист';
+    
+    // Обновляем интервал если указан
+    if (intervalSeconds) {
+      folderPlaylistIntervalSeconds = intervalSeconds;
+      updateFolderPlaylistIntervalButtons(intervalSeconds);
+    }
+  }
+  
+  // Также обновляем через основную функцию для синхронизации
+  updateFolderPlaylistButtonState();
 }
 
 function clearFolderPlaylistTimer() {
@@ -162,7 +213,11 @@ function clearFolderPlaylistTimer() {
 function sendPlaylistPlayCommand(payload) {
   folderPlaylistGuard = true;
   socket.emit('control/play', payload);
-  folderPlaylistGuard = false;
+  // Сбрасываем guard с небольшой задержкой, чтобы предотвратить остановку плейлиста
+  // при получении события preview/refresh сразу после отправки команды
+  setTimeout(() => {
+    folderPlaylistGuard = false;
+  }, 500);
 }
 
 function scheduleFolderPlaylistTick() {
@@ -185,6 +240,12 @@ function scheduleFolderPlaylistTick() {
 
 function startFolderPlaylist(deviceId, file, imageCount, intervalSeconds = folderPlaylistIntervalSeconds) {
   if (!deviceId || !file || imageCount < 1) return;
+  
+  // Останавливаем предыдущий плейлист, если он был активен
+  if (folderPlaylistState && folderPlaylistState.deviceId === deviceId && folderPlaylistState.file !== file) {
+    stopFolderPlaylist('switching to different folder');
+  }
+  
   const initialPage = 1;
   folderPlaylistIntervalSeconds = Math.max(1, intervalSeconds || DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS);
   folderPlaylistState = {
@@ -204,8 +265,19 @@ function startFolderPlaylist(deviceId, file, imageCount, intervalSeconds = folde
   } catch (e) {
     // Failed to save playlist state
   }
-  sendPlaylistPlayCommand({ device_id: deviceId, file, page: initialPage });
-  scheduleFolderPlaylistTick();
+  // Отправляем состояние плейлиста на сервер для синхронизации между панелями
+  socket.emit('control/playlistStart', {
+    device_id: deviceId,
+    file,
+    intervalSeconds: folderPlaylistIntervalSeconds
+  });
+  // Отправляем команду воспроизведения с небольшой задержкой, чтобы сервер успел обработать playlistStart
+  setTimeout(() => {
+    if (folderPlaylistState && folderPlaylistState.deviceId === deviceId && folderPlaylistState.file === file) {
+      sendPlaylistPlayCommand({ device_id: deviceId, file, page: initialPage });
+      scheduleFolderPlaylistTick();
+    }
+  }, 100);
   updateFolderPlaylistButtonState();
 }
 
@@ -214,6 +286,7 @@ function stopFolderPlaylist(reason = '') {
     clearFolderPlaylistTimer();
     return;
   }
+  const { deviceId } = folderPlaylistState;
   clearFolderPlaylistTimer();
   folderPlaylistState = null;
   // Удаляем состояние плейлиста из localStorage
@@ -221,6 +294,10 @@ function stopFolderPlaylist(reason = '') {
     localStorage.removeItem('folderPlaylistState');
   } catch (e) {
     // Failed to remove playlist state
+  }
+  // Отправляем остановку плейлиста на сервер для синхронизации между панелями
+  if (deviceId) {
+    socket.emit('control/playlistStop', { device_id: deviceId });
   }
   updateFolderPlaylistButtonState();
 }
@@ -235,10 +312,29 @@ function stopFolderPlaylistIfNeeded(reason = '', context = {}) {
 
 function toggleFolderPlaylist(deviceId, file, imageCount) {
   if (!deviceId || !file) return;
-  if (isFolderPlaylistActiveFor(deviceId, file)) {
-    stopFolderPlaylist('manual toggle');
+  
+  // Проверяем состояние на сервере
+  const device = devices.find(d => d.device_id === deviceId);
+  const serverPlaylistActive = device && device.current && 
+    device.current.type === 'folder' && 
+    device.current.playlistActive === true && 
+    (device.current.playlistFile === file || device.current.file === file);
+  
+  // Если плейлист активен локально или на сервере - останавливаем
+  if (isFolderPlaylistActiveFor(deviceId, file) || serverPlaylistActive) {
+    // Если плейлист был активен локально - останавливаем локально
+    // (stopFolderPlaylist уже отправит команду на сервер)
+    if (isFolderPlaylistActiveFor(deviceId, file)) {
+      stopFolderPlaylist('manual toggle');
+    } else {
+      // Если плейлист был активен только на сервере - отправляем команду на сервер
+      // Сервер отправит событие playlist/state, которое обновит UI на всех панелях
+      socket.emit('control/playlistStop', { device_id: deviceId });
+    }
     return;
   }
+  
+  // Запускаем плейлист
   const activeBtn = document.querySelector('.folder-playlist-interval-btn.is-active');
   const intervalValue = activeBtn ? Number(activeBtn.getAttribute('data-interval')) : folderPlaylistIntervalSeconds;
   startFolderPlaylist(deviceId, file, imageCount, intervalValue);
@@ -311,6 +407,9 @@ async function restoreFolderPlaylist() {
         file: file,
         state: 'playing',
         page: currentPage,
+        playlistActive: true,
+        playlistInterval: folderPlaylistIntervalSeconds,
+        playlistFile: file,
       };
     }
     
@@ -319,6 +418,13 @@ async function restoreFolderPlaylist() {
       type: 'folder',
       file: file,
       page: currentPage,
+    });
+    
+    // Отправляем состояние плейлиста на сервер для синхронизации
+    socket.emit('control/playlistStart', {
+      device_id: deviceId,
+      file,
+      intervalSeconds: folderPlaylistIntervalSeconds
     });
     
     // Если это текущее устройство, переключаемся на него и показываем превью
@@ -452,9 +558,10 @@ function renderThumbnailGrid(deviceId, safeName, contentType, imageUrls) {
       const btnFile = playlistBtn.getAttribute('data-file');
       const count = Number(playlistBtn.getAttribute('data-count')) || imageUrls.length;
       toggleFolderPlaylist(btnDevice, btnFile, count);
-      updateFolderPlaylistButtonState();
+      // updateFolderPlaylistButtonState вызывается внутри toggleFolderPlaylist
     });
-    updateFolderPlaylistButtonState();
+    // Обновляем состояние кнопки после рендера
+    setTimeout(() => updateFolderPlaylistButtonState(), 0);
   }
   const intervalButtons = document.querySelectorAll('.folder-playlist-interval-btn');
   if (intervalButtons.length) {
@@ -467,6 +574,12 @@ function renderThumbnailGrid(deviceId, safeName, contentType, imageUrls) {
         if (folderPlaylistState) {
           folderPlaylistState.intervalSeconds = nextValue;
           scheduleFolderPlaylistTick();
+          // Отправляем обновление интервала на сервер для синхронизации
+          socket.emit('control/playlistStart', {
+            device_id: folderPlaylistState.deviceId,
+            file: folderPlaylistState.file,
+            intervalSeconds: nextValue
+          });
         }
       });
     });
@@ -492,6 +605,12 @@ async function showStaticPreview(deviceId, safeName, contentType, { initiatedByU
   const state = playerStateByDevice.get(deviceId);
   if (state && state.file === safeName && state.page) {
     highlightCurrentThumbnail(state.page, currentPreviewContext);
+  }
+  
+  // Проверяем состояние плейлиста на сервере при открытии папки
+  if (contentType === 'folder') {
+    // Обновляем состояние кнопки плейлиста
+    updateFolderPlaylistButtonState();
   }
 }
 
@@ -563,6 +682,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   nodeNames = await loadNodeNames();
   await loadDevices();
+  
+  // Синхронизируем состояние плейлиста с сервера после загрузки устройств
+  devices.forEach(device => {
+    if (device.current && device.current.type === 'folder' && device.current.playlistActive) {
+      const playlistFile = device.current.playlistFile || device.current.file;
+      const playlistInterval = device.current.playlistInterval || 10;
+      updateFolderPlaylistButtonStateForDevice(device.device_id, playlistFile, true, playlistInterval);
+    }
+  });
+  
   attachTouchGestures();
 
   // Автовыбор из URL, если есть
@@ -1275,8 +1404,26 @@ document.getElementById('pdfCloseBtn').onclick = () => {
   // Устанавливаем флаг что пользователь ЯВНО закрыл превью
   previewManuallyClosed = true;
   
+  // Останавливаем плейлист (локально и на сервере)
+  const device = devices.find(d => d.device_id === currentDevice);
+  const hasActivePlaylist = device && device.current && 
+    device.current.type === 'folder' && 
+    device.current.playlistActive === true;
+  
+  if (hasActivePlaylist) {
+    // Если плейлист активен локально - останавливаем локально
+    if (isFolderPlaylistActiveFor(currentDevice, device.current.playlistFile || device.current.file)) {
+      stopFolderPlaylist('preview closed');
+    } else {
+      // Если плейлист активен только на сервере - отправляем команду на сервер
+      socket.emit('control/playlistStop', { device_id: currentDevice });
+    }
+  } else {
+    // Останавливаем локальный плейлист, если он был активен
+    stopFolderPlaylist('preview closed');
+  }
+  
   // Останавливаем воспроизведение
-  stopFolderPlaylist('preview closed');
   socket.emit('control/stop', { device_id: currentDevice });
   
   // Сбрасываем выбранный файл
@@ -1335,12 +1482,102 @@ socket.on('players/onlineSnapshot', (list) => {
   renderTVList();
 });
 
+// Синхронизация состояния плейлиста между панелями
+socket.on('playlist/state', ({ device_id, active, file, intervalSeconds }) => {
+  if (!device_id) return;
+  
+  // Обновляем состояние устройства в локальном массиве
+  const device = devices.find(d => d.device_id === device_id);
+  if (device) {
+    if (!device.current) {
+      device.current = { type: 'folder', file: file || null, state: 'playing', page: 1 };
+    }
+    if (active) {
+      device.current.playlistActive = true;
+      device.current.playlistInterval = intervalSeconds || 10;
+      device.current.playlistFile = file;
+      // Убеждаемся, что file также установлен
+      if (!device.current.file || device.current.file !== file) {
+        device.current.file = file;
+      }
+    } else {
+      device.current.playlistActive = false;
+      device.current.playlistInterval = undefined;
+      device.current.playlistFile = undefined;
+    }
+  }
+  
+  // Обновляем UI кнопки плейлиста для всех панелей с небольшой задержкой
+  // чтобы убедиться, что состояние обновлено
+  setTimeout(() => {
+    updateFolderPlaylistButtonState();
+  }, 50);
+  
+  // Если это текущее устройство - обновляем локальное состояние
+  if (active) {
+    if (device && file) {
+      // Если плейлист уже активен локально - синхронизируем интервал
+      if (isFolderPlaylistActiveFor(device_id, file)) {
+        if (intervalSeconds && intervalSeconds !== folderPlaylistIntervalSeconds) {
+          folderPlaylistIntervalSeconds = intervalSeconds;
+          if (folderPlaylistState) {
+            folderPlaylistState.intervalSeconds = intervalSeconds;
+            // Перепланируем таймер с новым интервалом
+            scheduleFolderPlaylistTick();
+          }
+          updateFolderPlaylistIntervalButtons(intervalSeconds);
+        }
+      } else {
+        // Плейлист запущен на другой панели - обновляем интервал в UI
+        if (intervalSeconds) {
+          folderPlaylistIntervalSeconds = intervalSeconds;
+          updateFolderPlaylistIntervalButtons(intervalSeconds);
+        }
+      }
+    }
+  } else {
+    // Плейлист остановлен - обновляем UI для всех панелей
+    if (isFolderPlaylistActiveFor(device_id, file || folderPlaylistState?.file)) {
+      // Если это наш локальный плейлист - останавливаем его
+      stopFolderPlaylist('stopped from another panel');
+    }
+    // Обновляем UI кнопки плейлиста
+    updateFolderPlaylistButtonState();
+  }
+});
+
 socket.on('devices/updated', onDevicesUpdated);
 const onPreviewRefresh = debounce(async ({ device_id }) => {
+  // Сохраняем состояние плейлиста перед загрузкой устройств
+  const playlistStates = {};
+  devices.forEach(d => {
+    if (d.current && d.current.playlistActive) {
+      playlistStates[d.device_id] = {
+        playlistActive: d.current.playlistActive,
+        playlistInterval: d.current.playlistInterval,
+        playlistFile: d.current.playlistFile
+      };
+    }
+  });
+  
   try {
     const res = await speakerFetch('/api/devices');
     if (!res.ok) return;
-    devices = sortDevices(await res.json());
+    const newDevices = sortDevices(await res.json());
+    
+    // Восстанавливаем состояние плейлиста после загрузки
+    newDevices.forEach(d => {
+      if (playlistStates[d.device_id]) {
+        if (!d.current) {
+          d.current = { type: 'folder', file: playlistStates[d.device_id].playlistFile, state: 'playing', page: 1 };
+        }
+        d.current.playlistActive = playlistStates[d.device_id].playlistActive;
+        d.current.playlistInterval = playlistStates[d.device_id].playlistInterval;
+        d.current.playlistFile = playlistStates[d.device_id].playlistFile;
+      }
+    });
+    
+    devices = newDevices;
   } catch (err) {
     console.error('Failed to refresh devices:', err);
     return;
@@ -1372,12 +1609,65 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
     page: Number(device.current.page) || 1,
   });
 
-  if (folderPlaylistState && folderPlaylistState.deviceId === device_id) {
-    if (!device.current || device.current.type !== 'folder' || device.current.file !== folderPlaylistState.file) {
-      stopFolderPlaylist('контент сменился');
-    } else if (device.current.page) {
-      folderPlaylistState.currentIndex = Number(device.current.page) || folderPlaylistState.currentIndex;
+  // Синхронизация плейлиста с состоянием устройства с сервера
+  if (device.current && device.current.type === 'folder' && device.current.playlistActive) {
+    // Плейлист активен на сервере - синхронизируем локальное состояние
+    const playlistFile = device.current.playlistFile || device.current.file;
+    const playlistInterval = device.current.playlistInterval || 10;
+    
+    if (isFolderPlaylistActiveFor(device_id, playlistFile)) {
+      // Локальный плейлист уже активен - синхронизируем интервал
+      if (playlistInterval !== folderPlaylistIntervalSeconds) {
+        folderPlaylistIntervalSeconds = playlistInterval;
+        if (folderPlaylistState) {
+          folderPlaylistState.intervalSeconds = playlistInterval;
+          scheduleFolderPlaylistTick();
+        }
+        updateFolderPlaylistIntervalButtons(playlistInterval);
+      }
+      // Синхронизируем текущую страницу
+      if (device.current.page) {
+        folderPlaylistState.currentIndex = Number(device.current.page) || folderPlaylistState.currentIndex;
+      }
     }
+    // Обновляем UI кнопки плейлиста
+    updateFolderPlaylistButtonState();
+  } else if (folderPlaylistState && folderPlaylistState.deviceId === device_id) {
+    // Локальный плейлист активен - проверяем состояние на сервере
+    if (device.current && device.current.type === 'folder') {
+      // Если файл совпадает, но плейлист не активен на сервере - возможно, он еще не обновился
+      // Не останавливаем плейлист сразу, если файл совпадает
+      if (device.current.file === folderPlaylistState.file) {
+        // Синхронизируем текущую страницу
+        if (device.current.page) {
+          folderPlaylistState.currentIndex = Number(device.current.page) || folderPlaylistState.currentIndex;
+        }
+        // Если плейлист активен на сервере - синхронизируем интервал
+        if (device.current.playlistActive) {
+          const playlistInterval = device.current.playlistInterval || 10;
+          if (playlistInterval !== folderPlaylistIntervalSeconds) {
+            folderPlaylistIntervalSeconds = playlistInterval;
+            folderPlaylistState.intervalSeconds = playlistInterval;
+            scheduleFolderPlaylistTick();
+            updateFolderPlaylistIntervalButtons(playlistInterval);
+          }
+        }
+      } else {
+        // Файл изменился - останавливаем плейлист
+        stopFolderPlaylist('контент сменился');
+      }
+    } else if (!device.current || device.current.type !== 'idle') {
+      // Устройство не воспроизводит папку - останавливаем плейлист только если это не idle
+      // (idle может быть временным состоянием)
+      if (device.current && device.current.type !== 'folder') {
+        stopFolderPlaylist('контент сменился');
+      }
+    }
+    // Обновляем UI кнопки плейлиста
+    updateFolderPlaylistButtonState();
+  } else {
+    // Обновляем UI кнопки плейлиста в любом случае
+    updateFolderPlaylistButtonState();
   }
 
   if (device_id === currentDevice) {

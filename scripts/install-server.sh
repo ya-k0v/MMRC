@@ -23,12 +23,12 @@ echo ""
 
 # Install Node.js if not installed
 if ! command -v node &> /dev/null; then
-    echo "Installing Node.js..."
+    echo "Installing Node.js 20 LTS..."
     if [ "$OS" = "ubuntu" ] || [ "$OS" = "debian" ]; then
-        curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
         sudo apt-get install -y nodejs
     elif [ "$OS" = "centos" ] || [ "$OS" = "rhel" ]; then
-        curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo bash -
+        curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
         sudo yum install -y nodejs
     fi
 else

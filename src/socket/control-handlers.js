@@ -89,9 +89,58 @@ export function setupControlHandlers(socket, deps) {
     const d = devices[device_id];
     if (!d) return;
     
+    // Останавливаем плейлист если был активен
+    if (d.current && d.current.playlistActive) {
+      d.current.playlistActive = false;
+      d.current.playlistInterval = undefined;
+      d.current.playlistFile = undefined;
+      io.emit('playlist/state', { device_id, active: false });
+    }
+    
     d.current = { type: 'idle', file: null, state: 'idle' };
     io.to(`device:${device_id}`).emit('player/stop');
     io.emit('preview/refresh', { device_id });
+  });
+
+  // control/playlistStart - Запуск плейлиста папки
+  socket.on('control/playlistStart', ({ device_id, file, intervalSeconds }) => {
+    const d = devices[device_id];
+    if (!d) return;
+    
+    // Обновляем состояние устройства с информацией о плейлисте
+    if (!d.current) {
+      d.current = { type: 'folder', file, state: 'playing', page: 1 };
+    }
+    d.current.playlistActive = true;
+    d.current.playlistInterval = intervalSeconds || 10;
+    d.current.playlistFile = file;
+    
+    // Рассылаем состояние плейлиста всем панелям для синхронизации
+    io.emit('playlist/state', {
+      device_id,
+      active: true,
+      file,
+      intervalSeconds: d.current.playlistInterval
+    });
+  });
+
+  // control/playlistStop - Остановка плейлиста папки
+  socket.on('control/playlistStop', ({ device_id }) => {
+    const d = devices[device_id];
+    if (!d) return;
+    
+    // Убираем информацию о плейлисте из состояния
+    if (d.current) {
+      d.current.playlistActive = false;
+      d.current.playlistInterval = undefined;
+      d.current.playlistFile = undefined;
+    }
+    
+    // Рассылаем остановку плейлиста всем панелям для синхронизации
+    io.emit('playlist/state', {
+      device_id,
+      active: false
+    });
   });
 
   // control/pdfPrev - Предыдущая страница/слайд/изображение
