@@ -364,8 +364,9 @@ if (!device_id || !device_id.trim()) {
                     if (preview) {
                       const startOnInteraction = () => {
                         vjsPlayer.play().then(() => {
-                        document.removeEventListener('click', startOnInteraction);
-                        document.removeEventListener('touchstart', startOnInteraction);
+                          document.removeEventListener('click', startOnInteraction);
+                          document.removeEventListener('touchstart', startOnInteraction);
+                        });
                       };
                       document.addEventListener('click', startOnInteraction, { once: true });
                       document.addEventListener('touchstart', startOnInteraction, { once: true });
