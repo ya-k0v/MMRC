@@ -11,7 +11,6 @@ import { uploadFiles, copyFile } from './admin/upload-manager.js';
 import { clearDetail, clearFilesPane, openDevice as openDeviceHelper } from './admin/ui-helpers.js';
 import { renderDeviceCard as renderDeviceCardModule } from './admin/device-card.js';
 import { setupUploadUI as setupUploadUIModule } from './admin/upload-ui.js';
-import { initSystemMonitor } from './admin/system-monitor.js';
 import { showDevicesModal, showUsersModal, showSettingsModal } from './admin/modal.js';
 
 const socket = io();
@@ -163,8 +162,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateDevicesCount(); // Обновляем счетчик после создания layout
   initSelectionFromUrl();
   
-  // Инициализируем системный монитор (теперь в специальном контейнере)
-  initSystemMonitor(adminFetch);
+  // Системный монитор теперь отображается в модальном окне настроек
 });
 
 async function loadDevices() {

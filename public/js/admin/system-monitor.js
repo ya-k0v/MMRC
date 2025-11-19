@@ -8,37 +8,30 @@ let fetchFunction = null;
 
 /**
  * Инициализация системного монитора
+ * @param {Function} adminFetch - функция для выполнения запросов
+ * @param {HTMLElement} container - опциональный контейнер для рендеринга (если не указан, используется systemMonitorContainer)
  */
-export function initSystemMonitor(adminFetch) {
-  
+export function initSystemMonitor(adminFetch, container = null) {
   fetchFunction = adminFetch;
   
   // Создаем UI для системной информации
-  createSystemMonitorUI();
+  createSystemMonitorUI(container);
   
   // Загружаем данные сразу
   loadSystemInfo();
   
   // Обновляем каждые 5 секунд
+  if (systemInfoInterval) {
+    clearInterval(systemInfoInterval);
+  }
   systemInfoInterval = setInterval(loadSystemInfo, 5000);
 }
 
 /**
- * Создать UI для системного монитора
+ * Получить HTML для системного монитора
  */
-function createSystemMonitorUI() {
-  // Проверяем, не создан ли уже
-  if (document.getElementById('system-monitor')) {
-    return;
-  }
-
-  // Находим специальный контейнер для монитора
-  const centerDiv = document.getElementById('systemMonitorContainer');
-  if (!centerDiv) {
-    return;
-  }
-
-  const monitorHTML = `
+export function getSystemMonitorHTML() {
+  return `
     <div id="system-monitor" class="system-monitor">
       <div class="system-stat" id="cpu-stat" title="Загрузка процессора">
         <span class="stat-icon">
@@ -101,8 +94,35 @@ function createSystemMonitorUI() {
       </div>
     </div>
   `;
+}
 
-  centerDiv.innerHTML = monitorHTML;
+/**
+ * Создать UI для системного монитора
+ * @param {HTMLElement} container - опциональный контейнер для рендеринга
+ */
+function createSystemMonitorUI(container = null) {
+  // Используем переданный контейнер или ищем по умолчанию
+  const targetContainer = container || document.getElementById('systemMonitorContainer');
+  if (!targetContainer) {
+    return;
+  }
+
+  // Проверяем, есть ли уже системный монитор в этом контейнере
+  const existingMonitor = targetContainer.querySelector('#system-monitor');
+  if (existingMonitor) {
+    // UI уже существует, просто убеждаемся что стили добавлены
+    addSystemMonitorStyles();
+    return;
+  }
+
+  // Проверяем, не создан ли уже системный монитор в другом месте
+  const globalMonitor = document.getElementById('system-monitor');
+  if (globalMonitor && !targetContainer.contains(globalMonitor)) {
+    return;
+  }
+
+  const monitorHTML = getSystemMonitorHTML();
+  targetContainer.innerHTML = monitorHTML;
   
   // Добавляем стили
   addSystemMonitorStyles();

@@ -886,12 +886,6 @@ body.light .queue li {
     flex: 0 0 auto;
   }
   
-  #systemMonitorContainer {
-    flex: 1 1 auto;
-    min-width: 0;
-    justify-content: center;
-  }
-  
   .layout {
     padding: var(--space-sm);
   }
@@ -930,12 +924,6 @@ body.light .queue li {
   
   .toolbar > div:first-child {
     order: 1;
-  }
-  
-  #systemMonitorContainer {
-    order: 3;
-    width: 100%;
-    margin-top: var(--space-xs);
   }
   
   .toolbar > div:last-child {

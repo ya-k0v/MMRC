@@ -385,125 +385,155 @@ async function loadModalUsersList(adminFetch) {
 }
 
 export function showSettingsModal() {
-  const content = `
-    <div id="settingsModalContainer" style="display:flex; flex-direction:column; gap:var(--space-lg);">
-      <div class="meta" style="text-align:center;">Загрузка настроек...</div>
-    </div>
-  `;
-  
-  showModal('⚙️ Настройки', content);
-  
-  setTimeout(async () => {
-    const container = document.getElementById('settingsModalContainer');
-    if (!container) return;
-    
-    let adminFetch;
-    let settingsData = null;
-    
-    try {
-      ({ adminFetch } = await import('./auth.js'));
-      const response = await adminFetch('/api/admin/settings');
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'Ошибка загрузки настроек' }));
-        throw new Error(error.error || 'Ошибка загрузки настроек');
-      }
-      settingsData = await response.json();
-    } catch (err) {
-      container.innerHTML = `<div class="meta" style="color:var(--danger); text-align:center;">${err.message}</div>`;
-      return;
-    }
-    
-    const currentContentRoot = settingsData?.runtime?.contentRoot || settingsData?.contentRoot || '';
-    const defaultContentRoot = settingsData?.defaults?.contentRoot || '';
-    
-    container.innerHTML = `
-      <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm); display:flex; flex-direction:column; gap:var(--space-sm);">
-        <div style="font-weight:600;">Хранилище контента</div>
-        <div class="meta" style="color:var(--text-secondary); line-height:1.4;">
-          Укажите абсолютный путь до папки, где лежат папки устройств. Папка должна быть доступна для записи пользователю, от которого запущен сервис.
-        </div>
-        <input id="contentRootInput" class="input" spellcheck="false" />
-        <div class="meta" style="font-size:0.85rem; color:var(--text-secondary);">
-          По умолчанию: <code style="font-family:monospace;">${defaultContentRoot}</code>
-        </div>
-        <div id="contentRootStatus" class="meta" style="min-height:1.2em;"></div>
-        <button id="contentRootSaveBtn" class="primary" style="align-self:flex-start;">Сохранить путь</button>
+  // Импортируем системный монитор динамически
+  Promise.all([
+    import('./system-monitor.js'),
+    import('./auth.js')
+  ]).then(([{ getSystemMonitorHTML, initSystemMonitor }, { adminFetch }]) => {
+    const content = `
+      <div id="settingsModalSystemMonitor" style="margin-bottom:var(--space-md);">
+        ${getSystemMonitorHTML()}
       </div>
-      <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm);">
-        <div style="margin-bottom:var(--space-md); font-weight:600;">База данных</div>
-        <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
-          <div class="meta" style="color:var(--text-secondary);">
-            Экспортируйте базу данных для резервного копирования или миграции.
-          </div>
-          <button id="exportDatabaseBtn" class="primary" style="width:100%;">
-            📥 Экспорт базы данных
-          </button>
-        </div>
+      <div id="settingsModalContainer" style="display:flex; flex-direction:column; gap:var(--space-lg);">
+        <div class="meta" style="text-align:center;">Загрузка настроек...</div>
       </div>
     `;
     
-    const inputEl = document.getElementById('contentRootInput');
-    const saveBtn = document.getElementById('contentRootSaveBtn');
-    const statusEl = document.getElementById('contentRootStatus');
-    const exportBtn = document.getElementById('exportDatabaseBtn');
+    showModal('⚙️ Настройки', content);
     
-    if (!inputEl || !saveBtn || !statusEl || !exportBtn) return;
-    
-    let lastSavedValue = currentContentRoot;
-    inputEl.value = currentContentRoot;
-    
-    const toggleSaveState = () => {
-      const same = inputEl.value.trim() === lastSavedValue;
-      saveBtn.disabled = same;
-      if (!same) {
-        statusEl.textContent = '';
-        statusEl.style.color = 'var(--text-secondary)';
+    // Инициализируем системный монитор в модальном окне после того как DOM обновлен
+    setTimeout(() => {
+      const monitorContainer = document.getElementById('settingsModalSystemMonitor');
+      if (monitorContainer && adminFetch) {
+        initSystemMonitor(adminFetch, monitorContainer);
       }
-    };
+    }, 0);
     
-    toggleSaveState();
-    inputEl.addEventListener('input', toggleSaveState);
-    
-    saveBtn.onclick = async () => {
-      const newPath = inputEl.value.trim();
-      if (!newPath) {
-        statusEl.textContent = 'Укажите абсолютный путь';
-        statusEl.style.color = 'var(--danger)';
-        return;
-      }
-      
-      saveBtn.disabled = true;
-      saveBtn.textContent = 'Сохранение...';
-      statusEl.textContent = 'Проверяем путь...';
+    // Загружаем настройки
+    loadSettingsContent(adminFetch);
+  }).catch(() => {
+    // Fallback если импорт не удался
+    import('./auth.js').then(({ adminFetch }) => {
+      const content = `
+        <div id="settingsModalContainer" style="display:flex; flex-direction:column; gap:var(--space-lg);">
+          <div class="meta" style="text-align:center;">Загрузка настроек...</div>
+        </div>
+      `;
+      showModal('⚙️ Настройки', content);
+      loadSettingsContent(adminFetch);
+    });
+  });
+}
+
+async function loadSettingsContent(adminFetch) {
+  const container = document.getElementById('settingsModalContainer');
+  if (!container) return;
+  
+  let settingsData = null;
+  
+  try {
+    const response = await adminFetch('/api/admin/settings');
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Ошибка загрузки настроек' }));
+      throw new Error(error.error || 'Ошибка загрузки настроек');
+    }
+    settingsData = await response.json();
+  } catch (err) {
+    container.innerHTML = `<div class="meta" style="color:var(--danger); text-align:center;">${err.message}</div>`;
+    return;
+  }
+  
+  const currentContentRoot = settingsData?.runtime?.contentRoot || settingsData?.contentRoot || '';
+  const defaultContentRoot = settingsData?.defaults?.contentRoot || '';
+  
+  container.innerHTML = `
+    <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm); display:flex; flex-direction:column; gap:var(--space-sm);">
+      <div style="font-weight:600;">Хранилище контента</div>
+      <div class="meta" style="color:var(--text-secondary); line-height:1.4;">
+        Укажите абсолютный путь до папки, где лежат папки устройств. Папка должна быть доступна для записи пользователю, от которого запущен сервис.
+      </div>
+      <input id="contentRootInput" class="input" spellcheck="false" />
+      <div class="meta" style="font-size:0.85rem; color:var(--text-secondary);">
+        По умолчанию: <code style="font-family:monospace;">${defaultContentRoot}</code>
+      </div>
+      <div id="contentRootStatus" class="meta" style="min-height:1.2em;"></div>
+      <button id="contentRootSaveBtn" class="primary" style="align-self:flex-start;">Сохранить путь</button>
+    </div>
+    <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm);">
+      <div style="margin-bottom:var(--space-md); font-weight:600;">База данных</div>
+      <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
+        <div class="meta" style="color:var(--text-secondary);">
+          Экспортируйте базу данных для резервного копирования или миграции.
+        </div>
+        <button id="exportDatabaseBtn" class="primary" style="width:100%;">
+          📥 Экспорт базы данных
+        </button>
+      </div>
+    </div>
+  `;
+  
+  const inputEl = document.getElementById('contentRootInput');
+  const saveBtn = document.getElementById('contentRootSaveBtn');
+  const statusEl = document.getElementById('contentRootStatus');
+  const exportBtn = document.getElementById('exportDatabaseBtn');
+  
+  if (!inputEl || !saveBtn || !statusEl || !exportBtn) return;
+  
+  let lastSavedValue = currentContentRoot;
+  inputEl.value = currentContentRoot;
+  
+  const toggleSaveState = () => {
+    const same = inputEl.value.trim() === lastSavedValue;
+    saveBtn.disabled = same;
+    if (!same) {
+      statusEl.textContent = '';
       statusEl.style.color = 'var(--text-secondary)';
-      
-      try {
-        const response = await adminFetch('/api/admin/settings/content-root', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: newPath })
-        });
-        
-        if (!response.ok) {
-          const error = await response.json().catch(() => ({ error: 'Не удалось сохранить' }));
-          throw new Error(error.error || 'Не удалось сохранить');
-        }
-        
-        const data = await response.json();
-        lastSavedValue = data.contentRoot || newPath;
-        inputEl.value = lastSavedValue;
-        statusEl.textContent = 'Путь сохранён. Контент будет загружаться и читаться из новой папки.';
-        statusEl.style.color = 'var(--success, #22c55e)';
-      } catch (err) {
-        statusEl.textContent = err.message;
-        statusEl.style.color = 'var(--danger)';
-      } finally {
-        saveBtn.textContent = 'Сохранить путь';
-        toggleSaveState();
-      }
-    };
+    }
+  };
+  
+  toggleSaveState();
+  inputEl.addEventListener('input', toggleSaveState);
+  
+  saveBtn.onclick = async () => {
+    const newPath = inputEl.value.trim();
+    if (!newPath) {
+      statusEl.textContent = 'Укажите абсолютный путь';
+      statusEl.style.color = 'var(--danger)';
+      return;
+    }
     
-    exportBtn.onclick = async () => {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Сохранение...';
+    statusEl.textContent = 'Проверяем путь...';
+    statusEl.style.color = 'var(--text-secondary)';
+    
+    try {
+      const response = await adminFetch('/api/admin/settings/content-root', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: newPath })
+      });
+      
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Не удалось сохранить' }));
+        throw new Error(error.error || 'Не удалось сохранить');
+      }
+      
+      const data = await response.json();
+      lastSavedValue = data.contentRoot || newPath;
+      inputEl.value = lastSavedValue;
+      statusEl.textContent = 'Путь сохранён. Контент будет загружаться и читаться из новой папки.';
+      statusEl.style.color = 'var(--success, #22c55e)';
+    } catch (err) {
+      statusEl.textContent = err.message;
+      statusEl.style.color = 'var(--danger)';
+    } finally {
+      saveBtn.textContent = 'Сохранить путь';
+      toggleSaveState();
+    }
+  };
+  
+  exportBtn.onclick = async () => {
       exportBtn.disabled = true;
       exportBtn.textContent = 'Экспорт...';
       
@@ -540,6 +570,5 @@ export function showSettingsModal() {
         exportBtn.textContent = 'Экспорт базы данных';
       }
     };
-  }, 100);
 }
 
