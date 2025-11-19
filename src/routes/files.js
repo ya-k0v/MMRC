@@ -101,6 +101,36 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
   // 1. Получаем файлы из БД (обычные файлы)
   const filesMetadata = getDeviceFilesMetadata(deviceId);
   
+  // КРИТИЧНО: Проверяем существование файлов по путям из БД
+  // После миграции путей файлы должны существовать по новым путям
+  const existingMetadata = filesMetadata.filter(f => {
+    if (!f.file_path) {
+      logger.warn(`[updateDeviceFilesFromDB] File metadata missing file_path`, { deviceId, safeName: f.safe_name });
+      return false;
+    }
+    
+    const exists = fs.existsSync(f.file_path);
+    if (!exists) {
+      logger.warn(`[updateDeviceFilesFromDB] File not found at path`, {
+        deviceId,
+        safeName: f.safe_name,
+        filePath: f.file_path
+      });
+    }
+    return exists;
+  });
+  
+  const missingCount = filesMetadata.length - existingMetadata.length;
+  if (missingCount > 0) {
+    logger.warn(`[updateDeviceFilesFromDB] ${deviceId}: ${missingCount} files from DB not found physically`, {
+      deviceId,
+      missingCount,
+      totalInDB: filesMetadata.length,
+      existing: existingMetadata.length,
+      missingFiles: filesMetadata.filter(f => !existingMetadata.includes(f)).map(f => f.safe_name)
+    });
+  }
+  
   // 2. Сканируем папку устройства для PDF/PPTX/image папок
   const deviceFolder = path.join(DEVICES, device.folder);
   const filesInFolders = new Set(); // Файлы которые находятся внутри папок
@@ -135,7 +165,8 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
   }
   
   // 3. Фильтруем файлы из БД: исключаем те что находятся в папках устройства
-  const filteredMetadata = filesMetadata.filter(f => !filesInFolders.has(f.safe_name));
+  // Используем existingMetadata (только существующие файлы) вместо filesMetadata
+  const filteredMetadata = existingMetadata.filter(f => !filesInFolders.has(f.safe_name));
   
   const nameMap = fileNamesMap[deviceId] || {};
   let files = filteredMetadata.map(f => f.safe_name);
@@ -150,12 +181,15 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
   device.files = files;
   device.fileNames = fileNames;
   
-  logger.info(`[updateDeviceFilesFromDB] ${deviceId}: БД=${filteredMetadata.length}, Папки=${folders.length}, Всего=${files.length}`);
+  logger.info(`[updateDeviceFilesFromDB] ${deviceId}: БД=${filteredMetadata.length} (существует=${existingMetadata.length}, отсутствует=${missingCount}), Папки=${folders.length}, Всего=${files.length}`);
   if (folders.length > 0) {
     logger.info(`[updateDeviceFilesFromDB] Папки: ${folders.join(', ')}`);
   }
-  if (filesMetadata.length !== filteredMetadata.length) {
-    logger.info(`[updateDeviceFilesFromDB] Скрыто ${filesMetadata.length - filteredMetadata.length} файлов (в папках)`);
+  if (existingMetadata.length !== filteredMetadata.length) {
+    logger.info(`[updateDeviceFilesFromDB] Скрыто ${existingMetadata.length - filteredMetadata.length} файлов (в папках)`);
+  }
+  if (missingCount > 0) {
+    logger.warn(`[updateDeviceFilesFromDB] Отсутствующие файлы из БД (возможно миграция путей выполнена, но файлы не перемещены): ${filesMetadata.filter(f => !existingMetadata.includes(f)).map(f => f.safe_name).join(', ')}`);
   }
 }
 

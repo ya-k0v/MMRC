@@ -71,6 +71,13 @@ app.use('/api/', apiSpeedLimiter);
 const DB_PATH = path.join(ROOT, 'config', 'main.db');
 initDatabase(DB_PATH);
 
+// КРИТИЧНО: Завершаем инициализацию настроек с миграцией путей после инициализации БД
+import('./src/config/settings-manager.js').then(module => {
+  module.initializeSettings().catch(err => {
+    logger.warn('[Server] Failed to complete settings initialization', { error: err.message, stack: err.stack });
+  });
+});
+
 // Инициализация данных
 let devices = {};
 let fileNamesMap = {};
@@ -264,21 +271,25 @@ app.get('/api/admin/settings', requireAuth, requireAdmin, (req, res) => {
   }
 });
 
-app.post('/api/admin/settings/content-root', requireAuth, requireAdmin, (req, res) => {
+app.post('/api/admin/settings/content-root', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { path: newPath } = req.body || {};
     if (!newPath) {
       return res.status(400).json({ error: 'Укажите путь' });
     }
 
-    const normalizedPath = updateContentRootPath(newPath);
+    // КРИТИЧНО: updateContentRootPath теперь async и мигрирует пути в БД
+    logger.info('[Admin] Updating content root path', { newPath });
+    const normalizedPath = await updateContentRootPath(newPath);
 
-    // Пересканируем устройства, чтобы обновить список файлов
+    // Пересканируем устройства, чтобы обновить список файлов после миграции
+    logger.info('[Admin] Rescanning devices after path migration', { deviceCount: Object.keys(devices).length });
     Object.keys(devices).forEach((deviceId) => {
       updateDeviceFilesFromDB(deviceId, devices, fileNamesMap);
     });
     saveDevicesToDB(devices);
     io.emit('devices/updated');
+    logger.info('[Admin] Content root path updated successfully', { newPath: normalizedPath });
 
     res.json({
       ok: true,

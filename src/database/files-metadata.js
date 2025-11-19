@@ -358,3 +358,113 @@ export function updateFileOriginalName(deviceId, safeName, newOriginalName) {
   }
 }
 
+/**
+ * Обновить пути файлов при смене content root
+ * @param {string} oldRoot - Старый корневой путь (например: /vid/videocontrol/public/content)
+ * @param {string} newRoot - Новый корневой путь (например: /mnt/vc-content)
+ * @returns {number} - Количество обновленных записей
+ */
+export function migrateFilePaths(oldRoot, newRoot) {
+  try {
+    const db = getDatabase();
+    
+    // Нормализуем пути (убираем trailing slashes для корректного сравнения)
+    const normalizedOldRoot = oldRoot.replace(/\/+$/, '');
+    const normalizedNewRoot = newRoot.replace(/\/+$/, '');
+    
+    if (normalizedOldRoot === normalizedNewRoot) {
+      logFile('info', 'File paths migration skipped (same root)', { oldRoot: normalizedOldRoot, newRoot: normalizedNewRoot });
+      return 0;
+    }
+    
+    // Логируем количество путей которые будут мигрированы
+    const checkStmt = db.prepare(`
+      SELECT COUNT(*) as count FROM files_metadata
+      WHERE file_path LIKE ? || '/%' OR file_path = ?
+    `);
+    const checkResult = checkStmt.get(normalizedOldRoot, normalizedOldRoot);
+    const pathsToMigrate = checkResult?.count || 0;
+    
+    logFile('info', 'Starting file paths migration', {
+      oldRoot: normalizedOldRoot,
+      newRoot: normalizedNewRoot,
+      pathsToMigrate
+    });
+    
+    if (pathsToMigrate === 0) {
+      logFile('info', 'No file paths found to migrate', {
+        oldRoot: normalizedOldRoot,
+        newRoot: normalizedNewRoot
+      });
+      return 0;
+    }
+    
+    // Заменяем старый путь на новый в начале file_path
+    // Формат: /old/root/file.mp4 -> /new/root/file.mp4
+    // SUBSTR(file_path, oldRootLength + 2) вернет "/file.mp4" (включая слэш после старого корня)
+    const stmt = db.prepare(`
+      UPDATE files_metadata
+      SET file_path = ? || SUBSTR(file_path, ?),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE file_path LIKE ? || '/%' OR file_path = ?
+    `);
+    
+    // Вычисляем позицию начала остатка пути (после старого корня + слэш)
+    // Например: "/vid/videocontrol/public/content/video.mp4"
+    // oldRoot = "/vid/videocontrol/public/content" (32 символа)
+    // SUBSTR начиная с позиции 33 вернет "/video.mp4"
+    const oldRootLength = normalizedOldRoot.length;
+    const substrStart = oldRootLength + 1; // +1 для слэша после старого корня
+    
+    const result = stmt.run(
+      normalizedNewRoot,
+      substrStart,
+      normalizedOldRoot,
+      normalizedOldRoot // Для случая когда путь равен старому корню (не должно быть, но на всякий случай)
+    );
+    
+    if (result.changes > 0) {
+      logFile('info', '✅ File paths migrated in database', {
+        oldRoot: normalizedOldRoot,
+        newRoot: normalizedNewRoot,
+        updated: result.changes
+      });
+    } else {
+      logFile('debug', 'No file paths to migrate', {
+        oldRoot: normalizedOldRoot,
+        newRoot: normalizedNewRoot
+      });
+    }
+    
+    return result.changes;
+  } catch (error) {
+    logger.error('Failed to migrate file paths', {
+      error: error.message,
+      oldRoot,
+      newRoot,
+      stack: error.stack
+    });
+    throw error;
+  }
+}
+
+/**
+ * Получить уникальные пути из базы данных для проверки миграции
+ * @returns {Array<string>} - Массив уникальных путей
+ */
+export function getAllFilePaths() {
+  try {
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      SELECT DISTINCT file_path FROM files_metadata
+      ORDER BY file_path
+    `);
+    
+    const rows = stmt.all();
+    return rows.map(row => row.file_path);
+  } catch (error) {
+    logger.error('Failed to get all file paths', { error: error.message, stack: error.stack });
+    return [];
+  }
+}
+
