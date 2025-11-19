@@ -52,6 +52,8 @@
     .sidebar {
       min-height: 280px;
       max-height: 400px;
+      display: flex;
+      flex-direction: column;
     }
     
     #tvList {
@@ -125,15 +127,21 @@
         <h3 class="title" style="margin:0; font-size:var(--font-size-base)">Устройства</h3>
         <div class="meta" id="devicesMeta" style="margin:0; white-space:nowrap">0</div>
       </div>
-      <ul id="tvList" class="list"></ul>
+      <div style="display:flex; flex-direction:column; gap:var(--space-md); flex:1 1 auto; min-height:0">
+        <ul id="tvList" class="list" style="flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; display:flex; flex-direction:column; gap:var(--space-sm)"></ul>
+        <div id="tvPager" class="meta" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); flex-wrap:wrap"></div>
+      </div>
     </aside>
     <section class="speaker-main">
-      <div class="panel files-panel">
+      <div class="panel files-panel" style="min-height:0; display:flex; flex-direction:column">
         <div class="header" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-sm)">
           <h3 class="title" id="filesPaneTitle" style="margin:0">Файлы</h3>
           <div class="meta" id="filesPaneMeta" style="margin:0; white-space:nowrap">Выберите устройство слева</div>
         </div>
-        <ul id="fileList" class="list"></ul>
+        <div style="display:flex; flex-direction:column; gap:var(--space-md); flex:1 1 auto; min-height:0">
+          <ul id="fileList" class="list" style="flex:1 1 auto; min-height:0; overflow:hidden"></ul>
+          <div id="filePager" class="meta" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); flex-wrap:wrap"></div>
+        </div>
       </div>
       <div class="panel preview-panel">
         <h3 class="title">Превью</h3>

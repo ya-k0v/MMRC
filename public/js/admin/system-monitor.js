@@ -261,16 +261,6 @@ function addSystemMonitorStyles() {
       position: relative;
     }
 
-    .system-stat:not(:last-child)::after {
-      content: '';
-      position: absolute;
-      right: calc(-1 * var(--space-sm));
-      width: 1px;
-      height: 24px;
-      background: var(--muted-2);
-      opacity: 0.3;
-    }
-
     .stat-icon {
       display: flex;
       align-items: center;

@@ -16,7 +16,7 @@ body:has(#filePreview) .file-item,
   background: transparent !important;
   min-height: 60px !important;
   max-height: 60px !important;
-  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border: var(--border) !important;
 }
 
 body:has(#filePreview) .file-item.active,
@@ -24,10 +24,22 @@ body:has(#filePreview) .file-item.active,
   border-color: var(--brand) !important;
 }
 
+/* Границы файлов в светлой теме */
+body.light body:has(#filePreview) .file-item,
+body.light .speaker-layout .file-item {
+  border: 1px solid rgba(15, 23, 42, 0.45) !important;
+}
+
 /* Убираем старые стили для file-item-actions */
 body:has(#filePreview) .file-item-actions,
 .speaker-layout .file-item-actions {
   display: none !important; /* Старая структура не нужна */
+}
+
+/* Уменьшаем gap между файлами в панели спикера */
+body:has(#filePreview) #fileList,
+.speaker-layout #fileList {
+  gap: 6px !important; /* Было 8px, уменьшили на 2px */
 }
 
 /* ===== 1. Touch targets: 40px → 48px (только для планшетов с touch) ===== */
@@ -39,9 +51,13 @@ body:has(#filePreview) .file-item-actions,
 
 /* ===== 2. Gap: 8px → 12px (для планшетов) ===== */
 @media (min-width: 768px) and (max-width: 1366px) {
-  #fileList,
   #tvList {
     gap: 12px;
+  }
+  /* Для файлов уменьшаем gap на 2px */
+  body:has(#filePreview) #fileList,
+  .speaker-layout #fileList {
+    gap: 10px !important; /* Было 12px, уменьшили на 2px */
   }
 }
 

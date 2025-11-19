@@ -81,23 +81,23 @@
 
 /* Light theme */
 body.light {
-  --bg: #f8fafc;
-  --bg-2: #f1f5f9;
-  --panel: #ffffff;
-  --panel-2: #f8fafc;
-  --panel-hover: #f1f5f9;
-  --text: #0f172a;
-  --text-2: #1e293b;
-  --muted: #64748b;
-  --muted-2: #94a3b8;
+  --bg: #e5e7eb;          /* более серый фон (раньше почти белый) */
+  --bg-2: #dde1e7;
+  --panel: #f1f2f6;
+  --panel-2: #e9ecf2;
+  --panel-hover: #d9dde6;
+  --text: #111827;
+  --text-2: #1f2937;
+  --muted: #4b5563;
+  --muted-2: #6b7280;
   
-  --border: 1px solid rgba(15, 23, 42, 0.1);
-  --border-2: 1px solid rgba(15, 23, 42, 0.15);
-  --border-hover: 1px solid rgba(15, 23, 42, 0.25);
+  --border: 1px solid rgba(15, 23, 42, 0.4);
+  --border-2: 1px solid rgba(15, 23, 42, 0.45);
+  --border-hover: 1px solid rgba(15, 23, 42, 0.55);
   
-  --shadow-sm: 0 2px 4px rgba(15, 23, 42, 0.05);
-  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
-  --shadow-lg: 0 8px 24px rgba(15, 23, 42, 0.1);
+  --shadow-sm: 0 2px 4px rgba(15, 23, 42, 0.07);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.12);
+  --shadow-lg: 0 8px 24px rgba(15, 23, 42, 0.16);
 }
 
 /* ===== Base Styles ===== */
@@ -586,8 +586,20 @@ body.light .tvTile.active {
   border-color: var(--brand);
 }
 
+body.light .file-item {
+  border: 1px solid rgba(15, 23, 42, 0.45) !important;
+}
+
 body.light .file-item.active {
   background: rgba(59, 130, 246, 0.08);
+  border-color: var(--brand);
+}
+
+/* Стили для badge в светлой теме */
+body.light .file-type-badge,
+body.light .resolution-badge {
+  border-color: rgba(15, 23, 42, 0.25) !important;
+  background: rgba(15, 23, 42, 0.08) !important;
 }
 
 .file-item-header {

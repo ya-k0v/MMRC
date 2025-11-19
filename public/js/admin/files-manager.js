@@ -52,9 +52,10 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         Нет файлов. Загрузите файлы через панель слева.
       </div>
     `;
-    // Очистить пейджер файлов если есть
-    const pager = panelEl.querySelector('#filePagerAdmin');
-    if (pager) pager.remove();
+    // Очистить пейджер файлов если есть (теперь находится в filesPane, а не в panelEl)
+    const filesPane = document.getElementById('filesPane');
+    const pager = filesPane ? filesPane.querySelector('#filePagerAdmin') : null;
+    if (pager) pager.innerHTML = '';
     return;
   }
   
@@ -184,30 +185,27 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
     </ul>
   `;
   
-  // Рендер пейджера файлов
-  let filePagerAdmin = panelEl.querySelector('#filePagerAdmin');
-  if (!filePagerAdmin) {
-    filePagerAdmin = document.createElement('div');
-    filePagerAdmin.id = 'filePagerAdmin';
-    filePagerAdmin.className = 'meta';
-    filePagerAdmin.style.display = 'flex';
-    filePagerAdmin.style.justifyContent = 'space-between';
-    filePagerAdmin.style.alignItems = 'center';
-    filePagerAdmin.style.gap = '8px';
-    panelEl.appendChild(filePagerAdmin);
-  }
-  
+  // Рендер пейджера файлов (теперь находится вне panelEl, в filesPane)
+  const filesPane = document.getElementById('filesPane');
+  let filePagerAdmin = filesPane ? filesPane.querySelector('#filePagerAdmin') : null;
   
   if (totalPages > 1) {
-    filePagerAdmin.innerHTML = `
-      <button class="secondary" id="filePrevAdmin" ${filePage<=0?'disabled':''} style="min-width:80px">Назад</button>
-      <span style="white-space:nowrap">Стр. ${filePage+1} из ${totalPages}</span>
-      <button class="secondary" id="fileNextAdmin" ${filePage>=totalPages-1?'disabled':''} style="min-width:80px">Вперёд</button>
-    `;
-    const prev = filePagerAdmin.querySelector('#filePrevAdmin');
-    const next = filePagerAdmin.querySelector('#fileNextAdmin');
-    if (prev) prev.onclick = () => { if (filePage>0) { refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, filePage-1, socket); } };
-    if (next) next.onclick = () => { if (filePage<totalPages-1) { refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, filePage+1, socket); } };
+    if (!filePagerAdmin && filesPane) {
+      // Если не найден, значит он уже в HTML (создан в renderLayout)
+      filePagerAdmin = filesPane.querySelector('#filePagerAdmin');
+    }
+    
+    if (filePagerAdmin) {
+      filePagerAdmin.innerHTML = `
+        <button class="secondary" id="filePrevAdmin" ${filePage<=0?'disabled':''} style="min-width:80px">Назад</button>
+        <span style="white-space:nowrap">Стр. ${filePage+1} из ${totalPages}</span>
+        <button class="secondary" id="fileNextAdmin" ${filePage>=totalPages-1?'disabled':''} style="min-width:80px">Вперёд</button>
+      `;
+      const prev = filePagerAdmin.querySelector('#filePrevAdmin');
+      const next = filePagerAdmin.querySelector('#fileNextAdmin');
+      if (prev) prev.onclick = () => { if (filePage>0) { refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, filePage-1, socket); } };
+      if (next) next.onclick = () => { if (filePage<totalPages-1) { refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, filePage+1, socket); } };
+    }
   } else if (filePagerAdmin) {
     filePagerAdmin.innerHTML = '';
   }

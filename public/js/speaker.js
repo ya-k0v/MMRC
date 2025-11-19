@@ -1,11 +1,8 @@
 import { initThemeToggle } from './theme.js';
-import { sortDevices, debounce, loadNodeNames } from './utils.js';
+import { sortDevices, debounce, loadNodeNames, getPageSize } from './utils.js';
 import { ensureAuth, speakerFetch, logout } from './speaker/auth.js';
 
 const socket = io();
-
-// Фиксированное количество элементов на странице для спикера
-const SPEAKER_PAGE_SIZE = 10;
 
 const tvList = document.getElementById('tvList');
 const fileList = document.getElementById('fileList');
@@ -630,7 +627,7 @@ async function loadDevices() {
         });
       }
     });
-    const pageSize = SPEAKER_PAGE_SIZE; // Фиксированное значение 10
+    const pageSize = getPageSize(); // Динамическое значение на основе высоты экрана
     const totalPages = Math.max(1, Math.ceil(devices.length / pageSize));
     if (tvPage >= totalPages) tvPage = totalPages - 1;
     updateDevicesCount();
@@ -644,7 +641,7 @@ async function loadDevices() {
 function renderTVList() {
   // Сортируем устройства перед отображением (на случай если список обновился)
   const sortedDevices = sortDevices(devices);
-  const pageSize = SPEAKER_PAGE_SIZE; // Фиксированное значение 10
+  const pageSize = getPageSize(); // Динамическое значение на основе высоты экрана
   const totalPages = Math.max(1, Math.ceil(sortedDevices.length / pageSize));
   if (tvPage >= totalPages) tvPage = totalPages - 1;
   const start = tvPage * pageSize;
@@ -677,33 +674,25 @@ function renderTVList() {
     item.onclick = async () => { await selectDevice(item.dataset.id); };
   });
 
-  // рендер пейджера под списком
-  let pager = document.getElementById('tvPager');
-  if (!pager) {
-    pager = document.createElement('div');
-    pager.id = 'tvPager';
-    pager.className = 'meta';
-    pager.style.display = 'flex';
-    pager.style.justifyContent = 'space-between';
-    pager.style.alignItems = 'center';
-    pager.style.gap = '8px';
-    tvList.parentElement && tvList.parentElement.appendChild(pager);
-  }
+  // Рендер пейджера под списком (теперь находится в HTML)
+  const pager = document.getElementById('tvPager');
   
   // Показываем пагинацию только если больше 1 страницы
-  if (totalPages > 1) {
-  pager.innerHTML = `
-    <button class="secondary" id="tvPrev" ${tvPage<=0?'disabled':''} style="min-width:80px">Назад</button>
-    <span style="white-space:nowrap">Стр. ${tvPage+1} из ${totalPages}</span>
-    <button class="secondary" id="tvNext" ${tvPage>=totalPages-1?'disabled':''} style="min-width:80px">Вперёд</button>
-  `;
-  const prev = document.getElementById('tvPrev');
-  const next = document.getElementById('tvNext');
-  if (prev) prev.onclick = () => { if (tvPage>0) { tvPage--; renderTVList(); } };
-  if (next) next.onclick = () => { if (tvPage<totalPages-1) { tvPage++; renderTVList(); } };
-  } else {
-    // Если только 1 страница - скрываем пагинацию
-    pager.innerHTML = '';
+  if (pager) {
+    if (totalPages > 1) {
+      pager.innerHTML = `
+        <button class="secondary" id="tvPrev" ${tvPage<=0?'disabled':''} style="min-width:80px">Назад</button>
+        <span style="white-space:nowrap">${tvPage+1} из ${totalPages}</span>
+        <button class="secondary" id="tvNext" ${tvPage>=totalPages-1?'disabled':''} style="min-width:80px">Вперёд</button>
+      `;
+      const prev = document.getElementById('tvPrev');
+      const next = document.getElementById('tvNext');
+      if (prev) prev.onclick = () => { if (tvPage>0) { tvPage--; renderTVList(); } };
+      if (next) next.onclick = () => { if (tvPage<totalPages-1) { tvPage++; renderTVList(); } };
+    } else {
+      // Если только 1 страница - скрываем пагинацию
+      pager.innerHTML = '';
+    }
   }
 }
 
@@ -860,8 +849,8 @@ async function loadFiles() {
   // Обновляем отображение прогресса из кэша (если есть)
   updatePlaybackInfoUI();
 
-  // Пагинация файлов
-  const pageSize = SPEAKER_PAGE_SIZE; // Фиксированное значение 10
+  // Пагинация файлов (используем меньшую высоту для файлов)
+  const pageSize = getPageSize('file'); // Динамическое значение на основе высоты экрана (60px для файлов)
   const totalPages = Math.max(1, Math.ceil(allFiles.length / pageSize));
   if (filePage >= totalPages) filePage = totalPages - 1;
   const start = filePage * pageSize;
@@ -1020,32 +1009,23 @@ async function loadFiles() {
     showLivePreviewForTV(currentDevice);
   }
 
-  // Рендер пейджера файлов
-  let filePager = document.getElementById('filePager');
-  if (!filePager) {
-    filePager = document.createElement('div');
-    filePager.id = 'filePager';
-    filePager.className = 'meta';
-    filePager.style.display = 'flex';
-    filePager.style.justifyContent = 'space-between';
-    filePager.style.alignItems = 'center';
-    filePager.style.gap = '8px';
-    filePager.style.marginTop = 'var(--space-md)';
-    fileList.parentElement && fileList.parentElement.appendChild(filePager);
-  }
+  // Рендер пейджера файлов (теперь находится в HTML)
+  const filePager = document.getElementById('filePager');
   
-  if (totalPages > 1) {
-    filePager.innerHTML = `
-      <button class="secondary" id="filePrev" ${filePage<=0?'disabled':''} style="min-width:80px">Назад</button>
-      <span style="white-space:nowrap">Стр. ${filePage+1} из ${totalPages}</span>
-      <button class="secondary" id="fileNext" ${filePage>=totalPages-1?'disabled':''} style="min-width:80px">Вперёд</button>
-    `;
-    const prev = document.getElementById('filePrev');
-    const next = document.getElementById('fileNext');
-    if (prev) prev.onclick = () => { if (filePage>0) { filePage--; loadFiles(); } };
-    if (next) next.onclick = () => { if (filePage<totalPages-1) { filePage++; loadFiles(); } };
-  } else {
-    filePager.innerHTML = '';
+  if (filePager) {
+    if (totalPages > 1) {
+      filePager.innerHTML = `
+        <button class="secondary" id="filePrev" ${filePage<=0?'disabled':''} style="min-width:80px">Назад</button>
+        <span style="white-space:nowrap">${filePage+1} из ${totalPages}</span>
+        <button class="secondary" id="fileNext" ${filePage>=totalPages-1?'disabled':''} style="min-width:80px">Вперёд</button>
+      `;
+      const prev = document.getElementById('filePrev');
+      const next = document.getElementById('fileNext');
+      if (prev) prev.onclick = () => { if (filePage>0) { filePage--; loadFiles(); } };
+      if (next) next.onclick = () => { if (filePage<totalPages-1) { filePage++; loadFiles(); } };
+    } else {
+      filePager.innerHTML = '';
+    }
   }
 
   // Клик по карточке файла (кроме кнопки) - показать превью

@@ -61,28 +61,47 @@ export function debounce(fn, ms = 200) {
 
 // Динамический расчет размера страницы по высоте экрана
 // Рассчитывает сколько элементов влезает на страницу
-export function getPageSize() {
+// @param {number|string} itemHeight - Опциональная высота элемента в пикселях или тип элемента ('device'|'file')
+export function getPageSize(itemHeight = null) {
   try {
-    // Получаем высоту элемента из CSS переменной
-    const rootStyles = getComputedStyle(document.documentElement);
-    const itemMinHeight = parseInt(rootStyles.getPropertyValue('--item-min-height')) || 100;
-    const itemGap = parseInt(rootStyles.getPropertyValue('--item-gap')) || 8;
+    let ITEM_HEIGHT;
     
-    // Высота одного элемента + gap
-    const ITEM_HEIGHT = itemMinHeight + itemGap;
+    if (typeof itemHeight === 'number') {
+      // Если передана конкретная высота
+      ITEM_HEIGHT = itemHeight;
+    } else if (itemHeight === 'file') {
+      // Для файлов используем меньшую высоту (60px + gap 6px)
+      // Gap уменьшен на 2px для компактности в панели спикера
+      ITEM_HEIGHT = 60 + 6; // Высота файла 60px + gap 6px в панели спикера
+    } else {
+      // По умолчанию используем высоту устройств из CSS переменной
+      const rootStyles = getComputedStyle(document.documentElement);
+      const itemMinHeight = parseInt(rootStyles.getPropertyValue('--item-min-height')) || 100;
+      const itemGap = parseInt(rootStyles.getPropertyValue('--item-gap')) || 8;
+      ITEM_HEIGHT = itemMinHeight + itemGap;
+    }
     
     // Получаем высоту видимой области
     const viewportHeight = window.innerHeight;
     
-    // Вычитаем высоту header/toolbar (примерно 60-80px) и пагинации (примерно 50px)
-    // Оставляем запас для комфортного отображения
-    const HEADER_HEIGHT = 80;
-    const PAGINATION_HEIGHT = 60;
-    const PADDING = 16; // Отступы
+    // Вычитаем высоту header/toolbar, header панели, отступы и пагинации
+    // Оставляем запас для комфортного отображения без скролла
+    const HEADER_HEIGHT = 80; // Верхний toolbar
+    const PANEL_HEADER_HEIGHT = itemHeight === 'file' ? 50 : 50; // Header панели файлов/устройств
+    const PANEL_HEADER_MARGIN = 8; // margin-bottom header
+    const PANEL_GAP = itemHeight === 'file' ? 12 : 12; // gap между header и списком, и между списком и пагинацией
+    const PAGINATION_HEIGHT = 40; // Высота пагинации
+    const PADDING = 16; // Внешние отступы
     
-    const availableHeight = viewportHeight - HEADER_HEIGHT - PAGINATION_HEIGHT - PADDING;
+    const availableHeight = viewportHeight 
+      - HEADER_HEIGHT 
+      - PANEL_HEADER_HEIGHT 
+      - PANEL_HEADER_MARGIN 
+      - (PANEL_GAP * 2) // gap сверху и снизу списка
+      - PAGINATION_HEIGHT 
+      - PADDING;
     
-    // Рассчитываем сколько элементов влезает
+    // Рассчитываем сколько элементов влезает (используем Math.floor для консервативного расчета)
     const itemsPerPage = Math.floor(availableHeight / ITEM_HEIGHT);
     
     // Минимум 3 элемента, максимум 20
