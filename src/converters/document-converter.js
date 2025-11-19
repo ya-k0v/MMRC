@@ -10,6 +10,7 @@ import util from 'util';
 import { fromPath } from 'pdf2pic';
 import { PDFDocument } from 'pdf-lib';
 import { DEVICES } from '../config/constants.js';
+import logger from '../utils/logger.js';
 
 const execAsync = util.promisify(exec);
 
@@ -77,7 +78,7 @@ export async function convertPptxToImages(pptxPath, outputDir) {
     
     return numPages;
   } catch (error) {
-    console.error(`[Converter] ❌ PPTX конвертация failed:`, error.message);
+    logger.error(`[Converter] ❌ PPTX конвертация failed`, { error: error.message, stack: error.stack, pptxPath });
     throw error;
   }
 }
@@ -153,7 +154,7 @@ export async function autoConvertFile(deviceId, fileName, devices, fileNamesMap,
   // Отправляем событие начала обработки
   if (io) {
     io.emit('file/processing', { device_id: deviceId, file: fileName, type: ext.substring(1) });
-    console.log(`[Converter] 📄 Начало конвертации: ${fileName}`);
+    logger.info(`[Converter] 📄 Начало конвертации: ${fileName}`, { deviceId, fileName });
   }
   
   const folderName = fileName.replace(/\.(pdf|pptx)$/i, '');
@@ -176,7 +177,7 @@ export async function autoConvertFile(deviceId, fileName, devices, fileNamesMap,
     // Отправляем событие готовности (файл уже был конвертирован)
     if (io) {
       io.emit('file/ready', { device_id: deviceId, file: fileName, pages: existing });
-      console.log(`[Converter] ✅ Уже конвертирован: ${fileName} (${existing} страниц)`);
+      logger.info(`[Converter] ✅ Уже конвертирован: ${fileName} (${existing} страниц)`, { deviceId, fileName, pages: existing });
     }
     
     return existing;
@@ -211,7 +212,7 @@ export async function autoConvertFile(deviceId, fileName, devices, fileNamesMap,
     // Отправляем событие успешной конвертации
     if (io && count > 0) {
       io.emit('file/ready', { device_id: deviceId, file: fileName, pages: count });
-      console.log(`[Converter] ✅ Конвертировано: ${fileName} (${count} страниц)`);
+      logger.info(`[Converter] ✅ Конвертировано: ${fileName} (${count} страниц)`, { deviceId, fileName, pages: count });
       
       // КРИТИЧНО: Обновляем список файлов (PPTX превратился в папку)
       io.emit('devices/updated');
@@ -220,7 +221,7 @@ export async function autoConvertFile(deviceId, fileName, devices, fileNamesMap,
     return count;
     
   } catch (error) {
-    console.error(`[Converter] ❌ Ошибка конвертации ${fileName}:`, error);
+    logger.error(`[Converter] ❌ Ошибка конвертации ${fileName}`, { error: error.message, stack: error.stack, deviceId, fileName });
     
     // Отправляем событие ошибки
     if (io) {
@@ -237,7 +238,7 @@ export async function autoConvertFile(deviceId, fileName, devices, fileNamesMap,
       try {
         fs.renameSync(movedFilePath, filePath);
       } catch (rollbackError) {
-        console.error(`[Converter] ⚠️ Ошибка отката:`, rollbackError);
+        logger.error(`[Converter] ⚠️ Ошибка отката`, { error: rollbackError.message, stack: rollbackError.stack, deviceId, fileName });
       }
     }
     

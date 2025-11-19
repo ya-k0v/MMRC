@@ -150,12 +150,12 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
   device.files = files;
   device.fileNames = fileNames;
   
-  console.log(`[updateDeviceFilesFromDB] ${deviceId}: БД=${filteredMetadata.length}, Папки=${folders.length}, Всего=${files.length}`);
+  logger.info(`[updateDeviceFilesFromDB] ${deviceId}: БД=${filteredMetadata.length}, Папки=${folders.length}, Всего=${files.length}`);
   if (folders.length > 0) {
-    console.log(`[updateDeviceFilesFromDB] Папки: ${folders.join(', ')}`);
+    logger.info(`[updateDeviceFilesFromDB] Папки: ${folders.join(', ')}`);
   }
   if (filesMetadata.length !== filteredMetadata.length) {
-    console.log(`[updateDeviceFilesFromDB] Скрыто ${filesMetadata.length - filteredMetadata.length} файлов (в папках)`);
+    logger.info(`[updateDeviceFilesFromDB] Скрыто ${filesMetadata.length - filteredMetadata.length} файлов (в папках)`);
   }
 }
 
@@ -232,9 +232,9 @@ export function createFilesRouter(deps) {
             
             fs.renameSync(sourcePath, targetPath);
             fs.chmodSync(targetPath, 0o644);
-            console.log(`[upload] 📄 Файл перемещен: ${file.filename} -> ${devices[id].folder}/`);
+            logger.info(`[upload] 📄 Файл перемещен: ${file.filename} -> ${devices[id].folder}/`);
           } catch (e) {
-            console.warn(`[upload] ⚠️ Ошибка перемещения ${file.filename}:`, e);
+            logger.warn(`[upload] ⚠️ Ошибка перемещения ${file.filename}`, { error: e.message, stack: e.stack });
           }
         }
         
@@ -242,9 +242,9 @@ export function createFilesRouter(deps) {
         for (const file of documentsToMove) {
           const ext = path.extname(file.filename).toLowerCase();
           if (ext === '.pdf' || ext === '.pptx') {
-            console.log(`[upload] 🔄 Запуск конвертации: ${file.filename}`);
+            logger.info(`[upload] 🔄 Запуск конвертации: ${file.filename}`);
             autoConvertFileWrapper(id, file.filename).catch(err => {
-              console.error(`[upload] ❌ Ошибка конвертации ${file.filename}:`, err.message);
+              logger.error(`[upload] ❌ Ошибка конвертации ${file.filename}`, { error: err.message, stack: err.stack });
             });
           }
         }
@@ -252,14 +252,14 @@ export function createFilesRouter(deps) {
       
       // Если это загрузка папки - создаем в /content/{device}/ (для изображений)
       if (folderName && req.files && req.files.length > 0) {
-        console.log(`[upload] 📁 Обнаружена загрузка папки: ${folderName}`);
+        logger.info(`[upload] 📁 Обнаружена загрузка папки: ${folderName}`);
         
         // Создаем безопасное имя папки через транслитерацию
         const safeFolderName = makeSafeFolderName(folderName);
         const deviceFolder = path.join(DEVICES, devices[id].folder);
         const targetFolder = path.join(deviceFolder, safeFolderName);
         
-        console.log(`[upload] 📝 Имя папки: "${folderName}" → "${safeFolderName}"`);
+        logger.info(`[upload] 📝 Имя папки: "${folderName}" → "${safeFolderName}"`);
         
         if (!fs.existsSync(targetFolder)) {
           fs.mkdirSync(targetFolder, { recursive: true });
@@ -287,31 +287,31 @@ export function createFilesRouter(deps) {
             
             // КРИТИЧНО: Если файл уже существует в целевой папке - удаляем старый
             if (fs.existsSync(targetPath)) {
-              console.log(`[upload] 🔄 Файл уже существует, заменяем: ${targetFileName}`);
+              logFile('info', `🔄 Файл уже существует, заменяем: ${targetFileName}`, { fileName: targetFileName, deviceId: id });
               fs.unlinkSync(targetPath);
             }
             
             // КРИТИЧНО: Проверяем существует ли исходный файл для перемещения
             // Может не существовать если файл с таким именем уже был в shared storage
             if (!fs.existsSync(sourcePath)) {
-              console.log(`[upload] ⚠️ Исходный файл не найден: ${file.filename}`);
+              logFile('info', `⚠️ Исходный файл не найден: ${file.filename}`, { fileName: file.filename, deviceId: id });
               
               // Возможно файл с таким именем уже существует в shared storage (/content/)
               // Для папок нужно СКОПИРОВАТЬ его, а не переместить
               const sharedFile = path.join(DEVICES, targetFileName);
               if (fs.existsSync(sharedFile)) {
-                console.log(`[upload] 🔄 Файл найден в shared storage, копируем: ${targetFileName}`);
+                logFile('info', `🔄 Файл найден в shared storage, копируем: ${targetFileName}`, { fileName: targetFileName, deviceId: id });
                 
                 // Копируем из shared storage в папку
                 fs.copyFileSync(sharedFile, targetPath);
                 fs.chmodSync(targetPath, 0o644);
-                console.log(`[upload] ✅ Скопирован из shared: ${targetFileName} -> ${safeFolderName}/${targetFileName}`);
+                logFile('info', `✅ Скопирован из shared: ${targetFileName} -> ${safeFolderName}/${targetFileName}`, { fileName: targetFileName, folderName: safeFolderName, deviceId: id });
                 movedCount++;
                 continue;
               }
               
               // Файл не найден нигде - ошибка
-              console.warn(`[upload] ❌ Файл не найден ни в uploads, ни в shared: ${targetFileName}`);
+              logFile('warn', `❌ Файл не найден ни в uploads, ни в shared: ${targetFileName}`, { fileName: targetFileName, deviceId: id });
               errorCount++;
               continue;
             }
@@ -319,7 +319,7 @@ export function createFilesRouter(deps) {
             // Перемещаем файл
             fs.renameSync(sourcePath, targetPath);
             fs.chmodSync(targetPath, 0o644);
-            console.log(`[upload] ✅ Перемещен: ${file.filename} -> ${safeFolderName}/${targetFileName}`);
+            logFile('info', `✅ Перемещен: ${file.filename} -> ${safeFolderName}/${targetFileName}`, { fileName: file.filename, folderName: safeFolderName, deviceId: id });
             movedCount++;
           } catch (e) {
             errorCount++;
@@ -328,9 +328,9 @@ export function createFilesRouter(deps) {
               fileName: file.filename,
               originalName: file.originalname,
               deviceId: id,
-              folderName: safeFolderName
+              folderName: safeFolderName,
+              stack: e.stack
             });
-            console.error(`[upload] ❌ Ошибка перемещения ${file.filename}:`, e.message);
             
             // КРИТИЧНО: Если не удалось переместить - НЕ оставляем файл в корне!
             // Удаляем его чтобы не было "потерянных" файлов
@@ -338,18 +338,19 @@ export function createFilesRouter(deps) {
               const sourcePath = path.join(DEVICES, file.filename);
               if (fs.existsSync(sourcePath)) {
                 fs.unlinkSync(sourcePath);
-                console.log(`[upload] 🗑️ Удален файл который не удалось переместить: ${file.filename}`);
+                logFile('info', `🗑️ Удален файл который не удалось переместить: ${file.filename}`, { fileName: file.filename, deviceId: id });
               }
             } catch (cleanupErr) {
               logger.error('[upload] Failed to cleanup unmoved file', { 
                 error: cleanupErr.message,
-                fileName: file.filename
+                fileName: file.filename,
+                stack: cleanupErr.stack
               });
             }
           }
         }
         
-        console.log(`[upload] 📁 Папка создана: ${safeFolderName} (${movedCount}/${req.files.length} файлов перемещено${errorCount > 0 ? `, ${errorCount} ошибок` : ''})`);
+        logFile('info', `📁 Папка создана: ${safeFolderName} (${movedCount}/${req.files.length} файлов перемещено${errorCount > 0 ? `, ${errorCount} ошибок` : ''})`, { folderName: safeFolderName, movedCount, totalFiles: req.files.length, errorCount, deviceId: id });
         
         if (errorCount > 0) {
           logger.warn('[upload] Some files failed to move to folder', { 
@@ -367,15 +368,15 @@ export function createFilesRouter(deps) {
         if (req.body.expectedFiles) {
           try {
             allExpectedFiles = JSON.parse(req.body.expectedFiles);
-            console.log(`[upload] 📋 Frontend передал список ожидаемых файлов: ${allExpectedFiles.length}`);
+            logFile('info', `📋 Frontend передал список ожидаемых файлов: ${allExpectedFiles.length}`, { deviceId: id, folderName: safeFolderName, expectedFilesCount: allExpectedFiles.length });
           } catch (e) {
-            console.warn('[upload] ⚠️ Не удалось распарсить expectedFiles:', e.message);
+            logger.warn('[upload] ⚠️ Не удалось распарсить expectedFiles', { error: e.message, deviceId: id, stack: e.stack });
           }
         }
         
         // Если frontend НЕ передал список (старая версия) - используем req.files
         if (allExpectedFiles.length === 0) {
-          console.log('[upload] ⚠️ Frontend не передал expectedFiles, используем req.files');
+          logFile('info', '⚠️ Frontend не передал expectedFiles, используем req.files', { deviceId: id, folderName: safeFolderName });
           allExpectedFiles = req.files.map(f => {
             let fileName = f.originalname;
             if (fileName.includes('/')) {
@@ -389,7 +390,7 @@ export function createFilesRouter(deps) {
         const filesInFolder = fs.readdirSync(targetFolder);
         const missingFiles = allExpectedFiles.filter(f => !filesInFolder.includes(f));
         
-        console.log(`[upload] 🔍 Проверка папки: ожидалось ${allExpectedFiles.length}, найдено ${filesInFolder.length}, не хватает ${missingFiles.length}`);
+        logFile('info', `🔍 Проверка папки: ожидалось ${allExpectedFiles.length}, найдено ${filesInFolder.length}, не хватает ${missingFiles.length}`, { deviceId: id, folderName: safeFolderName, expected: allExpectedFiles.length, found: filesInFolder.length, missing: missingFiles.length });
         
         // Копируем недостающие файлы из shared storage
         let copiedFromShared = 0;
@@ -400,23 +401,24 @@ export function createFilesRouter(deps) {
             try {
               fs.copyFileSync(sharedPath, targetPath);
               fs.chmodSync(targetPath, 0o644);
-              console.log(`[upload] ✅ Скопирован из shared: ${missingFile}`);
+              logFile('info', `✅ Скопирован из shared: ${missingFile}`, { fileName: missingFile, deviceId: id, folderName: safeFolderName });
               copiedFromShared++;
             } catch (e) {
               logger.error('[upload] Failed to copy from shared', { 
                 error: e.message,
                 fileName: missingFile,
                 deviceId: id,
-                folderName: safeFolderName
+                folderName: safeFolderName,
+                stack: e.stack
               });
             }
           } else {
-            console.warn(`[upload] ⚠️ Файл не найден в shared storage: ${missingFile}`);
+            logFile('warn', `⚠️ Файл не найден в shared storage: ${missingFile}`, { fileName: missingFile, deviceId: id, folderName: safeFolderName });
           }
         }
         
         const finalCount = fs.readdirSync(targetFolder).length;
-        console.log(`[upload] 📁 Папка готова: ${safeFolderName} (${finalCount} файлов${copiedFromShared > 0 ? `, ${copiedFromShared} скопировано из shared` : ''})`);
+        logFile('info', `📁 Папка готова: ${safeFolderName} (${finalCount} файлов${copiedFromShared > 0 ? `, ${copiedFromShared} скопировано из shared` : ''})`, { deviceId: id, folderName: safeFolderName, finalCount, copiedFromShared });
         
         // Сохраняем маппинг оригинального имени папки
         if (!fileNamesMap[id]) fileNamesMap[id] = {};
@@ -436,9 +438,9 @@ export function createFilesRouter(deps) {
           try {
             const filePath = path.join(DEVICES, file.filename);  // В /content/
             fs.chmodSync(filePath, 0o644);
-            console.log(`[upload] ✅ Права 644 установлены: ${file.filename}`);
+            logFile('info', `✅ Права 644 установлены: ${file.filename}`, { fileName: file.filename, deviceId: id });
           } catch (e) {
-            console.warn(`[upload] ⚠️ Не удалось установить права на ${file.filename}: ${e}`);
+            logger.warn(`[upload] ⚠️ Не удалось установить права на ${file.filename}`, { error: e.message, fileName: file.filename, deviceId: id, stack: e.stack });
           }
         }
       }
@@ -464,24 +466,24 @@ export function createFilesRouter(deps) {
         else if (ext === '.zip') {
           extractZipToFolder(id, fileName).then(result => {
             if (result.success) {
-              console.log(`[upload] 📦 ZIP распакован: ${fileName} -> ${result.folderName}/ (${result.imagesCount} изображений)`);
+              logFile('info', `📦 ZIP распакован: ${fileName} -> ${result.folderName}/ (${result.imagesCount} изображений)`, { fileName, deviceId: id, folderName: result.folderName, imagesCount: result.imagesCount });
               
               // Сохраняем маппинг оригинального имени папки
               if (result.originalFolderName && result.folderName !== result.originalFolderName) {
                 if (!fileNamesMap[id]) fileNamesMap[id] = {};
                 fileNamesMap[id][result.folderName] = result.originalFolderName;
                 saveFileNamesMap(fileNamesMap);
-                console.log(`[upload] 📝 Маппинг папки: "${result.folderName}" → "${result.originalFolderName}"`);
+                logFile('info', `📝 Маппинг папки: "${result.folderName}" → "${result.originalFolderName}"`, { deviceId: id, folderName: result.folderName, originalFolderName: result.originalFolderName });
               }
               
               // Обновляем список файлов после распаковки
               updateDeviceFilesFromDB(id, devices, fileNamesMap);
               io.emit('devices/updated');
             } else {
-              console.error(`[upload] ❌ Ошибка распаковки ZIP ${fileName}:`, result.error);
+              logger.error(`[upload] ❌ Ошибка распаковки ZIP ${fileName}`, { fileName, deviceId: id, error: result.error });
             }
           }).catch(err => {
-            console.error(`[upload] ❌ Ошибка обработки ZIP ${fileName}:`, err);
+            logger.error(`[upload] ❌ Ошибка обработки ZIP ${fileName}`, { fileName, deviceId: id, error: err.message, stack: err.stack });
           });
         }
           // УДАЛЕНО: Автоматическая оптимизация переносится ПОСЛЕ сохранения метаданных
@@ -750,7 +752,7 @@ export function createFilesRouter(deps) {
     const metadata = getFileMetadata(id, oldName);
     if (metadata) {
       // Медиафайл - обновляем только original_name в БД, физический файл НЕ трогаем
-      console.log(`[rename] 📝 Обновление originalName в БД: ${oldName} -> ${newName}`);
+      logFile('info', `📝 Обновление originalName в БД: ${oldName} -> ${newName}`, { deviceId: id, oldName, newName });
       updateFileOriginalName(id, oldName, newName);
       
       // Обновляем список файлов из БД
@@ -773,7 +775,7 @@ export function createFilesRouter(deps) {
       oldPath = possiblePdfFolder;
       isFolder = true;
       actualOldName = folderNamePdf;
-      console.log(`[rename] 📁 Переименование папки PDF/PPTX: ${folderNamePdf}`);
+      logFile('info', `📁 Переименование папки PDF/PPTX: ${folderNamePdf}`, { deviceId: id, oldName, folderNamePdf });
     } 
     // Проверяем, может это папка с изображениями (без расширения)
     else if (!oldName.includes('.')) {
@@ -782,12 +784,12 @@ export function createFilesRouter(deps) {
         oldPath = folderPath;
         isFolder = true;
         actualOldName = oldName;
-        console.log(`[rename] 📁 Переименование папки с изображениями: ${oldName}`);
+        logFile('info', `📁 Переименование папки с изображениями: ${oldName}`, { deviceId: id, oldName });
       }
     }
     
     if (!fs.existsSync(oldPath)) {
-      console.error(`[rename] ❌ Не найден: ${oldPath}`);
+      logFile('error', `❌ Не найден: ${oldPath}`, { deviceId: id, oldName, oldPath });
       return res.status(404).json({ error: 'file not found', path: oldPath });
     }
     
@@ -806,7 +808,7 @@ export function createFilesRouter(deps) {
     }
     
     try {
-      console.log(`[rename] 🔄 ${oldPath} -> ${newPath}`);
+      logFile('info', `🔄 ${oldPath} -> ${newPath}`, { deviceId: id, oldName, newName, oldPath, newPath });
       fs.renameSync(oldPath, newPath);
       
       // Обновляем маппинг имен
@@ -848,7 +850,7 @@ export function createFilesRouter(deps) {
       io.emit('devices/updated');
       res.json({ success: true, oldName: actualOldName, newName: finalName });
     } catch (e) {
-      console.error(`[rename] Ошибка:`, e);
+      logger.error('[rename] Ошибка', { error: e.message, stack: e.stack, deviceId: id, oldName, newName, oldPath, newPath });
       res.status(500).json({ error: 'rename failed', details: e.message });
     }
   });
@@ -902,9 +904,9 @@ export function createFilesRouter(deps) {
         fs.rmSync(possibleFolder, { recursive: true, force: true });
         deletedFileName = folderName;
         isFolder = true;
-        console.log(`[DELETE file] Удалена папка PDF/PPTX: ${folderName}`);
+        logFile('info', `Удалена папка PDF/PPTX: ${folderName}`, { deviceId: id, fileName: name, folderName });
       } catch (e) {
-        console.error(`[DELETE file] Ошибка удаления папки ${folderName}:`, e);
+        logger.error(`[DELETE file] Ошибка удаления папки ${folderName}`, { error: e.message, stack: e.stack, deviceId: id, fileName: name, folderName });
         return res.status(500).json({ error: 'failed to delete folder' });
       }
     } 
@@ -916,9 +918,9 @@ export function createFilesRouter(deps) {
           fs.rmSync(imageFolderPath, { recursive: true, force: true });
           deletedFileName = name;
           isFolder = true;
-          console.log(`[DELETE file] Удалена папка с изображениями: ${name}`);
+          logFile('info', `Удалена папка с изображениями: ${name}`, { deviceId: id, fileName: name });
         } catch (e) {
-          console.error(`[DELETE file] Ошибка удаления папки ${name}:`, e);
+          logger.error(`[DELETE file] Ошибка удаления папки ${name}`, { error: e.message, stack: e.stack, deviceId: id, fileName: name });
           return res.status(500).json({ error: 'failed to delete image folder' });
         }
       }

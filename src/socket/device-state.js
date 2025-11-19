@@ -3,6 +3,7 @@
  */
 import fs from 'fs';
 import path from 'path';
+import logger from '../utils/logger.js';
 
 const STATE_FILE = './config/device-state.json';
 
@@ -19,7 +20,7 @@ export function saveDeviceState(devices) {
     }
     fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
   } catch (error) {
-    console.error('Error saving device state:', error);
+    logger.error('Error saving device state', { error: error.message, stack: error.stack });
   }
 }
 
@@ -35,10 +36,10 @@ export function loadDeviceState(devices) {
           devices[deviceId].current = current;
         }
       }
-      console.log('✅ Device state restored from file');
+      logger.info('✅ Device state restored from file', { devicesCount: Object.keys(state).length });
     }
   } catch (error) {
-    console.error('Error loading device state:', error);
+    logger.error('Error loading device state', { error: error.message, stack: error.stack });
   }
 }
 

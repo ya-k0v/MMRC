@@ -9,16 +9,17 @@ import { spawn } from 'child_process';
 import { DEVICES, VIDEO_OPTIMIZATION_CONFIG_PATH } from '../config/constants.js';
 import { checkVideoParameters } from './ffmpeg-wrapper.js';
 import { setFileStatus, deleteFileStatus } from './file-status.js';
+import logger from '../utils/logger.js';
 
 // Загрузка конфигурации оптимизации
 let videoOptConfig = {};
 try {
   if (fs.existsSync(VIDEO_OPTIMIZATION_CONFIG_PATH)) {
     videoOptConfig = JSON.parse(fs.readFileSync(VIDEO_OPTIMIZATION_CONFIG_PATH, 'utf-8'));
-    console.log('[VideoOpt] ✅ Конфигурация загружена');
+    logger.info('[VideoOpt] ✅ Конфигурация загружена');
   }
 } catch (e) {
-  console.warn('[VideoOpt] ⚠️ Ошибка загрузки конфигурации, используем defaults');
+  logger.warn('[VideoOpt] ⚠️ Ошибка загрузки конфигурации, используем defaults', { error: e.message, stack: e.stack });
   videoOptConfig = { enabled: false };
 }
 
@@ -94,7 +95,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     return { success: false, message: 'Not a video file' };
   }
   
-  console.log(`[VideoOpt] 🔍 Проверка: ${fileName}`);
+  logger.info(`[VideoOpt] 🔍 Проверка: ${fileName}`, { deviceId, fileName });
   
   // Устанавливаем статус "проверка"
   setFileStatus(deviceId, fileName, { status: 'checking', progress: 0, canPlay: false });
@@ -110,7 +111,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       bitrate: metadata.video_bitrate || 0,
       profile: metadata.video_profile  // КРИТИЧНО!
     };
-    console.log(`[VideoOpt] 📊 Параметры из БД: ${params.width}x${params.height}, ${params.codec}/${params.profile}`);
+    logger.info(`[VideoOpt] 📊 Параметры из БД: ${params.width}x${params.height}, ${params.codec}/${params.profile}`, { deviceId, fileName, params });
   } else {
     // Fallback: получаем через FFmpeg если нет в БД
     params = await checkVideoParameters(filePath);
@@ -118,12 +119,12 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     deleteFileStatus(deviceId, fileName);
     return { success: false, message: 'Cannot read video parameters' };
   }
-    console.log(`[VideoOpt] 📊 Параметры через FFmpeg: ${params.width}x${params.height} @ ${params.fps}fps, ${Math.round(params.bitrate/1000)}kbps, ${params.codec}/${params.profile}`);
+    logger.info(`[VideoOpt] 📊 Параметры через FFmpeg: ${params.width}x${params.height} @ ${params.fps}fps, ${Math.round(params.bitrate/1000)}kbps, ${params.codec}/${params.profile}`, { deviceId, fileName, params });
   }
   
   // Проверяем нужна ли оптимизация
   if (!needsOptimization(params)) {
-    console.log(`[VideoOpt] ✅ Видео оптимально: ${fileName}`);
+    logger.info(`[VideoOpt] ✅ Видео оптимально: ${fileName}`, { deviceId, fileName });
     setFileStatus(deviceId, fileName, { status: 'ready', progress: 100, canPlay: true });
     
     // КРИТИЧНО: Отправляем событие клиентам даже если оптимизация не требуется
@@ -133,7 +134,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     return { success: true, message: 'Already optimized', optimized: false };
   }
   
-  console.log(`[VideoOpt] ⚠️ Требуется оптимизация: ${fileName}`);
+  logger.info(`[VideoOpt] ⚠️ Требуется оптимизация: ${fileName}`, { deviceId, fileName });
   
   // Устанавливаем статус "обработка"
   setFileStatus(deviceId, fileName, { status: 'processing', progress: 5, canPlay: false });
@@ -151,7 +152,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
   // Если видео больше 1080p (4K) - конвертируем в 1080p
   if (params.width > 1920 || params.height > 1080) {
     targetProfile = profiles['1080p'];
-    console.log(`[VideoOpt] 📉 4K → 1080p конвертация`);
+    logger.info(`[VideoOpt] 📉 4K → 1080p конвертация`, { deviceId, fileName });
   }
   
   const optConfig = videoOptConfig.optimization || {};
@@ -168,11 +169,10 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
   const finalFileName = ext === '.mp4' ? fileName : `${baseFileName}.mp4`;
   const finalPath = path.join(fileDir, finalFileName);
   
-  console.log(`[VideoOpt] 🎬 Начало конвертации: ${fileName}`);
+  logger.info(`[VideoOpt] 🎬 Начало конвертации: ${fileName}`, { deviceId, fileName, ext, finalFileName, targetProfile });
   if (ext !== '.mp4') {
-    console.log(`[VideoOpt] 🔄 Конвертация ${ext} → .mp4: ${finalFileName}`);
+    logger.info(`[VideoOpt] 🔄 Конвертация ${ext} → .mp4: ${finalFileName}`, { deviceId, fileName, ext, finalFileName });
   }
-  console.log(`[VideoOpt] 🎯 Профиль: ${targetProfile.width}x${targetProfile.height} @ ${targetProfile.fps}fps, ${targetProfile.bitrate}`);
   
   try {
     // FFmpeg аргументы
@@ -197,7 +197,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       '-y', tempPath
     ];
     
-    console.log(`[VideoOpt] 🔧 FFmpeg команда: ffmpeg ${ffmpegArgs.join(' ')}`);
+    logger.debug(`[VideoOpt] 🔧 FFmpeg команда: ffmpeg ${ffmpegArgs.join(' ')}`, { deviceId, fileName, ffmpegArgs });
     
     // Запускаем FFmpeg с отслеживанием прогресса
     await new Promise((resolve, reject) => {
@@ -210,7 +210,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       // ИСПРАВЛЕНО: Timeout 30 минут для предотвращения зависания
       const timeout = setTimeout(() => {
         if (!isResolved) {
-          console.error(`[VideoOpt] ⏱️ FFmpeg timeout (30 мин)`);
+          logger.error(`[VideoOpt] ⏱️ FFmpeg timeout (30 мин)`, { deviceId, fileName });
           ffmpegProcess.kill('SIGKILL');
           reject(new Error('FFmpeg timeout'));
         }
@@ -229,7 +229,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
             const minutes = parseInt(durationMatch[2]);
             const seconds = parseFloat(durationMatch[3]);
             duration = hours * 3600 + minutes * 60 + seconds;
-            console.log(`[VideoOpt] ⏱️ Длительность видео: ${duration.toFixed(1)}s`);
+            logger.info(`[VideoOpt] ⏱️ Длительность видео: ${duration.toFixed(1)}s`, { deviceId, fileName, duration });
           }
         }
         
@@ -252,7 +252,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
             // Отправляем событие клиентам каждые 5%
             if (progress % 5 === 0) {
               io.emit('file/progress', { device_id: deviceId, file: fileName, progress });
-              console.log(`[VideoOpt] 📊 Прогресс: ${progress}% (${currentTime.toFixed(1)}s / ${duration.toFixed(1)}s)`);
+              logger.info(`[VideoOpt] 📊 Прогресс: ${progress}% (${currentTime.toFixed(1)}s / ${duration.toFixed(1)}s)`, { deviceId, fileName, progress, currentTime, duration });
             }
           }
         }
@@ -263,11 +263,10 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
         isResolved = true;
         
         if (code === 0) {
-          console.log(`[VideoOpt] ✅ FFmpeg завершен успешно`);
+          logger.info(`[VideoOpt] ✅ FFmpeg завершен успешно`, { deviceId, fileName });
           resolve();
         } else {
-          console.error(`[VideoOpt] ❌ FFmpeg завершен с кодом ${code}`);
-          console.error(`[VideoOpt] Stderr: ${stderr.substring(stderr.length - 500)}`); // Последние 500 символов
+          logger.error(`[VideoOpt] ❌ FFmpeg завершен с кодом ${code}`, { deviceId, fileName, code, stderr: stderr.substring(stderr.length - 500) });
           reject(new Error(`FFmpeg exited with code ${code}`));
         }
       });
@@ -276,13 +275,13 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
         clearTimeout(timeout); // ИСПРАВЛЕНО: Очищаем timeout
         isResolved = true;
         
-        console.error(`[VideoOpt] ❌ Ошибка запуска FFmpeg: ${err}`);
+        logger.error(`[VideoOpt] ❌ Ошибка запуска FFmpeg`, { error: err.message, stack: err.stack, deviceId, fileName });
         reject(err);
       });
     });
     
     setFileStatus(deviceId, fileName, { status: 'processing', progress: 90, canPlay: false });
-    console.log(`[VideoOpt] ✅ Конвертация завершена: ${fileName}`);
+    logger.info(`[VideoOpt] ✅ Конвертация завершена: ${fileName}`, { deviceId, fileName });
     
     // Проверяем что файл создан и не пустой
     const stats = fs.statSync(tempPath);
@@ -293,7 +292,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     // КРИТИЧНО: Удаляем оригинал и заменяем оптимизированным
     // Если конвертация изменила формат (webm→mp4) - переименовываем файл
     if (ext !== '.mp4') {
-      console.log(`[VideoOpt] 🔄 Замена формата: ${fileName} → ${finalFileName}`);
+      logger.info(`[VideoOpt] 🔄 Замена формата: ${fileName} → ${finalFileName}`, { deviceId, fileName, finalFileName });
       
       // Удаляем оригинал (.webm, .mkv, etc)
       fs.unlinkSync(filePath);
@@ -307,7 +306,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
         delete fileNamesMap[deviceId][fileName];
         fileNamesMap[deviceId][finalFileName] = originalName;
         saveFileNamesMapFn(fileNamesMap);
-        console.log(`[VideoOpt] 📝 Маппинг обновлен: ${fileName} → ${finalFileName}`);
+        logger.info(`[VideoOpt] 📝 Маппинг обновлен: ${fileName} → ${finalFileName}`, { deviceId, fileName, finalFileName, originalName });
       }
       
       // Устанавливаем права
@@ -348,7 +347,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
           fileMtime: newStats.mtimeMs
         });
         
-        console.log(`[VideoOpt] 📊 Метаданные обновлены в БД (${fileName} → ${finalFileName})`);
+        logger.info(`[VideoOpt] 📊 Метаданные обновлены в БД (${fileName} → ${finalFileName})`, { deviceId, fileName, finalFileName });
       }
       
       // Обновляем список файлов устройства
@@ -360,8 +359,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
         }
       }
       
-      console.log(`[VideoOpt] 🎉 Видео конвертировано: ${fileName} → ${finalFileName}`);
-      console.log(`[VideoOpt] 📊 Размер: ${Math.round(stats.size / 1024 / 1024)}MB`);
+      logger.info(`[VideoOpt] 🎉 Видео конвертировано: ${fileName} → ${finalFileName}`, { deviceId, fileName, finalFileName, sizeMB: Math.round(stats.size / 1024 / 1024) });
       
       // Статус для НОВОГО имени файла (.mp4)
       deleteFileStatus(deviceId, fileName); // Удаляем статус старого файла (.webm)
@@ -410,7 +408,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
           fileMtime: newStats.mtimeMs
         });
         
-        console.log(`[VideoOpt] 📊 Метаданные обновлены в БД`);
+        logger.info(`[VideoOpt] 📊 Метаданные обновлены в БД`, { deviceId, fileName });
       }
       
       // Устанавливаем статус "готово"
@@ -420,8 +418,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       io.emit('devices/updated');
       io.emit('file/ready', { device_id: deviceId, file: fileName });
       
-      console.log(`[VideoOpt] 🎉 Видео оптимизировано: ${fileName}`);
-      console.log(`[VideoOpt] 📊 Размер: ${Math.round(stats.size / 1024 / 1024)}MB`);
+      logger.info(`[VideoOpt] 🎉 Видео оптимизировано: ${fileName}`, { deviceId, fileName, sizeMB: Math.round(stats.size / 1024 / 1024) });
     }
     
     return { 
@@ -444,7 +441,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     };
     
   } catch (error) {
-    console.error(`[VideoOpt] ❌ Ошибка конвертации: ${error.message}`);
+    logger.error(`[VideoOpt] ❌ Ошибка конвертации`, { error: error.message, stack: error.stack, deviceId, fileName });
     
     // Очищаем временный файл
     if (fs.existsSync(tempPath)) {
@@ -456,7 +453,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     
     if (params && params.codec && params.codec.toLowerCase() === 'av1') {
       errorMessage = `Кодек AV1 не поддерживается вашей версией FFmpeg. Файл воспроизводится как WebM, но может тормозить на Android. Рекомендация: конвертируйте файл в H.264 вручную или обновите FFmpeg.`;
-      console.warn(`[VideoOpt] ⚠️ AV1 кодек не поддерживается`);
+      logger.warn(`[VideoOpt] ⚠️ AV1 кодек не поддерживается`, { deviceId, fileName });
     } else if (params && params.codec && params.codec.toLowerCase() === 'vp9') {
       errorMessage = `Кодек VP9 может не поддерживаться. Файл воспроизводится как WebM, но может тормозить на Android.`;
     }

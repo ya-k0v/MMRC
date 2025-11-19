@@ -201,7 +201,7 @@ router.post('/refresh',
         expiresIn: 900 // 15 минут в секундах
       });
     } catch (err) {
-      console.error('[Auth] Refresh error:', err);
+      logger.error('Refresh error', { error: err.message, stack: err.stack });
       res.status(500).json({ error: 'Internal server error' });
     }
   }
@@ -260,7 +260,7 @@ router.get('/me', requireAuth, async (req, res) => {
 
     res.json(user);
   } catch (err) {
-    console.error('[Auth] Me error:', err);
+    logger.error('Me error', { error: err.message, stack: err.stack });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -353,7 +353,7 @@ router.get('/users', requireAuth, requireAdmin, async (req, res) => {
 
     res.json(users);
   } catch (err) {
-    console.error('[Auth] Users list error:', err);
+    logger.error('Users list error', { error: err.message, stack: err.stack });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -394,7 +394,7 @@ router.post('/users/:id/toggle',
 
       res.json({ success: true });
     } catch (err) {
-      console.error('[Auth] Toggle user error:', err);
+      logger.error('Toggle user error', { error: err.message, stack: err.stack, userId: req.params.id });
       res.status(500).json({ error: 'Internal server error' });
     }
   }

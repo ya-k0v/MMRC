@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import { DEVICES } from '../config/constants.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
+import logger from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -80,7 +81,7 @@ export function createVideoInfoRouter(deps) {
       });
       
     } catch (error) {
-      console.error(`[video-info] ❌ Ошибка:`, error);
+      logger.error(`[video-info] ❌ Ошибка`, { error: error.message, stack: error.stack, deviceId: id, fileName });
       res.status(500).json({ 
         error: 'failed to get video info', 
         detail: error.message 
@@ -103,7 +104,7 @@ export function createVideoInfoRouter(deps) {
       return res.status(404).json({ error: 'device not found' });
     }
     
-    console.log(`[API] 🎬 Ручная оптимизация: ${fileName}`);
+    logger.info(`[API] 🎬 Ручная оптимизация: ${fileName}`, { deviceId: id, fileName });
     
     try {
       const result = await autoOptimizeVideoWrapper(id, fileName);
@@ -116,7 +117,7 @@ export function createVideoInfoRouter(deps) {
       }
       
     } catch (error) {
-      console.error(`[optimize] ❌ Ошибка:`, error);
+      logger.error(`[optimize] ❌ Ошибка`, { error: error.message, stack: error.stack, deviceId: id, fileName });
       res.status(500).json({ 
         success: false, 
         message: error.message 

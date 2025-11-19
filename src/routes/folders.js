@@ -9,6 +9,7 @@ import path from 'path';
 import { DEVICES } from '../config/constants.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { getFolderImages, getFolderImagesCount } from '../converters/folder-converter.js';
+import logger from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -37,7 +38,7 @@ export function createFoldersRouter(deps) {
       const images = await getFolderImages(id, folderName);
       res.json({ images, count: images.length });
     } catch (error) {
-      console.error('[folders] Error getting folder images:', error);
+      logger.error('[folders] Error getting folder images', { error: error.message, stack: error.stack, deviceId: id, folderName });
       res.status(500).json({ error: 'failed to get folder images' });
     }
   });
@@ -59,7 +60,7 @@ export function createFoldersRouter(deps) {
       const count = await getFolderImagesCount(id, folderName);
       res.json({ count });
     } catch (error) {
-      console.error('[folders] Error getting folder count:', error);
+      logger.error('[folders] Error getting folder count', { error: error.message, stack: error.stack, deviceId: id, folderName });
       res.status(500).json({ error: 'failed to get folder count' });
     }
   });
@@ -95,14 +96,14 @@ export function createFoldersRouter(deps) {
       // Отправляем изображение
       res.sendFile(imagePath, (err) => {
         if (err) {
-          console.error('[folders] Error sending image:', err);
+          logger.error('[folders] Error sending image', { error: err.message, stack: err.stack, deviceId: id, folderName, index, imagePath });
           if (!res.headersSent) {
             res.status(500).json({ error: 'failed to send image' });
           }
         }
       });
     } catch (error) {
-      console.error('[folders] Error getting folder image:', error);
+      logger.error('[folders] Error getting folder image', { error: error.message, stack: error.stack, deviceId: id, folderName, index });
       res.status(500).json({ error: 'failed to get folder image' });
     }
   });

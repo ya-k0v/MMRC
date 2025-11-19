@@ -8,6 +8,7 @@ import path from 'path';
 import mime from 'mime';
 import { PUBLIC, ROOT, DEVICES } from '../config/constants.js';
 import { requestTimeout } from './timeout.js';
+import logger from '../utils/logger.js';
 
 /**
  * Настраивает базовые Express middleware
@@ -34,7 +35,7 @@ export function setupExpressMiddleware(app) {
   // Логирование запросов
   app.use((req, res, next) => {
     try {
-      console.log(new Date().toISOString(), req.method, req.url);
+      logger.debug('HTTP request', { method: req.method, url: req.url, ip: req.ip });
     } catch(e) {}
     next();
   });

@@ -5,6 +5,7 @@
 
 import path from 'path';
 import fs from 'fs';
+import logger from '../utils/logger.js';
 
 // Базовые пути
 export const ROOT = process.cwd();
@@ -17,9 +18,9 @@ const DATA_ROOT = process.env.DATA_ROOT || '/mnt/videocontrol-data';
 const useExternalDataDisk = fs.existsSync(DATA_ROOT);
 
 if (useExternalDataDisk) {
-  console.log(`[Config] ✅ Using external data disk: ${DATA_ROOT}`);
+  logger.info(`[Config] ✅ Using external data disk: ${DATA_ROOT}`);
 } else {
-  console.log(`[Config] ℹ️ Using local storage (DATA_ROOT not found: ${DATA_ROOT})`);
+  logger.info(`[Config] ℹ️ Using local storage (DATA_ROOT not found: ${DATA_ROOT})`);
 }
 
 // DEVICES - папка с контентом устройств (может переопределяться настройками)

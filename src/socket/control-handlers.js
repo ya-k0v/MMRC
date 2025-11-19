@@ -4,6 +4,7 @@
  */
 
 import { getFolderImagesCount } from '../converters/folder-converter.js';
+import logger from '../utils/logger.js';
 
 const DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS = 10;
 const serverPlaylistLoops = new Map();
@@ -15,7 +16,7 @@ function stopServerPlaylistLoop(deviceId, reason = 'stopped') {
   }
   if (loop) {
     serverPlaylistLoops.delete(deviceId);
-    console.log(`[Playlist] Loop stopped for ${deviceId} (${reason})`);
+    logger.info(`[Playlist] Loop stopped for ${deviceId}`, { deviceId, reason });
   }
 }
 
@@ -35,12 +36,12 @@ async function startServerPlaylistLoop(deviceId, file, intervalSeconds, devices,
   try {
     totalImages = await getFolderImagesCount(deviceId, folderName);
   } catch (error) {
-    console.error(`[Playlist] Failed to get images count for ${deviceId}/${file}:`, error);
+    logger.error(`[Playlist] Failed to get images count for ${deviceId}/${file}`, { error: error.message, stack: error.stack, deviceId, file });
     return;
   }
 
   if (!totalImages || totalImages < 1) {
-    console.warn(`[Playlist] Folder ${file} for ${deviceId} has no images, playlist loop skipped`);
+    logger.warn(`[Playlist] Folder ${file} for ${deviceId} has no images, playlist loop skipped`, { deviceId, file });
     return;
   }
 
@@ -55,7 +56,7 @@ async function startServerPlaylistLoop(deviceId, file, intervalSeconds, devices,
   };
 
   serverPlaylistLoops.set(deviceId, loopState);
-  console.log(`[Playlist] Loop started for ${deviceId} (${file}) total=${totalImages} interval=${loopState.intervalMs}ms`);
+  logger.info(`[Playlist] Loop started for ${deviceId} (${file}) total=${totalImages} interval=${loopState.intervalMs}ms`, { deviceId, file, totalImages, intervalMs: loopState.intervalMs });
   scheduleNextFolderSlide(loopState, devices, io);
 }
 
@@ -77,7 +78,7 @@ function scheduleNextFolderSlide(loopState, devices, io) {
       );
 
     if (!playlistNameMatches) {
-      console.warn('[Playlist] State changed, stopping loop', {
+      logger.warn('[Playlist] State changed, stopping loop', {
         deviceId: loopState.deviceId,
         hasDevice: !!deviceState,
         hasCurrent: !!deviceState?.current,
@@ -97,12 +98,12 @@ function scheduleNextFolderSlide(loopState, devices, io) {
     loopState.currentPage = nextPage;
     deviceState.current.page = nextPage;
 
-    console.log(`[Playlist] ${loopState.deviceId} -> slide ${nextPage}/${totalPages}`);
+    logger.info(`[Playlist] ${loopState.deviceId} -> slide ${nextPage}/${totalPages}`, { deviceId: loopState.deviceId, page: nextPage, totalPages });
     if (loopState.hasAdvanced || nextPage !== 1) {
       io.to(`device:${loopState.deviceId}`).emit('player/folderPage', nextPage);
       io.emit('preview/refresh', { device_id: loopState.deviceId });
     } else {
-      console.log(`[Playlist] ${loopState.deviceId} first slide already playing, skipping duplicate page 1`);
+      logger.info(`[Playlist] ${loopState.deviceId} first slide already playing, skipping duplicate page 1`, { deviceId: loopState.deviceId });
     }
 
     loopState.hasAdvanced = true;
@@ -179,7 +180,7 @@ export function setupControlHandlers(socket, deps) {
         d.current.state = 'playing';
       }
       io.to(`device:${device_id}`).emit('player/resume');
-      console.log(`[Control] ▶️ Resume: ${device_id} (продолжение с места паузы)`);
+      logger.info(`[Control] ▶️ Resume: ${device_id} (продолжение с места паузы)`, { deviceId: device_id });
     }
     
     io.emit('preview/refresh', { device_id });
@@ -257,7 +258,7 @@ export function setupControlHandlers(socket, deps) {
     try {
       await startServerPlaylistLoop(device_id, file, d.current.playlistInterval, devices, io);
     } catch (error) {
-      console.error('[Playlist] Failed to start server loop:', error);
+      logger.error('[Playlist] Failed to start server loop', { error: error.message, stack: error.stack, deviceId: device_id, file });
     }
   });
 

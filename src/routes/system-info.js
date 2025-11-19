@@ -5,8 +5,11 @@
 import express from 'express';
 import os from 'os';
 import fs from 'fs';
+import path from 'path';
 import { promisify } from 'util';
 import { exec } from 'child_process';
+import logger from '../utils/logger.js';
+import { getSettings } from '../config/settings-manager.js';
 
 const execAsync = promisify(exec);
 
@@ -21,7 +24,7 @@ export function createSystemInfoRouter() {
       const systemInfo = await getSystemInfo();
       res.json(systemInfo);
     } catch (error) {
-      console.error('Error getting system info:', error);
+      logger.error('Error getting system info', { error: error.message, stack: error.stack });
       res.status(500).json({ error: 'Failed to get system info' });
     }
   });
@@ -92,21 +95,53 @@ function getMemoryInfo() {
 }
 
 /**
- * Получить информацию о диске
+ * Получить информацию о диске контента
+ * Возвращает информацию только о том диске, где хранится контент (из настроек)
  */
 async function getDiskInfo() {
   try {
+    // Получаем путь к контент-диску из настроек
+    const settings = getSettings();
+    const contentRoot = settings.runtime?.contentRoot || settings.contentRoot || '/';
+    
     // Для Linux/Mac
     if (process.platform !== 'win32') {
-      const { stdout } = await execAsync('df -k / | tail -1');
-      const parts = stdout.trim().split(/\s+/);
+      // Получаем информацию о диске, где находится путь к контенту
+      // df -k показывает информацию о файловой системе, в которой находится указанный путь
+      let contentPath = path.resolve(contentRoot);
       
+      // Убеждаемся что путь существует
+      if (!fs.existsSync(contentPath)) {
+        // Если путь не существует, используем родительский каталог
+        contentPath = path.dirname(contentPath);
+        if (!fs.existsSync(contentPath)) {
+          contentPath = '/';
+        }
+      }
+      
+      // Получаем информацию о диске для этого пути
+      const { stdout } = await execAsync(`df -k "${contentPath}" | tail -n +2`);
+      const line = stdout.trim();
+      
+      if (!line) {
+        throw new Error('Не удалось получить информацию о диске');
+      }
+      
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 6) {
+        throw new Error('Неверный формат вывода df');
+      }
+      
+      const filesystem = parts[0];
       const total = parseInt(parts[1]) * 1024; // KB to bytes
       const used = parseInt(parts[2]) * 1024;
       const available = parseInt(parts[3]) * 1024;
-      const usagePercent = parseInt(parts[4]);
-
-      return {
+      const usagePercentStr = parts[4].replace('%', '');
+      const usagePercent = parseInt(usagePercentStr) || 0;
+      // Точка монтирования - это последний элемент (может содержать пробелы)
+      const mountPoint = parts.slice(5).join(' ') || parts[parts.length - 1];
+      
+      const diskInfo = {
         total,
         used,
         available,
@@ -114,21 +149,45 @@ async function getDiskInfo() {
         totalFormatted: formatBytes(total),
         usedFormatted: formatBytes(used),
         availableFormatted: formatBytes(available),
-        filesystem: parts[0],
-        mountPoint: parts[5] || '/'
+        filesystem,
+        mountPoint,
+        contentPath: contentRoot
+      };
+      
+      // Возвращаем один диск (контентный) в массиве для совместимости с фронтендом
+      return {
+        ...diskInfo,
+        disks: [diskInfo]
       };
     } else {
-      // Для Windows
-      const { stdout } = await execAsync('wmic logicaldisk get size,freespace,caption');
-      const lines = stdout.trim().split('\n');
-      const data = lines[1].trim().split(/\s+/);
+      // Для Windows - определяем диск из пути
+      const driveLetter = path.parse(contentRoot).root.replace('\\', '').replace('/', '');
       
-      const available = parseInt(data[1]);
-      const total = parseInt(data[2]);
+      if (!driveLetter) {
+        throw new Error('Не удалось определить диск из пути');
+      }
+      
+      // Получаем информацию о логическом диске
+      const { stdout } = await execAsync(`wmic logicaldisk where "caption='${driveLetter}'" get size,freespace,caption /format:value`);
+      const lines = stdout.trim().split('\n').filter(line => line.trim());
+      
+      let total = 0;
+      let available = 0;
+      
+      for (const line of lines) {
+        const [key, value] = line.split('=');
+        if (key === 'Size') total = parseInt(value) || 0;
+        if (key === 'FreeSpace') available = parseInt(value) || 0;
+      }
+      
+      if (total === 0) {
+        throw new Error('Диск не найден или недоступен');
+      }
+      
       const used = total - available;
-      const usagePercent = ((used / total) * 100).toFixed(2);
+      const usagePercent = parseFloat(((used / total) * 100).toFixed(2));
 
-      return {
+      const diskInfo = {
         total,
         used,
         available,
@@ -136,16 +195,24 @@ async function getDiskInfo() {
         totalFormatted: formatBytes(total),
         usedFormatted: formatBytes(used),
         availableFormatted: formatBytes(available),
-        drive: data[0]
+        drive: driveLetter,
+        contentPath: contentRoot
+      };
+      
+      // Возвращаем один диск (контентный) в массиве для совместимости с фронтендом
+      return {
+        ...diskInfo,
+        disks: [diskInfo]
       };
     }
   } catch (error) {
-    console.error('Error getting disk info:', error);
+    logger.error('Error getting disk info', { error: error.message, stack: error.stack });
     return {
       total: 0,
       used: 0,
       available: 0,
       usagePercent: 0,
+      disks: [],
       error: 'Failed to get disk info'
     };
   }

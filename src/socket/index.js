@@ -6,6 +6,7 @@
 import { getOnlineDevices } from './connection-manager.js';
 import { setupDeviceHandlers, handleDisconnect } from './device-handlers.js';
 import { setupControlHandlers } from './control-handlers.js';
+import logger from '../utils/logger.js';
 
 /**
  * Настраивает все Socket.IO обработчики
@@ -17,16 +18,16 @@ export function setupSocketHandlers(io, deps) {
   
   io.on('connection', socket => {
     const transport = socket.conn?.transport?.name;
-    console.log(`[Socket.IO] 🔌 connection id=${socket.id} transport=${transport}`);
+    logger.info(`[Socket.IO] 🔌 connection id=${socket.id}`, { socketId: socket.id, transport });
 
     // Логирование transport events
     if (socket.conn) {
       socket.conn.on('upgrade', () => {
-        console.log(`[Socket.IO] 🚀 transport upgraded for ${socket.id} → ${socket.conn.transport.name}`);
+        logger.info(`[Socket.IO] 🚀 transport upgraded for ${socket.id}`, { socketId: socket.id, newTransport: socket.conn.transport.name });
       });
       
       socket.conn.on('close', (reason) => {
-        console.warn(`[Socket.IO] 🔌 connection closed id=${socket.id} reason=${reason}`);
+        logger.warn(`[Socket.IO] 🔌 connection closed id=${socket.id}`, { socketId: socket.id, reason });
       });
     }
 
@@ -35,7 +36,7 @@ export function setupSocketHandlers(io, deps) {
       const snapshot = getOnlineDevices();
       socket.emit('players/onlineSnapshot', snapshot);
     } catch (e) {
-      console.error(`[Socket.IO] ❌ Ошибка отправки snapshot:`, e);
+      logger.error(`[Socket.IO] ❌ Ошибка отправки snapshot`, { error: e.message, stack: e.stack, socketId: socket.id });
     }
     
     // Настраиваем обработчики

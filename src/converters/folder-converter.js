@@ -9,6 +9,7 @@ import { exec as execCallback } from 'child_process';
 import util from 'util';
 import { DEVICES, CONVERTED_CACHE } from '../config/constants.js';
 import { makeSafeFolderName } from '../utils/transliterate.js';
+import logger from '../utils/logger.js';
 
 const exec = util.promisify(execCallback);
 
@@ -32,7 +33,7 @@ export async function extractZipToFolder(deviceId, zipFileName) {
     const folderName = makeSafeFolderName(originalFolderName); // Транслитерация
     const outputFolder = path.join(deviceFolder, folderName);
     
-    console.log(`[FolderConverter] 📝 Имя папки: "${originalFolderName}" → "${folderName}"`);
+    logger.info(`[FolderConverter] 📝 Имя папки: "${originalFolderName}" → "${folderName}"`, { deviceId, zipFileName, originalFolderName, folderName });
     
     // Если папка уже существует, удаляем её
     if (fs.existsSync(outputFolder)) {
@@ -42,14 +43,14 @@ export async function extractZipToFolder(deviceId, zipFileName) {
     // Создаем новую папку
     fs.mkdirSync(outputFolder, { recursive: true });
     
-    console.log(`[FolderConverter] 📦 Распаковка ZIP: ${zipFileName} -> ${folderName}/`);
+    logger.info(`[FolderConverter] 📦 Распаковка ZIP: ${zipFileName} -> ${folderName}/`, { deviceId, zipFileName, folderName });
     
     // Распаковываем ZIP с помощью unzip (доступен на большинстве Linux систем)
     try {
       await exec(`unzip -q "${zipPath}" -d "${outputFolder}"`);
     } catch (err) {
       // Если unzip недоступен, пробуем 7z
-      console.log('[FolderConverter] unzip недоступен, пробую 7z...');
+      logger.info('[FolderConverter] unzip недоступен, пробую 7z...', { deviceId, zipFileName });
       await exec(`7z x "${zipPath}" -o"${outputFolder}" -y`);
     }
     
@@ -109,7 +110,7 @@ export async function extractZipToFolder(deviceId, zipFileName) {
     }
     
     if (movedCount > 0) {
-      console.log(`[FolderConverter] 📁 Перемещено файлов из подпапок: ${movedCount}`);
+      logger.info(`[FolderConverter] 📁 Перемещено файлов из подпапок: ${movedCount}`, { deviceId, zipFileName, movedCount });
       
       // Удаляем пустые подпапки
       const subdirs = fs.readdirSync(outputFolder, { withFileTypes: true })
@@ -120,7 +121,7 @@ export async function extractZipToFolder(deviceId, zipFileName) {
         try {
           fs.rmSync(subdir, { recursive: true, force: true });
         } catch (e) {
-          console.warn(`[FolderConverter] ⚠️ Не удалось удалить подпапку ${subdir}:`, e);
+          logger.warn(`[FolderConverter] ⚠️ Не удалось удалить подпапку ${subdir}`, { error: e.message, deviceId, zipFileName, subdir });
         }
       }
     }
@@ -131,14 +132,14 @@ export async function extractZipToFolder(deviceId, zipFileName) {
       try {
         fs.chmodSync(file, 0o644);
       } catch (e) {
-        console.warn(`[FolderConverter] ⚠️ Не удалось установить права на ${file}:`, e);
+        logger.warn(`[FolderConverter] ⚠️ Не удалось установить права на ${file}`, { error: e.message, deviceId, zipFileName, file });
       }
     });
     
     // Удаляем исходный ZIP файл
     fs.unlinkSync(zipPath);
     
-    console.log(`[FolderConverter] ✅ ZIP распакован: ${allFiles.length} изображений`);
+    logger.info(`[FolderConverter] ✅ ZIP распакован: ${allFiles.length} изображений`, { deviceId, zipFileName, imagesCount: allFiles.length, folderName });
     
     return { 
       success: true, 
@@ -148,7 +149,7 @@ export async function extractZipToFolder(deviceId, zipFileName) {
     };
     
   } catch (error) {
-    console.error('[FolderConverter] ❌ Ошибка распаковки ZIP:', error);
+    logger.error('[FolderConverter] ❌ Ошибка распаковки ZIP', { error: error.message, stack: error.stack, deviceId, zipFileName });
     return { success: false, error: error.message };
   }
 }
@@ -185,7 +186,7 @@ export async function getFolderImages(deviceId, folderName) {
     
     return files;
   } catch (error) {
-    console.error('[FolderConverter] ❌ Ошибка чтения папки:', error);
+    logger.error('[FolderConverter] ❌ Ошибка чтения папки', { error: error.message, stack: error.stack, deviceId, folderName });
     return [];
   }
 }

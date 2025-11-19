@@ -5,6 +5,7 @@
 
 import { exec } from 'child_process';
 import util from 'util';
+import logger from '../utils/logger.js';
 
 const execAsync = util.promisify(exec);
 
@@ -47,9 +48,9 @@ export async function checkVideoParameters(filePath) {
   } catch (error) {
     // Проверяем timeout ошибку
     if (error.killed && error.signal === 'SIGTERM') {
-      console.error(`[VideoOpt] ⏱️ FFprobe timeout для файла: ${filePath}`);
+      logger.error(`[VideoOpt] ⏱️ FFprobe timeout для файла: ${filePath}`, { filePath, error: error.message });
     } else {
-      console.error(`[VideoOpt] ❌ Ошибка ffprobe: ${error.message}`);
+      logger.error(`[VideoOpt] ❌ Ошибка ffprobe: ${error.message}`, { filePath, error: error.message, stack: error.stack });
     }
     return null;
   }

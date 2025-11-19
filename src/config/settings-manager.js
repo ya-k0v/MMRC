@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { ROOT, DEFAULT_DEVICES_PATH, setDevicesPath, DEVICES } from './constants.js';
+import logger from '../utils/logger.js';
 
 const SETTINGS_FILE = path.join(ROOT, 'config', 'app-settings.json');
 
@@ -13,7 +14,7 @@ function safeWriteSettings() {
     fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf-8');
   } catch (error) {
-    console.error('[Settings] Failed to persist settings:', error.message);
+    logger.error('[Settings] Failed to persist settings', { error: error.message, stack: error.stack });
   }
 }
 
@@ -42,7 +43,7 @@ function loadSettingsFromFile() {
       };
     }
   } catch (error) {
-    console.error('[Settings] Failed to read settings file:', error.message);
+    logger.error('[Settings] Failed to read settings file', { error: error.message, stack: error.stack });
   }
 }
 
@@ -51,7 +52,7 @@ export function initializeSettings() {
   const currentPath = settings.contentRoot || DEFAULT_DEVICES_PATH;
   ensureDirectory(currentPath);
   setDevicesPath(currentPath);
-  console.log(`[Settings] 📁 Content root: ${currentPath}`);
+  logger.info(`[Settings] 📁 Content root: ${currentPath}`);
 }
 
 export function getSettings() {
@@ -82,7 +83,7 @@ export function updateContentRootPath(newPath) {
   settings.contentRoot = normalized;
   safeWriteSettings();
   setDevicesPath(normalized);
-  console.log(`[Settings] 🔄 Content root updated: ${normalized}`);
+  logger.info(`[Settings] 🔄 Content root updated: ${normalized}`);
 
   return normalized;
 }

@@ -8,7 +8,7 @@ import {
   ROOT, PUBLIC, DEVICES, CONVERTED_CACHE, MAX_FILE_SIZE, ALLOWED_EXT, PORT, HOST 
 } from './src/config/constants.js';
 import { createSocketServer } from './src/config/socket-config.js';
-import { initDatabase } from './src/database/database.js';
+import { initDatabase, closeDatabase, getDatabase } from './src/database/database.js';
 import { 
   loadDevicesFromDB, 
   saveDevicesToDB, 
@@ -38,9 +38,9 @@ import { setupExpressMiddleware, setupStaticFiles } from './src/middleware/expre
 import { setupSocketHandlers } from './src/socket/index.js';
 import logger, { httpLoggerMiddleware } from './src/utils/logger.js';
 import { cleanupResolutionCache, getResolutionCacheSize } from './src/video/resolution-cache.js';
-import { getDatabase } from './src/database/database.js';
 import { circuitBreakers } from './src/utils/circuit-breaker.js';
 import { getSettings, updateContentRootPath } from './src/config/settings-manager.js';
+import { getMetrics } from './src/utils/metrics.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -337,7 +337,6 @@ app.get('/health', (req, res) => {
 // ========================================
 // METRICS ENDPOINT
 // ========================================
-import { getMetrics } from './src/utils/metrics.js';
 
 app.get('/api/metrics', requireAuth, requireAdmin, (req, res) => {
   try {
@@ -428,7 +427,7 @@ async function gracefulShutdown(signal) {
   
   try {
     // 1. Останавливаем прием новых запросов
-    httpServer.close(() => {
+    server.close(() => {
       logger.info('✅ HTTP server closed');
     });
     

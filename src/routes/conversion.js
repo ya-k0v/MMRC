@@ -9,6 +9,7 @@ import path from 'path';
 import mime from 'mime';
 import { DEVICES } from '../config/constants.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
+import logger from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -43,7 +44,7 @@ export function createConversionRouter(deps) {
       const count = await getPageSlideCount(id, fileName);
       res.json({ count });
     } catch (error) {
-      console.error(`[slides-count] ❌ Ошибка:`, error);
+      logger.error(`[slides-count] ❌ Ошибка`, { error: error.message, stack: error.stack, deviceId: id, fileName });
       res.status(500).json({ error: 'failed to get slide count' });
     }
   });
@@ -103,7 +104,7 @@ export function createConversionRouter(deps) {
       stream.pipe(res);
       
     } catch (error) {
-      console.error(`[converted] ❌ Ошибка:`, error);
+      logger.error(`[converted] ❌ Ошибка`, { error: error.message, stack: error.stack, deviceId: id, fileName, type, num });
       res.status(500).json({ error: 'failed to serve converted file' });
     }
   });

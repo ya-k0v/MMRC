@@ -23,7 +23,7 @@ export const DEVICE_TYPE_NAMES = {
   'webos': 'WebOS',
   'tizen': 'Tizen',
   'VJC': 'Video.js Player',
-  'NATIVE_MEDIAPLAYER': 'Android MediaPlayer',
+  'NATIVE_MEDIAPLAYER': 'VCMediaPlayer',
   'NATIVE_MPV': 'Linux MPV Player'
 };
 

@@ -41,7 +41,16 @@ function createSystemMonitorUI() {
   const monitorHTML = `
     <div id="system-monitor" class="system-monitor">
       <div class="system-stat" id="cpu-stat" title="Загрузка процессора">
-        <span class="stat-icon">🖥️</span>
+        <span class="stat-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="4" width="16" height="16" rx="2" ry="2"/>
+            <rect x="9" y="9" width="6" height="6"/>
+            <line x1="9" y1="1" x2="9" y2="4"/>
+            <line x1="15" y1="1" x2="15" y2="4"/>
+            <line x1="9" y1="20" x2="9" y2="23"/>
+            <line x1="15" y1="20" x2="15" y2="23"/>
+          </svg>
+        </span>
         <span class="stat-value" id="cpu-value">--</span>
         <div class="stat-bar">
           <div class="stat-bar-fill" id="cpu-bar"></div>
@@ -49,7 +58,15 @@ function createSystemMonitorUI() {
       </div>
       
       <div class="system-stat" id="ram-stat" title="Использование оперативной памяти">
-        <span class="stat-icon">💾</span>
+        <span class="stat-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <line x1="9" y1="3" x2="9" y2="21"/>
+            <line x1="15" y1="3" x2="15" y2="21"/>
+            <line x1="3" y1="9" x2="21" y2="9"/>
+            <line x1="3" y1="15" x2="21" y2="15"/>
+          </svg>
+        </span>
         <span class="stat-value" id="ram-value">--</span>
         <div class="stat-bar">
           <div class="stat-bar-fill" id="ram-bar"></div>
@@ -57,7 +74,16 @@ function createSystemMonitorUI() {
       </div>
       
       <div class="system-stat" id="disk-stat" title="Свободное место на диске">
-        <span class="stat-icon">💿</span>
+        <span class="stat-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="5" width="18" height="14" rx="2" ry="2"/>
+            <rect x="3" y="9" width="18" height="2" opacity="0.6"/>
+            <rect x="3" y="13" width="18" height="2" opacity="0.6"/>
+            <rect x="3" y="17" width="18" height="2" opacity="0.6"/>
+            <line x1="8" y1="5" x2="8" y2="19"/>
+            <line x1="16" y1="5" x2="16" y2="19"/>
+          </svg>
+        </span>
         <span class="stat-value" id="disk-value">--</span>
         <div class="stat-bar">
           <div class="stat-bar-fill" id="disk-bar"></div>
@@ -65,7 +91,12 @@ function createSystemMonitorUI() {
       </div>
       
       <div class="system-stat" id="uptime-stat" title="Время работы сервера">
-        <span class="stat-icon">⏱️</span>
+        <span class="stat-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
+        </span>
         <span class="stat-value" id="uptime-value">--</span>
       </div>
     </div>
@@ -124,14 +155,61 @@ function updateSystemMonitorUI(data) {
     ramBar.style.backgroundColor = getColorByUsage(usagePercent);
   }
 
-  // Disk
-  const diskValue = document.getElementById('disk-value');
-  const diskBar = document.getElementById('disk-bar');
-  if (diskValue && diskBar && data.disk) {
-    const usagePercent = parseFloat(data.disk.usagePercent);
-    diskValue.textContent = `${usagePercent.toFixed(0)}%`;
-    diskBar.style.width = `${usagePercent}%`;
-    diskBar.style.backgroundColor = getColorByUsage(usagePercent);
+  // Disk - показываем информацию о контент-диске (один диск из настроек)
+  const diskStat = document.getElementById('disk-stat');
+  if (diskStat && data.disk) {
+    // Убираем контейнер множественных дисков если был (теперь всегда один диск)
+    const diskContainer = diskStat.querySelector('.disk-container');
+    if (diskContainer) {
+      diskContainer.remove();
+    }
+    
+    // Восстанавливаем стандартную структуру если её нет
+    let diskValue = document.getElementById('disk-value');
+    let diskBar = document.getElementById('disk-bar');
+    
+    if (!diskValue || !diskBar) {
+      // Если структуры нет - создаём её (должна быть в HTML, но на всякий случай)
+      const icon = diskStat.querySelector('.stat-icon');
+      if (icon) {
+        const valueContainer = document.createElement('div');
+        valueContainer.style.display = 'flex';
+        valueContainer.style.alignItems = 'center';
+        valueContainer.style.gap = 'var(--space-sm)';
+        valueContainer.innerHTML = `
+          <span class="stat-value" id="disk-value">--</span>
+          <div class="stat-bar" id="disk-bar">
+            <div class="stat-bar-fill"></div>
+          </div>
+        `;
+        icon.parentElement.insertBefore(valueContainer, icon.nextSibling);
+        diskValue = document.getElementById('disk-value');
+        diskBar = document.getElementById('disk-bar');
+      }
+    }
+    
+    if (diskValue && diskBar) {
+      // Используем данные из data.disk (контентный диск)
+      const usagePercent = parseFloat(data.disk?.usagePercent || 0);
+      
+      if (usagePercent >= 0 && usagePercent <= 100) {
+        diskValue.textContent = `${usagePercent.toFixed(0)}%`;
+        
+        // Обновляем title с информацией о диске
+        const mountPoint = data.disk.mountPoint || data.disk.drive || '';
+        const available = data.disk.availableFormatted || '';
+        diskStat.title = `Контент-диск ${mountPoint}: ${available} свободно`;
+        
+        const barFill = diskBar.querySelector('.stat-bar-fill');
+        if (barFill) {
+          barFill.style.width = `${usagePercent}%`;
+          barFill.style.backgroundColor = getColorByUsage(usagePercent);
+        }
+      } else {
+        diskValue.textContent = '--';
+        diskStat.title = 'Контент-диск: информация недоступна';
+      }
+    }
   }
 
   // Uptime
@@ -194,9 +272,19 @@ function addSystemMonitorStyles() {
     }
 
     .stat-icon {
-      font-size: var(--font-size-lg);
-      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
       opacity: 0.8;
+      flex-shrink: 0;
+    }
+
+    .stat-icon svg {
+      width: 100%;
+      height: 100%;
+      color: currentColor;
     }
 
     .stat-value {
@@ -222,6 +310,43 @@ function addSystemMonitorStyles() {
       transition: width var(--transition-base), background-color var(--transition-base);
     }
 
+    /* Множественные диски */
+    .disk-container {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-xs);
+      min-width: 120px;
+    }
+
+    .disk-item {
+      display: flex;
+      align-items: center;
+      gap: var(--space-xs);
+      font-size: var(--font-size-xs);
+    }
+
+    .disk-label {
+      min-width: 30px;
+      font-weight: var(--font-weight-medium);
+      color: var(--text-2);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .disk-item .disk-value {
+      min-width: 35px;
+      font-size: var(--font-size-xs);
+      font-weight: var(--font-weight-bold);
+      text-align: center;
+      color: var(--text);
+    }
+
+    .disk-item .stat-bar {
+      width: 40px;
+      height: 4px;
+    }
+
     /* Адаптивность */
     @media (max-width: 1200px) {
       #uptime-stat {
@@ -245,7 +370,8 @@ function addSystemMonitorStyles() {
       }
       
       .stat-icon {
-        font-size: var(--font-size-base);
+        width: 18px;
+        height: 18px;
       }
     }
 

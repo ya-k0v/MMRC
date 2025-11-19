@@ -5,6 +5,7 @@
 
 import { fileTypeFromFile } from 'file-type';
 import fs from 'fs';
+import logger from '../utils/logger.js';
 
 /**
  * Разрешенные MIME types по категориям
@@ -91,7 +92,7 @@ export async function validateFileMimeType(filePath, expectedCategory = null) {
       valid
     };
   } catch (err) {
-    console.error('[File Validation] Error:', err);
+    logger.error('[File Validation] Error', { error: err.message, stack: err.stack, filePath: file.path });
     throw new Error(`File validation failed: ${err.message}`);
   }
 }
@@ -161,7 +162,7 @@ export function validateUploadedFiles(req, res, next) {
       next();
     })
     .catch((err) => {
-      console.error('[File Validation] Middleware error:', err);
+      logger.error('[File Validation] Middleware error', { error: err.message, stack: err.stack });
       res.status(500).json({ error: 'File validation failed' });
     });
 }

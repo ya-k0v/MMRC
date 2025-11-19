@@ -11,6 +11,7 @@ import { DEVICES, MAX_FILE_SIZE, ALLOWED_EXT } from '../config/constants.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { fixEncoding } from '../utils/encoding.js';
 import { makeSafeFilename } from '../utils/transliterate.js';
+import logger from '../utils/logger.js';
 
 /**
  * Создает настроенный Multer middleware для загрузки файлов
@@ -32,7 +33,7 @@ export function createUploadMiddleware(devices) {
         fs.mkdirSync(folder, { recursive: true });
       }
       
-      console.log(`[Multer] 📂 Upload destination: ${folder} (shared storage)`);
+      logger.info(`[Multer] 📂 Upload destination: ${folder} (shared storage)`, { folder });
       cb(null, folder);
     },
     
@@ -58,7 +59,7 @@ export function createUploadMiddleware(devices) {
           if (fixed !== originalName) originalName = fixed;
         }
       } catch (e) {
-        console.warn(`[Multer] ⚠️ Ошибка исправления кодировки: ${e.message}`);
+        logger.warn(`[Multer] ⚠️ Ошибка исправления кодировки`, { error: e.message, fileName: originalName, stack: e.stack });
       }
       
       const base = path.basename(originalName);
@@ -80,11 +81,11 @@ export function createUploadMiddleware(devices) {
         const name = path.basename(safe, ext);
         const suffix = '_' + crypto.randomBytes(3).toString('hex');
         finalSafeName = `${name}${suffix}${ext}`;
-        console.log(`[Multer] ⚠️ Файл существует, добавлен суффикс: ${safe} → ${finalSafeName}`);
+        logger.info(`[Multer] ⚠️ Файл существует, добавлен суффикс: ${safe} → ${finalSafeName}`, { safe, finalSafeName, deviceId: id });
       }
       
       req.originalFileNames.set(finalSafeName, base);
-      console.log(`[Multer] 📝 "${base}" → "${finalSafeName}"`);
+      logger.debug(`[Multer] 📝 "${base}" → "${finalSafeName}"`, { originalName: base, safeName: finalSafeName, deviceId: id });
       cb(null, finalSafeName);
     }
   });

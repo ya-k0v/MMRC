@@ -143,7 +143,7 @@ export function closeDatabase() {
   if (db) {
     db.close();
     db = null;
-    console.log('[DB] ✅ Database closed');
+    logger.info('[DB] ✅ Database closed');
   }
 }
 
@@ -522,7 +522,7 @@ export function transaction(fn) {
     const txn = db.transaction(fn);
     return txn();
   } catch (e) {
-    console.error('[DB] ❌ Transaction failed:', e);
+    logger.error('[DB] ❌ Transaction failed', { error: e.message, stack: e.stack });
     throw e; // Re-throw для обработки на уровне выше
   }
 }
