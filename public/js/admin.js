@@ -27,6 +27,11 @@ let nodeNames = {};
 // Настройка Socket.IO обработчиков
 setupSocketListeners(socket, {
   onDevicesUpdated: async () => {
+    // КРИТИЧНО: Не обновляем UI во время активной загрузки файлов (избегаем сброса очереди)
+    if (window.isUploadingFiles && window.isUploadingFiles()) {
+      return; // Пропускаем обновление во время загрузки
+    }
+    
     const prev = currentDeviceId;
     await loadDevices();
     const pageSize = getPageSize();

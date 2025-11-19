@@ -15,9 +15,13 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
 
   let pending = [];
   let folderName = null; // Имя выбранной папки
+  let isUploading = false; // Флаг активной загрузки (предотвращает обновление UI)
   const allowed = /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp|pdf|pptx|zip)$/i;
   const imageExtensions = /\.(png|jpg|jpeg|gif|webp)$/i;
   const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024; // 5GB
+  
+  // Экспортируем функцию для проверки состояния загрузки
+  window.isUploadingFiles = () => isUploading;
 
   function renderQueue() {
     if (!pending.length) { 
@@ -321,14 +325,17 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
         }
       }
       
-      // STEP 2: Загружаем только уникальные файлы
+      // STEP 2: Загружаем только уникальные файлы ПО ОЧЕРЕДИ (последовательно)
       if (filesToUpload.length > 0) {
-        uploadBtn.textContent = `Загрузка (${filesToUpload.length})...`;
+        isUploading = true; // Устанавливаем флаг активной загрузки
+        uploadBtn.textContent = `Загрузка (0/${filesToUpload.length})...`;
         
-        const form = new FormData();
+        let uploadedCount = 0;
         
-        // Если это папка, добавляем метаданные
+        // КРИТИЧНО: Если это папка, загружаем все файлы одним запросом
+        // (папка должна создаваться со всеми файлами сразу)
         if (folderName) {
+          const form = new FormData();
           form.append('folderName', folderName);
           
           // КРИТИЧНО: Передаем ПОЛНЫЙ список файлов которые должны быть в папке
@@ -344,33 +351,76 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
             const relativePath = f.webkitRelativePath || f.name;
             form.append('files', f, relativePath);
           });
-        } else {
-          filesToUpload.forEach(f => form.append('files', f));
-        }
 
-        await new Promise((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open('POST', `/api/devices/${encodeURIComponent(deviceId)}/upload`);
-          setXhrAuth(xhr);
-          xhr.upload.onprogress = e => {
-            if (!e.lengthComputable) return;
-            const percent = Math.round((e.loaded / e.total) * 100);
-            if (folderName) {
-              const el = queue.querySelector(`#p_${deviceId}_folder`);
-              if (el) el.textContent = `${percent}%`;
-            } else {
-              // Обновляем только для файлов которые грузятся
-              filesToUpload.forEach((f) => {
-                const origIdx = fileIndexMap.get(f);
-                const el = queue.querySelector(`#p_${deviceId}_${origIdx}`);
-                if (el) el.textContent = `${percent}%`;
-              });
-            }
-          };
-          xhr.onload = () => xhr.status<300 ? resolve() : reject(new Error(xhr.statusText));
-          xhr.onerror = () => reject(new Error('Network error'));
-          xhr.send(form);
-        });
+          const folderProgressEl = queue.querySelector(`#p_${deviceId}_folder`);
+          await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', `/api/devices/${encodeURIComponent(deviceId)}/upload`);
+            setXhrAuth(xhr);
+            xhr.upload.onprogress = e => {
+              if (!e.lengthComputable) return;
+              const percent = Math.round((e.loaded / e.total) * 100);
+              if (folderProgressEl) folderProgressEl.textContent = `${percent}%`;
+            };
+            xhr.onload = () => xhr.status<300 ? resolve() : reject(new Error(xhr.statusText || 'Upload failed'));
+            xhr.onerror = () => reject(new Error('Network error'));
+            xhr.send(form);
+          });
+          
+          uploadedCount = filesToUpload.length;
+        } else {
+          // КРИТИЧНО: Загружаем файлы ПО ОЧЕРЕДИ (один за другим)
+          for (let i = 0; i < filesToUpload.length; i++) {
+            const file = filesToUpload[i];
+            const origIdx = fileIndexMap.get(file);
+            const progressEl = queue.querySelector(`#p_${deviceId}_${origIdx}`);
+            
+            if (progressEl) progressEl.textContent = 'Подготовка...';
+            uploadBtn.textContent = `Загрузка (${i + 1}/${filesToUpload.length})...`;
+            
+            const form = new FormData();
+            form.append('files', file);
+            
+            await new Promise((resolve, reject) => {
+              const xhr = new XMLHttpRequest();
+              xhr.open('POST', `/api/devices/${encodeURIComponent(deviceId)}/upload`);
+              setXhrAuth(xhr);
+              
+              xhr.upload.onprogress = e => {
+                if (!e.lengthComputable) return;
+                const percent = Math.round((e.loaded / e.total) * 100);
+                if (progressEl) progressEl.textContent = `${percent}%`;
+              };
+              
+              xhr.onload = () => {
+                if (xhr.status < 300) {
+                  if (progressEl) progressEl.textContent = '✅';
+                  resolve();
+                } else {
+                  let errorMsg = xhr.statusText || `HTTP ${xhr.status}`;
+                  try {
+                    const response = JSON.parse(xhr.responseText);
+                    if (response.error) errorMsg = response.error;
+                  } catch (e) {
+                    // Игнорируем ошибку парсинга, используем statusText
+                  }
+                  reject(new Error(errorMsg));
+                }
+              };
+              
+              xhr.onerror = () => reject(new Error('Network error'));
+              xhr.send(form);
+            }).catch(err => {
+              // Обрабатываем ошибку для текущего файла
+              if (progressEl) progressEl.textContent = `❌ ${err.message}`;
+              throw err; // Пробрасываем дальше, чтобы остановить загрузку
+            });
+            
+            uploadedCount++;
+          }
+        }
+        
+        uploadBtn.textContent = `✅ Загружено (${uploadedCount})`;
       }
       
       // STEP 3: Показываем сводку дедупликации
@@ -385,6 +435,9 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       folderName = null;
       renderQueue();
       
+      // Сбрасываем флаг загрузки ПЕРЕД обновлением UI
+      isUploading = false;
+      
       // После загрузки — обновить правую колонку файлов
       await renderFilesPane(deviceId);
       socket.emit('devices/updated');
@@ -393,6 +446,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       console.error('[Upload] Error:', error);
       alert(`❌ Ошибка загрузки: ${error.message}`);
     } finally {
+      isUploading = false; // Сбрасываем флаг в любом случае
       uploadBtn.disabled = false;
       uploadBtn.textContent = 'Загрузить';
     }

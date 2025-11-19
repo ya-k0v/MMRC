@@ -666,14 +666,15 @@ export function createFilesRouter(deps) {
         }
         
       // 3. ⚡ МГНОВЕННОЕ КОПИРОВАНИЕ: просто INSERT метаданных с тем же file_path!
-      // КРИТИЧНО: Определяем правильное original_name - приоритет у fileNamesMap (может быть актуальнее)
+      // КРИТИЧНО: Определяем правильное original_name - приоритет у original_name из БД (обновляется при переименовании)
+      // Если в БД нет или оно не актуально - проверяем fileNamesMap
       let targetOriginalName = fileName;
-      if (fileNamesMap[sourceId] && fileNamesMap[sourceId][fileName]) {
-        // Используем из fileNamesMap если есть (более актуальное)
-        targetOriginalName = fileNamesMap[sourceId][fileName];
-      } else if (sourceMetadata.original_name) {
-        // Иначе используем из метаданных
+      if (sourceMetadata.original_name) {
+        // Используем из метаданных БД (самый надежный источник, обновляется при переименовании)
         targetOriginalName = sourceMetadata.original_name;
+      } else if (fileNamesMap[sourceId] && fileNamesMap[sourceId][fileName]) {
+        // Fallback: используем из fileNamesMap если в БД нет
+        targetOriginalName = fileNamesMap[sourceId][fileName];
       }
       
       saveFileMetadata({
@@ -788,6 +789,13 @@ export function createFilesRouter(deps) {
       // Медиафайл - обновляем только original_name в БД, физический файл НЕ трогаем
       logFile('info', `📝 Обновление originalName в БД: ${oldName} -> ${newName}`, { deviceId: id, oldName, newName });
       updateFileOriginalName(id, oldName, newName);
+      
+      // КРИТИЧНО: Также обновляем fileNamesMap чтобы при копировании использовалось правильное имя
+      if (!fileNamesMap[id]) fileNamesMap[id] = {};
+      fileNamesMap[id][oldName] = newName; // safe_name -> original_name (переименованное)
+      saveFileNamesMap(fileNamesMap);
+      
+      logFile('info', `📝 Обновлен fileNamesMap: ${oldName} -> ${newName}`, { deviceId: id, oldName, newName });
       
       // Обновляем список файлов из БД
       updateDeviceFilesFromDB(id, devices, fileNamesMap);
