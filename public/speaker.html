@@ -121,7 +121,10 @@
 
   <main class="speaker-layout">
     <aside class="sidebar panel devices-panel">
-      <h3 class="title">Устройства</h3>
+      <div class="header" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-sm)">
+        <h3 class="title" style="margin:0; font-size:var(--font-size-base)">Устройства</h3>
+        <div class="meta" id="devicesMeta" style="margin:0; white-space:nowrap">0</div>
+      </div>
       <ul id="tvList" class="list"></ul>
     </aside>
     <section class="speaker-main">

@@ -600,6 +600,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 /* Загрузка списка устройств */
+// Обновление количества устройств в заголовке
+function updateDevicesCount() {
+  const devicesMeta = document.getElementById('devicesMeta');
+  if (devicesMeta) {
+    const count = devices.length;
+    devicesMeta.textContent = count > 0 ? `${count}` : '0';
+  }
+}
+
 async function loadDevices() {
   try {
     const res = await speakerFetch('/api/devices');
@@ -624,6 +633,7 @@ async function loadDevices() {
     const pageSize = SPEAKER_PAGE_SIZE; // Фиксированное значение 10
     const totalPages = Math.max(1, Math.ceil(devices.length / pageSize));
     if (tvPage >= totalPages) tvPage = totalPages - 1;
+    updateDevicesCount();
     renderTVList();
   } catch (error) {
     console.error('Failed to load devices:', error);
@@ -1474,6 +1484,7 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
     });
     
     devices = newDevices;
+    updateDevicesCount();
   } catch (err) {
     console.error('Failed to refresh devices:', err);
     return;

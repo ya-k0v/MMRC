@@ -34,6 +34,7 @@ setupSocketListeners(socket, {
     
     const prev = currentDeviceId;
     await loadDevices();
+    updateDevicesCount(); // Обновляем счетчик после загрузки устройств
     const pageSize = getPageSize();
     const totalPages = Math.max(1, Math.ceil(devicesCache.length / pageSize));
     if (tvPage >= totalPages) tvPage = totalPages - 1;
@@ -159,6 +160,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadAndSetNodeNames();
   await loadDevices();
   renderLayout();
+  updateDevicesCount(); // Обновляем счетчик после создания layout
   initSelectionFromUrl();
   
   // Инициализируем системный монитор (теперь в специальном контейнере)
@@ -167,6 +169,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 async function loadDevices() {
   devicesCache = await loadDevicesModule(adminFetch, sortDevices, nodeNames);
+  updateDevicesCount();
+}
+
+// Обновление количества устройств в заголовке панели
+function updateDevicesCount() {
+  const devicesMeta = document.getElementById('devicesMeta');
+  if (devicesMeta) {
+    const count = devicesCache.length;
+    devicesMeta.textContent = count > 0 ? `${count}` : '0';
+  }
 }
 
 // renderTVList перенесена в devices-manager.js  
@@ -191,8 +203,9 @@ async function loadAndSetNodeNames() {
 function renderLayout() {
   grid.innerHTML = `
     <div class="card" style="display:flex; flex-direction:column; min-height:0">
-      <div class="header">
-        <div class="title">Устройства</div>
+      <div class="header" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-sm)">
+        <div class="title" style="margin:0; font-size:var(--font-size-base)">Устройства</div>
+        <div class="meta" id="devicesMeta" style="margin:0; white-space:nowrap">0</div>
       </div>
       <div style="display:flex; flex-direction:column; gap:var(--space-md); flex:1 1 auto; min-height:0">
         <ul id="tvList" class="list" style="flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; display:flex; flex-direction:column; gap:var(--space-sm)"></ul>
