@@ -346,26 +346,52 @@ function addSystemMonitorStyles() {
 
     @media (max-width: 900px) {
       .system-monitor {
-        gap: var(--space-md);
-        padding: var(--space-xs) var(--space-md);
+        gap: var(--space-sm);
+        padding: var(--space-xs) var(--space-sm);
+        flex-wrap: wrap;
+        justify-content: center;
       }
       
       .stat-bar {
-        width: 40px;
+        width: 35px;
       }
       
       .stat-value {
         font-size: var(--font-size-xs);
-        min-width: 35px;
+        min-width: 32px;
       }
       
       .stat-icon {
-        width: 18px;
-        height: 18px;
+        width: 16px;
+        height: 16px;
       }
     }
 
     @media (max-width: 768px) {
+      .system-monitor {
+        gap: var(--space-xs);
+        padding: var(--space-xs);
+        flex-wrap: wrap;
+        font-size: 0.75rem;
+      }
+      
+      .stat-bar {
+        width: 30px;
+        height: 4px;
+      }
+      
+      .stat-value {
+        font-size: 0.7rem;
+        min-width: 28px;
+      }
+      
+      .stat-icon {
+        width: 14px;
+        height: 14px;
+      }
+    }
+
+    @media (max-width: 480px) {
       .system-monitor {
         display: none;
       }

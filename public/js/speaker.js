@@ -1154,11 +1154,62 @@ function formatTime(sec) {
 
 function updatePlaybackInfoUI() {
   const infoEl = document.getElementById('previewPlaybackInfo');
-  if (!infoEl || !currentDevice) return;
+  if (!infoEl || !currentDevice) {
+    if (infoEl) infoEl.innerHTML = '';
+    return;
+  }
+
+  const device = devices.find(d => d.device_id === currentDevice);
+  if (!device || !device.current) {
+    infoEl.innerHTML = '';
+    return;
+  }
+
+  // Показываем информацию о плейлисте папки
+  if (device.current.type === 'folder' && device.current.playlistActive === true) {
+    const playlistFile = device.current.playlistFile || device.current.file;
+    const currentPage = Number(device.current.page) || 1;
+    
+    // Находим папку в списке файлов для получения количества изображений
+    let folderImageCount = 0;
+    let displayName = (playlistFile || '').replace(/\.[^.]+$/, '');
+    
+    if (playlistFile && allFiles && allFiles.length > 0) {
+      const fileInfo = allFiles.find(f => 
+        f.safeName === playlistFile || 
+        f.originalName === playlistFile ||
+        f.safeName === playlistFile.replace(/\.[^.]+$/, '') ||
+        f.originalName === playlistFile.replace(/\.[^.]+$/, '')
+      );
+      if (fileInfo) {
+        if (fileInfo.originalName) {
+          displayName = fileInfo.originalName.replace(/\.[^.]+$/, '');
+        }
+        if (typeof fileInfo.folderImageCount === 'number' && fileInfo.folderImageCount > 0) {
+          folderImageCount = fileInfo.folderImageCount;
+        }
+      }
+    }
+    
+    // Если не нашли количество изображений в allFiles, пробуем получить из device
+    if (folderImageCount === 0 && device.current.folderImageCount) {
+      folderImageCount = Number(device.current.folderImageCount) || 0;
+    }
+    
+    const safeName = escapeHtml(truncateText(displayName, 50)) || '—';
+    const pageInfo = folderImageCount > 0 ? `Кадр ${currentPage} из ${folderImageCount}` : `Кадр ${currentPage}`;
+    
+    infoEl.innerHTML = `
+      <div class="meta-line">
+        <span class="meta-title">${safeName}</span>
+        <span class="meta-value">${pageInfo} | Плейлист</span>
+      </div>
+    `;
+    return;
+  }
 
   // Показываем таймер ТОЛЬКО когда реально играет видео
-  const device = devices.find(d => d.device_id === currentDevice);
-  if (!device || !device.current || device.current.type !== 'video') {
+  if (device.current.type !== 'video') {
     infoEl.innerHTML = '';
     return;
   }
@@ -1292,23 +1343,28 @@ document.getElementById('pdfCloseBtn').onclick = () => {
   // Устанавливаем флаг что пользователь ЯВНО закрыл превью
   previewManuallyClosed = true;
   
-  // Останавливаем плейлист (локально и на сервере)
+  // Останавливаем плейлист ТОЛЬКО для текущего устройства (локально и на сервере)
   const device = devices.find(d => d.device_id === currentDevice);
   const hasActivePlaylist = device && device.current && 
     device.current.type === 'folder' && 
     device.current.playlistActive === true;
   
   if (hasActivePlaylist) {
-    // Если плейлист активен локально - останавливаем локально
-    if (isFolderPlaylistActiveFor(currentDevice, device.current.playlistFile || device.current.file)) {
+    // Проверяем, что плейлист активен именно для текущего устройства
+    const playlistFile = device.current.playlistFile || device.current.file;
+    if (isFolderPlaylistActiveFor(currentDevice, playlistFile)) {
+      // Если плейлист активен локально для текущего устройства - останавливаем локально
       stopFolderPlaylist('preview closed');
     } else {
-      // Если плейлист активен только на сервере - отправляем команду на сервер
+      // Если плейлист активен только на сервере для текущего устройства - отправляем команду на сервер
       socket.emit('control/playlistStop', { device_id: currentDevice });
     }
   } else {
-    // Останавливаем локальный плейлист, если он был активен
-    stopFolderPlaylist('preview closed');
+    // Проверяем, есть ли локальный плейлист для ТЕКУЩЕГО устройства
+    // Если плейлист активен для другого устройства - НЕ останавливаем его!
+    if (folderPlaylistState && folderPlaylistState.deviceId === currentDevice) {
+      stopFolderPlaylist('preview closed');
+    }
   }
   
   // Останавливаем воспроизведение
@@ -1347,6 +1403,8 @@ const onDevicesUpdated = debounce(async () => {
     } else {
       showLivePreviewForTV(prevDevice);
     }
+    // Обновляем информацию о плейлисте после обновления устройств
+    updatePlaybackInfoUI();
   }
 }, 150);
 
@@ -1399,6 +1457,10 @@ socket.on('playlist/state', ({ device_id, active, file, intervalSeconds }) => {
   // чтобы убедиться, что состояние обновлено
   setTimeout(() => {
     updateFolderPlaylistButtonState();
+    // Если это текущее устройство - обновляем информацию о плейлисте
+    if (device_id === currentDevice) {
+      updatePlaybackInfoUI();
+    }
   }, 50);
   
   // Если это текущее устройство - обновляем локальное состояние
@@ -1557,6 +1619,8 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
 
   if (device_id === currentDevice) {
     requestPreviewSync();
+    // Обновляем информацию о плейлисте после обновления состояния устройства
+    updatePlaybackInfoUI();
   }
 }, 200);
 
@@ -1598,10 +1662,19 @@ function highlightCurrentThumbnail(pageNumber, context) {
 // Слушаем события смены страниц для выделения активной миниатюры
 ['pdfPage', 'pptxPage', 'folderPage'].forEach(eventName => {
   socket.on(`player/${eventName}`, (pageNumber) => {
+    // Событие приходит как число (номер страницы), а не объект
     const page = Math.max(1, Number(pageNumber) || 1);
     const state = playerStateByDevice.get(currentDevice) || {};
     if (!state.file) return;
     playerStateByDevice.set(currentDevice, { ...state, page });
+    
+    // Обновляем device.current.page для плейлиста папки
+    const device = devices.find(d => d.device_id === currentDevice);
+    if (device && device.current && device.current.type === 'folder' && device.current.playlistActive) {
+      device.current.page = page;
+      updatePlaybackInfoUI();
+    }
+    
     requestPreviewSync();
   });
 });

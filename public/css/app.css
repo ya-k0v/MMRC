@@ -877,6 +877,19 @@ body.light .queue li {
   
   .toolbar {
     padding: var(--space-sm);
+    gap: var(--space-sm);
+  }
+  
+  /* На планшетах toolbar может быть в несколько строк */
+  .toolbar > div:first-child,
+  .toolbar > div:last-child {
+    flex: 0 0 auto;
+  }
+  
+  #systemMonitorContainer {
+    flex: 1 1 auto;
+    min-width: 0;
+    justify-content: center;
   }
   
   .layout {
@@ -908,12 +921,42 @@ body.light .queue li {
   }
 }
 
-/* Very small screens - Стандартизировано */
-@media (max-width: 400px) {
-  .toolbar .button-group {
-    gap: var(--space-xs);
+/* Очень маленькие экраны - Стандартизировано */
+@media (max-width: 640px) {
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
   }
   
+  .toolbar > div:first-child {
+    order: 1;
+  }
+  
+  #systemMonitorContainer {
+    order: 3;
+    width: 100%;
+    margin-top: var(--space-xs);
+  }
+  
+  .toolbar > div:last-child {
+    order: 2;
+    justify-content: center;
+    margin-top: var(--space-xs);
+  }
+  
+  .toolbar .button-group {
+    gap: var(--space-xs);
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  
+  .toolbar .button-group button {
+    flex: 1;
+    min-width: 100px;
+  }
+}
+
+@media (max-width: 400px) {
   .toolbar .button-group button {
     padding: var(--space-sm) var(--space-sm);
     font-size: 0.7rem;
@@ -965,12 +1008,50 @@ body.light .queue li {
   overflow-y: auto;
 }
 
+/* Планшет (≥768px): 2 колонки - устройства и файлы/превью */
+@media (min-width: 768px) {
+  #grid {
+    grid-template-columns: 260px 1fr;
+    gap: var(--space-sm);
+    padding: var(--space-sm);
+  }
+  
+  #grid > .card {
+    padding: var(--item-padding);
+  }
+  
+  #detailPane {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  
+  #filesPane {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  
+  #grid .preview {
+    min-height: 200px;
+    max-height: 320px;
+  }
+}
+
 /* Широкий экран (≥1024px): горизонтальный layout - Стандартизировано */
 @media (min-width: 1024px) {
   #grid {
     grid-template-columns: 280px minmax(380px, 0.85fr) minmax(520px, 1.15fr);
     gap: var(--space-sm);
     padding: var(--space-sm);
+  }
+  
+  #detailPane {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  
+  #filesPane {
+    grid-column: 2;
+    grid-row: 1;
   }
   
   #grid > .card .files {
@@ -990,10 +1071,6 @@ body.light .queue li {
     height: var(--button-height);
     padding: var(--button-padding);
     font-size: var(--font-size-sm);
-  }
-  
-  #grid > .card {
-    padding: var(--item-padding);
   }
   
   #grid .card .panel {
