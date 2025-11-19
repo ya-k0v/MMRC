@@ -42,6 +42,19 @@ body:has(#filePreview) #fileList,
   gap: 6px !important; /* Было 8px, уменьшили на 2px */
 }
 
+/* ===== tvTile на панели спикера: такие же отступы как на админ панели ===== */
+.speaker-layout .tvTile {
+  padding: var(--item-padding) !important; /* 8px - как на админ панели */
+}
+
+.speaker-layout .tvTile-content {
+  gap: var(--space-xs) !important; /* 4px - как на админ панели */
+}
+
+.speaker-layout .tvTile-header {
+  gap: var(--space-sm) !important; /* 8px - как на админ панели */
+}
+
 /* ===== 1. Touch targets: 40px → 48px (только для планшетов с touch) ===== */
 @media (pointer: coarse) and (min-width: 768px) and (max-width: 1366px) {
   button {

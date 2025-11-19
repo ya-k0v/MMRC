@@ -30,22 +30,32 @@ export function getStringPriority(str) {
   return getCharPriority(firstChar);
 }
 
-// Функция сортировки устройств: сначала по приоритету первого символа, затем по алфавиту
+// Функция проверки, начинается ли строка с цифры
+function startsWithDigit(str) {
+  if (!str || str.length === 0) return false;
+  const firstChar = str[0];
+  const code = firstChar.charCodeAt(0);
+  return code >= 48 && code <= 57; // Цифры 0-9
+}
+
+// Функция сортировки устройств: сначала элементы с цифрами, потом без цифр, внутри каждой группы - по алфавиту
 export function sortDevices(devices, nodeNames = {}) {
   return [...devices].sort((a, b) => {
     const nameA = (a.name || nodeNames[a.device_id] || a.device_id).trim();
     const nameB = (b.name || nodeNames[b.device_id] || b.device_id).trim();
     
-    // Сначала сравниваем по приоритету первого символа
-    const priorityA = getStringPriority(nameA);
-    const priorityB = getStringPriority(nameB);
+    // Проверяем, начинается ли имя с цифры
+    const aStartsWithDigit = startsWithDigit(nameA);
+    const bStartsWithDigit = startsWithDigit(nameB);
     
-    if (priorityA !== priorityB) {
-      return priorityA - priorityB;
+    // Сначала идут элементы с цифрами (aStartsWithDigit = true имеет приоритет 0)
+    // Потом элементы без цифр (aStartsWithDigit = false имеет приоритет 1)
+    if (aStartsWithDigit !== bStartsWithDigit) {
+      return aStartsWithDigit ? -1 : 1; // Элементы с цифрами идут первыми
     }
     
-    // Если приоритет одинаковый, сортируем по алфавиту
-    // Для правильной сортировки используем localeCompare с русской локалью
+    // Если обе строки начинаются с цифр или обе не начинаются с цифр - сортируем по алфавиту
+    // Для правильной сортировки используем localeCompare с русской локалью и numeric: true
     return nameA.localeCompare(nameB, 'ru', { numeric: true, sensitivity: 'base' });
   });
 }

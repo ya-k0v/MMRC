@@ -610,7 +610,7 @@ async function loadDevices() {
   try {
     const res = await speakerFetch('/api/devices');
     if (!res.ok) {
-      console.error('Failed to load devices:', res.status);
+      console.error('Не удалось загрузить устройства:', res.status);
       return;
     }
     const newDevices = await res.json();
@@ -633,7 +633,7 @@ async function loadDevices() {
     updateDevicesCount();
     renderTVList();
   } catch (error) {
-    console.error('Failed to load devices:', error);
+    console.error('Не удалось загрузить устройства:', error);
   }
 }
 
@@ -805,7 +805,7 @@ async function loadFiles() {
     // КРИТИЧНО: Используем files-with-status для получения разрешения видео
     const res = await speakerFetch(`/api/devices/${encodeURIComponent(currentDevice)}/files-with-status`);
     if (!res.ok) {
-      console.error('Failed to load files:', res.status);
+      console.error('Не удалось загрузить файлы:', res.status);
       fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-xl)"><div class="meta">Ошибка загрузки файлов</div></li>';
       if (meta) meta.textContent = '0 файлов';
       return;
@@ -1123,7 +1123,7 @@ async function loadFiles() {
   });
   
   } catch (error) {
-    console.error('Failed to render files:', error);
+    console.error('Не удалось отобразить файлы:', error);
     fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-xl)"><div class="meta">Ошибка загрузки файлов</div></li>';
   }
 
@@ -1466,7 +1466,7 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
     devices = newDevices;
     updateDevicesCount();
   } catch (err) {
-    console.error('Failed to refresh devices:', err);
+    console.error('Не удалось обновить устройства:', err);
     return;
   }
 

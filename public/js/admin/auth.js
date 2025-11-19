@@ -35,7 +35,7 @@ export async function ensureAuth() {
 
     return true;
   } catch (e) {
-    console.error('[Admin Auth] Error parsing user data:', e);
+    console.error('[Admin Auth] Ошибка парсинга данных пользователя:', e);
     localStorage.clear();
     window.location.href = '/index.html';
     return false;
@@ -65,7 +65,7 @@ async function refreshAccessToken() {
       return true;
     }
   } catch (err) {
-    console.error('Refresh token failed:', err);
+    console.error('Не удалось обновить токен:', err);
   }
   
   return false;
@@ -79,7 +79,7 @@ export async function adminFetch(url, opts = {}) {
   
   if (!token) {
     window.location.href = '/index.html';
-    throw new Error('No token');
+    throw new Error('Отсутствует токен авторизации');
   }
   
   const init = {
@@ -103,7 +103,7 @@ export async function adminFetch(url, opts = {}) {
       // ИСПРАВЛЕНО: Не удалось обновить - редирект на login
       localStorage.clear();
       window.location.href = '/index.html';
-      throw new Error('Session expired');
+      throw new Error('Сессия истекла');
     }
   }
   

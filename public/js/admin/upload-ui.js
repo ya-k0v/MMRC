@@ -362,8 +362,8 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
               const percent = Math.round((e.loaded / e.total) * 100);
               if (folderProgressEl) folderProgressEl.textContent = `${percent}%`;
             };
-            xhr.onload = () => xhr.status<300 ? resolve() : reject(new Error(xhr.statusText || 'Upload failed'));
-            xhr.onerror = () => reject(new Error('Network error'));
+            xhr.onload = () => xhr.status<300 ? resolve() : reject(new Error(xhr.statusText || 'Ошибка загрузки'));
+            xhr.onerror = () => reject(new Error('Ошибка сети'));
             xhr.send(form);
           });
           
@@ -408,7 +408,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
                 }
               };
               
-              xhr.onerror = () => reject(new Error('Network error'));
+              xhr.onerror = () => reject(new Error('Ошибка сети'));
               xhr.send(form);
             }).catch(err => {
               // Обрабатываем ошибку для текущего файла
@@ -443,8 +443,15 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       socket.emit('devices/updated');
       
     } catch (error) {
-      console.error('[Upload] Error:', error);
-      alert(`❌ Ошибка загрузки: ${error.message}`);
+      console.error('[Upload] Ошибка:', error);
+      // Переводим стандартные сообщения об ошибках на русский
+      let errorMessage = error.message;
+      if (errorMessage === 'Network error' || errorMessage === 'Ошибка сети') {
+        errorMessage = 'Ошибка сети';
+      } else if (errorMessage === 'Upload failed' || errorMessage === 'Ошибка загрузки') {
+        errorMessage = 'Ошибка загрузки';
+      }
+      alert(`❌ Ошибка загрузки: ${errorMessage}`);
     } finally {
       isUploading = false; // Сбрасываем флаг в любом случае
       uploadBtn.disabled = false;

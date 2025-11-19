@@ -50,7 +50,7 @@ async function refreshAccessToken() {
       return true;
     }
   } catch (err) {
-    console.error('Refresh token failed:', err);
+    console.error('Не удалось обновить токен:', err);
   }
   
   return false;
@@ -61,7 +61,7 @@ export async function speakerFetch(url, opts = {}) {
   
   if (!token) {
     window.location.href = '/login.html';
-    throw new Error('No token');
+    throw new Error('Отсутствует токен авторизации');
   }
   
   const init = {
@@ -83,7 +83,7 @@ export async function speakerFetch(url, opts = {}) {
       // ИСПРАВЛЕНО: Редирект на login page
       localStorage.clear();
       window.location.href = '/index.html';
-      throw new Error('Session expired');
+      throw new Error('Сессия истекла');
     }
   }
   
