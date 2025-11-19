@@ -56,7 +56,7 @@ router.post('/login',
           status: 'failure'
         });
         logSecurity('warn', 'Failed login attempt: user not found', { username, ip: req.ip });
-        return res.status(401).json({ error: 'Invalid credentials' });
+        return res.status(401).json({ error: 'Неверный логин или пароль' });
       }
 
       if (!user.is_active) {
@@ -71,7 +71,7 @@ router.post('/login',
           status: 'failure'
         });
         logSecurity('warn', 'Failed login attempt: account disabled', { username, userId: user.id, ip: req.ip });
-        return res.status(403).json({ error: 'Account disabled' });
+        return res.status(403).json({ error: 'Аккаунт отключен' });
       }
 
       // Проверяем пароль
@@ -89,7 +89,7 @@ router.post('/login',
           status: 'failure'
         });
         logSecurity('warn', 'Failed login attempt: invalid password', { username, userId: user.id, ip: req.ip });
-        return res.status(401).json({ error: 'Invalid credentials' });
+        return res.status(401).json({ error: 'Неверный логин или пароль' });
       }
 
       // Генерируем токены
@@ -138,7 +138,7 @@ router.post('/login',
       });
     } catch (err) {
       logger.error('Login error', { error: err.message, stack: err.stack, username });
-      res.status(500).json({ error: 'Internal server error' });
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
     }
   }
 );
@@ -168,18 +168,18 @@ router.post('/refresh',
       `).get(refreshToken);
 
       if (!tokenRecord) {
-        return res.status(401).json({ error: 'Invalid refresh token' });
+        return res.status(401).json({ error: 'Неверный токен обновления' });
       }
 
       if (!tokenRecord.is_active) {
-        return res.status(403).json({ error: 'Account disabled' });
+        return res.status(403).json({ error: 'Аккаунт отключен' });
       }
 
       // Проверяем срок действия
       if (new Date(tokenRecord.expires_at) < new Date()) {
         // Удаляем истекший токен
         db.prepare('DELETE FROM refresh_tokens WHERE token = ?').run(refreshToken);
-        return res.status(401).json({ error: 'Refresh token expired' });
+        return res.status(401).json({ error: 'Токен обновления истек' });
       }
 
       // Генерируем новый access token
@@ -202,7 +202,7 @@ router.post('/refresh',
       });
     } catch (err) {
       logger.error('Refresh error', { error: err.message, stack: err.stack });
-      res.status(500).json({ error: 'Internal server error' });
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
     }
   }
 );
@@ -236,7 +236,7 @@ router.post('/logout', requireAuth, async (req, res) => {
     res.json({ message: 'Logged out successfully' });
   } catch (err) {
     logger.error('Logout error', { error: err.message, stack: err.stack, userId: req.user.id });
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 });
 
@@ -255,13 +255,13 @@ router.get('/me', requireAuth, async (req, res) => {
     `).get(req.user.userId);
 
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: 'Пользователь не найден' });
     }
 
     res.json(user);
   } catch (err) {
     logger.error('Me error', { error: err.message, stack: err.stack });
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 });
 
@@ -293,7 +293,7 @@ router.post('/register',
       `).get(username);
 
       if (existing) {
-        return res.status(409).json({ error: 'Username already exists' });
+        return res.status(409).json({ error: 'Пользователь с таким логином уже существует' });
       }
 
       // Хешируем пароль
@@ -332,7 +332,7 @@ router.post('/register',
       });
     } catch (err) {
       logger.error('Register error', { error: err.message, stack: err.stack, username });
-      res.status(500).json({ error: 'Internal server error' });
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
     }
   }
 );
@@ -354,7 +354,7 @@ router.get('/users', requireAuth, requireAdmin, async (req, res) => {
     res.json(users);
   } catch (err) {
     logger.error('Users list error', { error: err.message, stack: err.stack });
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 });
 
@@ -373,7 +373,7 @@ router.post('/users/:id/toggle',
     try {
       // Нельзя отключить себя
       if (userId === req.user.userId) {
-        return res.status(400).json({ error: 'Cannot disable yourself' });
+        return res.status(400).json({ error: 'Нельзя отключить свой аккаунт' });
       }
 
       // Обновляем статус
@@ -395,7 +395,7 @@ router.post('/users/:id/toggle',
       res.json({ success: true });
     } catch (err) {
       logger.error('Toggle user error', { error: err.message, stack: err.stack, userId: req.params.id });
-      res.status(500).json({ error: 'Internal server error' });
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
     }
   }
 );
@@ -411,19 +411,19 @@ router.delete('/users/:id', requireAuth, requireAdmin, deleteLimiter, async (req
   try {
     // Нельзя удалить себя
     if (userId === req.user.id) {
-      return res.status(400).json({ error: 'Cannot delete yourself' });
+      return res.status(400).json({ error: 'Нельзя удалить свой аккаунт' });
     }
 
     // Нельзя удалить первого admin
     if (userId === 1) {
-      return res.status(400).json({ error: 'Cannot delete default admin' });
+      return res.status(400).json({ error: 'Нельзя удалить администратора по умолчанию' });
     }
 
     // Получаем информацию о пользователе перед удалением
     const userToDelete = db.prepare('SELECT username, role FROM users WHERE id = ?').get(userId);
     
     if (!userToDelete) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: 'Пользователь не найден' });
     }
 
     // Удаляем пользователя (каскадно удалятся refresh_tokens)
@@ -452,7 +452,7 @@ router.delete('/users/:id', requireAuth, requireAdmin, deleteLimiter, async (req
     res.json({ success: true });
   } catch (err) {
     logger.error('Delete user error', { error: err.message, stack: err.stack, userId });
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 });
 
@@ -479,7 +479,7 @@ router.post('/users/:id/reset-password',
       const userToUpdate = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(userId);
       
       if (!userToUpdate) {
-        return res.status(404).json({ error: 'User not found' });
+        return res.status(404).json({ error: 'Пользователь не найден' });
       }
 
       // Хешируем новый пароль
@@ -523,7 +523,7 @@ router.post('/users/:id/reset-password',
       });
     } catch (err) {
       logger.error('Reset password error', { error: err.message, stack: err.stack, userId });
-      res.status(500).json({ error: 'Internal server error' });
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
     }
   }
 );

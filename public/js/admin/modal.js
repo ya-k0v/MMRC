@@ -256,15 +256,15 @@ async function loadModalUsersList(adminFetch) {
         <div style="display:flex; gap:4px; flex-shrink:0;">
           <button class="secondary" style="min-width:auto; padding:6px 10px;" onclick="resetUserPasswordInModal(${u.id}, '${u.username}')" title="Сбросить пароль">🔑</button>
           ${u.is_active 
-            ? `<button class="secondary" style="min-width:auto; padding:6px 10px;" onclick="toggleUserInModal(${u.id}, false, ${adminFetch})" title="Отключить">🔒</button>`
-            : `<button class="secondary" style="min-width:auto; padding:6px 10px;" onclick="toggleUserInModal(${u.id}, true, ${adminFetch})" title="Включить">🔓</button>`
+            ? `<button class="secondary" style="min-width:auto; padding:6px 10px;" onclick="toggleUserInModal(${u.id}, false)" title="Отключить">🔒</button>`
+            : `<button class="secondary" style="min-width:auto; padding:6px 10px;" onclick="toggleUserInModal(${u.id}, true)" title="Включить">🔓</button>`
           }
-          ${u.id !== 1 ? `<button class="danger" style="min-width:auto; padding:6px 10px;" onclick="deleteUserInModal(${u.id}, '${u.username}', ${adminFetch})" title="Удалить">🗑️</button>` : ''}
+          ${u.id !== 1 ? `<button class="danger" style="min-width:auto; padding:6px 10px;" onclick="deleteUserInModal(${u.id}, '${u.username}')" title="Удалить">🗑️</button>` : ''}
         </div>
       </div>
     `).join('');
     
-    // Глобальные функции для onclick
+    // Глобальные функции для onclick (используют adminFetch из замыкания)
     window.toggleUserInModal = async (userId, activate) => {
       try {
         const res = await adminFetch(`/api/auth/users/${userId}/toggle`, {
@@ -274,10 +274,14 @@ async function loadModalUsersList(adminFetch) {
         });
         
         if (res.ok) {
+          // Сразу обновляем список пользователей
           await loadModalUsersList(adminFetch);
+        } else {
+          const error = await res.json().catch(() => ({ error: 'Ошибка' }));
+          alert(error.error || 'Ошибка при изменении статуса пользователя');
         }
       } catch (err) {
-        alert('Ошибка');
+        alert(`Ошибка: ${err.message}`);
       }
     };
     
@@ -290,10 +294,14 @@ async function loadModalUsersList(adminFetch) {
         });
         
         if (res.ok) {
+          // Сразу обновляем список пользователей
           await loadModalUsersList(adminFetch);
+        } else {
+          const error = await res.json().catch(() => ({ error: 'Ошибка' }));
+          alert(error.error || 'Ошибка при удалении пользователя');
         }
       } catch (err) {
-        alert('Ошибка');
+        alert(`Ошибка: ${err.message}`);
       }
     };
     
