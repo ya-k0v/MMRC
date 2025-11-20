@@ -20,7 +20,7 @@ function stopServerPlaylistLoop(deviceId, reason = 'stopped') {
   }
 }
 
-async function startServerPlaylistLoop(deviceId, file, intervalSeconds, devices, io) {
+async function startServerPlaylistLoop(deviceId, file, intervalSeconds, startPage, devices, io) {
   stopServerPlaylistLoop(deviceId);
 
   const deviceState = devices[deviceId];
@@ -45,18 +45,22 @@ async function startServerPlaylistLoop(deviceId, file, intervalSeconds, devices,
     return;
   }
 
+  // Определяем начальную страницу: используем startPage если указан, иначе из состояния устройства
+  const initialPage = Math.max(1, Math.min(totalImages, Number(startPage) || Number(deviceState.current?.page) || 1));
+  deviceState.current.page = initialPage;
+
   const loopState = {
     deviceId,
     file,
     totalPages: totalImages,
     intervalMs: Math.max(1, intervalSeconds || DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS) * 1000,
-    currentPage: Number(deviceState.current?.page) || 1,
+    currentPage: initialPage,
     timer: null,
     hasAdvanced: false
   };
 
   serverPlaylistLoops.set(deviceId, loopState);
-  logger.info(`[Playlist] Loop started for ${deviceId} (${file}) total=${totalImages} interval=${loopState.intervalMs}ms`, { deviceId, file, totalImages, intervalMs: loopState.intervalMs });
+  logger.info(`[Playlist] Loop started for ${deviceId} (${file}) total=${totalImages} startPage=${initialPage} interval=${loopState.intervalMs}ms`, { deviceId, file, totalImages, startPage: initialPage, intervalMs: loopState.intervalMs });
   scheduleNextFolderSlide(loopState, devices, io);
 }
 
@@ -99,12 +103,9 @@ function scheduleNextFolderSlide(loopState, devices, io) {
     deviceState.current.page = nextPage;
 
     logger.info(`[Playlist] ${loopState.deviceId} -> slide ${nextPage}/${totalPages}`, { deviceId: loopState.deviceId, page: nextPage, totalPages });
-    if (loopState.hasAdvanced || nextPage !== 1) {
-      io.to(`device:${loopState.deviceId}`).emit('player/folderPage', nextPage);
-      io.emit('preview/refresh', { device_id: loopState.deviceId });
-    } else {
-      logger.info(`[Playlist] ${loopState.deviceId} first slide already playing, skipping duplicate page 1`, { deviceId: loopState.deviceId });
-    }
+    // Показываем следующую страницу (первая страница уже была показана при запуске)
+    io.to(`device:${loopState.deviceId}`).emit('player/folderPage', nextPage);
+    io.emit('preview/refresh', { device_id: loopState.deviceId });
 
     loopState.hasAdvanced = true;
 
@@ -226,13 +227,19 @@ export function setupControlHandlers(socket, deps) {
   });
 
   // control/playlistStart - Запуск плейлиста папки
-  socket.on('control/playlistStart', async ({ device_id, file, intervalSeconds }) => {
+  socket.on('control/playlistStart', async ({ device_id, file, intervalSeconds, startPage }) => {
     const d = devices[device_id];
     if (!d) return;
     
+    // Определяем начальную страницу: если указана startPage - используем её, иначе начинаем с первой
+    const initialPage = Math.max(1, Number(startPage) || 1);
+    
+    // Проверяем, какая страница уже показывается на устройстве
+    const currentShowingPage = d.current?.page || 1;
+    
     // Обновляем состояние устройства с информацией о плейлисте
     if (!d.current) {
-      d.current = { type: 'folder', file, state: 'playing', page: 1 };
+      d.current = { type: 'folder', file, state: 'playing', page: initialPage };
     }
     d.current.playlistActive = true;
     d.current.playlistInterval = intervalSeconds || 10;
@@ -240,11 +247,14 @@ export function setupControlHandlers(socket, deps) {
     d.current.type = 'folder';
     d.current.file = file;
     d.current.state = 'playing';
-    d.current.page = 1;
+    d.current.page = initialPage;
     
-    // Немедленно запускаем воспроизведение первой картинки
-    io.to(`device:${device_id}`).emit('player/play', d.current);
-    io.emit('preview/refresh', { device_id });
+    // Показываем начальную страницу только если она отличается от текущей
+    // Если страница уже показывается - не моргаем, просто начинаем отсчет таймера
+    if (initialPage !== currentShowingPage || !d.current.page) {
+      io.to(`device:${device_id}`).emit('player/folderPage', initialPage);
+      io.emit('preview/refresh', { device_id });
+    }
     
     // Рассылаем состояние плейлиста всем панелям для синхронизации
     io.emit('playlist/state', {
@@ -256,7 +266,7 @@ export function setupControlHandlers(socket, deps) {
     io.emit('devices/updated', { device_id });
 
     try {
-      await startServerPlaylistLoop(device_id, file, d.current.playlistInterval, devices, io);
+      await startServerPlaylistLoop(device_id, file, d.current.playlistInterval, initialPage, devices, io);
     } catch (error) {
       logger.error('[Playlist] Failed to start server loop', { error: error.message, stack: error.stack, deviceId: device_id, file });
     }

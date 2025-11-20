@@ -212,6 +212,8 @@ h1, h2, h3, h4, h5, h6 {
   width: 100%;
   justify-content: center;
   text-transform: none;
+  /* Убираем hover эффект для сенсорных панелей */
+  -webkit-tap-highlight-color: transparent;
 }
 
 .folder-playlist-btn.is-active {
@@ -249,9 +251,19 @@ h1, h2, h3, h4, h5, h6 {
   font-weight: var(--font-weight-medium);
   cursor: pointer;
   transition: all var(--transition-base);
+  /* Убираем hover эффект для сенсорных панелей */
+  -webkit-tap-highlight-color: transparent;
 }
 
+/* Выбранный интервал - серое состояние */
 .folder-playlist-interval-btn.is-active {
+  background: var(--panel-2);
+  border-color: var(--border-2);
+  color: var(--text);
+}
+
+/* Выбранный интервал И плейлист запущен - синее состояние */
+.folder-playlist-interval-btn.is-active.is-running {
   background: var(--brand);
   border-color: var(--brand);
   color: #fff;

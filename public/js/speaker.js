@@ -7,6 +7,9 @@ const socket = io();
 const tvList = document.getElementById('tvList');
 const fileList = document.getElementById('fileList');
 const filePreview = document.getElementById('filePreview');
+const pdfPrevBtn = document.getElementById('pdfPrevBtn');
+const pdfNextBtn = document.getElementById('pdfNextBtn');
+const pdfCloseBtn = document.getElementById('pdfCloseBtn');
 
 const STATIC_CONTENT_TYPES = new Set(['pdf', 'pptx', 'folder']);
 const FOLDER_INTERVAL_OPTIONS = [5, 10, 15, 20];
@@ -87,6 +90,31 @@ let currentPreviewContext = { deviceId: null, file: null, page: null };
 let folderPlaylistState = null;
 let folderPlaylistIntervalSeconds = DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS;
 
+/**
+ * Управление видимостью кнопок навигации (Назад, Вперёд, Закрыть)
+ * Показываем только для папок с плейлистом
+ */
+function updatePreviewControlButtons() {
+  if (!pdfPrevBtn || !pdfNextBtn || !pdfCloseBtn) return;
+  
+  // Проверяем, есть ли в превью сетка миниатюр папки (это означает, что открыто превью папки)
+  const hasThumbnails = filePreview.querySelector('.thumbnail-preview');
+  
+  // Также проверяем, есть ли активный плейлист папки
+  const device = devices.find(d => d.device_id === currentDevice);
+  const isFolderWithPlaylist = device && 
+    device.current && 
+    device.current.type === 'folder' && 
+    device.current.playlistActive === true;
+  
+  // Показываем кнопки для папок: либо когда открыто превью (миниатюры), либо когда активен плейлист
+  const shouldShow = hasThumbnails || isFolderWithPlaylist;
+  
+  pdfPrevBtn.style.display = shouldShow ? 'inline-block' : 'none';
+  pdfNextBtn.style.display = shouldShow ? 'inline-block' : 'none';
+  pdfCloseBtn.style.display = shouldShow ? 'inline-block' : 'none';
+}
+
 function resetPreviewHighlightState() {
   currentPreviewContext = { deviceId: null, file: null, page: null };
   filePreview.querySelectorAll('.thumbnail-preview').forEach((thumb) => {
@@ -116,11 +144,17 @@ function updateFolderPlaylistIntervalButtons(value = folderPlaylistIntervalSecon
   const buttons = document.querySelectorAll('.folder-playlist-interval-btn');
   if (!buttons.length) return;
   const normalizedValue = Math.max(1, Number(value) || DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS);
+  
+  // Проверяем, запущен ли плейлист
+  const isPlaylistRunning = !!folderPlaylistState;
+  
   let matched = false;
   buttons.forEach((btn) => {
     const interval = Number(btn.getAttribute('data-interval'));
     const isActive = interval === normalizedValue;
     btn.classList.toggle('is-active', isActive);
+    // Добавляем класс is-running только если плейлист запущен И это выбранный интервал
+    btn.classList.toggle('is-running', isActive && isPlaylistRunning);
     if (isActive) {
       folderPlaylistIntervalSeconds = interval;
       matched = true;
@@ -130,6 +164,7 @@ function updateFolderPlaylistIntervalButtons(value = folderPlaylistIntervalSecon
     buttons.forEach((btn, idx) => {
       const shouldActivate = idx === 1; // по умолчанию 10 секунд
       btn.classList.toggle('is-active', shouldActivate);
+      btn.classList.toggle('is-running', shouldActivate && isPlaylistRunning);
       if (shouldActivate) {
         folderPlaylistIntervalSeconds = Number(btn.getAttribute('data-interval'));
       }
@@ -158,11 +193,14 @@ function updateFolderPlaylistButtonState() {
   // Всегда обновляем и класс, и текст синхронно
   if (isActive) {
     btn.classList.add('is-active');
-    btn.textContent = 'Остановить плейлист';
+    btn.textContent = 'Остановить слайдшоу';
   } else {
     btn.classList.remove('is-active');
-    btn.textContent = 'Плейлист';
+    btn.textContent = 'Запустить как слайдшоу';
   }
+  
+  // Обновляем состояние кнопок интервала (добавляем is-running если плейлист активен)
+  updateFolderPlaylistIntervalButtons();
   
   // Если плейлист активен на сервере, но не локально - обновляем интервал
   if (serverPlaylistActive && !isFolderPlaylistActiveFor(deviceId, file)) {
@@ -206,11 +244,42 @@ function startFolderPlaylist(deviceId, file, imageCount, intervalSeconds = folde
     stopFolderPlaylist('switching to different folder');
   }
   
+пш  // Определяем начальную страницу: используем текущую страницу устройства, выделенную миниатюру или начинаем с начала
+  let startPage = 1;
+  
+  // Сначала проверяем текущую страницу устройства из состояния
+  const device = devices.find(d => d.device_id === deviceId);
+  if (device && device.current && device.current.type === 'folder' && 
+      (device.current.file === file || device.current.playlistFile === file)) {
+    const currentPage = Number(device.current.page);
+    if (currentPage && currentPage >= 1 && currentPage <= imageCount) {
+      startPage = currentPage;
+    }
+  } else {
+    // Если текущая страница устройства не найдена - проверяем выделенную миниатюру
+    const activeThumbnail = filePreview.querySelector('.thumbnail-preview.is-active, .thumbnail-preview[data-selected="1"]');
+    if (activeThumbnail) {
+      const thumbPage = parseInt(activeThumbnail.getAttribute('data-page'), 10);
+      if (thumbPage && thumbPage >= 1 && thumbPage <= imageCount) {
+        startPage = thumbPage;
+      }
+    } else {
+      // Если миниатюра не найдена - проверяем playerStateByDevice
+      const state = playerStateByDevice.get(deviceId);
+      if (state && state.file === file && state.page) {
+        const statePage = Number(state.page);
+        if (statePage && statePage >= 1 && statePage <= imageCount) {
+          startPage = statePage;
+        }
+      }
+    }
+  }
+  
   folderPlaylistIntervalSeconds = Math.max(1, intervalSeconds || DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS);
   folderPlaylistState = {
     deviceId,
     file,
-    currentIndex: 1,
+    currentIndex: startPage,
     intervalSeconds: folderPlaylistIntervalSeconds,
   };
   // Сохраняем состояние плейлиста в localStorage
@@ -219,18 +288,24 @@ function startFolderPlaylist(deviceId, file, imageCount, intervalSeconds = folde
       deviceId,
       file,
       intervalSeconds: folderPlaylistIntervalSeconds,
+      currentIndex: startPage,
     }));
   } catch (e) {
     // Failed to save playlist state
   }
   
-  // Сообщаем серверу о новом плейлисте (он сам запустит первое изображение)
+  // Сообщаем серверу о новом плейлисте с начальной страницей
+  // Сервер сразу покажет начальную страницу на устройстве
   socket.emit('control/playlistStart', {
     device_id: deviceId,
     file,
-    intervalSeconds: folderPlaylistIntervalSeconds
+    intervalSeconds: folderPlaylistIntervalSeconds,
+    startPage: startPage
   });
+  
   updateFolderPlaylistButtonState();
+  updateFolderPlaylistIntervalButtons(); // Обновляем состояние кнопок интервала (добавляем is-running)
+  updatePreviewControlButtons();
 }
 
 function stopFolderPlaylist(reason = '', notifyServer = true) {
@@ -250,6 +325,7 @@ function stopFolderPlaylist(reason = '', notifyServer = true) {
     socket.emit('control/playlistStop', { device_id: deviceId });
   }
   updateFolderPlaylistButtonState();
+  updateFolderPlaylistIntervalButtons(); // Обновляем состояние кнопок интервала (убираем is-running)
 }
 
 function stopFolderPlaylistIfNeeded(reason = '', context = {}) {
@@ -496,6 +572,7 @@ async function showStaticPreview(deviceId, safeName, contentType, { initiatedByU
     // Обновляем состояние кнопки плейлиста
     updateFolderPlaylistButtonState();
   }
+  updatePreviewControlButtons();
 }
 
 async function syncPreviewWithPlayerState() {
@@ -580,6 +657,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   
   attachTouchGestures();
+  updatePreviewControlButtons(); // Инициализация видимости кнопок
 
   // Автовыбор из URL, если есть - откладываем на следующий тик для неблокирующей загрузки
   setTimeout(async () => {
@@ -714,6 +792,7 @@ function showLivePreviewForTV(deviceId, force = false) {
     resetPreviewHighlightState();
     currentPreviewContext = { deviceId, file: null, page: null };
     filePreview.innerHTML = `<iframe src="/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&muted=1" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
+    updatePreviewControlButtons();
     return;
   }
   
@@ -728,6 +807,7 @@ function showLivePreviewForTV(deviceId, force = false) {
   if (!device) {
     resetPreviewHighlightState();
     filePreview.innerHTML = `<iframe src="/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&muted=1" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
+    updatePreviewControlButtons();
     return;
   }
   
@@ -1117,6 +1197,7 @@ async function loadFiles() {
           } else {
             filePreview.innerHTML = `<iframe src="${placeholderUrl}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
           }
+          updatePreviewControlButtons();
         }, 300);
       }
     };
@@ -1156,12 +1237,14 @@ function updatePlaybackInfoUI() {
   const infoEl = document.getElementById('previewPlaybackInfo');
   if (!infoEl || !currentDevice) {
     if (infoEl) infoEl.innerHTML = '';
+    updatePreviewControlButtons();
     return;
   }
 
   const device = devices.find(d => d.device_id === currentDevice);
   if (!device || !device.current) {
     infoEl.innerHTML = '';
+    updatePreviewControlButtons();
     return;
   }
 
@@ -1205,30 +1288,35 @@ function updatePlaybackInfoUI() {
         <span class="meta-value">${pageInfo} | Плейлист</span>
       </div>
     `;
+    updatePreviewControlButtons();
     return;
   }
 
   // Показываем таймер ТОЛЬКО когда реально играет видео
   if (device.current.type !== 'video') {
     infoEl.innerHTML = '';
+    updatePreviewControlButtons();
     return;
   }
 
   const prog = playbackProgressByDevice.get(currentDevice);
   if (!prog || !prog.file) {
     infoEl.innerHTML = '';
+    updatePreviewControlButtons();
     return;
   }
   
   // Проверяем, что файл в прогрессе совпадает с текущим файлом устройства
   if (prog.file !== device.current.file) {
     infoEl.innerHTML = '';
+    updatePreviewControlButtons();
     return;
   }
   
   // Проверяем, не закончилось ли видео (с небольшой погрешностью)
   if (prog.duration > 0 && prog.currentTime >= prog.duration - 0.5) {
     infoEl.innerHTML = '';
+    updatePreviewControlButtons();
     return;
   }
   
@@ -1242,6 +1330,7 @@ function updatePlaybackInfoUI() {
     );
     if (fileInfo && fileInfo.isPlaceholder) {
       infoEl.innerHTML = '';
+      updatePreviewControlButtons();
       return;
     }
   }
@@ -1271,6 +1360,7 @@ function updatePlaybackInfoUI() {
       <span class="meta-value">${currentTimeLabel} / ${total}</span>
     </div>
   `;
+  updatePreviewControlButtons();
 }
 
 // Прием прогресса от плееров
@@ -1372,6 +1462,7 @@ document.getElementById('pdfCloseBtn').onclick = () => {
   
   // Сбрасываем выбранный файл
   currentFile = null;
+  updatePreviewControlButtons();
   
   // Убираем active класс со всех файлов
   fileList.querySelectorAll('.file-item').forEach(item => {
@@ -1405,6 +1496,7 @@ const onDevicesUpdated = debounce(async () => {
     }
     // Обновляем информацию о плейлисте после обновления устройств
     updatePlaybackInfoUI();
+    updatePreviewControlButtons();
   }
 }, 150);
 
@@ -1457,6 +1549,7 @@ socket.on('playlist/state', ({ device_id, active, file, intervalSeconds }) => {
   // чтобы убедиться, что состояние обновлено
   setTimeout(() => {
     updateFolderPlaylistButtonState();
+    updatePreviewControlButtons();
     // Если это текущее устройство - обновляем информацию о плейлисте
     if (device_id === currentDevice) {
       updatePlaybackInfoUI();

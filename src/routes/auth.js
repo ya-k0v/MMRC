@@ -223,7 +223,7 @@ router.post('/logout', requireAuth, async (req, res) => {
 
     // Логируем выход
     await auditLog({
-      userId: req.user.id,
+      userId: req.user.userId,
       action: AuditAction.LOGOUT,
       resource: req.user.username,
       details: { role: req.user.role },
@@ -231,11 +231,11 @@ router.post('/logout', requireAuth, async (req, res) => {
       userAgent: req.get('user-agent'),
       status: 'success'
     });
-    logAuth('info', 'User logged out', { username: req.user.username, userId: req.user.id, ip: req.ip });
+    logAuth('info', 'User logged out', { username: req.user.username, userId: req.user.userId, ip: req.ip });
 
     res.json({ message: 'Logged out successfully' });
   } catch (err) {
-    logger.error('Logout error', { error: err.message, stack: err.stack, userId: req.user.id });
+    logger.error('Logout error', { error: err.message, stack: err.stack, userId: req.user.userId });
     res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 });
@@ -309,7 +309,7 @@ router.post('/register',
 
       // Логируем создание
       await auditLog({
-        userId: req.user.id,
+        userId: req.user.userId,
         action: AuditAction.USER_CREATE,
         resource: `user:${newUserId}`,
         details: { username, full_name, role, createdBy: req.user.username },
@@ -382,15 +382,18 @@ router.post('/users/:id/toggle',
       `).run(is_active ? 1 : 0, userId);
 
       // Логируем
-      db.prepare(`
-        INSERT INTO audit_log (user_id, action, resource_type, resource_id)
-        VALUES (?, ?, ?, ?)
-      `).run(
-        req.user.userId,
-        is_active ? 'ENABLE_USER' : 'DISABLE_USER',
-        'user',
-        userId
-      );
+      await auditLog({
+        userId: req.user.userId,
+        action: is_active ? AuditAction.USER_ENABLE : AuditAction.USER_DISABLE,
+        resource: `user:${userId}`,
+        details: { 
+          targetUserId: userId,
+          targetUsername: db.prepare('SELECT username FROM users WHERE id = ?').get(userId)?.username || 'unknown'
+        },
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent'),
+        status: 'success'
+      });
 
       res.json({ success: true });
     } catch (err) {
@@ -410,7 +413,7 @@ router.delete('/users/:id', requireAuth, requireAdmin, deleteLimiter, async (req
 
   try {
     // Нельзя удалить себя
-    if (userId === req.user.id) {
+    if (userId === req.user.userId) {
       return res.status(400).json({ error: 'Нельзя удалить свой аккаунт' });
     }
 
@@ -431,7 +434,7 @@ router.delete('/users/:id', requireAuth, requireAdmin, deleteLimiter, async (req
 
     // Логируем удаление
     await auditLog({
-      userId: req.user.id,
+      userId: req.user.userId,
       action: AuditAction.USER_DELETE,
       resource: `user:${userId}`,
       details: { 
@@ -497,7 +500,7 @@ router.post('/users/:id/reset-password',
 
       // Логируем сброс пароля
       await auditLog({
-        userId: req.user.id,
+        userId: req.user.userId,
         action: AuditAction.PASSWORD_RESET,
         resource: `user:${userId}`,
         details: { 
@@ -514,7 +517,7 @@ router.post('/users/:id/reset-password',
         targetUserId: userId, 
         targetUsername: userToUpdate.username,
         resetBy: req.user.username,
-        resetById: req.user.id
+        resetById: req.user.userId
       });
 
       res.json({ 
