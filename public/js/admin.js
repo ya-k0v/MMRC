@@ -219,7 +219,7 @@ function renderLayout() {
         <div class="meta" id="filesPaneMeta" style="margin:0; white-space:nowrap">Выберите устройство слева</div>
       </div>
       <div style="display:flex; flex-direction:column; gap:var(--space-md); flex:1 1 auto; min-height:0">
-        <div id="filesPanel" style="flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden"></div>
+      <div id="filesPanel" style="flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden"></div>
         <div id="filePagerAdmin" class="meta" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); flex-wrap:wrap"></div>
       </div>
     </div>

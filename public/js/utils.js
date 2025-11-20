@@ -85,9 +85,9 @@ export function getPageSize(itemHeight = null) {
       ITEM_HEIGHT = 60 + 6; // Высота файла 60px + gap 6px в панели спикера
     } else {
       // По умолчанию используем высоту устройств из CSS переменной
-      const rootStyles = getComputedStyle(document.documentElement);
-      const itemMinHeight = parseInt(rootStyles.getPropertyValue('--item-min-height')) || 100;
-      const itemGap = parseInt(rootStyles.getPropertyValue('--item-gap')) || 8;
+    const rootStyles = getComputedStyle(document.documentElement);
+    const itemMinHeight = parseInt(rootStyles.getPropertyValue('--item-min-height')) || 100;
+    const itemGap = parseInt(rootStyles.getPropertyValue('--item-gap')) || 8;
       ITEM_HEIGHT = itemMinHeight + itemGap;
     }
     
