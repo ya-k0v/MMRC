@@ -1101,6 +1101,17 @@ if (!device_id || !device_id.trim()) {
 
   // WebSocket обработчики
   socket.on('player/play', ({ type, file, page }) => {
+    // КРИТИЧНО: Останавливаем заглушку при любой команде от спикера
+    if (currentFileState.type === 'placeholder') {
+      if (vjsPlayer && !vjsPlayer.paused()) {
+        vjsPlayer.pause();
+      }
+      // Скрываем заглушку (изображение или видео)
+      [videoContainer, img1, img2].forEach(e => {
+        if (e) e.classList.remove('visible', 'preloading');
+      });
+      currentPlaceholderSrc = null;
+    }
     
     if (type === 'video') {
       img1.removeAttribute('src');
