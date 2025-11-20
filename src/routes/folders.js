@@ -21,8 +21,8 @@ const router = express.Router();
 export function createFoldersRouter(deps) {
   const { devices, requireAuth } = deps;
   
-  // GET /api/devices/:id/folder/:folderName/images - Получить список изображений (требует auth)
-  router.get('/:id/folder/:folderName/images', requireAuth, async (req, res) => {
+  // GET /api/devices/:id/folder/:folderName/images - Получить список изображений (публичный - для плеера)
+  router.get('/:id/folder/:folderName/images', async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
     const folderName = req.params.folderName;
     
