@@ -378,7 +378,18 @@ if (!device_id || !device_id.trim()) {
             }, 100);
           } else {
             // Обычный режим - показываем заглушку
-            setTimeout(() => showPlaceholder(), 100);
+            setTimeout(async () => {
+              try {
+                await showPlaceholder();
+              } catch (e) {
+                console.error('[Player] ❌ Ошибка загрузки заглушки при инициализации:', e);
+                // Убираем черный экран при ошибке, показываем бренд-фон
+                idle.classList.remove('visible');
+                [videoContainer, img1, img2, pdf].forEach(e => {
+                  if (e) e.classList.remove('visible', 'preloading');
+                });
+              }
+            }, 100);
           }
         });
       } catch (e) {
@@ -554,6 +565,8 @@ if (!device_id || !device_id.trim()) {
     const src = await resolvePlaceholder(forceRefresh);
     
     if (!src) {
+      // КРИТИЧНО: Убираем черный экран, чтобы показывался бренд-фон
+      idle.classList.remove('visible');
       
       // Показываем сообщение об отсутствии заглушки
       if (preview) {
@@ -591,8 +604,8 @@ if (!device_id || !device_id.trim()) {
         `;
         show(pdf);
       } else {
-        // В обычном плеере просто скрываем все (включая оба буфера)
-        [idle, v, img1, img2, pdf].forEach(el => el && el.classList.remove('visible'));
+        // В обычном плеере скрываем все слои (включая idle) - показывается бренд-фон
+        [videoContainer, img1, img2, pdf, idle].forEach(el => el && el.classList.remove('visible', 'preloading'));
       }
       return;
     }
@@ -628,6 +641,9 @@ if (!device_id || !device_id.trim()) {
       
       tempImg.onerror = () => {
         console.error('[Player] ❌ Ошибка загрузки заглушки-изображения');
+        // КРИТИЧНО: Убираем черный экран при ошибке загрузки
+        idle.classList.remove('visible');
+        
         // Показываем сообщение об ошибке
         if (preview) {
           pdf.srcdoc = `
@@ -656,6 +672,9 @@ if (!device_id || !device_id.trim()) {
             </html>
           `;
           show(pdf);
+        } else {
+          // В обычном плеере скрываем все - показывается бренд-фон
+          [videoContainer, img1, img2, pdf, idle].forEach(el => el && el.classList.remove('visible', 'preloading'));
         }
       };
       
@@ -677,6 +696,9 @@ if (!device_id || !device_id.trim()) {
             const finalCheck = await fetch(src, { method: 'HEAD' });
             if (!finalCheck.ok) {
               console.error(`[Player] ❌ Файл заглушки недоступен: ${finalCheck.status}`);
+              // КРИТИЧНО: Убираем черный экран при ошибке загрузки
+              idle.classList.remove('visible');
+              
               // Показываем предупреждение вместо ошибки Video.js
               if (preview) {
                 pdf.srcdoc = `
@@ -704,6 +726,9 @@ if (!device_id || !device_id.trim()) {
                   </html>
                 `;
                 show(pdf);
+              } else {
+                // В обычном плеере скрываем все - показывается бренд-фон
+                [videoContainer, img1, img2, pdf, idle].forEach(el => el && el.classList.remove('visible', 'preloading'));
               }
               return;
             }
@@ -763,6 +788,10 @@ if (!device_id || !device_id.trim()) {
             }
           } catch (e) {
             console.error('[Player] ❌ Ошибка проверки или загрузки заглушки:', e);
+            // КРИТИЧНО: Убираем черный экран при ошибке
+            idle.classList.remove('visible');
+            // Скрываем все слои - показывается бренд-фон
+            [videoContainer, img1, img2, pdf, idle].forEach(el => el && el.classList.remove('visible', 'preloading'));
           }
         })();
       } else {
@@ -1296,9 +1325,21 @@ if (!device_id || !device_id.trim()) {
       
       // Не показываем black/idle — оставляем бренд-фон видимым
       layers.forEach(e => e.classList.remove('visible', 'preloading'));
+      idle.classList.remove('visible'); // КРИТИЧНО: Убираем черный экран
       
       // Загружаем заглушку в фоне, затем мягко показываем (без черного экрана)
-      setTimeout(() => showPlaceholder(true), 100);
+      setTimeout(async () => {
+        try {
+          await showPlaceholder(true);
+        } catch (e) {
+          console.error('[Player] ❌ Ошибка загрузки заглушки при stop:', e);
+          // Убираем черный экран при ошибке, показываем бренд-фон
+          idle.classList.remove('visible');
+          [videoContainer, img1, img2, pdf].forEach(e => {
+            if (e) e.classList.remove('visible', 'preloading');
+          });
+        }
+      }, 100);
     };
     
     if (active) {
@@ -1339,9 +1380,32 @@ if (!device_id || !device_id.trim()) {
     }
     
     // Небольшая задержка, затем ВСЕГДА загружаем новую заглушку
-    setTimeout(() => {
+    const placeholderTimeout = setTimeout(() => {
+      // Таймаут: если заглушка не загрузилась за 5 секунд, убираем черный экран
+      if (idle.classList.contains('visible')) {
+        console.warn('[Player] ⚠️ Таймаут загрузки заглушки, показываем бренд-фон');
+        idle.classList.remove('visible');
+        [videoContainer, img1, img2, pdf].forEach(e => {
+          if (e) e.classList.remove('visible', 'preloading');
+        });
+      }
+    }, 5000); // 5 секунд на загрузку заглушки
+    
+    setTimeout(async () => {
       // УБРАЛИ УСЛОВИЕ - всегда загружаем новую заглушку при placeholder/refresh
-      showPlaceholder(true); // Принудительная перезагрузка с ?t=timestamp
+      try {
+        await showPlaceholder(true); // Принудительная перезагрузка с ?t=timestamp
+        // Если заглушка успешно загрузилась, очищаем таймаут
+        clearTimeout(placeholderTimeout);
+      } catch (e) {
+        console.error('[Player] ❌ Ошибка загрузки заглушки при refresh:', e);
+        // Убираем черный экран при ошибке
+        clearTimeout(placeholderTimeout);
+        idle.classList.remove('visible');
+        [videoContainer, img1, img2, pdf].forEach(e => {
+          if (e) e.classList.remove('visible', 'preloading');
+        });
+      }
     }, 300); // Даем время на переход к черному экрану
   });
 
