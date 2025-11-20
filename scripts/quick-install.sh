@@ -210,7 +210,7 @@ NODE_ENV=production
 PORT=3000
 HOST=127.0.0.1
 
-# JWT Authentication (Week 1)
+# JWT Authentication (12h access, 30d refresh)
 JWT_SECRET=$JWT_SECRET
 JWT_ACCESS_EXPIRES_IN=12h
 JWT_REFRESH_EXPIRES_IN=30d

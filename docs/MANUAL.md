@@ -127,7 +127,7 @@ WHERE username='admin';
 ```
 Генерация нового bcrypt-хэша:
 ```bash
-node -e "import('bcryptjs').then(b=>b.hash('NEW_STRONG_PASSWORD',10).then(console.log))"
+node -e "import('bcrypt').then(b=>b.hash('NEW_STRONG_PASSWORD',10).then(console.log))"
 ```
 
 ---
@@ -147,9 +147,9 @@ echo '/dev/sdb1 /mnt/vc-content ext4 defaults,noatime 0 2' | sudo tee -a /etc/fs
 sudo mkdir -p /mnt/vc-content
 sudo mount -a
 
-# Кэш трейлеров
-ls -lh CONVERTED_CACHE/trailers/
-find CONVERTED_CACHE/trailers -type f -mtime +7 -print -delete
+# Кэш трейлеров (по умолчанию: .converted/trailers/)
+ls -lh .converted/trailers/
+find .converted/trailers -type f -mtime +7 -print -delete
 ```
 
 ---

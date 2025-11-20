@@ -145,6 +145,9 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         cd nginx
         sudo bash install-nginx.sh
         cd ..
+    else
+        echo "ℹ️  Nginx configuration file not found (nginx/install-nginx.sh)"
+        echo "   Use quick-install.sh for automatic Nginx setup"
     fi
 fi
 
