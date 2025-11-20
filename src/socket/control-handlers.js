@@ -231,6 +231,19 @@ export function setupControlHandlers(socket, deps) {
     const d = devices[device_id];
     if (!d) return;
     
+    // Останавливаем текущее видео, если оно воспроизводится
+    if (d.current && d.current.type === 'video' && d.current.state === 'playing') {
+      logger.info(`[Playlist] Останавливаем текущее видео перед запуском плейлиста`, { deviceId: device_id, currentFile: d.current.file });
+      io.to(`device:${device_id}`).emit('player/stop');
+      // Даем время на остановку видео
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    // Останавливаем активный плейлист, если был запущен другой файл
+    if (d.current && d.current.playlistActive && d.current.playlistFile !== file) {
+      stopServerPlaylistLoop(device_id, 'switching playlist');
+    }
+    
     // Определяем начальную страницу: если указана startPage - используем её, иначе начинаем с первой
     const initialPage = Math.max(1, Number(startPage) || 1);
     
