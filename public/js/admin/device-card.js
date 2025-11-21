@@ -1,5 +1,6 @@
 // device-card.js - ПОЛНЫЙ код renderDeviceCard из admin.js
 import { DEVICE_ICONS, DEVICE_TYPE_NAMES } from '../shared/constants.js';
+import { getCheckIcon, getCrossIcon, getFileIcon, getFolderIcon } from '../shared/svg-icons.js';
 import { adminFetch } from './auth.js';
 import { clearDetail, clearFilesPane } from './ui-helpers.js';
 import { setupUploadUI } from './upload-ui.js';
@@ -27,12 +28,12 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
         </button>` : ''}
       </div>
     </div>
-    <div class="meta" style="margin-top:var(--space-sm); margin-bottom:var(--space-sm)">
-      ${DEVICE_ICONS[d.deviceType] || '📺'} <strong>${DEVICE_TYPE_NAMES[d.deviceType] || d.deviceType || 'Browser'}</strong>
-      ${d.platform && d.platform !== 'Unknown' ? `• ${d.platform}` : ''}
-      • ID: ${d.device_id}
-      • Файлов: ${d.files?.length || 0}
-      • ${readyDevices.has(d.device_id) ? '✓ Готов' : '✗ Не готов'}
+    <div class="meta" style="margin-top:var(--space-sm); margin-bottom:var(--space-sm); display:flex; align-items:center; flex-wrap:wrap; gap:4px">
+      ${DEVICE_ICONS[d.deviceType] || DEVICE_ICONS['browser']} <strong>${DEVICE_TYPE_NAMES[d.deviceType] || d.deviceType || 'Browser'}</strong>
+      ${d.platform && d.platform !== 'Unknown' ? `<span>• ${d.platform}</span>` : ''}
+      <span>• ID: ${d.device_id}</span>
+      <span>• Файлов: ${d.files?.length || 0}</span>
+      <span style="display:inline-flex; align-items:center;">• ${readyDevices.has(d.device_id) ? getCheckIcon(14, 'var(--success)') + ' Готов' : getCrossIcon(14, 'var(--danger)') + ' Не готов'}</span>
     </div>
 
     <div style="display:flex; flex-wrap:wrap; gap:var(--space-sm); align-items:center; margin-top:var(--space-md)">
@@ -52,14 +53,14 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
         <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; width:100%">
           <input type="file" class="fileInput" multiple accept=".mp4,.webm,.ogg,.mkv,.mov,.avi,.mp3,.wav,.m4a,.png,.jpg,.jpeg,.gif,.webp,.pdf,.pptx,.zip" style="display:none"/>
           <input type="file" class="folderInput" webkitdirectory directory multiple style="display:none"/>
-          <button class="secondary pickBtn" style="flex:1; min-width:110px">📄 Файлы</button>
-          <button class="secondary pickFolderBtn" style="flex:1; min-width:110px">📁 Папка</button>
+          <button class="secondary pickBtn" style="flex:1; min-width:110px; display:flex; align-items:center; justify-content:center; gap:4px;">${getFileIcon(16)}<span>Файлы</span></button>
+          <button class="secondary pickFolderBtn" style="flex:1; min-width:110px; display:flex; align-items:center; justify-content:center; gap:4px;">${getFolderIcon(16)}<span>Папка</span></button>
           <button class="secondary clearBtn" style="flex:1; min-width:110px">Очистить</button>
           <button class="primary uploadBtn" style="flex:1; min-width:110px">Загрузить</button>
         </div>
       </div>
       <div class="dropZone">
-        Перетащите файлы/папки сюда или нажмите "📄 Файлы" / "📁 Папка"
+        Перетащите файлы/папки сюда или нажмите "${getFileIcon(14)} Файлы" / "${getFolderIcon(14)} Папка"
       </div>
       <ul class="queue"></ul>
     </div>

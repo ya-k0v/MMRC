@@ -1,5 +1,6 @@
 // files-manager.js - ПОЛНЫЙ код управления файлами из admin.js
 import { adminFetch } from './auth.js';
+import { getCheckIcon, getCrossIcon, getClockIcon } from '../shared/svg-icons.js';
 
 const formatDuration = (value) => {
   const seconds = Number(value);
@@ -126,17 +127,17 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         
         if (isVideo) {
           if (isProcessing) {
-            statusIcon = '⏳';
-            statusText = `Обработка... ${fileProgress}%`;
             statusColor = 'var(--warning)';
+            statusIcon = getClockIcon(14, statusColor);
+            statusText = `Обработка... ${fileProgress}%`;
           } else if (hasError) {
-            statusIcon = '✗';
-            statusText = 'Ошибка обработки';
             statusColor = 'var(--danger)';
+            statusIcon = getCrossIcon(14, statusColor);
+            statusText = 'Ошибка обработки';
           } else if (fileStatus === 'ready') {
-            statusIcon = '✓';
-            statusText = 'Готов';
             statusColor = 'var(--success)';
+            statusIcon = getCheckIcon(14, statusColor);
+            statusText = 'Готов';
           }
         }
         

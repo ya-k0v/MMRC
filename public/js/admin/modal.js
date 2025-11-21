@@ -3,6 +3,19 @@
  * @module admin/modal
  */
 
+import { 
+  getAndroidIcon, 
+  getUsersIcon, 
+  getKeyIcon, 
+  getLockIcon, 
+  getUnlockIcon, 
+  getTrashIcon, 
+  getSuccessIcon, 
+  getSettingsIcon, 
+  getDownloadIcon, 
+  getCloseIcon 
+} from '../shared/svg-icons.js';
+
 export function showModal(title, content) {
   const overlay = document.getElementById('modalOverlay');
   const modalContent = document.getElementById('modalContent');
@@ -12,7 +25,7 @@ export function showModal(title, content) {
   modalContent.innerHTML = `
     <div class="header" style="display:flex; justify-content:space-between; align-items:center;">
       <div class="title">${title}</div>
-      <button class="secondary" onclick="closeModal()" style="min-width:auto; padding:8px;">✕</button>
+      <button class="secondary" onclick="closeModal()" style="min-width:auto; padding:8px; display:flex; align-items:center; justify-content:center;">${getCloseIcon(18)}</button>
     </div>
     <div style="margin-top:var(--space-md);">
       ${content}
@@ -67,7 +80,7 @@ export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevi
     </div>
   `;
   
-  showModal('📱 Новое устройство', content);
+  showModal(`${getAndroidIcon(18)} Новое устройство`, content);
   
   // Обработчики
   setTimeout(() => {
@@ -156,7 +169,7 @@ export async function showUsersModal(adminFetch) {
     </div>
   `;
   
-  showModal('👥 Управление пользователями', content);
+  showModal(`${getUsersIcon(18)} Управление пользователями`, content);
   
   // Загружаем список пользователей
   setTimeout(() => loadModalUsersList(adminFetch), 100);
@@ -254,12 +267,12 @@ async function loadModalUsersList(adminFetch) {
           <div class="meta">${u.full_name}</div>
         </div>
         <div style="display:flex; gap:4px; flex-shrink:0;">
-          <button class="secondary" style="min-width:auto; padding:6px 10px;" onclick="resetUserPasswordInModal(${u.id}, '${u.username}')" title="Сбросить пароль">🔑</button>
+          <button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="resetUserPasswordInModal(${u.id}, '${u.username}')" title="Сбросить пароль">${getKeyIcon(16)}</button>
           ${u.is_active 
-            ? `<button class="secondary" style="min-width:auto; padding:6px 10px;" onclick="toggleUserInModal(${u.id}, false)" title="Отключить">🔒</button>`
-            : `<button class="secondary" style="min-width:auto; padding:6px 10px;" onclick="toggleUserInModal(${u.id}, true)" title="Включить">🔓</button>`
+            ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="toggleUserInModal(${u.id}, false)" title="Отключить">${getLockIcon(16)}</button>`
+            : `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="toggleUserInModal(${u.id}, true)" title="Включить">${getUnlockIcon(16)}</button>`
           }
-          ${u.id !== 1 ? `<button class="danger" style="min-width:auto; padding:6px 10px;" onclick="deleteUserInModal(${u.id}, '${u.username}')" title="Удалить">🗑️</button>` : ''}
+          ${u.id !== 1 ? `<button class="danger" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="deleteUserInModal(${u.id}, '${u.username}')" title="Удалить">${getTrashIcon(16)}</button>` : ''}
         </div>
       </div>
     `).join('');
@@ -321,7 +334,7 @@ async function loadModalUsersList(adminFetch) {
         </div>
       `;
       
-      showModal('🔑 Сброс пароля', passwordResetContent);
+      showModal(`${getKeyIcon(18)} Сброс пароля`, passwordResetContent);
       
       setTimeout(() => {
         const password1Input = document.getElementById('newPassword1');
@@ -360,7 +373,7 @@ async function loadModalUsersList(adminFetch) {
             
             if (res.ok) {
               closeModal();
-              showModal('✅ Успешно', `
+              showModal(`${getSuccessIcon(18)} Успешно`, `
                 <div style="text-align:center; padding:var(--space-lg);">
                   Пароль для <strong>${username}</strong> успешно изменен
                 </div>
@@ -407,7 +420,7 @@ export function showSettingsModal() {
       </div>
     `;
     
-    showModal('⚙️ Настройки', content);
+    showModal(`${getSettingsIcon(18)} Настройки`, content);
     
     // Инициализируем системный монитор в модальном окне после того как DOM обновлен
     setTimeout(() => {
@@ -427,7 +440,7 @@ export function showSettingsModal() {
           <div class="meta" style="text-align:center;">Загрузка настроек...</div>
         </div>
       `;
-      showModal('⚙️ Настройки', content);
+      showModal(`${getSettingsIcon(18)} Настройки`, content);
       loadSettingsContent(adminFetch);
     });
   });
@@ -474,7 +487,7 @@ async function loadSettingsContent(adminFetch) {
           Экспортируйте базу данных для резервного копирования или миграции.
         </div>
         <button id="exportDatabaseBtn" class="primary" style="width:100%;">
-          📥 Экспорт базы данных
+          ${getDownloadIcon(16)} Экспорт базы данных
         </button>
       </div>
     </div>

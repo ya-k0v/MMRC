@@ -3,16 +3,49 @@
  * @module shared/constants
  */
 
-// Иконки для типов устройств
+import { 
+  getAndroidIcon, 
+  getTVIcon, 
+  getBrowserIcon, 
+  getMonitorIcon, 
+  getFilmIcon 
+} from './svg-icons.js';
+
+/**
+ * Получить SVG иконку для типа устройства
+ * @param {string} deviceType - Тип устройства
+ * @returns {string} SVG код иконки
+ */
+export function getDeviceIcon(deviceType) {
+  switch (deviceType) {
+    case 'android':
+    case 'NATIVE_MEDIAPLAYER':
+      return getAndroidIcon();
+    case 'browser':
+      return getBrowserIcon();
+    case 'kodi':
+    case 'webos':
+    case 'tizen':
+      return getTVIcon();
+    case 'VJC':
+      return getFilmIcon();
+    case 'NATIVE_MPV':
+      return getMonitorIcon();
+    default:
+      return getTVIcon();
+  }
+}
+
+// Для обратной совместимости (используется как объект)
 export const DEVICE_ICONS = {
-  'browser': '🌐',
-  'android': '📱',
-  'kodi': '📺',
-  'webos': '📺',
-  'tizen': '📺',
-  'VJC': '🎬',
-  'NATIVE_MEDIAPLAYER': '📱',
-  'NATIVE_MPV': '🖥️'
+  'browser': getBrowserIcon(),
+  'android': getAndroidIcon(),
+  'kodi': getTVIcon(),
+  'webos': getTVIcon(),
+  'tizen': getTVIcon(),
+  'VJC': getFilmIcon(),
+  'NATIVE_MEDIAPLAYER': getAndroidIcon(),
+  'NATIVE_MPV': getMonitorIcon()
 };
 
 // Названия типов устройств

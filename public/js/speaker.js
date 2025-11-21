@@ -1,6 +1,7 @@
 import { initThemeToggle } from './theme.js';
 import { sortDevices, debounce, loadNodeNames, getPageSize } from './utils.js';
 import { ensureAuth, speakerFetch, logout } from './speaker/auth.js';
+import { getCrossIcon } from './shared/svg-icons.js';
 
 const socket = io();
 
@@ -463,7 +464,7 @@ function renderThumbnailGrid(deviceId, safeName, contentType, imageUrls) {
                    alt="${idx + 1}"
                    loading="lazy"
                    style="width:100%; height:100%; object-fit:cover; display:block; pointer-events:none"
-                   onerror="this.parentElement.innerHTML='<div style=&quot;display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);font-size:10px&quot;>✗</div>'" />
+                   onerror="this.parentElement.innerHTML='<div style=&quot;display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);font-size:10px&quot;><svg xmlns=&quot;http://www.w3.org/2000/svg&quot; width=&quot;14&quot; height=&quot;14&quot; viewBox=&quot;0 0 24 24&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;2.5&quot; stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot; style=&quot;display:inline-block&quot;><line x1=&quot;18&quot; y1=&quot;6&quot; x2=&quot;6&quot; y2=&quot;18&quot;></line><line x1=&quot;6&quot; y1=&quot;6&quot; x2=&quot;18&quot; y2=&quot;18&quot;></line></svg></div>'" />
               <div style="position:absolute; bottom:2px; right:4px; background:rgba(0,0,0,0.7); color:#fff; padding:2px 4px; border-radius:3px; font-size:10px; pointer-events:none">${idx + 1}</div>
             </div>
           `).join('')}
@@ -1471,7 +1472,7 @@ document.getElementById('pdfCloseBtn').onclick = () => {
   
   // Возвращаем preview в исходное состояние (показываем live preview устройства)
   showLivePreviewForTV(currentDevice, true);
-};
+  };
 
 /* Реакция на обновления с сервера — дебаунс + сохранение выбора */
 const onDevicesUpdated = debounce(async () => {

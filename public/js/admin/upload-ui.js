@@ -1,6 +1,7 @@
 // upload-ui.js - ПОЛНЫЙ код setupUploadUI из admin.js
 import { setXhrAuth, adminFetch } from './auth.js';
 import { calculateFileMD5 } from './md5-helper.js';
+import { getFolderIcon, getWarningIcon, getSuccessIcon } from '../shared/svg-icons.js';
 
 export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, socket) {
   const dropZone = card.querySelector('.dropZone');
@@ -36,7 +37,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       const totalSize = pending.reduce((sum, f) => sum + f.size, 0);
       queue.innerHTML = `
         <li style="display:flex; justify-content:space-between; align-items:center; padding:8px; background:var(--panel-2); border-radius:var(--radius-sm)">
-          <span>📁 <strong>${folderName}</strong> <span class="meta">(${imageCount} изображений, ${(totalSize/1024/1024).toFixed(2)} MB)</span></span>
+          <span style="display:flex; align-items:center; gap:4px;">${getFolderIcon(16)} <strong>${folderName}</strong> <span class="meta">(${imageCount} изображений, ${(totalSize/1024/1024).toFixed(2)} MB)</span></span>
           <span class="meta" id="p_${deviceId}_folder">0%</span>
         </li>
       `;
@@ -74,7 +75,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
     // Показываем предупреждение о отклоненных файлах
     if (rejected.length > 0) {
       const messages = rejected.map(r => `• ${r.name}\n  ${r.reason}`).join('\n\n');
-      alert(`⚠️ Следующие файлы не были добавлены:\n\n${messages}`);
+      alert(`${getWarningIcon(18)} Следующие файлы не были добавлены:\n\n${messages}`);
     }
     
     renderQueue();
@@ -138,7 +139,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       
       if (rejected.length > 0) {
         const messages = rejected.map(r => `• ${r.name}\n  ${r.reason}`).join('\n\n');
-        alert(`⚠️ Следующие файлы из папки не будут загружены:\n\n${messages}`);
+        alert(`${getWarningIcon(18)} Следующие файлы из папки не будут загружены:\n\n${messages}`);
       }
       
       if (validFiles.length === 0) {
@@ -198,7 +199,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
                 
                 if (rejected.length > 0) {
                   const messages = rejected.map(r => `• ${r.name}\n  ${r.reason}`).join('\n\n');
-                  alert(`⚠️ Следующие файлы из папки не будут загружены:\n\n${messages}`);
+                  alert(`${getWarningIcon(18)} Следующие файлы из папки не будут загружены:\n\n${messages}`);
                 }
                 
                 if (validFiles.length === 0) {
@@ -316,7 +317,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
               from: checkData.sourceDevice,
               savedMB: copyData.savedTrafficMB
             });
-            if (progressEl) progressEl.textContent = '✅ Скопирован';
+            if (progressEl) progressEl.innerHTML = `${getSuccessIcon(14)} Скопирован`;
           }
         } else {
           // Уникальный файл - добавляем в очередь загрузки
@@ -394,7 +395,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
               
               xhr.onload = () => {
                 if (xhr.status < 300) {
-                  if (progressEl) progressEl.textContent = '✅';
+                  if (progressEl) progressEl.innerHTML = getSuccessIcon(14);
                   resolve();
                 } else {
                   let errorMsg = xhr.statusText || `HTTP ${xhr.status}`;
@@ -420,14 +421,14 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
           }
         }
         
-        uploadBtn.textContent = `✅ Загружено (${uploadedCount})`;
+        uploadBtn.innerHTML = `${getSuccessIcon(16)} Загружено (${uploadedCount})`;
       }
       
       // STEP 3: Показываем сводку дедупликации
       if (duplicates.length > 0) {
         const totalSavedMB = duplicates.reduce((sum, d) => sum + parseFloat(d.savedMB), 0);
         const message = duplicates.map(d => 
-          `✅ ${d.name}\n   Скопирован с ${d.from} (${d.savedMB} MB)`
+          `${getSuccessIcon(14)} ${d.name}\n   Скопирован с ${d.from} (${d.savedMB} MB)`
         ).join('\n\n');
       }
       
