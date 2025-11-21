@@ -29,6 +29,11 @@ const unmuteBtn = document.getElementById('unmute');
 const brandBg = document.getElementById('brandBg');
 
 let currentFileState = { type: null, file: null, page: 1 };
+// КРИТИЧНО: Retry счетчик для сетевых ошибок (как в Android) - доступен из всех обработчиков
+let networkErrorRetryCount = 0;
+let networkErrorRetryTimeout = null;
+const maxNetworkRetryAttempts = 10; // Для контента (не заглушки) - больше попыток
+const maxPlaceholderRetryAttempts = 3; // Для заглушки - меньше попыток
 let soundUnlocked = false;
 let vjsPlayer = null;
 let isLoadingPlaceholder = false; // Флаг для предотвращения двойной загрузки
@@ -198,19 +203,72 @@ if (!device_id || !device_id.trim()) {
             }
           });
           
-          // Обработчик ошибок
+                  // Обработчик ошибок
           vjsPlayer.on('error', function() {
             const error = vjsPlayer.error();
             console.error('[Player] ❌ Video.js error:', error);
             
-            // КРИТИЧНО: При ошибке загрузки видео (404, сеть и т.д.) обрабатываем корректно
+            // КРИТИЧНО: При ошибке загрузки видео обрабатываем по типу ошибки (как в Android)
             if (error && error.code) {
               const errorCode = error.code;
-              const isNetworkError = errorCode === 2 || errorCode === 3; // MEDIA_ERR_NETWORK, MEDIA_ERR_DECODE
+              const isNetworkError = errorCode === 2; // MEDIA_ERR_NETWORK
+              const isDecodeError = errorCode === 3; // MEDIA_ERR_DECODE
               const isSrcError = errorCode === 4; // MEDIA_ERR_SRC_NOT_SUPPORTED (404, формат не поддерживается)
               
-              // Если ошибка при загрузке контента (не заглушки) - возвращаемся к заглушке
-              if (currentFileState.type === 'video' && currentFileState.type !== 'placeholder') {
+              const isContent = currentFileState.type === 'video' && currentFileState.type !== 'placeholder';
+              const isPlaceholder = currentFileState.type === 'placeholder';
+              
+              // КРИТИЧНО: Для сетевых ошибок при воспроизведении контента - делаем retry (как в Android)
+              if (isNetworkError && isContent) {
+                const maxAttempts = maxNetworkRetryAttempts;
+                
+                // Отменяем предыдущий retry
+                if (networkErrorRetryTimeout) {
+                  clearTimeout(networkErrorRetryTimeout);
+                  networkErrorRetryTimeout = null;
+                }
+                
+                if (networkErrorRetryCount < maxAttempts) {
+                  networkErrorRetryCount++;
+                  console.warn(`[Player] ⚠️ Сетевая ошибка при воспроизведении контента, retry ${networkErrorRetryCount}/${maxAttempts}...`);
+                  
+                  // Сохраняем текущую позицию и URL для retry
+                  const savedTime = vjsPlayer.currentTime();
+                  const savedSrc = vjsPlayer.currentSrc();
+                  
+                  // Retry через 5 секунд (как в Android)
+                  networkErrorRetryTimeout = setTimeout(() => {
+                    networkErrorRetryTimeout = null;
+                    
+                    if (currentFileState.type === 'video' && currentFileState.type !== 'placeholder') {
+                      console.log(`[Player] 🔄 Retry воспроизведения с позиции ${savedTime.toFixed(1)}s...`);
+                      
+                      // Пробуем перезагрузить с той же позиции
+                      vjsPlayer.load(); // Перезагружаем текущий источник
+                      
+                      vjsPlayer.one('loadedmetadata', () => {
+                        // Восстанавливаем позицию
+                        if (savedTime > 0 && savedTime < vjsPlayer.duration()) {
+                          vjsPlayer.currentTime(savedTime);
+                        }
+                        vjsPlayer.play().catch(err => {
+                          console.error('[Player] ❌ Ошибка retry воспроизведения:', err);
+                        });
+                      });
+                    }
+                  }, 5000);
+                  
+                  return; // Не показываем заглушку, ждем восстановления сети
+                } else {
+                  // Превышен лимит попыток - возвращаемся к заглушке
+                  console.error(`[Player] ❌ Превышен лимит retry (${maxAttempts}), возвращаемся к заглушке`);
+                  networkErrorRetryCount = 0;
+                  // Продолжаем вниз - показываем заглушку
+                }
+              }
+              
+              // Для других ошибок или если retry не помог - показываем заглушку
+              if (isContent) {
                 console.warn(`[Player] ⚠️ Ошибка загрузки видео (code: ${errorCode}), возвращаемся к заглушке`);
                 
                 // Используем кэшированную заглушку если есть
@@ -259,14 +317,20 @@ if (!device_id || !device_id.trim()) {
                   // Кэша нет - загружаем заглушку с сервера
                   showPlaceholder();
                 }
-              } else if (currentFileState.type === 'placeholder' && cachedPlaceholderSrc) {
+              } else if (isPlaceholder && cachedPlaceholderSrc) {
                 // Ошибка при загрузке заглушки - пробуем еще раз через некоторое время
-                console.warn('[Player] ⚠️ Ошибка загрузки заглушки, повтор через 5 секунд...');
-                setTimeout(() => {
-                  if (currentFileState.type === 'placeholder') {
-                    showPlaceholder(true);
-                  }
-                }, 5000);
+                if (networkErrorRetryCount < maxPlaceholderRetryAttempts) {
+                  networkErrorRetryCount++;
+                  console.warn(`[Player] ⚠️ Ошибка загрузки заглушки, повтор ${networkErrorRetryCount}/${maxPlaceholderRetryAttempts} через 5 секунд...`);
+                  setTimeout(() => {
+                    if (currentFileState.type === 'placeholder') {
+                      showPlaceholder(true);
+                    }
+                  }, 5000);
+                } else {
+                  networkErrorRetryCount = 0;
+                  console.error('[Player] ❌ Превышен лимит retry для заглушки');
+                }
               }
             }
           });
@@ -278,10 +342,19 @@ if (!device_id || !device_id.trim()) {
           // КРИТИЧНО для Android: обработчики состояния воспроизведения
           let lastLoggedPercent = -1;
           
+          // КРИТИЧНО: При stalled/waiting не показываем ошибку - это нормально при сетевых проблемах
           vjsPlayer.on('stalled', () => {
+            // Видео остановилось из-за нехватки данных - это нормально, ждем загрузки
+            if (currentFileState.type === 'video' && currentFileState.type !== 'placeholder') {
+              console.log('[Player] ⏸️ Видео остановилось (stalled), ждем загрузки данных...');
+            }
           });
           
           vjsPlayer.on('waiting', () => {
+            // Видео ждет загрузки данных - это нормально, не показываем ошибку
+            if (currentFileState.type === 'video' && currentFileState.type !== 'placeholder') {
+              console.log('[Player] ⏳ Видео ждет загрузки данных (waiting)...');
+            }
           });
           
           vjsPlayer.on('playing', () => {
@@ -2252,6 +2325,34 @@ if (!device_id || !device_id.trim()) {
     if (isContentPlaying) {
       // Контент играет - продолжаем воспроизведение, не трогаем
       console.log('[Player] ✅ Переподключено: контент играет, продолжаем воспроизведение...');
+      
+      // КРИТИЧНО: Сбрасываем счетчик retry при успешном переподключении
+      if (typeof networkErrorRetryCount !== 'undefined') {
+        networkErrorRetryCount = 0;
+      }
+      
+      // Если видео было на паузе из-за ошибки - пробуем возобновить
+      if (currentFileState.type === 'video' && vjsPlayer) {
+        if (vjsPlayer.paused() && vjsPlayer.readyState() >= 2) {
+          console.log('[Player] 🔄 Возобновляем воспроизведение после переподключения...');
+          vjsPlayer.play().catch(err => {
+            console.error('[Player] ❌ Ошибка возобновления после переподключения:', err);
+          });
+        } else if (vjsPlayer.readyState() < 2) {
+          // Видео не загружено - пробуем перезагрузить
+          console.log('[Player] 🔄 Перезагружаем видео после переподключения...');
+          const savedTime = vjsPlayer.currentTime();
+          vjsPlayer.load();
+          vjsPlayer.one('loadedmetadata', () => {
+            if (savedTime > 0 && savedTime < vjsPlayer.duration()) {
+              vjsPlayer.currentTime(savedTime);
+            }
+            vjsPlayer.play().catch(err => {
+              console.error('[Player] ❌ Ошибка воспроизведения после перезагрузки:', err);
+            });
+          });
+        }
+      }
     } else if (isPlaceholderPlaying) {
       // Заглушка играет - продолжаем, не перезагружаем
       console.log('[Player] ✅ Переподключено: заглушка играет, продолжаем...');
