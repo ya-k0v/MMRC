@@ -284,9 +284,17 @@ class MainActivity : AppCompatActivity() {
                         override fun onIsPlayingChanged(isPlaying: Boolean) {
                             Log.d(TAG, "Player isPlaying: $isPlaying")
                             
-                            // Запускаем/останавливаем отправку прогресса
-                            if (isPlaying && !isPlayingPlaceholder && currentVideoFile != null) {
-                                startProgressUpdates()
+                            // КРИТИЧНО: Запускаем отправку прогресса для контента (не заглушки)
+                            // Отправляем прогресс даже на паузе (для отображения текущей позиции)
+                            if (!isPlayingPlaceholder && currentVideoFile != null) {
+                                // Проверяем, что видео загружено (STATE_READY)
+                                val isVideoReady = player?.playbackState == Player.STATE_READY
+                                if (isVideoReady || isPlaying) {
+                                    startProgressUpdates()
+                                } else {
+                                    // Видео еще не загружено - остановим отправку, запустится когда загрузится
+                                    stopProgressUpdates()
+                                }
                             } else {
                                 stopProgressUpdates()
                             }
@@ -373,8 +381,18 @@ class MainActivity : AppCompatActivity() {
                     // Если играет контент - продолжаем воспроизведение
                     if (!isPlayingPlaceholder && player?.isPlaying == true) {
                         Log.i(TAG, "Reconnected: content is playing, continuing...")
+                        // КРИТИЧНО: Перезапускаем отправку прогресса после переподключения
+                        if (currentVideoFile != null) {
+                            startProgressUpdates()
+                            Log.d(TAG, "✅ Restarted progress updates after reconnect")
+                        }
                     } else if (!isPlayingPlaceholder && player?.isPlaying == false) {
                         Log.i(TAG, "Reconnected: content was paused, keeping paused")
+                        // КРИТИЧНО: Перезапускаем отправку прогресса даже если на паузе (для отображения текущей позиции)
+                        if (currentVideoFile != null) {
+                            startProgressUpdates()
+                            Log.d(TAG, "✅ Restarted progress updates after reconnect (paused)")
+                        }
                     } else {
                         // Заглушка должна играть - проверяем что плеер действительно играет
                         if (player?.isPlaying != true) {
@@ -1771,12 +1789,17 @@ class MainActivity : AppCompatActivity() {
                     val fileName = currentVideoFile ?: return
                     
                     // Отправляем прогресс только для видео (не для заглушек)
+                    // КРИТИЧНО: Отправляем прогресс даже если видео на паузе (для отображения текущей позиции)
                     // Проверяем не только isPlaying, но и состояние буферизации
                     val isPlayingOrBuffering = exoPlayer.isPlaying || 
                         exoPlayer.playbackState == Player.STATE_BUFFERING ||
                         exoPlayer.playbackState == Player.STATE_READY
                     
-                    if (!isPlayingPlaceholder && isPlayingOrBuffering) {
+                    // КРИТИЧНО: Отправляем прогресс если видео загружено (STATE_READY) даже на паузе
+                    // Это нужно для отображения текущей позиции на панели спикера
+                    val isVideoReady = exoPlayer.playbackState == Player.STATE_READY
+                    
+                    if (!isPlayingPlaceholder && (isPlayingOrBuffering || isVideoReady)) {
                         val currentTime = exoPlayer.currentPosition / 1000 // в секундах
                         val duration = exoPlayer.duration
                         val durationSeconds = if (duration > 0 && duration != com.google.android.exoplayer2.C.TIME_UNSET) {
