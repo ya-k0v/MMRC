@@ -97,6 +97,59 @@ setupSocketListeners(socket, {
     }
     renderTVList();
     if (currentDeviceId) openDevice(currentDeviceId);
+  },
+  onDeviceUpdated: (device_id, device) => {
+    // КРИТИЧНО: Обновляем информацию об устройстве без перезагрузки страницы
+    const deviceIndex = devicesCache.findIndex(d => d.device_id === device_id);
+    if (deviceIndex !== -1) {
+      // Обновляем данные устройства в кэше
+      devicesCache[deviceIndex] = {
+        ...devicesCache[deviceIndex],
+        ...device
+      };
+      
+      // Обновляем отображение в списке устройств (tvTile)
+      const tvList = document.getElementById('tvList');
+      if (tvList) {
+        const tile = tvList.querySelector(`[data-id="${device_id}"]`);
+        if (tile) {
+          const metaEl = tile.querySelector('.tvTile-meta');
+          if (metaEl) {
+            metaEl.textContent = `ID: ${device_id}${device.ipAddress ? ` • IP: ${device.ipAddress}` : ''}`;
+          }
+        }
+      }
+      
+      // Обновляем отображение в карточке устройства, если оно открыто
+      if (currentDeviceId === device_id) {
+        const pane = document.getElementById('detailPane');
+        if (pane) {
+          const metaEl = pane.querySelector('.meta');
+          if (metaEl) {
+            // Обновляем строку с IP адресом в карточке устройства
+            const metaHTML = metaEl.innerHTML;
+            const ipRegex = /<span>• IP: [^<]+<\/span>/;
+            if (device.ipAddress) {
+              if (ipRegex.test(metaHTML)) {
+                // IP адрес уже отображается - обновляем его
+                metaEl.innerHTML = metaHTML.replace(ipRegex, `<span>• IP: ${device.ipAddress}</span>`);
+              } else {
+                // IP адрес еще не был отображен - добавляем его перед ID
+                const idIndex = metaHTML.indexOf('<span>• ID:');
+                if (idIndex !== -1) {
+                  metaEl.innerHTML = metaHTML.slice(0, idIndex) + 
+                    `<span>• IP: ${device.ipAddress}</span> ` + 
+                    metaHTML.slice(idIndex);
+                }
+              }
+            } else {
+              // IP адрес был удален - убираем его
+              metaEl.innerHTML = metaHTML.replace(ipRegex, '').replace(/\s+/g, ' ').trim();
+            }
+          }
+        }
+      }
+    }
   }
 });
 

@@ -13,6 +13,7 @@ import { debounce } from '../shared/socket-base.js';
 export function setupSocketListeners(socket, callbacks) {
   const {
     onDevicesUpdated,
+    onDeviceUpdated,
     onFileProcessing,
     onFileProgress,
     onFileReady,
@@ -27,6 +28,11 @@ export function setupSocketListeners(socket, callbacks) {
   socket.on('devices/updated', debounce(async () => {
     if (onDevicesUpdated) await onDevicesUpdated();
   }, 150));
+  
+  // device/updated - Обновление конкретного устройства (IP, platform и т.д.)
+  socket.on('device/updated', ({ device_id, device }) => {
+    if (onDeviceUpdated) onDeviceUpdated(device_id, device);
+  });
   
   // file/processing - Файл начал обработку
   socket.on('file/processing', ({ device_id, file }) => {

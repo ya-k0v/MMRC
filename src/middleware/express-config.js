@@ -15,6 +15,10 @@ import logger from '../utils/logger.js';
  * @param {express.Application} app - Express приложение
  */
 export function setupExpressMiddleware(app) {
+  // КРИТИЧНО: Настраиваем доверие к прокси (nginx)
+  // Позволяет Express читать реальный IP клиента из заголовков X-Forwarded-For и X-Real-IP
+  app.set('trust proxy', true);
+  
   // Таймауты для всех запросов (30 секунд по умолчанию)
   app.use(requestTimeout(30000));
   

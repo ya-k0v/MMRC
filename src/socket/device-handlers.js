@@ -44,38 +44,76 @@ export function setupDeviceHandlers(socket, deps) {
       };
       
       // Получаем IP адрес клиента
+      // КРИТИЧНО: Читаем реальный IP из заголовков nginx (X-Real-IP или X-Forwarded-For)
       let clientIP = null;
       try {
-        // Socket.IO 4.x+
-        if (socket.handshake?.address) {
+        // Приоритет 1: Заголовок X-Real-IP от nginx (самый надежный)
+        if (socket.request?.headers?.['x-real-ip']) {
+          clientIP = socket.request.headers['x-real-ip'];
+        }
+        
+        // Приоритет 2: Заголовок X-Forwarded-For от nginx
+        // X-Forwarded-For может содержать цепочку IP: "client, proxy1, proxy2"
+        // Берем первый IP (клиент)
+        if (!clientIP && socket.request?.headers?.['x-forwarded-for']) {
+          const forwardedFor = socket.request.headers['x-forwarded-for'];
+          if (typeof forwardedFor === 'string') {
+            // Берем первый IP из цепочки
+            clientIP = forwardedFor.split(',')[0].trim();
+          }
+        }
+        
+        // Приоритет 3: Socket.IO native адрес (для прямых подключений без nginx)
+        if (!clientIP && socket.handshake?.address) {
           clientIP = typeof socket.handshake.address === 'string' 
             ? socket.handshake.address 
             : socket.handshake.address?.address;
         }
-        // Socket.IO 3.x и fallback
+        
+        // Приоритет 4: Socket.IO 3.x и fallback
         if (!clientIP && socket.request?.socket?.remoteAddress) {
           clientIP = socket.request.socket.remoteAddress;
         }
-        // Старые версии
+        
+        // Приоритет 5: Старые версии
         if (!clientIP && socket.request?.connection?.remoteAddress) {
           clientIP = socket.request.connection.remoteAddress;
         }
-        // Обрабатываем IPv6 маппинг
+        
+        // Обрабатываем IPv6 маппинг (::ffff:127.0.0.1 -> 127.0.0.1)
         if (clientIP && clientIP.startsWith('::ffff:')) {
           clientIP = clientIP.replace('::ffff:', '');
         }
       } catch (e) {
         // Игнорируем ошибки получения IP
+        logger.debug(`[Socket.IO] Ошибка получения IP для socket ${socket.id}:`, e);
       }
       
       // Обновляем информацию об устройстве
       const deviceType = device_type || 'browser';
       const devicePlatform = platform || 'Unknown';
+      const previousIP = devices[device_id].ipAddress;
       devices[device_id].deviceType = deviceType;
       devices[device_id].capabilities = capabilities || defaultCapabilities;
       devices[device_id].platform = devicePlatform;
       devices[device_id].ipAddress = clientIP || null;
       devices[device_id].lastSeen = new Date().toISOString();
+      
+      // КРИТИЧНО: Отправляем обновление устройства если IP изменился или это первое подключение
+      const ipChanged = previousIP !== devices[device_id].ipAddress;
+      if (ipChanged || !previousIP) {
+        io.emit('device/updated', {
+          device_id,
+          device: {
+            device_id,
+            deviceType,
+            platform: devicePlatform,
+            ipAddress: devices[device_id].ipAddress,
+            capabilities: devices[device_id].capabilities,
+            lastSeen: devices[device_id].lastSeen
+          }
+        });
+      }
       
       // Проверяем было ли устройство подключено ранее
       const prevDevice = activeConnections.get(socket.id);
@@ -98,6 +136,21 @@ export function setupDeviceHandlers(socket, deps) {
         if (sockets && sockets.has(socket.id)) {
           // Обновляем ping
           if (socket.data) socket.data.lastPing = Date.now();
+          
+          // КРИТИЧНО: Отправляем обновление устройства если IP изменился при повторной регистрации
+          if (ipChanged || !previousIP) {
+            io.emit('device/updated', {
+              device_id,
+              device: {
+                device_id,
+                deviceType,
+                platform: devicePlatform,
+                ipAddress: devices[device_id].ipAddress,
+                capabilities: devices[device_id].capabilities,
+                lastSeen: devices[device_id].lastSeen
+              }
+            });
+          }
           
           // Сбрасываем состояние
           ensureCurrentState(device_id);
