@@ -2141,6 +2141,20 @@ if (!device_id || !device_id.trim()) {
       return;
     }
     
+    // КРИТИЧНО: Если показывается заглушка - НЕ загружаем видео автоматически!
+    // Заглушка включилась после проблем с сетью - она должна продолжать играть
+    const isPlaceholderPlaying = currentFileState.type === 'placeholder' && 
+                                  ((vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) || 
+                                   (img1.classList.contains('visible') || img2.classList.contains('visible')));
+    
+    if (isPlaceholderPlaying) {
+      // КРИТИЧНО: Заглушка играет - НЕ переключаемся на видео автоматически!
+      // Если заглушка включилась после проблем с сетью, она должна продолжать играть
+      console.log('[Player] ✅ Получен player/state с файлом, но заглушка играет - продолжаем показывать заглушку');
+      // НЕ меняем currentFileState - оставляем заглушку
+      return;
+    }
+    
     // КРИТИЧНО: При переподключении НЕ сбрасываем контент если он уже играет (как в Android)
     // Проверяем, не играет ли уже тот же файл
     const isSameContentPlaying = currentFileState.type === cur.type && 
@@ -2450,6 +2464,14 @@ if (!device_id || !device_id.trim()) {
     const isPlaceholderPlaying = currentFileState.type === 'placeholder' && 
                                   ((vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) || 
                                    (img1.classList.contains('visible') || img2.classList.contains('visible')));
+    
+    // КРИТИЧНО: Если показывается заглушка - НЕ переключаемся на контент автоматически!
+    // Заглушка включилась после проблем с сетью - она должна продолжать играть
+    if (isPlaceholderPlaying) {
+      console.log('[Player] ✅ Переподключено: заглушка играет, продолжаем показывать заглушку (не переключаемся на контент)');
+      // НЕ трогаем заглушку - она должна продолжать играть
+      return;
+    }
     
     if (isContentPlaying) {
       // Контент играет - продолжаем воспроизведение, не трогаем
