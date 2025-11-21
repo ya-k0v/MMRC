@@ -152,10 +152,25 @@ export function setupDeviceHandlers(socket, deps) {
             });
           }
           
-          // Сбрасываем состояние
-          ensureCurrentState(device_id);
+      // Сбрасываем состояние
+      ensureCurrentState(device_id);
+      
+      // КРИТИЧНО: Проверяем существование файла перед отправкой состояния
+      const currentState = devices[device_id].current;
+      if (currentState && currentState.file && currentState.type !== 'idle') {
+        // Проверяем, существует ли файл в списке файлов устройства
+        const deviceFiles = devices[device_id].files || [];
+        if (!deviceFiles.includes(currentState.file)) {
+          // Файл не существует - сбрасываем состояние на idle
+          logger.warn(`[Device] Файл ${currentState.file} не найден для устройства ${device_id}, сбрасываем состояние`);
+          devices[device_id].current = { type: 'idle', file: null, state: 'idle' };
           socket.emit('player/state', devices[device_id].current);
           return;
+        }
+      }
+      
+      socket.emit('player/state', devices[device_id].current);
+      return;
         }
       }
       
@@ -178,6 +193,19 @@ export function setupDeviceHandlers(socket, deps) {
       
       // Сбрасываем состояние устройства только если его нет
       ensureCurrentState(device_id);
+      
+      // КРИТИЧНО: Проверяем существование файла перед отправкой состояния
+      const currentState = devices[device_id].current;
+      if (currentState && currentState.file && currentState.type !== 'idle') {
+        // Проверяем, существует ли файл в списке файлов устройства
+        const deviceFiles = devices[device_id].files || [];
+        if (!deviceFiles.includes(currentState.file)) {
+          // Файл не существует - сбрасываем состояние на idle
+          logger.warn(`[Device] Файл ${currentState.file} не найден для устройства ${device_id}, сбрасываем состояние`);
+          devices[device_id].current = { type: 'idle', file: null, state: 'idle' };
+        }
+      }
+      
       socket.emit('player/state', devices[device_id].current);
       
       // КРИТИЧНО: Отправляем подтверждение успешной регистрации

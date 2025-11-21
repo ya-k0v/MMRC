@@ -797,6 +797,14 @@ export function createFilesRouter(deps) {
       
       logFile('info', `📝 Обновлен fileNamesMap: ${oldName} -> ${newName}`, { deviceId: id, oldName, newName });
       
+      // КРИТИЧНО: Если переименованный файл был текущим воспроизводимым - обновляем состояние
+      if (devices[id] && devices[id].current && devices[id].current.file === oldName) {
+        logger.info(`[RENAME file] Обновляем состояние устройства ${id}, т.к. переименован текущий файл ${oldName} -> ${newName}`);
+        devices[id].current.file = newName;
+        // Отправляем обновленное состояние на устройство
+        io.to(`device:${id}`).emit('player/state', devices[id].current);
+      }
+      
       // Обновляем список файлов из БД
       updateDeviceFilesFromDB(id, devices, fileNamesMap);
       io.emit('devices/updated');
@@ -887,6 +895,15 @@ export function createFilesRouter(deps) {
       // и ПОТЕРЯЕТ медиафайлы из БД!
       
       // Вместо этого обновляем только конкретные записи в d.files и d.fileNames
+      // КРИТИЧНО: Если переименованный файл был текущим воспроизводимым - обновляем состояние
+      if (devices[id] && devices[id].current && 
+          (devices[id].current.file === oldName || devices[id].current.file === actualOldName)) {
+        logger.info(`[RENAME file] Обновляем состояние устройства ${id}, т.к. переименован текущий файл ${actualOldName} -> ${finalName}`);
+        devices[id].current.file = finalName;
+        // Отправляем обновленное состояние на устройство
+        io.to(`device:${id}`).emit('player/state', devices[id].current);
+      }
+      
       // Обновляем список файлов из БД + файловой системы (это перезагрузит весь список)
       updateDeviceFilesFromDB(id, devices, fileNamesMap);
       io.emit('devices/updated');
@@ -1027,6 +1044,14 @@ export function createFilesRouter(deps) {
       }
       if (Object.keys(fileNamesMap[id]).length === 0) delete fileNamesMap[id];
       saveFileNamesMap(fileNamesMap);
+    }
+    
+    // КРИТИЧНО: Если удаляемый файл был текущим воспроизводимым - сбрасываем состояние
+    if (devices[id] && devices[id].current && devices[id].current.file === deletedFileName) {
+      logger.info(`[DELETE file] Сбрасываем состояние устройства ${id}, т.к. удален текущий файл ${deletedFileName}`);
+      devices[id].current = { type: 'idle', file: null, state: 'idle' };
+      // Отправляем команду остановки на устройство
+      io.to(`device:${id}`).emit('player/stop');
     }
     
     // НОВОЕ: Обновляем список файлов из БД (а не из файловой системы)

@@ -203,38 +203,70 @@ if (!device_id || !device_id.trim()) {
             const error = vjsPlayer.error();
             console.error('[Player] ❌ Video.js error:', error);
             
-            // КРИТИЧНО: При ошибке загрузки видео (сервер недоступен) возвращаемся к кэшированной заглушке
-            if (error && error.code && currentFileState.type === 'video' && cachedPlaceholderSrc) {
-              console.warn('[Player] ⚠️ Ошибка загрузки видео, возвращаемся к кэшированной заглушке');
-              // Восстанавливаем кэшированную заглушку
-              if (cachedPlaceholderType === 'video' && cachedPlaceholderSrc) {
-                vjsPlayer.src({ src: cachedPlaceholderSrc, type: 'video/mp4' });
-                vjsPlayer.loop(true);
-                vjsPlayer.muted(true);
-                vjsPlayer.volume(0);
-                currentPlaceholderSrc = cachedPlaceholderSrc;
-                currentFileState = { type: 'placeholder', file: cachedPlaceholderSrc, page: 1 };
+            // КРИТИЧНО: При ошибке загрузки видео (404, сеть и т.д.) обрабатываем корректно
+            if (error && error.code) {
+              const errorCode = error.code;
+              const isNetworkError = errorCode === 2 || errorCode === 3; // MEDIA_ERR_NETWORK, MEDIA_ERR_DECODE
+              const isSrcError = errorCode === 4; // MEDIA_ERR_SRC_NOT_SUPPORTED (404, формат не поддерживается)
+              
+              // Если ошибка при загрузке контента (не заглушки) - возвращаемся к заглушке
+              if (currentFileState.type === 'video' && currentFileState.type !== 'placeholder') {
+                console.warn(`[Player] ⚠️ Ошибка загрузки видео (code: ${errorCode}), возвращаемся к заглушке`);
                 
-                // Показываем заглушку и запускаем воспроизведение
-                vjsPlayer.one('loadedmetadata', () => {
-                  hideVideoJsControls();
-                  vjsPlayer.one('loadeddata', () => {
-                    requestAnimationFrame(() => {
-                      requestAnimationFrame(() => {
-                        videoContainer.classList.remove('preloading');
-                        videoContainer.classList.add('visible');
-                        idle.classList.remove('visible');
-                        vjsPlayer.one('canplay', () => {
-                          setTimeout(() => {
-                            vjsPlayer.play().catch(err => {
-                              console.error('[Player] ❌ Ошибка воспроизведения кэшированной заглушки:', err);
+                // Используем кэшированную заглушку если есть
+                if (cachedPlaceholderSrc) {
+                  if (cachedPlaceholderType === 'video' && cachedPlaceholderSrc) {
+                    vjsPlayer.src({ src: cachedPlaceholderSrc, type: 'video/mp4' });
+                    vjsPlayer.loop(true);
+                    vjsPlayer.muted(true);
+                    vjsPlayer.volume(0);
+                    currentPlaceholderSrc = cachedPlaceholderSrc;
+                    currentFileState = { type: 'placeholder', file: cachedPlaceholderSrc, page: 1 };
+                    
+                    // Показываем заглушку и запускаем воспроизведение
+                    vjsPlayer.one('loadedmetadata', () => {
+                      hideVideoJsControls();
+                      vjsPlayer.one('loadeddata', () => {
+                        requestAnimationFrame(() => {
+                          requestAnimationFrame(() => {
+                            videoContainer.classList.remove('preloading');
+                            videoContainer.classList.add('visible');
+                            idle.classList.remove('visible');
+                            vjsPlayer.one('canplay', () => {
+                              setTimeout(() => {
+                                vjsPlayer.play().catch(err => {
+                                  console.error('[Player] ❌ Ошибка воспроизведения кэшированной заглушки:', err);
+                                });
+                              }, 200);
                             });
-                          }, 200);
+                          });
                         });
                       });
                     });
-                  });
-                });
+                  } else if (cachedPlaceholderType === 'image' && cachedPlaceholderSrc) {
+                    // Используем изображение заглушку
+                    const tempImg = new Image();
+                    tempImg.onload = () => {
+                      idle.classList.remove('visible');
+                      img.src = cachedPlaceholderSrc;
+                      currentPlaceholderSrc = cachedPlaceholderSrc;
+                      currentFileState = { type: 'placeholder', file: cachedPlaceholderSrc, page: 1 };
+                      show(img);
+                    };
+                    tempImg.src = cachedPlaceholderSrc;
+                  }
+                } else {
+                  // Кэша нет - загружаем заглушку с сервера
+                  showPlaceholder();
+                }
+              } else if (currentFileState.type === 'placeholder' && cachedPlaceholderSrc) {
+                // Ошибка при загрузке заглушки - пробуем еще раз через некоторое время
+                console.warn('[Player] ⚠️ Ошибка загрузки заглушки, повтор через 5 секунд...');
+                setTimeout(() => {
+                  if (currentFileState.type === 'placeholder') {
+                    showPlaceholder(true);
+                  }
+                }, 5000);
               }
             }
           });
@@ -1520,42 +1552,145 @@ if (!device_id || !device_id.trim()) {
           hideVideoJsControls();
           
           const setSrcAndShow = () => {
-            // Шаг 2: меняем источник ПОСЛЕ завершения fade-out
-            vjsPlayer.src({ src: fileUrl, type: 'video/mp4' });
-            // Шаг 3: ждём готовности и показываем новый слой с fade-in
-            vjsPlayer.one('loadedmetadata', () => {
-              hideVideoJsControls();
-              
-              // Ждём loadeddata (первый кадр загружен) перед показом
-              vjsPlayer.one('loadeddata', () => {
-                
-                // Двойной requestAnimationFrame для гарантии, что браузер готов к рендерингу
-                requestAnimationFrame(() => {
-                  requestAnimationFrame(() => {
-                    videoContainer.classList.remove('preloading');
+            // КРИТИЧНО: Проверяем существование файла перед установкой src (защита от 404)
+            fetch(fileUrl, { method: 'HEAD', cache: 'no-store' })
+              .then(response => {
+                if (!response.ok) {
+                  // Файл не существует (404) - не загружаем, возвращаемся к заглушке
+                  console.error(`[Player] ❌ Файл недоступен (${response.status}): ${file}`);
+                  
+                  // Отменяем fade-out и возвращаемся к текущему контенту или заглушке
+                  videoContainer.classList.remove('preloading');
+                  
+                  // КРИТИЧНО: Проверяем, играет ли уже другой файл
+                  const currentSrc = vjsPlayer ? vjsPlayer.currentSrc() : '';
+                  const hasCurrentVideo = currentSrc && currentFileState.type === 'video' && currentFileState.file && 
+                                         currentFileState.file !== file && videoContainer.classList.contains('visible');
+                  
+                  if (hasCurrentVideo && vjsPlayer && !vjsPlayer.paused()) {
+                    // Другое видео уже играет - продолжаем его, не перезагружаем
+                    console.log('[Player] ✅ Файл недоступен, продолжаем воспроизведение текущего видео:', currentFileState.file);
                     videoContainer.classList.add('visible');
-                    
-                    // Ждём canplay перед запуском воспроизведения
-                    vjsPlayer.one('canplay', () => {
-                      // Задержка для завершения CSS fade-in (500ms transition)
-                      setTimeout(() => {
-                        vjsPlayer.play().then(() => {
-                          if (soundUnlocked && !forceMuted) {
-                            setTimeout(() => {
-                              vjsPlayer.muted(false);
-                              vjsPlayer.volume(1.0);
-                            }, 200);
-                          }
-                        }).catch(err => {
-                          console.error('[Player] ❌ Ошибка воспроизведения:', err);
+                    // Не меняем currentFileState - оставляем текущий файл
+                  } else {
+                    // Видео не было или остановлено - возвращаемся к заглушке
+                    console.log('[Player] ℹ️ Файл недоступен, возвращаемся к заглушке');
+                    if (cachedPlaceholderSrc) {
+                      currentPlaceholderSrc = cachedPlaceholderSrc;
+                      currentFileState = { type: 'placeholder', file: cachedPlaceholderSrc, page: 1 };
+                      // Загружаем заглушку
+                      if (cachedPlaceholderType === 'video' && vjsPlayer) {
+                        vjsPlayer.src({ src: cachedPlaceholderSrc, type: 'video/mp4' });
+                        vjsPlayer.loop(true);
+                        vjsPlayer.muted(true);
+                        vjsPlayer.volume(0);
+                        hideVideoJsControls();
+                        vjsPlayer.one('loadedmetadata', () => {
                           hideVideoJsControls();
+                          vjsPlayer.one('loadeddata', () => {
+                            requestAnimationFrame(() => {
+                              requestAnimationFrame(() => {
+                                videoContainer.classList.remove('preloading');
+                                videoContainer.classList.add('visible');
+                                idle.classList.remove('visible');
+                                vjsPlayer.one('canplay', () => {
+                                  setTimeout(() => {
+                                    vjsPlayer.play().catch(err => {
+                                      console.error('[Player] ❌ Ошибка воспроизведения кэшированной заглушки:', err);
+                                    });
+                                  }, 200);
+                                });
+                              });
+                            });
+                          });
                         });
-                      }, 200); // Задержка для завершения fade-in
+                      } else if (cachedPlaceholderType === 'image') {
+                        const tempImg = new Image();
+                        tempImg.onload = () => {
+                          idle.classList.remove('visible');
+                          img.src = cachedPlaceholderSrc;
+                          show(img);
+                        };
+                        tempImg.src = cachedPlaceholderSrc;
+                      }
+                    } else {
+                      showPlaceholder();
+                    }
+                  }
+                  return;
+                }
+                
+                // Файл существует - загружаем его
+                // Шаг 2: меняем источник ПОСЛЕ завершения fade-out
+                vjsPlayer.src({ src: fileUrl, type: 'video/mp4' });
+                // Шаг 3: ждём готовности и показываем новый слой с fade-in
+                vjsPlayer.one('loadedmetadata', () => {
+                  hideVideoJsControls();
+                  
+                  // Ждём loadeddata (первый кадр загружен) перед показом
+                  vjsPlayer.one('loadeddata', () => {
+                    
+                    // Двойной requestAnimationFrame для гарантии, что браузер готов к рендерингу
+                    requestAnimationFrame(() => {
+                      requestAnimationFrame(() => {
+                        videoContainer.classList.remove('preloading');
+                        videoContainer.classList.add('visible');
+                        
+                        // Ждём canplay перед запуском воспроизведения
+                        vjsPlayer.one('canplay', () => {
+                          // Задержка для завершения CSS fade-in (500ms transition)
+                          setTimeout(() => {
+                            vjsPlayer.play().then(() => {
+                              if (soundUnlocked && !forceMuted) {
+                                setTimeout(() => {
+                                  vjsPlayer.muted(false);
+                                  vjsPlayer.volume(1.0);
+                                }, 200);
+                              }
+                            }).catch(err => {
+                              console.error('[Player] ❌ Ошибка воспроизведения:', err);
+                              hideVideoJsControls();
+                            });
+                          }, 200); // Задержка для завершения fade-in
+                        });
+                      });
+                    });
+                  });
+                });
+              })
+              .catch(error => {
+                // Ошибка сети при проверке - пробуем загрузить (может быть временная проблема)
+                console.warn(`[Player] ⚠️ Ошибка проверки файла: ${error.message}, пробуем загрузить...`);
+                
+                // Пробуем загрузить файл (может быть временная проблема сети)
+                vjsPlayer.src({ src: fileUrl, type: 'video/mp4' });
+                vjsPlayer.one('loadedmetadata', () => {
+                  hideVideoJsControls();
+                  vjsPlayer.one('loadeddata', () => {
+                    requestAnimationFrame(() => {
+                      requestAnimationFrame(() => {
+                        videoContainer.classList.remove('preloading');
+                        videoContainer.classList.add('visible');
+                        vjsPlayer.one('canplay', () => {
+                          setTimeout(() => {
+                            vjsPlayer.play().then(() => {
+                              if (soundUnlocked && !forceMuted) {
+                                setTimeout(() => {
+                                  vjsPlayer.muted(false);
+                                  vjsPlayer.volume(1.0);
+                                }, 200);
+                              }
+                            }).catch(err => {
+                              console.error('[Player] ❌ Ошибка воспроизведения:', err);
+                              hideVideoJsControls();
+                            });
+                          }, 200);
+                        });
+                      });
                     });
                   });
                 });
               });
-            });
           };
           
           // Если был видимым — дождёмся завершения CSS fade-out (transitionend с таймаутом)
@@ -1777,14 +1912,27 @@ if (!device_id || !device_id.trim()) {
 
   socket.on('player/state', (cur) => {
     if (!cur || cur.type === 'idle' || !cur.file) {
-      // КРИТИЧНО: Не вызываем showPlaceholder() если заглушка уже играет
-      // Это предотвращает показ черного экрана при переподключении
+      // КРИТИЧНО: При получении idle НЕ прерываем контент если он уже играет (как в Android)
+      // Проверяем, играет ли контент (не заглушка)
+      const isContentPlaying = currentFileState.type && currentFileState.type !== 'placeholder' &&
+                               ((currentFileState.type === 'video' && vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) ||
+                                (currentFileState.type !== 'video' && (img1.classList.contains('visible') || img2.classList.contains('visible'))));
+      
       const isPlaceholderPlaying = currentFileState.type === 'placeholder' && 
                                     ((vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) || 
                                      (img1.classList.contains('visible') || img2.classList.contains('visible')));
       
-      if (!isPlaceholderPlaying) {
-        // Заглушка не играет - показываем её (но без черного экрана если она уже кэширована)
+      if (isContentPlaying) {
+        // КРИТИЧНО: Контент играет - продолжаем воспроизведение, НЕ показываем заглушку!
+        console.log('[Player] ✅ Получен idle, но контент играет - продолжаем воспроизведение из кэша...');
+        // НЕ меняем currentFileState - оставляем текущий контент
+        return;
+      } else if (isPlaceholderPlaying) {
+        // Заглушка уже играет - просто обновляем состояние
+        currentFileState = { type: 'placeholder', file: currentPlaceholderSrc || cachedPlaceholderSrc, page: 1 };
+        return;
+      } else {
+        // Контент не играет и заглушка не играет - показываем заглушку
         if (cachedPlaceholderSrc) {
           // Используем кэшированную заглушку без перезагрузки
           currentPlaceholderSrc = cachedPlaceholderSrc;
@@ -1795,9 +1943,6 @@ if (!device_id || !device_id.trim()) {
           showPlaceholder();
         }
         currentFileState = { type: null, file: null, page: 1 };
-      } else {
-        // Заглушка уже играет - просто обновляем состояние
-        currentFileState = { type: 'placeholder', file: currentPlaceholderSrc || cachedPlaceholderSrc, page: 1 };
       }
       return;
     }
@@ -1827,9 +1972,69 @@ if (!device_id || !device_id.trim()) {
       return;
     }
     
-    // Контент не играет или другой - применяем состояние (для переподключения)
+    // Контент не играет или другой - проверяем существование файла перед загрузкой
     console.log('[Player] 📡 Применяем состояние при переподключении:', cur.type, cur.file);
-    socket.emit('control/play', { device_id, file: cur.file });
+    
+    // КРИТИЧНО: Проверяем существование файла перед загрузкой (защита от 404)
+    if (cur.type === 'video' || cur.type === 'image') {
+      const fileUrl = content(cur.file);
+      
+      // Проверяем существование файла через HEAD запрос
+      fetch(fileUrl, { method: 'HEAD', cache: 'no-store' })
+        .then(response => {
+          if (response.ok) {
+            // Файл существует - загружаем его
+            socket.emit('control/play', { device_id, file: cur.file });
+          } else {
+            // Файл не существует (404) - не загружаем, продолжаем текущий контент или заглушку
+            console.warn(`[Player] ⚠️ Файл недоступен (${response.status}): ${cur.file}, продолжаем текущий контент`);
+            
+            // Если есть текущий контент - продолжаем его
+            const hasCurrentContent = currentFileState.type && currentFileState.type !== 'placeholder' &&
+                                     ((currentFileState.type === 'video' && vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) ||
+                                      (currentFileState.type !== 'video' && (img1.classList.contains('visible') || img2.classList.contains('visible'))));
+            
+            if (hasCurrentContent) {
+              console.log('[Player] ✅ Продолжаем воспроизведение текущего контента');
+              // Обновляем состояние на текущий контент
+              currentFileState = { type: currentFileState.type, file: currentFileState.file, page: currentFileState.page || 1 };
+            } else {
+              // Текущего контента нет - возвращаемся к заглушке
+              console.log('[Player] ℹ️ Возвращаемся к заглушке');
+              if (cachedPlaceholderSrc) {
+                currentPlaceholderSrc = cachedPlaceholderSrc;
+                currentFileState = { type: 'placeholder', file: cachedPlaceholderSrc, page: 1 };
+                // Не вызываем showPlaceholder() - заглушка должна быть видна
+              } else {
+                showPlaceholder();
+              }
+            }
+          }
+        })
+        .catch(error => {
+          // Ошибка сети - продолжаем текущий контент или заглушку
+          console.warn(`[Player] ⚠️ Ошибка проверки файла: ${error.message}, продолжаем текущий контент`);
+          
+          const hasCurrentContent = currentFileState.type && currentFileState.type !== 'placeholder' &&
+                                   ((currentFileState.type === 'video' && vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) ||
+                                    (currentFileState.type !== 'video' && (img1.classList.contains('visible') || img2.classList.contains('visible'))));
+          
+          if (hasCurrentContent) {
+            console.log('[Player] ✅ Продолжаем воспроизведение текущего контента');
+            currentFileState = { type: currentFileState.type, file: currentFileState.file, page: currentFileState.page || 1 };
+          } else {
+            if (cachedPlaceholderSrc) {
+              currentPlaceholderSrc = cachedPlaceholderSrc;
+              currentFileState = { type: 'placeholder', file: cachedPlaceholderSrc, page: 1 };
+            } else {
+              showPlaceholder();
+            }
+          }
+        });
+    } else {
+      // Для PDF/PPTX/folder - сразу загружаем (они всегда доступны через API)
+      socket.emit('control/play', { device_id, file: cur.file });
+    }
   });
 
   // Регистрация плеера
@@ -1955,17 +2160,25 @@ if (!device_id || !device_id.trim()) {
       registrationTimeout = null;
     }
     
-    // КРИТИЧНО: При потере связи НЕ останавливаем заглушку!
-    // Заглушка продолжает играть (из кэша браузера), переподключение происходит в фоне
+    // КРИТИЧНО: При потере связи НЕ прерываем контент (как в Android)!
+    // Контент продолжает играть из кэша браузера, переподключение происходит в фоне
+    const isContentPlaying = currentFileState.type && currentFileState.type !== 'placeholder' &&
+                             ((currentFileState.type === 'video' && vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) ||
+                              (currentFileState.type !== 'video' && (img1.classList.contains('visible') || img2.classList.contains('visible'))));
+    
     const isPlaceholderPlaying = currentFileState.type === 'placeholder' && 
-                                  ((vjsPlayer && !vjsPlayer.paused()) || 
+                                  ((vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) || 
                                    (img1.classList.contains('visible') || img2.classList.contains('visible')));
     
-    if (isPlaceholderPlaying) {
+    if (isContentPlaying) {
+      // КРИТИЧНО: Контент играет - продолжаем воспроизведение, НЕ показываем заглушку!
+      console.log('[Player] ✅ Потеря связи: контент играет, продолжаем воспроизведение из кэша, переподключение в фоне...');
+      // НЕ трогаем контент - он продолжает играть из кэша браузера
+    } else if (isPlaceholderPlaying) {
       console.log('[Player] ℹ️ Потеря связи: заглушка продолжает играть, переподключение в фоне...');
       // Заглушка продолжает играть, не показываем черный экран
     } else if (cachedPlaceholderSrc) {
-      // Если заглушка не играет, но есть в кэше - запускаем её
+      // Если контент не играет и заглушка не играет, но есть в кэше - запускаем её
       console.log('[Player] ℹ️ Потеря связи: запускаем кэшированную заглушку...');
       currentPlaceholderSrc = cachedPlaceholderSrc;
       if (cachedPlaceholderType === 'video' && vjsPlayer) {
