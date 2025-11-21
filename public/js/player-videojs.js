@@ -202,6 +202,41 @@ if (!device_id || !device_id.trim()) {
           vjsPlayer.on('error', function() {
             const error = vjsPlayer.error();
             console.error('[Player] ❌ Video.js error:', error);
+            
+            // КРИТИЧНО: При ошибке загрузки видео (сервер недоступен) возвращаемся к кэшированной заглушке
+            if (error && error.code && currentFileState.type === 'video' && cachedPlaceholderSrc) {
+              console.warn('[Player] ⚠️ Ошибка загрузки видео, возвращаемся к кэшированной заглушке');
+              // Восстанавливаем кэшированную заглушку
+              if (cachedPlaceholderType === 'video' && cachedPlaceholderSrc) {
+                vjsPlayer.src({ src: cachedPlaceholderSrc, type: 'video/mp4' });
+                vjsPlayer.loop(true);
+                vjsPlayer.muted(true);
+                vjsPlayer.volume(0);
+                currentPlaceholderSrc = cachedPlaceholderSrc;
+                currentFileState = { type: 'placeholder', file: cachedPlaceholderSrc, page: 1 };
+                
+                // Показываем заглушку и запускаем воспроизведение
+                vjsPlayer.one('loadedmetadata', () => {
+                  hideVideoJsControls();
+                  vjsPlayer.one('loadeddata', () => {
+                    requestAnimationFrame(() => {
+                      requestAnimationFrame(() => {
+                        videoContainer.classList.remove('preloading');
+                        videoContainer.classList.add('visible');
+                        idle.classList.remove('visible');
+                        vjsPlayer.one('canplay', () => {
+                          setTimeout(() => {
+                            vjsPlayer.play().catch(err => {
+                              console.error('[Player] ❌ Ошибка воспроизведения кэшированной заглушки:', err);
+                            });
+                          }, 200);
+                        });
+                      });
+                    });
+                  });
+                });
+              }
+            }
           });
           
           // КРИТИЧНО для Android: обработчики буферизации и зависания
@@ -554,6 +589,8 @@ if (!device_id || !device_id.trim()) {
   }
 
   let currentPlaceholderSrc = null; // Отслеживаем текущую заглушку
+  let cachedPlaceholderSrc = null; // Кэшированная заглушка (для восстановления при ошибках)
+  let cachedPlaceholderType = null; // Тип кэшированной заглушки ('video' или 'image')
   
   async function showPlaceholder(forceRefresh = false) {
     
@@ -563,6 +600,62 @@ if (!device_id || !device_id.trim()) {
     }
     
     const src = await resolvePlaceholder(forceRefresh);
+    
+    // КРИТИЧНО: Если сервер недоступен (src === null), но есть кэшированная заглушка - используем её
+    if (!src && cachedPlaceholderSrc && !forceRefresh) {
+      console.log('[Player] ⚠️ Сервер недоступен, используем кэшированную заглушку');
+      const cachedSrc = cachedPlaceholderSrc;
+      const cachedType = cachedPlaceholderType;
+      
+      if (cachedType === 'video' && vjsPlayer) {
+        // Восстанавливаем видео заглушку из кэша
+        vjsPlayer.loop(true);
+        vjsPlayer.muted(true);
+        vjsPlayer.volume(0);
+        currentPlaceholderSrc = cachedSrc;
+        currentFileState = { type: 'placeholder', file: cachedSrc, page: 1 };
+        hideVideoJsControls();
+        
+        vjsPlayer.src({ src: cachedSrc, type: 'video/mp4' });
+        vjsPlayer.one('loadedmetadata', () => {
+          hideVideoJsControls();
+          vjsPlayer.one('loadeddata', () => {
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                videoContainer.classList.remove('preloading');
+                videoContainer.classList.add('visible');
+                idle.classList.remove('visible');
+                vjsPlayer.one('canplay', () => {
+                  setTimeout(() => {
+                    vjsPlayer.play().catch(err => {
+                      console.error('[Player] ❌ Ошибка воспроизведения кэшированной заглушки:', err);
+                    });
+                  }, 200);
+                });
+              });
+            });
+          });
+        });
+        return;
+      } else if (cachedType === 'image' && cachedSrc) {
+        // Восстанавливаем изображение заглушку из кэша
+        const tempImg = new Image();
+        tempImg.onload = () => {
+          idle.classList.remove('visible');
+          img.src = cachedSrc;
+          currentPlaceholderSrc = cachedSrc;
+          currentFileState = { type: 'placeholder', file: cachedSrc, page: 1 };
+          show(img);
+        };
+        tempImg.onerror = () => {
+          // Если даже кэш не загрузился - показываем ошибку
+          idle.classList.remove('visible');
+          [videoContainer, img1, img2, pdf].forEach(el => el && el.classList.remove('visible', 'preloading'));
+        };
+        tempImg.src = cachedSrc;
+        return;
+      }
+    }
     
     if (!src) {
       // КРИТИЧНО: Убираем черный экран, чтобы показывался бренд-фон
@@ -611,12 +704,21 @@ if (!device_id || !device_id.trim()) {
     }
     
     // КРИТИЧНО: Если та же заглушка уже играет - не перезагружаем (кроме force refresh)
-    if (!forceRefresh && currentPlaceholderSrc === src && vjsPlayer && !vjsPlayer.paused()) {
+    // Также не прерываем воспроизведение при перезагрузке заглушки, если она уже играет
+    const isSamePlaceholderPlaying = !forceRefresh && currentPlaceholderSrc === src && 
+                                     ((vjsPlayer && !vjsPlayer.paused() && currentFileState.type === 'placeholder') ||
+                                      (img1.classList.contains('visible') && img1.src === src) ||
+                                      (img2.classList.contains('visible') && img2.src === src));
+    if (isSamePlaceholderPlaying) {
       return;
     }
     
     currentPlaceholderSrc = src;
     currentFileState = { type: 'placeholder', file: src, page: 1 }; // КРИТИЧНО: Сбрасываем состояние
+    
+    // КРИТИЧНО: Сохраняем заглушку в кэш для восстановления при ошибках
+    cachedPlaceholderSrc = src;
+    cachedPlaceholderType = /\.(png|jpg|jpeg|gif|webp)$/i.test(src) ? 'image' : 'video';
     
     const isImage = /\.(png|jpg|jpeg|gif|webp)$/i.test(src);
     
@@ -641,6 +743,93 @@ if (!device_id || !device_id.trim()) {
       
       tempImg.onerror = () => {
         console.error('[Player] ❌ Ошибка загрузки заглушки-изображения');
+        
+        // КРИТИЧНО: При ошибке загрузки используем кэшированную заглушку, если она есть
+        if (cachedPlaceholderSrc && cachedPlaceholderSrc !== src) {
+          console.log('[Player] ⚠️ Ошибка загрузки изображения, используем кэшированную заглушку');
+          const cachedSrc = cachedPlaceholderSrc;
+          const cachedType = cachedPlaceholderType;
+          
+          if (cachedType === 'video' && vjsPlayer) {
+            // Используем видео заглушку из кэша
+            vjsPlayer.loop(true);
+            vjsPlayer.muted(true);
+            vjsPlayer.volume(0);
+            currentPlaceholderSrc = cachedSrc;
+            currentFileState = { type: 'placeholder', file: cachedSrc, page: 1 };
+            hideVideoJsControls();
+            
+            vjsPlayer.src({ src: cachedSrc, type: 'video/mp4' });
+            vjsPlayer.one('loadedmetadata', () => {
+              hideVideoJsControls();
+              vjsPlayer.one('loadeddata', () => {
+                requestAnimationFrame(() => {
+                  requestAnimationFrame(() => {
+                    videoContainer.classList.remove('preloading');
+                    videoContainer.classList.add('visible');
+                    idle.classList.remove('visible');
+                    vjsPlayer.one('canplay', () => {
+                      setTimeout(() => {
+                        vjsPlayer.play().catch(err => {
+                          console.error('[Player] ❌ Ошибка воспроизведения кэшированной заглушки:', err);
+                        });
+                      }, 200);
+                    });
+                  });
+                });
+              });
+            });
+            return;
+          } else if (cachedType === 'image' && cachedSrc) {
+            // Пробуем загрузить кэшированное изображение
+            const cachedImg = new Image();
+            cachedImg.onload = () => {
+              idle.classList.remove('visible');
+              img.src = cachedSrc;
+              currentPlaceholderSrc = cachedSrc;
+              currentFileState = { type: 'placeholder', file: cachedSrc, page: 1 };
+              show(img);
+            };
+            cachedImg.onerror = () => {
+              // Если даже кэш не загрузился - показываем ошибку
+              idle.classList.remove('visible');
+              if (preview) {
+                pdf.srcdoc = `
+                  <!DOCTYPE html>
+                  <html>
+                    <head>
+                      <meta charset="utf-8">
+                      <style>
+                        body { 
+                          margin:0; padding:2rem; 
+                          display:flex; align-items:center; justify-content:center; 
+                          min-height:100vh; 
+                          background:#1e293b; color:#fff; 
+                          font-family:sans-serif; text-align:center;
+                        }
+                        h2 { color: #fbbf24; margin-bottom: 1rem; }
+                        p { color: #cbd5e1; line-height: 1.5; }
+                      </style>
+                    </head>
+                    <body>
+                      <div>
+                        <h2>⚠️ Ошибка загрузки заглушки</h2>
+                        <p>Изображение не найдено или повреждено</p>
+                      </div>
+                    </body>
+                  </html>
+                `;
+                show(pdf);
+              } else {
+                [videoContainer, img1, img2, pdf, idle].forEach(el => el && el.classList.remove('visible', 'preloading'));
+              }
+            };
+            cachedImg.src = cachedSrc;
+            return;
+          }
+        }
+        
+        // Если кэша нет - показываем ошибку
         // КРИТИЧНО: Убираем черный экран при ошибке загрузки
         idle.classList.remove('visible');
         
@@ -689,18 +878,69 @@ if (!device_id || !device_id.trim()) {
       // Видео заглушка через Video.js
       
       if (vjsPlayer) {
-        // КРИТИЧНО: Финальная проверка доступности ПЕРЕД установкой src в Video.js
-        // Избегаем ошибок "no supported source" для несуществующих файлов
-        (async () => {
-          try {
-            const finalCheck = await fetch(src, { method: 'HEAD' });
-            if (!finalCheck.ok) {
-              console.error(`[Player] ❌ Файл заглушки недоступен: ${finalCheck.status}`);
-              // КРИТИЧНО: Убираем черный экран при ошибке загрузки
-              idle.classList.remove('visible');
-              
-              // Показываем предупреждение вместо ошибки Video.js
-              if (preview) {
+            // КРИТИЧНО: Финальная проверка доступности ПЕРЕД установкой src в Video.js
+            // Избегаем ошибок "no supported source" для несуществующих файлов
+            (async () => {
+              try {
+                const finalCheck = await fetch(src, { method: 'HEAD' });
+                if (!finalCheck.ok) {
+                  console.error(`[Player] ❌ Файл заглушки недоступен: ${finalCheck.status}`);
+                  
+                  // КРИТИЧНО: При недоступности сервера используем кэшированную заглушку
+                  if (cachedPlaceholderSrc && cachedPlaceholderSrc !== src) {
+                    console.log('[Player] ⚠️ Сервер недоступен, используем кэшированную заглушку');
+                    // Используем кэшированную заглушку вместо новой
+                    const cachedSrc = cachedPlaceholderSrc;
+                    const cachedType = cachedPlaceholderType;
+                    if (cachedType === 'video' && vjsPlayer) {
+                      vjsPlayer.loop(true);
+                      vjsPlayer.muted(true);
+                      vjsPlayer.volume(0);
+                      currentPlaceholderSrc = cachedSrc;
+                      currentFileState = { type: 'placeholder', file: cachedSrc, page: 1 };
+                      hideVideoJsControls();
+                      
+                      vjsPlayer.src({ src: cachedSrc, type: 'video/mp4' });
+                      vjsPlayer.one('loadedmetadata', () => {
+                        hideVideoJsControls();
+                        vjsPlayer.one('loadeddata', () => {
+                          requestAnimationFrame(() => {
+                            requestAnimationFrame(() => {
+                              videoContainer.classList.remove('preloading');
+                              videoContainer.classList.add('visible');
+                              idle.classList.remove('visible');
+                              vjsPlayer.one('canplay', () => {
+                                setTimeout(() => {
+                                  vjsPlayer.play().catch(err => {
+                                    console.error('[Player] ❌ Ошибка воспроизведения кэшированной заглушки:', err);
+                                  });
+                                }, 200);
+                              });
+                            });
+                          });
+                        });
+                      });
+                      return;
+                    } else if (cachedType === 'image') {
+                      const tempImg = new Image();
+                      tempImg.onload = () => {
+                        idle.classList.remove('visible');
+                        img.src = cachedSrc;
+                        currentPlaceholderSrc = cachedSrc;
+                        currentFileState = { type: 'placeholder', file: cachedSrc, page: 1 };
+                        show(img);
+                      };
+                      tempImg.src = cachedSrc;
+                      return;
+                    }
+                  }
+                  
+                  // Если кэша нет - показываем ошибку
+                  // КРИТИЧНО: Убираем черный экран при ошибке загрузки
+                  idle.classList.remove('visible');
+                  
+                  // Показываем предупреждение вместо ошибки Video.js
+                  if (preview) {
                 pdf.srcdoc = `
                   <!DOCTYPE html>
                   <html>
@@ -788,6 +1028,56 @@ if (!device_id || !device_id.trim()) {
             }
           } catch (e) {
             console.error('[Player] ❌ Ошибка проверки или загрузки заглушки:', e);
+            
+            // КРИТИЧНО: При ошибке загрузки используем кэшированную заглушку, если она есть
+            if (cachedPlaceholderSrc) {
+              console.log('[Player] ⚠️ Ошибка загрузки, используем кэшированную заглушку');
+              const cachedSrc = cachedPlaceholderSrc;
+              const cachedType = cachedPlaceholderType;
+              if (cachedType === 'video' && vjsPlayer) {
+                vjsPlayer.loop(true);
+                vjsPlayer.muted(true);
+                vjsPlayer.volume(0);
+                currentPlaceholderSrc = cachedSrc;
+                currentFileState = { type: 'placeholder', file: cachedSrc, page: 1 };
+                hideVideoJsControls();
+                
+                vjsPlayer.src({ src: cachedSrc, type: 'video/mp4' });
+                vjsPlayer.one('loadedmetadata', () => {
+                  hideVideoJsControls();
+                  vjsPlayer.one('loadeddata', () => {
+                    requestAnimationFrame(() => {
+                      requestAnimationFrame(() => {
+                        videoContainer.classList.remove('preloading');
+                        videoContainer.classList.add('visible');
+                        idle.classList.remove('visible');
+                        vjsPlayer.one('canplay', () => {
+                          setTimeout(() => {
+                            vjsPlayer.play().catch(err => {
+                              console.error('[Player] ❌ Ошибка воспроизведения кэшированной заглушки:', err);
+                            });
+                          }, 200);
+                        });
+                      });
+                    });
+                  });
+                });
+                return;
+              } else if (cachedType === 'image') {
+                const tempImg = new Image();
+                tempImg.onload = () => {
+                  idle.classList.remove('visible');
+                  img.src = cachedSrc;
+                  currentPlaceholderSrc = cachedSrc;
+                  currentFileState = { type: 'placeholder', file: cachedSrc, page: 1 };
+                  show(img);
+                };
+                tempImg.src = cachedSrc;
+                return;
+              }
+            }
+            
+            // Если кэша нет - показываем ошибку
             // КРИТИЧНО: Убираем черный экран при ошибке
             idle.classList.remove('visible');
             // Скрываем все слои - показывается бренд-фон
@@ -1557,7 +1847,61 @@ if (!device_id || !device_id.trim()) {
       registrationTimeout = null;
     }
     
-    // КРИТИЧНО: Для Android - явное переподключение после disconnect
+    // КРИТИЧНО: При потере связи НЕ останавливаем заглушку!
+    // Заглушка продолжает играть (из кэша браузера), переподключение происходит в фоне
+    const isPlaceholderPlaying = currentFileState.type === 'placeholder' && 
+                                  ((vjsPlayer && !vjsPlayer.paused()) || 
+                                   (img1.classList.contains('visible') || img2.classList.contains('visible')));
+    
+    if (isPlaceholderPlaying) {
+      console.log('[Player] ℹ️ Потеря связи: заглушка продолжает играть, переподключение в фоне...');
+      // Заглушка продолжает играть, не показываем черный экран
+    } else if (cachedPlaceholderSrc) {
+      // Если заглушка не играет, но есть в кэше - запускаем её
+      console.log('[Player] ℹ️ Потеря связи: запускаем кэшированную заглушку...');
+      currentPlaceholderSrc = cachedPlaceholderSrc;
+      if (cachedPlaceholderType === 'video' && vjsPlayer) {
+        // Восстанавливаем видео заглушку из кэша
+        vjsPlayer.src({ src: cachedPlaceholderSrc, type: 'video/mp4' });
+        vjsPlayer.loop(true);
+        vjsPlayer.muted(true);
+        vjsPlayer.volume(0);
+        currentFileState = { type: 'placeholder', file: cachedPlaceholderSrc, page: 1 };
+        hideVideoJsControls();
+        
+        vjsPlayer.one('loadedmetadata', () => {
+          hideVideoJsControls();
+          vjsPlayer.one('loadeddata', () => {
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                videoContainer.classList.remove('preloading');
+                videoContainer.classList.add('visible');
+                idle.classList.remove('visible');
+                vjsPlayer.one('canplay', () => {
+                  setTimeout(() => {
+                    vjsPlayer.play().catch(err => {
+                      console.error('[Player] ❌ Ошибка воспроизведения кэшированной заглушки:', err);
+                    });
+                  }, 200);
+                });
+              });
+            });
+          });
+        });
+      } else if (cachedPlaceholderType === 'image' && cachedPlaceholderSrc) {
+        // Восстанавливаем изображение заглушку из кэша
+        const tempImg = new Image();
+        tempImg.onload = () => {
+          idle.classList.remove('visible');
+          img.src = cachedPlaceholderSrc;
+          currentFileState = { type: 'placeholder', file: cachedPlaceholderSrc, page: 1 };
+          show(img);
+        };
+        tempImg.src = cachedPlaceholderSrc;
+      }
+    }
+    
+    // КРИТИЧНО: Для Android - явное переподключение после disconnect (в фоне)
     if (reason === 'transport close' || reason === 'transport error') {
       setTimeout(() => {
         if (!preview && device_id) {
@@ -1573,6 +1917,10 @@ if (!device_id || !device_id.trim()) {
   socket.on('reconnect', () => {
     isRegistered = false;
     registerInFlight = false;
+    
+    // КРИТИЧНО: При переподключении НЕ показываем черный экран
+    // Заглушка продолжает играть, просто регистрируемся заново
+    console.log('[Player] ✅ Переподключено, регистрация в фоне...');
     registerPlayer();
   });
   
