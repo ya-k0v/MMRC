@@ -3,6 +3,63 @@ import { sortDevices, debounce, loadNodeNames, getPageSize } from './utils.js';
 import { ensureAuth, speakerFetch, logout } from './speaker/auth.js';
 import { getCrossIcon } from './shared/svg-icons.js';
 
+const SPEAKER_CACHE_SESSION_FLAG = 'vc-speaker-cache-cleared-v1';
+
+clearPwaCachesOnLaunch();
+
+async function clearPwaCachesOnLaunch() {
+  if (typeof window === 'undefined') return;
+  if (!('serviceWorker' in navigator)) return;
+  if (!navigator.onLine) return; // Не чистим кэш офлайн, иначе пропадёт офлайн-режим
+  if (sessionStorage.getItem(SPEAKER_CACHE_SESSION_FLAG) === '1') return;
+
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    const worker = registration?.active;
+    if (!worker) return;
+
+    const result = await sendMessageToServiceWorker(worker, { type: 'CLEAR_CACHE' });
+    sessionStorage.setItem(SPEAKER_CACHE_SESSION_FLAG, '1');
+    console.log('[Speaker] PWA cache cleared on launch', result);
+
+    // После очистки кэша перезагружаем страницу, чтобы все ресурсы подтянулись заново
+    setTimeout(() => {
+      window.location.reload();
+    }, 150);
+  } catch (err) {
+    sessionStorage.removeItem(SPEAKER_CACHE_SESSION_FLAG);
+    console.warn('[Speaker] Не удалось очистить PWA-кэш при запуске:', err);
+  }
+}
+
+function sendMessageToServiceWorker(worker, message, timeoutMs = 5000) {
+  if (typeof MessageChannel === 'undefined') {
+    // Фолбэк: отправляем без подтверждения
+    worker.postMessage(message);
+    return Promise.resolve({ success: false, note: 'MessageChannel not supported' });
+  }
+
+  return new Promise((resolve, reject) => {
+    const channel = new MessageChannel();
+    const timer = setTimeout(() => {
+      channel.port1.onmessage = null;
+      reject(new Error('Service Worker response timeout'));
+    }, timeoutMs);
+
+    channel.port1.onmessage = (event) => {
+      clearTimeout(timer);
+      resolve(event.data);
+    };
+
+    try {
+      worker.postMessage(message, [channel.port2]);
+    } catch (err) {
+      clearTimeout(timer);
+      reject(err);
+    }
+  });
+}
+
 const socket = io();
 
 const tvList = document.getElementById('tvList');

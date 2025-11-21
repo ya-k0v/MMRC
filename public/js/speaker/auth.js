@@ -60,7 +60,7 @@ export async function speakerFetch(url, opts = {}) {
   const token = localStorage.getItem('accessToken');
   
   if (!token) {
-    window.location.href = '/login.html';
+    window.location.href = '/index.html';
     throw new Error('Отсутствует токен авторизации');
   }
   

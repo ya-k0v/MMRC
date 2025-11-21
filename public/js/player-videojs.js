@@ -879,6 +879,12 @@ if (!device_id || !device_id.trim()) {
     }
     
     if (!src) {
+      // Нет заглушки или сервер недоступен — сбрасываем состояние и прогресс,
+      // чтобы панель спикера не показывала «висящий» контент.
+      currentFileState = { type: 'idle', file: null, page: 1 };
+      if (emitProgressStop) {
+        emitProgressStop();
+      }
       // КРИТИЧНО: Убираем черный экран, чтобы показывался бренд-фон
       idle.classList.remove('visible');
       
