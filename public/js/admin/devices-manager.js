@@ -47,7 +47,7 @@ export function renderTVList(devicesCache, readyDevices, currentDeviceId, nodeNa
                   title="${isReady ? 'Готов' : 'Не готов'}" 
                   aria-label="${isReady ? 'online' : 'offline'}"></span>
           </div>
-          <div class="meta tvTile-meta">ID: ${d.device_id}</div>
+          <div class="meta tvTile-meta">ID: ${d.device_id}${d.ipAddress ? ` • IP: ${d.ipAddress}` : ''}</div>
           <div class="meta">Файлов: ${filesCount}</div>
         </div>
       </li>

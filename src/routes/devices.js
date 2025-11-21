@@ -43,7 +43,8 @@ export function createDevicesRouter(deps) {
         streaming: true 
       },
       platform: d.platform || 'Unknown',
-      lastSeen: d.lastSeen || null
+      lastSeen: d.lastSeen || null,
+      ipAddress: d.ipAddress || null
     })));
   });
   

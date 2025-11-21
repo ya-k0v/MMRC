@@ -31,6 +31,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
     <div class="meta" style="margin-top:var(--space-sm); margin-bottom:var(--space-sm); display:flex; align-items:center; flex-wrap:wrap; gap:4px">
       ${DEVICE_ICONS[d.deviceType] || DEVICE_ICONS['browser']} <strong>${DEVICE_TYPE_NAMES[d.deviceType] || d.deviceType || 'Browser'}</strong>
       ${d.platform && d.platform !== 'Unknown' ? `<span>• ${d.platform}</span>` : ''}
+      ${d.ipAddress ? `<span>• IP: ${d.ipAddress}</span>` : ''}
       <span>• ID: ${d.device_id}</span>
       <span>• Файлов: ${d.files?.length || 0}</span>
       <span style="display:inline-flex; align-items:center;">• ${readyDevices.has(d.device_id) ? getCheckIcon(14, 'var(--success)') + ' Готов' : getCrossIcon(14, 'var(--danger)') + ' Не готов'}</span>

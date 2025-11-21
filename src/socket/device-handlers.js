@@ -43,12 +43,38 @@ export function setupDeviceHandlers(socket, deps) {
         streaming: true
       };
       
+      // Получаем IP адрес клиента
+      let clientIP = null;
+      try {
+        // Socket.IO 4.x+
+        if (socket.handshake?.address) {
+          clientIP = typeof socket.handshake.address === 'string' 
+            ? socket.handshake.address 
+            : socket.handshake.address?.address;
+        }
+        // Socket.IO 3.x и fallback
+        if (!clientIP && socket.request?.socket?.remoteAddress) {
+          clientIP = socket.request.socket.remoteAddress;
+        }
+        // Старые версии
+        if (!clientIP && socket.request?.connection?.remoteAddress) {
+          clientIP = socket.request.connection.remoteAddress;
+        }
+        // Обрабатываем IPv6 маппинг
+        if (clientIP && clientIP.startsWith('::ffff:')) {
+          clientIP = clientIP.replace('::ffff:', '');
+        }
+      } catch (e) {
+        // Игнорируем ошибки получения IP
+      }
+      
       // Обновляем информацию об устройстве
       const deviceType = device_type || 'browser';
       const devicePlatform = platform || 'Unknown';
       devices[device_id].deviceType = deviceType;
       devices[device_id].capabilities = capabilities || defaultCapabilities;
       devices[device_id].platform = devicePlatform;
+      devices[device_id].ipAddress = clientIP || null;
       devices[device_id].lastSeen = new Date().toISOString();
       
       // Проверяем было ли устройство подключено ранее
@@ -129,9 +155,16 @@ export function setupDeviceHandlers(socket, deps) {
   // player/ping - Keep-alive пинг
   socket.on('player/ping', () => {
     if (socket.data.device_id) {
+      const device_id = socket.data.device_id;
+      
+      // Обновляем lastSeen при каждом ping
+      if (devices[device_id]) {
+        devices[device_id].lastSeen = new Date().toISOString();
+      }
+      
       socket.emit('player/pong');
       if (socket.data) socket.data.lastPing = Date.now();
-      logSocket('debug', `Ping from ${socket.data.device_id}`, { socketId: socket.id });
+      logSocket('debug', `Ping from ${device_id}`, { socketId: socket.id });
     }
   });
   
