@@ -951,8 +951,18 @@ if (!device_id || !device_id.trim()) {
     const isImage = /\.(png|jpg|jpeg|gif|webp)$/i.test(src);
     
     if (isImage) {
-      if (vjsPlayer) vjsPlayer.pause();
+      // КРИТИЧНО: Скрываем видео и PDF перед показом изображения-заглушки
+      if (vjsPlayer) {
+        vjsPlayer.pause();
+        // Скрываем videoContainer
+        videoContainer.classList.remove('visible', 'preloading');
+      }
       pdf.removeAttribute('src');
+      pdf.classList.remove('visible', 'preloading');
+      
+      // КРИТИЧНО: Скрываем оба буфера изображений перед показом нового
+      img1.classList.remove('visible', 'preloading');
+      img2.classList.remove('visible', 'preloading');
       
       // КРИТИЧНО: Дожидаемся загрузки изображения ПЕРЕД показом!
       // Иначе показывается черный экран
@@ -962,18 +972,10 @@ if (!device_id || !device_id.trim()) {
         // КРИТИЧНО: Убираем черный экран перед показом заглушки
         idle.classList.remove('visible');
         
-        // КРИТИЧНО: Если заглушка уже отображается - не показываем черный экран
-        const isAlreadyVisible = (img1.classList.contains('visible') && img1.src === src) ||
-                                  (img2.classList.contains('visible') && img2.src === src);
-        
-        if (isAlreadyVisible) {
-          // Заглушка уже видна - просто обновляем состояние, не показываем черный экран
-          img.src = src;
-          show(img, true); // skipTransition = true чтобы избежать черного экрана
-        } else {
-          img.src = src;
-          show(img);
-        }
+        // Для заглушки-изображения никогда не показываем черный экран —
+        // мгновенно показываем кадр поверх видео/других слоев
+        img.src = src;
+        show(img, true); // skipTransition = true чтобы избежать черного экрана
       };
       
       tempImg.onload = () => {
@@ -1473,6 +1475,7 @@ if (!device_id || !device_id.trim()) {
       hideVideoJsControls();
     }
     pdf.removeAttribute('src');
+    pdf.classList.remove('visible', 'preloading');
     
     // Убеждаемся что videoContainer скрыт классами (без display:none)
     videoContainer.classList.remove('visible', 'preloading');
@@ -1573,8 +1576,10 @@ if (!device_id || !device_id.trim()) {
     }
     pdf.removeAttribute('src');
     
-    // Убеждаемся что videoContainer скрыт классами (без display:none)
+    // КРИТИЧНО: Скрываем videoContainer и оба буфера изображений перед показом PDF/PPTX
     videoContainer.classList.remove('visible', 'preloading');
+    img1.classList.remove('visible', 'preloading');
+    img2.classList.remove('visible', 'preloading');
     
     const { current, next } = getImageBuffers();
     // Для презентаций фон ДОЛЖЕН быть черным, без логотипа
@@ -1671,9 +1676,13 @@ if (!device_id || !device_id.trim()) {
     }
     
     if (type === 'video') {
+      // КРИТИЧНО: Скрываем оба буфера изображений перед показом видео
       img1.removeAttribute('src');
       img2.removeAttribute('src');
+      img1.classList.remove('visible', 'preloading');
+      img2.classList.remove('visible', 'preloading');
       pdf.removeAttribute('src');
+      pdf.classList.remove('visible', 'preloading');
       
       if (!file && vjsPlayer) {
         // Resume текущего видео (нет файла = продолжить с паузы)
@@ -2007,7 +2016,7 @@ if (!device_id || !device_id.trim()) {
       // Загружаем заглушку в фоне, затем мягко показываем (без черного экрана)
       setTimeout(async () => {
         try {
-          await showPlaceholder(true);
+          await showPlaceholder();
         } catch (e) {
           console.error('[Player] ❌ Ошибка загрузки заглушки при stop:', e);
           // Убираем черный экран при ошибке, показываем бренд-фон
