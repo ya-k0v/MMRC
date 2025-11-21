@@ -706,10 +706,12 @@ if (!device_id || !device_id.trim()) {
     // КРИТИЧНО: Если та же заглушка уже играет - не перезагружаем (кроме force refresh)
     // Также не прерываем воспроизведение при перезагрузке заглушки, если она уже играет
     const isSamePlaceholderPlaying = !forceRefresh && currentPlaceholderSrc === src && 
-                                     ((vjsPlayer && !vjsPlayer.paused() && currentFileState.type === 'placeholder') ||
+                                     ((vjsPlayer && !vjsPlayer.paused() && currentFileState.type === 'placeholder' && videoContainer.classList.contains('visible')) ||
                                       (img1.classList.contains('visible') && img1.src === src) ||
                                       (img2.classList.contains('visible') && img2.src === src));
     if (isSamePlaceholderPlaying) {
+      // КРИТИЧНО: Убеждаемся что черный экран скрыт
+      idle.classList.remove('visible');
       return;
     }
     
@@ -733,8 +735,19 @@ if (!device_id || !device_id.trim()) {
       const showImagePlaceholder = () => {
         // КРИТИЧНО: Убираем черный экран перед показом заглушки
         idle.classList.remove('visible');
-        img.src = src;
-        show(img);
+        
+        // КРИТИЧНО: Если заглушка уже отображается - не показываем черный экран
+        const isAlreadyVisible = (img1.classList.contains('visible') && img1.src === src) ||
+                                  (img2.classList.contains('visible') && img2.src === src);
+        
+        if (isAlreadyVisible) {
+          // Заглушка уже видна - просто обновляем состояние, не показываем черный экран
+          img.src = src;
+          show(img, true); // skipTransition = true чтобы избежать черного экрана
+        } else {
+          img.src = src;
+          show(img);
+        }
       };
       
       tempImg.onload = () => {
@@ -981,13 +994,39 @@ if (!device_id || !device_id.trim()) {
             // КРИТИЧНО: Скрываем контролы
             hideVideoJsControls();
             
+            // КРИТИЧНО: Проверяем, не играет ли уже эта заглушка - не показываем черный экран
+            const isAlreadyPlayingPlaceholder = currentPlaceholderSrc === src && 
+                                                 vjsPlayer && !vjsPlayer.paused() && 
+                                                 videoContainer.classList.contains('visible');
+            
+            if (isAlreadyPlayingPlaceholder && !forceRefresh) {
+              // Заглушка уже играет - ничего не делаем, убираем черный экран
+              idle.classList.remove('visible');
+              return;
+            }
+            
             // Делаем плавный переход как видео→видео: слой уходит в прозрачность, под ним виден бренд-фон
             const TRANSITION_MS_PLACEHOLDER = 500;
             const needFadeOutPlaceholder = videoContainer.classList.contains('visible');
-            videoContainer.classList.remove('visible');
-            videoContainer.classList.add('preloading');
+            
+            // КРИТИЧНО: Не скрываем videoContainer если заглушка уже играет
+            if (!isAlreadyPlayingPlaceholder) {
+              videoContainer.classList.remove('visible');
+              videoContainer.classList.add('preloading');
+            }
             
             const setPlaceholderSrcAndShow = () => {
+              // КРИТИЧНО: Проверяем еще раз, не играет ли уже эта заглушка
+              const isStillPlaying = currentPlaceholderSrc === src && 
+                                       vjsPlayer && !vjsPlayer.paused() && 
+                                       videoContainer.classList.contains('visible');
+              
+              if (isStillPlaying && !forceRefresh) {
+                // Заглушка уже играет - ничего не делаем, только убираем черный экран
+                idle.classList.remove('visible');
+                return;
+              }
+              
               vjsPlayer.src({ src: src, type: 'video/mp4' });
               
               // Ждем готовности метаданных, затем показываем новый слой с fade-in
@@ -1002,6 +1041,8 @@ if (!device_id || !device_id.trim()) {
                     requestAnimationFrame(() => {
                       videoContainer.classList.remove('preloading');
                       videoContainer.classList.add('visible');
+                      // КРИТИЧНО: Убираем черный экран сразу, не ждем fade-in
+                      idle.classList.remove('visible');
                       
                       // Ждём canplay перед запуском воспроизведения
                       vjsPlayer.one('canplay', () => {
@@ -1020,7 +1061,7 @@ if (!device_id || !device_id.trim()) {
             };
             
             // Если слой был видимым — дождёмся завершения fade-out, иначе сразу ставим заглушку
-            if (needFadeOutPlaceholder) {
+            if (needFadeOutPlaceholder && !isAlreadyPlayingPlaceholder) {
               waitForOpacityTransitionEnd(videoContainer, 'opacity', TRANSITION_MS_PLACEHOLDER + 150)
                 .then(() => setPlaceholderSrcAndShow());
             } else {
@@ -1432,7 +1473,7 @@ if (!device_id || !device_id.trim()) {
         
         
         if (isSameFile && vjsPlayer) {
-          // Тот же файл - просто возобновляем (это нажатие Play после паузы)
+          // Тот же файл - просто возобновляем (это нажатие Play после паузы или переподключение)
           currentFileState = { type: 'video', file, page: 1 };
           
           vjsPlayer.muted(soundUnlocked && !forceMuted ? false : true);
@@ -1445,11 +1486,17 @@ if (!device_id || !device_id.trim()) {
           
           // КРИТИЧНО: НЕ проверяем ended() на Android - он врет после паузы!
           // Просто возобновляем с текущей позиции (currentTime сохраняется)
+          // КРИТИЧНО: При переподключении видео продолжает играть из кэша браузера
+          // Не перезагружаем src - просто возобновляем воспроизведение если оно остановилось
           if (vjsPlayer.paused()) {
             vjsPlayer.play().then(() => {
+              console.log('[Player] ✅ Возобновлено воспроизведение того же файла');
             }).catch(err => {
               console.error('[Player] ❌ Ошибка resume:', err);
             });
+          } else {
+            // Видео уже играет - ничего не делаем, продолжаем воспроизведение
+            console.log('[Player] ✅ Видео уже играет, продолжаем...');
           }
           return;
         }
@@ -1730,11 +1777,58 @@ if (!device_id || !device_id.trim()) {
 
   socket.on('player/state', (cur) => {
     if (!cur || cur.type === 'idle' || !cur.file) {
-      showPlaceholder();
-      currentFileState = { type: null, file: null, page: 1 };
+      // КРИТИЧНО: Не вызываем showPlaceholder() если заглушка уже играет
+      // Это предотвращает показ черного экрана при переподключении
+      const isPlaceholderPlaying = currentFileState.type === 'placeholder' && 
+                                    ((vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) || 
+                                     (img1.classList.contains('visible') || img2.classList.contains('visible')));
+      
+      if (!isPlaceholderPlaying) {
+        // Заглушка не играет - показываем её (но без черного экрана если она уже кэширована)
+        if (cachedPlaceholderSrc) {
+          // Используем кэшированную заглушку без перезагрузки
+          currentPlaceholderSrc = cachedPlaceholderSrc;
+          currentFileState = { type: 'placeholder', file: cachedPlaceholderSrc, page: 1 };
+          // Не вызываем showPlaceholder() - заглушка уже должна быть видна
+        } else {
+          // Кэша нет - загружаем заглушку
+          showPlaceholder();
+        }
+        currentFileState = { type: null, file: null, page: 1 };
+      } else {
+        // Заглушка уже играет - просто обновляем состояние
+        currentFileState = { type: 'placeholder', file: currentPlaceholderSrc || cachedPlaceholderSrc, page: 1 };
+      }
       return;
     }
-    // Применяем состояние (для переподключения)
+    
+    // КРИТИЧНО: При переподключении НЕ сбрасываем контент если он уже играет (как в Android)
+    // Проверяем, не играет ли уже тот же файл
+    const isSameContentPlaying = currentFileState.type === cur.type && 
+                                  currentFileState.file === cur.file &&
+                                  ((cur.type === 'video' && vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) ||
+                                   (cur.type === 'image' && (img1.classList.contains('visible') || img2.classList.contains('visible'))) ||
+                                   (cur.type === 'pdf' && (img1.classList.contains('visible') || img2.classList.contains('visible'))) ||
+                                   (cur.type === 'pptx' && (img1.classList.contains('visible') || img2.classList.contains('visible'))) ||
+                                   (cur.type === 'folder' && (img1.classList.contains('visible') || img2.classList.contains('visible'))));
+    
+    if (isSameContentPlaying) {
+      // Тот же контент уже играет - продолжаем воспроизведение, не перезагружаем
+      console.log('[Player] ✅ Переподключено: контент уже играет, продолжаем воспроизведение...');
+      // Обновляем состояние, но не перезагружаем
+      currentFileState = { type: cur.type, file: cur.file, page: cur.page || 1 };
+      
+      // Для видео - убеждаемся что воспроизведение продолжается
+      if (cur.type === 'video' && vjsPlayer && vjsPlayer.paused()) {
+        vjsPlayer.play().catch(err => {
+          console.error('[Player] ❌ Ошибка возобновления:', err);
+        });
+      }
+      return;
+    }
+    
+    // Контент не играет или другой - применяем состояние (для переподключения)
+    console.log('[Player] 📡 Применяем состояние при переподключении:', cur.type, cur.file);
     socket.emit('control/play', { device_id, file: cur.file });
   });
 
@@ -1786,6 +1880,20 @@ if (!device_id || !device_id.trim()) {
     registerInFlight = false;
     isRegistered = true;
     startHeartbeat();
+    
+    // КРИТИЧНО: При регистрации НЕ сбрасываем контент если он уже играет (как в Android)
+    // Сервер отправит player/state, который обработает состояние корректно
+    const isContentPlaying = currentFileState.type && currentFileState.type !== 'placeholder' &&
+                             ((currentFileState.type === 'video' && vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) ||
+                              (currentFileState.type !== 'video' && (img1.classList.contains('visible') || img2.classList.contains('visible'))));
+    
+    if (isContentPlaying) {
+      console.log('[Player] ✅ Зарегистрировано: контент играет, продолжаем...');
+      // Не трогаем контент - ждем player/state от сервера
+    } else if (currentFileState.type === 'placeholder') {
+      console.log('[Player] ✅ Зарегистрировано: заглушка играет, продолжаем...');
+      // Заглушка играет - продолжаем
+    }
   });
   
   function startHeartbeat() {
@@ -1918,9 +2026,32 @@ if (!device_id || !device_id.trim()) {
     isRegistered = false;
     registerInFlight = false;
     
-    // КРИТИЧНО: При переподключении НЕ показываем черный экран
-    // Заглушка продолжает играть, просто регистрируемся заново
-    console.log('[Player] ✅ Переподключено, регистрация в фоне...');
+    // КРИТИЧНО: При переподключении НЕ сбрасываем контент (как в Android)
+    // Проверяем, играет ли контент или заглушка
+    const isContentPlaying = currentFileState.type && currentFileState.type !== 'placeholder' &&
+                             ((currentFileState.type === 'video' && vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) ||
+                              (currentFileState.type !== 'video' && (img1.classList.contains('visible') || img2.classList.contains('visible'))));
+    
+    const isPlaceholderPlaying = currentFileState.type === 'placeholder' && 
+                                  ((vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) || 
+                                   (img1.classList.contains('visible') || img2.classList.contains('visible')));
+    
+    if (isContentPlaying) {
+      // Контент играет - продолжаем воспроизведение, не трогаем
+      console.log('[Player] ✅ Переподключено: контент играет, продолжаем воспроизведение...');
+    } else if (isPlaceholderPlaying) {
+      // Заглушка играет - продолжаем, не перезагружаем
+      console.log('[Player] ✅ Переподключено: заглушка играет, продолжаем...');
+    } else {
+      // Ничего не играет - проверяем заглушку
+      if (player?.isPlaying != true) {
+        console.log('[Player] ℹ️ Переподключено: контент остановлен, проверяем заглушку...');
+        // Не загружаем заглушку сразу - ждем player/state от сервера
+      }
+    }
+    
+    // Регистрируемся заново (сервер отправит player/state с текущим состоянием)
+    console.log('[Player] 📡 Регистрация в фоне...');
     registerPlayer();
   });
   
