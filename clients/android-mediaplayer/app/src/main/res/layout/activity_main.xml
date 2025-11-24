@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -21,7 +22,18 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="@android:color/transparent"
-        android:alpha="0.0" />
+        android:alpha="0.0"
+        app:surface_type="texture_view" />
+
+    <!-- Второй слой ExoPlayer для кроссфейда -->
+    <com.google.android.exoplayer2.ui.StyledPlayerView
+        android:id="@+id/playerViewBuffer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/transparent"
+        android:visibility="gone"
+        android:alpha="0.0"
+        app:surface_type="texture_view" />
 
     <!-- ImageView для изображений и заглушек -->
     <ImageView

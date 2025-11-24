@@ -14,6 +14,7 @@ npm-debug.log*
 config/main.db
 config/main.db-wal
 config/main.db-shm
+config/main.db.backup.*
 config/json-backup-*/
 
 # Deprecated JSON files (backup only)
@@ -36,6 +37,7 @@ nginx_upload/
 # Environment
 .env
 .env.local
+.test
 
 # Temporary files
 *.tmp
@@ -82,6 +84,6 @@ backups/
 .git-remotes-cheatsheet
 
 # Biography module database
-config/biographies.db
-config/biographies.db-shm
-config/biographies.db-wal
+config/heroes.db
+config/heroes.db-shm
+config/heroes.db-wal

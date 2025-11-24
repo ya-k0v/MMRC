@@ -22,6 +22,7 @@ import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
 import com.google.android.exoplayer2.upstream.DefaultDataSource
 import com.google.android.exoplayer2.upstream.DefaultAllocator
 import com.google.android.exoplayer2.DefaultLoadControl
+import com.google.android.exoplayer2.LoadControl
 import com.google.android.exoplayer2.C
 import com.google.android.exoplayer2.upstream.cache.CacheDataSource
 import com.google.android.exoplayer2.upstream.cache.LeastRecentlyUsedCacheEvictor
@@ -34,6 +35,8 @@ import org.json.JSONObject
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.DiskCacheStrategy
 import android.graphics.drawable.TransitionDrawable
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.Bitmap
 import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions
 import com.bumptech.glide.request.target.CustomTarget
 import com.bumptech.glide.request.transition.DrawableCrossFadeFactory
@@ -46,31 +49,36 @@ import kotlinx.coroutines.withContext
 import androidx.lifecycle.lifecycleScope
 import android.animation.ObjectAnimator
 import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import kotlin.math.max
 import kotlin.math.min
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var playerView: StyledPlayerView
+    private lateinit var playerViewPrimary: StyledPlayerView
+    private lateinit var playerViewSecondary: StyledPlayerView
+    private lateinit var bufferPlayerView: StyledPlayerView
     private lateinit var imageView: ImageView
     private lateinit var statusText: TextView
     private lateinit var brandBg: ImageView
 
     private var player: ExoPlayer? = null
+    private var bufferPlayer: ExoPlayer? = null
+    private var pendingPlayer: ExoPlayer? = null
+    private var pendingPlayerView: StyledPlayerView? = null
     private var socket: Socket? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var simpleCache: SimpleCache? = null
     private val pingHandler = Handler(Looper.getMainLooper())
     private val retryHandler = Handler(Looper.getMainLooper())
     private val progressHandler = Handler(Looper.getMainLooper())
-    private val logoRefreshHandler = Handler(Looper.getMainLooper())
     private val connectionWatchdogHandler = Handler(Looper.getMainLooper())
     private var retryRunnable: Runnable? = null
     private var placeholderJob: Job? = null
     private var isPlayingPlaceholder: Boolean = false
     private var isLoadingPlaceholder: Boolean = false  // Защита от параллельных вызовов loadPlaceholder()
     private var progressRunnable: Runnable? = null
-    private var logoRefreshRunnable: Runnable? = null
     
     // Новые компоненты
     private var config: RemoteConfig.Config = RemoteConfig.Config()
@@ -94,6 +102,27 @@ class MainActivity : AppCompatActivity() {
     private val TAG = "VCMediaPlayer"
     private var SERVER_URL = ""
     private var DEVICE_ID = ""
+
+    private fun cancelPendingBuffer(reason: String) {
+        val pending = pendingPlayer ?: return
+        val pendingView = pendingPlayerView
+        Log.d(TAG, "🧹 Cancel pending buffer ($reason)")
+        try {
+            pending.stop()
+            pending.clearMediaItems()
+        } catch (_: Exception) {
+        }
+        pendingView?.let {
+            it.alpha = 0f
+            it.visibility = View.GONE
+        }
+        pendingPlayer = null
+        pendingPlayerView = null
+        pendingVideoFileName = null
+        pendingVideoIsPlaceholder = false
+        isVideoReadyToShow = false
+        hasVideoSize = false
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -129,23 +158,28 @@ class MainActivity : AppCompatActivity() {
                         View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
                 )
 
-        playerView = findViewById(R.id.playerView)
+        playerViewPrimary = findViewById(R.id.playerView)
+        playerViewSecondary = findViewById(R.id.playerViewBuffer)
+        playerView = playerViewPrimary
+        bufferPlayerView = playerViewSecondary
         imageView = findViewById(R.id.imageView)
         statusText = findViewById(R.id.statusText)
         brandBg = findViewById(R.id.brandBg)
-        
-        // Загружаем логотип в brandBg с cache-busting
-        loadBrandLogo()
-        startLogoRefreshTimer() // Запускаем периодическое обновление логотипа
+        // Логотип больше не используется - смена контента идет через кроссфейд
+        bufferPlayerView.alpha = 0f
+        bufferPlayerView.visibility = View.GONE
 
         // Длинное нажатие на экран - открывает настройки
-        playerView.setOnLongClickListener {
+        val openSettingsListener = View.OnLongClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
             true
         }
+        playerViewPrimary.setOnLongClickListener(openSettingsListener)
+        playerViewSecondary.setOnLongClickListener(openSettingsListener)
 
         // Скрываем контролы ExoPlayer
-        playerView.useController = false
+        playerViewPrimary.useController = false
+        playerViewSecondary.useController = false
 
         // Wake Lock для предотвращения suspend
         val powerManager = getSystemService(POWER_SERVICE) as PowerManager
@@ -171,86 +205,134 @@ class MainActivity : AppCompatActivity() {
             releaseSimpleCache()
             initializeSimpleCache()
 
-            // Настройки буферизации для тяжелых видео (используем config)
-            val loadControl = DefaultLoadControl.Builder()
-                .setAllocator(DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE))
-                .setBufferDurationsMs(
-                    config.bufferMinMs,  // minBufferMs
-                    config.bufferMaxMs,  // maxBufferMs
-                    2500,   // bufferForPlaybackMs: начать воспроизведение через 2.5 сек
-                    5000    // bufferForPlaybackAfterRebufferMs: после паузы - 5 сек
-                )
-                .setPrioritizeTimeOverSizeThresholds(true)
-                .build()
+            fun buildLoadControl(): LoadControl {
+                return DefaultLoadControl.Builder()
+                    .setAllocator(DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE))
+                    .setBufferDurationsMs(
+                        config.bufferMinMs,
+                        config.bufferMaxMs,
+                        2500,
+                        5000
+                    )
+                    .setPrioritizeTimeOverSizeThresholds(true)
+                    .build()
+            }
 
-            player = ExoPlayer.Builder(this)
+            val primaryLoadControl = buildLoadControl()
+            val secondaryLoadControl = buildLoadControl()
+
+            player = buildPlayer(primaryLoadControl, playerViewPrimary)
+            bufferPlayer = buildPlayer(secondaryLoadControl, playerViewSecondary)
+
+            Log.i(TAG, "ExoPlayer initialized (cache: ${config.cacheSize / 1024 / 1024}MB, buffer: ${config.bufferMinMs}-${config.bufferMaxMs}ms)")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error initializing player", e)
+        }
+    }
+
+    private fun buildPlayer(loadControl: LoadControl, targetView: StyledPlayerView): ExoPlayer {
+        return ExoPlayer.Builder(this)
                 .setLoadControl(loadControl)
                 .build()
                 .also { exoPlayer ->
-                    playerView.player = exoPlayer
+                targetView.player = exoPlayer
 
-                    // Обработчик событий
                     exoPlayer.addListener(object : Player.Listener {
                         override fun onPlaybackStateChanged(playbackState: Int) {
+                        val isActivePlayer = exoPlayer === player
+                        val isPendingPlayerInstance = exoPlayer === pendingPlayer
+
                             when (playbackState) {
-                                Player.STATE_IDLE -> Log.d(TAG, "Player STATE_IDLE")
+                            Player.STATE_IDLE -> Log.d(TAG, "Player STATE_IDLE (${if (isActivePlayer) "active" else "buffer"})")
                                 Player.STATE_BUFFERING -> {
-                                    Log.d(TAG, "Player STATE_BUFFERING")
-                                    showStatus("Буферизация...", autohideSeconds = 0)  // Не скрываем автоматически
+                                if (isActivePlayer) {
+                                    Log.d(TAG, "Player STATE_BUFFERING (active)")
+                                    showStatus("Буферизация...", autohideSeconds = 0)
+                                } else {
+                                    Log.d(TAG, "Player STATE_BUFFERING (buffer)")
+                                }
                                 }
 
                                 Player.STATE_READY -> {
-                                    Log.d(TAG, "Player STATE_READY")
-                                    errorRetryCount = 0  // Сбрасываем счетчик при успешном воспроизведении
+                                Log.d(TAG, "Player STATE_READY (${if (isActivePlayer) "active" else "buffer"})")
+                                if (isActivePlayer) {
+                                    errorRetryCount = 0
                                     hideStatus()
+                                }
                                     
-                                    // Плавный fade-in нового видео после готовности
-                                    // КРИТИЧНО: Ждем и STATE_READY и onVideoSizeChanged для коротких файлов
-                                    if (!isVideoReadyToShow && pendingVideoFileName != null) {
-                                        // Если размер видео уже известен - можно сразу начинать fade-in
+                                if (isPendingPlayerInstance && !isVideoReadyToShow && pendingVideoFileName != null) {
                                         if (hasVideoSize) {
                                             startVideoFadeIn()
                                         } else {
-                                            // Ждем onVideoSizeChanged - он вызовет startVideoFadeIn()
                                             Log.d(TAG, "📸 STATE_READY получен, ждем onVideoSizeChanged для: ${pendingVideoFileName}")
-                                            // Таймаут на случай если onVideoSizeChanged не придет (для очень коротких файлов)
                                             Handler(Looper.getMainLooper()).postDelayed({
-                                                if (!isVideoReadyToShow && pendingVideoFileName != null) {
+                                            if (!isDestroyed && !isFinishing && !isVideoReadyToShow && pendingVideoFileName != null && pendingPlayer === exoPlayer) {
                                                     Log.d(TAG, "⏱️ Таймаут ожидания onVideoSizeChanged, начинаем fade-in")
                                                     startVideoFadeIn()
                                                 }
-                                            }, 500) // Таймаут 500ms
+                                        }, 500)
                                         }
                                     }
                                 }
 
                                 Player.STATE_ENDED -> {
-                                    Log.d(TAG, "Player STATE_ENDED")
-                                    // КРИТИЧНО: Заглушка зацикливается (ExoPlayer сам перезапустит)
-                                    // Обычное видео - показываем заглушку
+                                if (isActivePlayer) {
+                                    Log.d(TAG, "Player STATE_ENDED (active)")
                                     if (!isPlayingPlaceholder) {
-                                        Log.i(TAG, "Контент закончился, возврат на заглушку")
+                                        Log.i(TAG, "Контент закончился, fade-out перед возвратом на заглушку")
+                                        if (playerView.alpha > 0f && playerView.visibility == View.VISIBLE) {
+                                            player?.pause()
+                                            fadeOutView(playerView, 500) {
+                                                player?.stop()
+                                                player?.clearMediaItems()
+                                                playerView.alpha = 0f
+                                                playerView.visibility = View.GONE
                                         loadPlaceholder()
+                                            }
+                                        } else {
+                                            loadPlaceholder()
+                                        }
                                     } else {
                                         Log.d(TAG, "Заглушка зациклена, ExoPlayer перезапустит автоматически")
+                                    }
+                                } else {
+                                    Log.d(TAG, "Player STATE_ENDED (buffer) - ignored")
                                     }
                                 }
                             }
                         }
 
                         override fun onPlayerError(error: com.google.android.exoplayer2.PlaybackException) {
-                            Log.e(TAG, "Player error: ${error.message} (attempt $errorRetryCount/$maxRetryAttempts)", error)
-                            
-                            // КРИТИЧНО: Если играет контент (не заглушка) - больше попыток!
+                        val isActivePlayer = exoPlayer === player
+                        if (!isActivePlayer && exoPlayer !== pendingPlayer) {
+                            Log.e(TAG, "Player error on inactive buffer layer: ${error.message}")
+                            return
+                        }
+
+                        Log.e(TAG, "Player error (${if (isActivePlayer) "active" else "buffer"}): ${error.message} (attempt $errorRetryCount/$maxRetryAttempts)", error)
+
+                        if (!isActivePlayer) {
+                            pendingPlayer = null
+                            pendingPlayerView?.let {
+                                it.alpha = 0f
+                                it.visibility = View.GONE
+                            }
+                            pendingPlayerView = null
+                            pendingVideoFileName = null
+                            pendingVideoIsPlaceholder = false
+                            isVideoReadyToShow = false
+                            hasVideoSize = false
+                            showStatus("Ошибка подготовки видео, ожидаем новое задание", autohideSeconds = 3)
+                            return
+                        }
+
                             val maxAttempts = if (!isPlayingPlaceholder) 10 else maxRetryAttempts
                             
                             showStatus("Ошибка воспроизведения, попытка $errorRetryCount/$maxAttempts...")
                             
-                            // Автоматический retry для стабильности 24/7
-                            // КРИТИЧНО: Отменяем предыдущий retry перед созданием нового
                             retryRunnable?.let { retryHandler.removeCallbacks(it) }
                             retryRunnable = Runnable {
-                                // КРИТИЧНО: Проверяем что Activity еще жива
                                 if (isDestroyed || isFinishing) {
                                     Log.d(TAG, "Activity destroyed, skipping retry")
                                     return@Runnable
@@ -261,7 +343,6 @@ class MainActivity : AppCompatActivity() {
                                     Log.i(TAG, "Retrying playback (attempt $errorRetryCount/$maxAttempts) [content=${!isPlayingPlaceholder}]...")
                                     
                                     try {
-                                        // ExoPlayer сам продолжит с текущей позиции благодаря кэшу
                                         player?.prepare()
                                         player?.play()
                                     } catch (e: OutOfMemoryError) {
@@ -278,44 +359,39 @@ class MainActivity : AppCompatActivity() {
                                     loadPlaceholder()
                                 }
                             }
-                            retryHandler.postDelayed(retryRunnable!!, 5000) // 5 секунд для сетевых ошибок
+                        retryHandler.postDelayed(retryRunnable!!, 5000)
                         }
 
                         override fun onIsPlayingChanged(isPlaying: Boolean) {
+                        if (exoPlayer !== player) {
+                            return
+                        }
                             Log.d(TAG, "Player isPlaying: $isPlaying")
                             
-                            // КРИТИЧНО: Запускаем отправку прогресса для контента (не заглушки)
-                            // Отправляем прогресс даже на паузе (для отображения текущей позиции)
-                            if (!isPlayingPlaceholder && currentVideoFile != null) {
-                                // Проверяем, что видео загружено (STATE_READY)
-                                val isVideoReady = player?.playbackState == Player.STATE_READY
-                                if (isVideoReady || isPlaying) {
-                                    startProgressUpdates()
-                                } else {
-                                    // Видео еще не загружено - остановим отправку, запустится когда загрузится
-                                    stopProgressUpdates()
-                                }
+                        if (!isPlayingPlaceholder && currentVideoFile != null) {
+                            val isVideoReady = player?.playbackState == Player.STATE_READY
+                            if (isVideoReady || isPlaying) {
+                                startProgressUpdates()
+                            } else {
+                                stopProgressUpdates()
+                            }
                             } else {
                                 stopProgressUpdates()
                             }
                         }
                         
                         override fun onVideoSizeChanged(videoSize: com.google.android.exoplayer2.video.VideoSize) {
-                            Log.d(TAG, "📐 Video size changed: ${videoSize.width}x${videoSize.height}")
+                        if (exoPlayer !== pendingPlayer) {
+                            return
+                        }
+                        Log.d(TAG, "📐 Video size changed (buffer): ${videoSize.width}x${videoSize.height}")
                             hasVideoSize = true
                             
-                            // Если видео готово к показу и размер известен - можно начинать fade-in
-                            if (!isVideoReadyToShow && pendingVideoFileName != null && hasVideoSize) {
+                        if (!isVideoReadyToShow && pendingVideoFileName != null) {
                                 startVideoFadeIn()
                             }
                         }
                     })
-                }
-
-            Log.i(TAG, "ExoPlayer initialized (cache: ${config.cacheSize / 1024 / 1024}MB, buffer: ${config.bufferMinMs}-${config.bufferMaxMs}ms)")
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error initializing player", e)
         }
     }
 
@@ -373,9 +449,7 @@ class MainActivity : AppCompatActivity() {
                     registerDevice()
                     startPingTimer()
                     
-                    // Обновляем логотип при переподключении (может быть обновлен на сервере)
-                    loadBrandLogo()
-                    startLogoRefreshTimer() // Запускаем периодическое обновление логотипа
+                    // Логотип больше не используется - смена контента идет через кроссфейд
                     
                     // КРИТИЧНО: При переподключении НЕ сбрасываем на заглушку!
                     // Если играет контент - продолжаем воспроизведение
@@ -447,8 +521,7 @@ class MainActivity : AppCompatActivity() {
                     registerDevice()
                     startPingTimer()
                     // Обновляем логотип при переподключении (может быть обновлен на сервере)
-                    loadBrandLogo()
-                    startLogoRefreshTimer() // Запускаем периодическое обновление логотипа
+                    // Логотип больше не используется
                     Log.i(TAG, "📡 Re-registered device after reconnect")
                 }
             }
@@ -516,42 +589,7 @@ class MainActivity : AppCompatActivity() {
                     
                     stopProgressUpdates() // Останавливаем отправку прогресса
                     Log.i(TAG, "⏹️ Stop - возврат на заглушку")
-                    
-                    // КРИТИЧНО: Логика как в JS плеере - fade-out 500ms, затем заглушка БЕЗ черного экрана
-                    // Определяем активный контент (видео или изображение)
-                    val hasVideo = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
-                    val hasImage = imageView.alpha > 0f && imageView.visibility == View.VISIBLE
-                    
-                    if (hasVideo || hasImage) {
-                        Log.d(TAG, "🎬 Fade-out текущего контента (500ms как в JS)...")
-                        
-                        val afterFade = {
-                            // После fade-out загружаем заглушку БЕЗ черного экрана (как в JS)
-                            player?.stop()
-                            player?.clearMediaItems()
-                            playerView.alpha = 0f
-                            playerView.visibility = View.GONE
-                            
-                            Glide.with(this).clear(imageView)
-                            imageView.setImageDrawable(null)
-                            imageView.alpha = 0f
-                            imageView.visibility = View.GONE
-                            
-                            // Загружаем заглушку в фоне, затем мягко показываем поверх логотипа
-                            // brandBg с логотипом остается видимым
-                            loadPlaceholder(skipLogoTransition = true)
-                        }
-                        
-                        if (hasVideo) {
-                            player?.pause()
-                            fadeOutView(playerView, 500, afterFade)
-                        } else if (hasImage) {
-                            fadeOutView(imageView, 500, afterFade)
-                        }
-                    } else {
-                        // Контента не было - сразу загружаем заглушку поверх логотипа
-                        loadPlaceholder(skipLogoTransition = true)
-                    }
+                    loadPlaceholder(skipLogoTransition = true)
                 }
             }
 
@@ -583,7 +621,7 @@ class MainActivity : AppCompatActivity() {
                     cachedPlaceholderType = null
                     
                     Log.i(TAG, "🔄 Placeholder changed (timestamp=$placeholderTimestamp), clearing decoder and reloading...")
-                    loadPlaceholder()
+                    loadPlaceholder(forceReload = true)
                 }
             }
 
@@ -725,7 +763,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun fadeOutVideoWithLogo(durationMs: Long = 500, onComplete: () -> Unit) {
-        showLogoBackground(durationMs)
+        // Логотип больше не используется - просто fade-out видео
         player?.pause()
         fadeOutView(playerView, durationMs) {
             player?.stop()
@@ -746,50 +784,96 @@ class MainActivity : AppCompatActivity() {
     // Логика аналогична JS плееру: loadeddata → requestAnimationFrame → fade-in → canplay → play()
     private fun startVideoFadeIn() {
         if (isVideoReadyToShow || pendingVideoFileName == null) return
+        val targetPlayer = pendingPlayer ?: return
+        val targetView = pendingPlayerView ?: return
         
         isVideoReadyToShow = true
         val fileName = pendingVideoFileName!!
         val isPlaceholder = pendingVideoIsPlaceholder
         Log.d(TAG, "📸 Начинаем fade-in видео: $fileName (hasVideoSize=$hasVideoSize, isPlaceholder=$isPlaceholder)")
         
-        // Убеждаемся что playerView видим и alpha = 0 перед fade-in
-        playerView.visibility = View.VISIBLE
-        playerView.alpha = 0f
+        targetView.visibility = View.VISIBLE
+        targetView.bringToFront()
+        imageView.bringToFront()
+        statusText.bringToFront()
+        targetView.alpha = 0f
         
-        // КРИТИЧНО: Скрываем логотип для любого видео-контента после fade-in
         if (brandBg.visibility == View.VISIBLE && brandBg.alpha > 0f) {
             brandBg.animate()
                 .alpha(0f)
                 .setDuration(200)
-                .withEndAction {
-                    brandBg.visibility = View.GONE
-                }
+                .withEndAction { brandBg.visibility = View.GONE }
                 .start()
         } else {
             brandBg.visibility = View.GONE
             brandBg.alpha = 0f
         }
         
-        // Аналогично JS плееру: двойной post для гарантии готовности рендеринга (как requestAnimationFrame)
-        Handler(Looper.getMainLooper()).post {
-            Handler(Looper.getMainLooper()).post {
-                // Fade-in видео (500ms как в JS)
-                fadeInView(playerView, 500) {
-                    // После завершения fade-in ждем canplay (аналог JS плеера)
-                    // В ExoPlayer это STATE_READY + isPlaying или проверка через onIsPlayingChanged
-                    // Задержка 200ms как в JS плеере для завершения CSS fade-in
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        player?.apply {
-                            playWhenReady = true
-                            play()
-                        }
-                        Log.d(TAG, "✅ Видео запущено после fade-in (аналог canplay в JS)")
-                    }, 200) // Задержка для завершения fade-in (как в JS плеере)
+        val outgoingView = playerView
+        val outgoingPlayer = player
+        val hasOutgoingVideo = outgoingView.alpha > 0f && outgoingView.visibility == View.VISIBLE
+        val hasOutgoingImage = imageView.alpha > 0f && imageView.visibility == View.VISIBLE
+
+        if (hasOutgoingVideo) {
+            outgoingPlayer?.pause()
+        }
+
+        val playerToStart = targetPlayer
+        playerToStart.playWhenReady = true
+        playerToStart.play()
+
+        val fadeDuration = 500L
+        val animator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = fadeDuration
+            addUpdateListener { valueAnimator ->
+                val value = valueAnimator.animatedValue as Float
+                targetView.alpha = value
+                when {
+                    hasOutgoingImage -> imageView.alpha = 1f - value
+                    hasOutgoingVideo -> outgoingView.alpha = 1f - value
                 }
             }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    if (hasOutgoingVideo) {
+                        outgoingPlayer?.stop()
+                        outgoingPlayer?.clearMediaItems()
+                        outgoingView.alpha = 0f
+                        outgoingView.visibility = View.GONE
+                    }
+                    if (hasOutgoingImage) {
+                        imageView.alpha = 0f
+                        imageView.visibility = View.GONE
+                        Glide.with(this@MainActivity).clear(imageView)
+                        imageView.setImageDrawable(null)
+                    }
+                    finalizeVideoSwap(targetPlayer, targetView)
+                }
+            })
         }
-        
+
+        animator.start()
+    }
+
+    private fun finalizeVideoSwap(newActivePlayer: ExoPlayer, newActiveView: StyledPlayerView) {
+        val previousPlayer = player
+        val previousView = playerView
+
+        player = newActivePlayer
+        playerView = newActiveView
+
+        bufferPlayer = previousPlayer
+        bufferPlayerView = previousView
+
+        bufferPlayerView.alpha = 0f
+        bufferPlayerView.visibility = View.GONE
+
+        pendingPlayer = null
+        pendingPlayerView = null
         pendingVideoFileName = null
+        pendingVideoIsPlaceholder = false
+        isVideoReadyToShow = false
+        hasVideoSize = false
     }
 
     private fun playVideo(fileName: String, isPlaceholder: Boolean = false) {
@@ -837,30 +921,26 @@ class MainActivity : AppCompatActivity() {
                 return
             }
             
-            // Новый файл - плавный переход через бренд-фон
-            Log.i(TAG, "🎬 Загрузка НОВОГО видео: $fileName")
-            stopProgressUpdates() // Останавливаем прогресс старого видео
+        cancelPendingBuffer("new playVideo command for $fileName")
+
+            // Новый файл - плавный переход с двойной буферизацией
+            Log.i(TAG, "🎬 Загрузка НОВОГО видео с буферизацией: $fileName")
+            stopProgressUpdates()
             currentVideoFile = fileName
             savedPosition = 0
             isVideoReadyToShow = false
-            hasVideoSize = false // Сбрасываем флаг размера видео для нового файла
-            pendingVideoFileName = fileName
-            pendingVideoIsPlaceholder = isPlaceholder
+            hasVideoSize = false
 
-            // Шаг 1: Fade-out старого видео (если оно было видимым)
-            val needFadeOut = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
-        if (needFadeOut) {
-            Log.d(TAG, "🎬 Fade-out старого видео с логотипом (как при stop)...")
-            fadeOutVideoWithLogo(500) {
-                loadNewVideo(videoUrl, isPlaceholder)
+        val targetPlayer = bufferPlayer ?: player
+        val targetView = if (targetPlayer === player) playerView else bufferPlayerView
+
+            if (targetPlayer == null || targetView == null) {
+                Log.e(TAG, "❌ Нет свободного буфера для загрузки видео")
+                showStatus("Ошибка подготовки видео")
+                return
             }
-        } else {
-            // Старого видео не было - показываем логотип и плавно загружаем новое
-            showLogoBackground()
-            playerView.visibility = View.GONE
-            playerView.alpha = 0f
-            loadNewVideo(videoUrl, isPlaceholder)
-        }
+
+            loadNewVideo(videoUrl, fileName, isPlaceholder, targetPlayer, targetView)
             
         } catch (e: OutOfMemoryError) {
             Log.e(TAG, "❌ OutOfMemoryError playing video: $fileName", e)
@@ -874,7 +954,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
     
-    private fun loadNewVideo(videoUrl: String, isPlaceholder: Boolean) {
+    private fun loadNewVideo(
+        videoUrl: String,
+        originalFileName: String,
+        isPlaceholder: Boolean,
+        targetPlayer: ExoPlayer,
+        targetView: StyledPlayerView
+    ) {
         try {
             Log.d(TAG, "📥 Загрузка нового видео: $videoUrl")
             
@@ -886,7 +972,6 @@ class MainActivity : AppCompatActivity() {
                 setUserAgent("VideoControl/1.0")
             }
 
-            // Data Source с кэшированием
             val cacheDataSourceFactory = if (simpleCache != null) {
                 CacheDataSource.Factory()
                     .setCache(simpleCache!!)
@@ -900,19 +985,29 @@ class MainActivity : AppCompatActivity() {
             val mediaSource = ProgressiveMediaSource.Factory(cacheDataSourceFactory)
                 .createMediaSource(mediaItem)
 
-            player?.apply {
+            pendingPlayer = targetPlayer
+            pendingPlayerView = targetView
+            pendingVideoFileName = originalFileName
+            pendingVideoIsPlaceholder = isPlaceholder
+            isVideoReadyToShow = false
+            hasVideoSize = false
+
+        targetView.visibility = View.VISIBLE
+        targetView.alpha = 0f
+        targetView.bringToFront()
+        statusText.bringToFront()
+
+            targetPlayer.apply {
+                stop()
                 setMediaSource(mediaSource)
-                // КРИТИЧНО: Заглушка зацикливается, контент - нет
                 repeatMode = if (isPlaceholder) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
                 prepare()
-                // НЕ запускаем play() сразу - ждём STATE_READY
                 playWhenReady = false
             }
             
-            // Отмечаем тип контента
             isPlayingPlaceholder = isPlaceholder
             
-            Log.i(TAG, "✅ Video source set, waiting for STATE_READY...")
+            Log.i(TAG, "✅ Video source set, waiting for STATE_READY and fade-in...")
             
         } catch (e: OutOfMemoryError) {
             Log.e(TAG, "❌ OutOfMemoryError loading new video", e)
@@ -958,50 +1053,27 @@ class MainActivity : AppCompatActivity() {
             // КРИТИЧНО: Для заглушки НЕ показываем логотип - заглушка должна быть всегда видна
             // Логотип только для переходов между контентом
             if (isPlaceholder) {
-                // Заглушка - сразу показываем изображение без логотипа
-                player?.stop()
-                player?.clearMediaItems()
-                playerView.visibility = View.GONE
-                playerView.alpha = 0f
                 brandBg.visibility = View.GONE
                 brandBg.alpha = 0f
-                // Загружаем изображение заглушки сразу (без fade, без логотипа)
-                loadImageToView(imageUrl, useFadeFromLogo = false, delayMs = 0)
-                return
             }
 
-            // КРИТИЧНО: Логика переходов как в JS плеере
-            // Для обычных изображений показываем логотип сначала (через brandBg)
-            val needFadeOut = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
-            
-            if (needFadeOut) {
-                Log.d(TAG, "🎬 Fade-out видео перед показом изображения...")
-                player?.pause()
-                fadeOutView(playerView, 500) {
-                    // После fade-out останавливаем видео
-                    player?.stop()
-                    player?.clearMediaItems()
-                    playerView.alpha = 0f
-                    playerView.visibility = View.GONE
-                    
-                    // Показываем логотип через brandBg (переходы через прозрачность)
-                    showLogoBackground()
-                    // Загружаем изображение с fade-in поверх логотипа (500ms как в JS)
-                    loadImageToView(imageUrl, useFadeFromLogo = true, delayMs = 300)
-                }
-            } else {
-                // Видео не было - СРАЗУ показываем логотип (переходы через прозрачность)
+            val hasPreviousImage = imageView.drawable != null && imageView.alpha > 0f && imageView.visibility == View.VISIBLE
+            val hasVideo = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
+
+            if (!hasVideo) {
                 player?.stop()
                 player?.clearMediaItems()
                 playerView.visibility = View.GONE
                 playerView.alpha = 0f
-                imageView.alpha = 0f
-                imageView.visibility = View.GONE
-                
-                showLogoBackground()
-                // Загружаем изображение с fade-in поверх логотипа (500ms как в JS)
-                loadImageToView(imageUrl, useFadeFromLogo = true, delayMs = 300)
             }
+
+            loadImageToView(
+                imageUrl,
+                useFadeFromLogo = false,
+                delayMs = 0,
+                crossFadeFromCurrent = !hasVideo && hasPreviousImage,
+                crossFadeFromVideo = hasVideo
+            )
 
             // Отмечаем тип контента
             isPlayingPlaceholder = isPlaceholder
@@ -1020,31 +1092,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
     
-    // Функция для показа логотипа через brandBg (вместо черного экрана)
-    // Контент будет делать fade-in/fade-out поверх логотипа через прозрачность
+    // Логотип больше не используется - смена контента идет через кроссфейд
+    // Функция оставлена для совместимости, но ничего не делает
     private fun showLogoBackground(fadeDurationMs: Long = 500L) {
-        // Показываем brandBg с логотипом (если еще не загружен - загрузится)
-        brandBg.animate().cancel()
-        
-        if (fadeDurationMs > 0) {
+        // Скрываем brandBg, так как логотип не используется
+        brandBg.visibility = View.GONE
             brandBg.alpha = 0f
-            brandBg.visibility = View.VISIBLE
-            brandBg.animate()
-                .alpha(1f)
-                .setDuration(fadeDurationMs)
-                .setListener(null)
-                .start()
-        } else {
-            brandBg.alpha = 1f
-            brandBg.visibility = View.VISIBLE
-        }
-        
-        // Убеждаемся что логотип загружен (если еще не загружен - загружаем)
-        if (brandBg.drawable == null) {
-            loadBrandLogo()
-        }
-        
-        Log.d(TAG, "🎨 Логотип показан (brandBg) - переходы через прозрачность (fade=${fadeDurationMs}ms)")
     }
 
     private fun showPdfPage(fileName: String?, page: Int) {
@@ -1075,47 +1128,26 @@ class MainActivity : AppCompatActivity() {
             currentVideoFile = null
             savedPosition = 0
 
-            // КРИТИЧНО: Логика переходов как в JS плеере
-            // Первый показ презентации - через черный экран (500ms)
-            // Переключение слайдов - мгновенно (skipTransition)
-            val needFadeOut = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
-            
-            if (needFadeOut) {
-                Log.d(TAG, "🎬 Fade-out видео перед показом PDF...")
-                player?.pause()
-                fadeOutView(playerView, 500) {
-                    player?.stop()
-                    player?.clearMediaItems()
-                    playerView.alpha = 0f
-                    playerView.visibility = View.GONE
-                    
-                    // Первый показ - через логотип (fade-in поверх логотипа)
-                    if (wasFirstShow) {
-                        showLogoBackground()
-                        loadImageToView(pageUrl, useFadeFromLogo = true, delayMs = 300)
-                    } else {
-                        // Переключение слайдов - мягкий crossfade
-                        loadImageToView(pageUrl, useFadeFromLogo = false, delayMs = 0, crossFadeFromCurrent = true)
-                    }
-                }
-            } else {
-                // Видео не было
+            // КРИТИЧНО: Логика переходов - всегда используем кроссфейд если есть предыдущий контент
+            // Проверяем наличие предыдущего изображения (для кроссфейда между слайдами)
+            // Важно: проверяем drawable независимо от visibility, так как изображение может быть загружено но скрыто
+            val hasPreviousImage = imageView.drawable != null
+            val hasVideo = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
+
+            if (!hasVideo) {
                 player?.stop()
                 player?.clearMediaItems()
                 playerView.visibility = View.GONE
                 playerView.alpha = 0f
-                imageView.alpha = 0f
-                imageView.visibility = View.GONE
-                
-                // Первый показ - через логотип (fade-in поверх логотипа), переключение - мгновенно
-                if (wasFirstShow) {
-                    showLogoBackground()
-                    loadImageToView(pageUrl, useFadeFromLogo = true, delayMs = 300)
-                } else {
-                    // Переключение слайдов - мягкий crossfade
-                    loadImageToView(pageUrl, useFadeFromLogo = false, delayMs = 0, crossFadeFromCurrent = true)
-                }
             }
+
+            loadImageToView(
+                pageUrl,
+                useFadeFromLogo = false,
+                delayMs = 0,
+                crossFadeFromCurrent = !hasVideo && hasPreviousImage,
+                crossFadeFromVideo = hasVideo
+            )
             
             // Предзагружаем соседние страницы для быстрого переключения
             preloadAdjacentSlides(file, page, 999, "pdf")  // 999 как max (не знаем точное кол-во)
@@ -1154,47 +1186,26 @@ class MainActivity : AppCompatActivity() {
             currentVideoFile = null
             savedPosition = 0
 
-            // КРИТИЧНО: Логика переходов как в JS плеере
-            // Первый показ презентации - через черный экран (500ms)
-            // Переключение слайдов - мгновенно (skipTransition)
-            val needFadeOut = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
-            
-            if (needFadeOut) {
-                Log.d(TAG, "🎬 Fade-out видео перед показом PPTX...")
-                player?.pause()
-                fadeOutView(playerView, 500) {
-                    player?.stop()
-                    player?.clearMediaItems()
-                    playerView.alpha = 0f
-                    playerView.visibility = View.GONE
-                    
-                    // Первый показ - через логотип (fade-in поверх логотипа)
-                    if (wasFirstShow) {
-                        showLogoBackground()
-                        loadImageToView(slideUrl, useFadeFromLogo = true, delayMs = 300)
-                    } else {
-                        // Переключение слайдов - мгновенно
-                        loadImageToView(slideUrl, useFadeFromLogo = false, delayMs = 0)
-                    }
-                }
-            } else {
-                // Видео не было
+            // КРИТИЧНО: Логика переходов - всегда используем кроссфейд если есть предыдущий контент
+            // Проверяем наличие предыдущего изображения (для кроссфейда между слайдами)
+            // Важно: проверяем drawable независимо от visibility, так как изображение может быть загружено но скрыто
+            val hasPreviousImage = imageView.drawable != null
+            val hasVideo = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
+
+            if (!hasVideo) {
                 player?.stop()
                 player?.clearMediaItems()
                 playerView.visibility = View.GONE
                 playerView.alpha = 0f
-                imageView.alpha = 0f
-                imageView.visibility = View.GONE
-                
-                // Первый показ - через логотип (fade-in поверх логотипа), переключение - мгновенно
-                if (wasFirstShow) {
-                    showLogoBackground()
-                    loadImageToView(slideUrl, useFadeFromLogo = true, delayMs = 300)
-                } else {
-                    // Переключение слайдов - мгновенно (skipTransition как в JS)
-                    loadImageToView(slideUrl, useFadeFromLogo = false, delayMs = 0)
-                }
             }
+
+            loadImageToView(
+                slideUrl,
+                useFadeFromLogo = false,
+                delayMs = 0,
+                crossFadeFromCurrent = !hasVideo && hasPreviousImage,
+                crossFadeFromVideo = hasVideo
+            )
             
             // Предзагружаем соседние слайды для быстрого переключения
             preloadAdjacentSlides(file, slide, 999, "pptx")  // 999 как max (не знаем точное кол-во)
@@ -1233,47 +1244,26 @@ class MainActivity : AppCompatActivity() {
             currentVideoFile = null
             savedPosition = 0
 
-            // КРИТИЧНО: Логика переходов как в JS плеере
-            // Первый показ папки - через черный экран (500ms)
-            // Переключение изображений - мгновенно (skipTransition)
-            val needFadeOut = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
-            
-            if (needFadeOut) {
-                Log.d(TAG, "🎬 Fade-out видео перед показом изображения из папки...")
-                player?.pause()
-                fadeOutView(playerView, 500) {
-                    player?.stop()
-                    player?.clearMediaItems()
-                    playerView.alpha = 0f
-                    playerView.visibility = View.GONE
-                    
-                    // Первый показ - через логотип (fade-in поверх логотипа)
-                    if (wasFirstShow) {
-                        showLogoBackground()
-                        loadImageToView(imageUrl, useFadeFromLogo = true, delayMs = 300)
-                    } else {
-                        // Переключение изображений - мягкий crossfade
-                        loadImageToView(imageUrl, useFadeFromLogo = false, delayMs = 0, crossFadeFromCurrent = true)
-                    }
-                }
-            } else {
-                // Видео не было
+            // КРИТИЧНО: Логика переходов - всегда используем кроссфейд если есть предыдущий контент
+            // Проверяем наличие предыдущего изображения (для кроссфейда между изображениями)
+            // Важно: проверяем только наличие drawable, не alpha, чтобы кроссфейд работал даже если изображение еще в процессе fade-in
+            val hasPreviousImage = imageView.drawable != null
+            val hasVideo = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
+
+            if (!hasVideo) {
                 player?.stop()
                 player?.clearMediaItems()
                 playerView.visibility = View.GONE
                 playerView.alpha = 0f
-                imageView.alpha = 0f
-                imageView.visibility = View.GONE
-                
-                // Первый показ - через логотип (fade-in поверх логотипа), переключение - мгновенно
-                if (wasFirstShow) {
-                    showLogoBackground()
-                    loadImageToView(imageUrl, useFadeFromLogo = true, delayMs = 300)
-                } else {
-                    // Переключение изображений - мягкий crossfade
-                    loadImageToView(imageUrl, useFadeFromLogo = false, delayMs = 0, crossFadeFromCurrent = true)
-                }
             }
+
+            loadImageToView(
+                imageUrl,
+                useFadeFromLogo = false,
+                delayMs = 0,
+                crossFadeFromCurrent = !hasVideo && hasPreviousImage,
+                crossFadeFromVideo = hasVideo
+            )
             
             // Предзагружаем соседние изображения для быстрого переключения
             preloadAdjacentSlides(folder, imageNum, 999, "folder")  // 999 как max (не знаем точное кол-во)
@@ -1288,18 +1278,22 @@ class MainActivity : AppCompatActivity() {
         imageUrl: String,
         useFadeFromLogo: Boolean = false,
         delayMs: Int = 0,
-        crossFadeFromCurrent: Boolean = false
+        crossFadeFromCurrent: Boolean = false,
+        crossFadeFromVideo: Boolean = false
     ) {
         try {
+            // КРИТИЧНО: Проверяем состояние Activity перед началом
+            if (isDestroyed || isFinishing) {
+                Log.d(TAG, "Activity destroyed, skipping loadImageToView")
+                return
+            }
+            
             // Glide для быстрой загрузки изображений
-            Log.d(TAG, "🖼️ Loading image with Glide: $imageUrl (useFadeFromLogo=$useFadeFromLogo, delayMs=$delayMs)")
+            Log.d(TAG, "🖼️ Loading image with Glide: $imageUrl (useFadeFromLogo=$useFadeFromLogo, delayMs=$delayMs, crossFadeFromCurrent=$crossFadeFromCurrent)")
             
             imageView.visibility = View.VISIBLE
-            if (useFadeFromLogo) {
-                imageView.alpha = 0f  // Всегда начинаем с прозрачности для fade-in
-            } else {
-                imageView.alpha = 1f
-            }
+            imageView.bringToFront()
+            statusText.bringToFront()
             
             val request = Glide.with(this)
                 .load(imageUrl)
@@ -1308,8 +1302,11 @@ class MainActivity : AppCompatActivity() {
                 .timeout(10000)
                 .error(android.R.drawable.ic_dialog_alert)
             
+            val crossFadeVideoActive = crossFadeFromVideo && playerView.alpha > 0f && playerView.visibility == View.VISIBLE
+
             when {
                 useFadeFromLogo -> {
+                    imageView.alpha = 0f  // Всегда начинаем с прозрачности для fade-in
                     request.listener(object : com.bumptech.glide.request.RequestListener<android.graphics.drawable.Drawable> {
                         override fun onResourceReady(
                             resource: android.graphics.drawable.Drawable,
@@ -1319,8 +1316,10 @@ class MainActivity : AppCompatActivity() {
                             isFirstResource: Boolean
                         ): Boolean {
                             Handler(Looper.getMainLooper()).postDelayed({
-                                fadeInView(imageView, 500) {
-                                    Log.d(TAG, "✅ Fade-in изображения поверх логотипа завершен")
+                                if (!isDestroyed && !isFinishing) {
+                                    fadeInView(imageView, 500) {
+                                        Log.d(TAG, "✅ Fade-in изображения поверх логотипа завершен")
+                                    }
                                 }
                             }, delayMs.toLong())
                             return false
@@ -1337,50 +1336,258 @@ class MainActivity : AppCompatActivity() {
                         }
                     }).into(imageView)
                 }
-                crossFadeFromCurrent -> {
-                    Glide.with(this).clear(imageView)
+                crossFadeVideoActive -> {
                     request.into(object : CustomTarget<android.graphics.drawable.Drawable>() {
                         override fun onResourceReady(
                             resource: android.graphics.drawable.Drawable,
                             transition: Transition<in android.graphics.drawable.Drawable>?
                         ) {
-                            val previousDrawable = imageView.drawable
-                            if (previousDrawable == null) {
-                                imageView.alpha = 0f
-                                imageView.setImageDrawable(resource)
-                                imageView.animate().alpha(1f).setDuration(500).start()
-                                return
-                            }
+                            if (isDestroyed || isFinishing) return
+                            val outgoingView = playerView
+                            val outgoingPlayer = player
+                            imageView.setImageDrawable(resource)
+                            imageView.alpha = 0f
+                            imageView.visibility = View.VISIBLE
+                            imageView.bringToFront()
+                            statusText.bringToFront()
+                            outgoingPlayer?.pause()
 
-                            val transitionDrawable = TransitionDrawable(arrayOf(previousDrawable, resource))
-                            transitionDrawable.isCrossFadeEnabled = true
-                            imageView.setImageDrawable(transitionDrawable)
-                            transitionDrawable.startTransition(500)
-                            
-                            Handler(Looper.getMainLooper()).postDelayed({
-                                imageView.setImageDrawable(resource)
-                            }, 500)
+                            val animator = ValueAnimator.ofFloat(0f, 1f).apply {
+                                duration = 500
+                                addUpdateListener { animation ->
+                                    val value = animation.animatedValue as Float
+                                    imageView.alpha = value
+                                    outgoingView.alpha = 1f - value
+                                }
+                                addListener(object : AnimatorListenerAdapter() {
+                                    override fun onAnimationEnd(animation: android.animation.Animator) {
+                                        outgoingPlayer?.stop()
+                                        outgoingPlayer?.clearMediaItems()
+                                        outgoingView.alpha = 0f
+                                        outgoingView.visibility = View.GONE
+                                    }
+                                })
+                            }
+                            animator.start()
                         }
 
                         override fun onLoadCleared(placeholder: android.graphics.drawable.Drawable?) {
-                            // no-op
+                            // Nothing
                         }
                     })
                 }
+                crossFadeFromCurrent -> {
+                    val hasPreviousImage = imageView.drawable != null
+                    val previousDrawable = if (hasPreviousImage) imageView.drawable else null
+                    loadImageWithCrossfade(request, previousDrawable)
+                }
                 else -> {
-                    val crossFadeFactory = DrawableCrossFadeFactory.Builder(500)
-                        .setCrossFadeEnabled(true)
-                        .build()
-                    request.transition(DrawableTransitionOptions.with(crossFadeFactory))
-                        .into(imageView)
+                    val hasPreviousImage = imageView.drawable != null
+                    val hasPreviousVideo = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
+                    
+                    if (hasPreviousImage) {
+                        Log.d(TAG, "🔄 Используем кроссфейд (обнаружено предыдущее изображение)")
+                        loadImageWithCrossfade(request, imageView.drawable)
+                    } else if (hasPreviousVideo) {
+                        val outgoingView = playerView
+                        val outgoingPlayer = player
+                        outgoingPlayer?.pause()
+                        request.listener(object : com.bumptech.glide.request.RequestListener<android.graphics.drawable.Drawable> {
+                            override fun onResourceReady(
+                                resource: android.graphics.drawable.Drawable,
+                                model: Any,
+                                target: com.bumptech.glide.request.target.Target<android.graphics.drawable.Drawable>,
+                                dataSource: com.bumptech.glide.load.DataSource,
+                                isFirstResource: Boolean
+                            ): Boolean {
+                                if (isDestroyed || isFinishing) return false
+                                imageView.alpha = 0f
+                                imageView.visibility = View.VISIBLE
+                                imageView.setImageDrawable(resource)
+                                imageView.bringToFront()
+                                statusText.bringToFront()
+                                val animator = ValueAnimator.ofFloat(0f, 1f).apply {
+                                    duration = 500
+                                    addUpdateListener { animation ->
+                                        val value = animation.animatedValue as Float
+                                        imageView.alpha = value
+                                        outgoingView.alpha = 1f - value
+                                    }
+                                    addListener(object : AnimatorListenerAdapter() {
+                                        override fun onAnimationEnd(animation: android.animation.Animator) {
+                                            outgoingPlayer?.stop()
+                                            outgoingPlayer?.clearMediaItems()
+                                            outgoingView.alpha = 0f
+                                            outgoingView.visibility = View.GONE
+                                        }
+                                    })
+                                }
+                                animator.start()
+                                return true
+                            }
+
+                            override fun onLoadFailed(
+                                e: com.bumptech.glide.load.engine.GlideException?,
+                                model: Any?,
+                                target: com.bumptech.glide.request.target.Target<android.graphics.drawable.Drawable>,
+                                isFirstResource: Boolean
+                            ): Boolean {
+                                Log.e(TAG, "❌ Glide failed to load image: $imageUrl", e)
+                                return false
+                            }
+                        }).into(imageView)
+                    } else {
+                        imageView.alpha = 0f
+                        request.listener(object : com.bumptech.glide.request.RequestListener<android.graphics.drawable.Drawable> {
+                            override fun onResourceReady(
+                                resource: android.graphics.drawable.Drawable,
+                                model: Any,
+                                target: com.bumptech.glide.request.target.Target<android.graphics.drawable.Drawable>,
+                                dataSource: com.bumptech.glide.load.DataSource,
+                                isFirstResource: Boolean
+                            ): Boolean {
+                                if (!isDestroyed && !isFinishing) {
+                                    fadeInView(imageView, 500)
+                                }
+                                return false
+                            }
+                            
+                            override fun onLoadFailed(
+                                e: com.bumptech.glide.load.engine.GlideException?,
+                                model: Any?,
+                                target: com.bumptech.glide.request.target.Target<android.graphics.drawable.Drawable>,
+                                isFirstResource: Boolean
+                            ): Boolean {
+                                Log.e(TAG, "❌ Glide failed to load image: $imageUrl", e)
+                                return false
+                            }
+                        }).into(imageView)
+                    }
                 }
             }
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error loading image with Glide", e)
-            showStatus("Ошибка загрузки изображения")
-            // При ошибке логотип остается видимым
+            if (!isDestroyed && !isFinishing) {
+                showStatus("Ошибка загрузки изображения")
+            }
         }
+    }
+    
+    /**
+     * Создает полную независимую копию drawable с копией bitmap
+     * Это необходимо для предотвращения использования recycled bitmap в TransitionDrawable
+     */
+    private fun createIndependentDrawableCopy(drawable: android.graphics.drawable.Drawable): android.graphics.drawable.Drawable? {
+        return try {
+            when (drawable) {
+                is BitmapDrawable -> {
+                    val bitmap = drawable.bitmap
+                    if (bitmap.isRecycled) {
+                        Log.w(TAG, "⚠️ Previous bitmap is already recycled")
+                        return null
+                    }
+                    // Создаем полную копию bitmap
+                    val bitmapCopy = bitmap.copy(bitmap.config, true)
+                    if (bitmapCopy == null) {
+                        Log.w(TAG, "⚠️ Failed to copy bitmap")
+                        return null
+                    }
+                    // Создаем новый BitmapDrawable из копии
+                    BitmapDrawable(resources, bitmapCopy)
+                }
+                else -> {
+                    // Для других типов drawable пытаемся использовать constantState
+                    val copied = drawable.constantState?.newDrawable()?.mutate()
+                    if (copied != null) {
+                        copied
+                    } else {
+                        Log.w(TAG, "⚠️ Cannot create copy for drawable type: ${drawable.javaClass.simpleName}")
+                        null
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error creating drawable copy: ${e.message}", e)
+            null
+        }
+    }
+    
+    /**
+     * Вспомогательная функция для загрузки изображения с кроссфейдом
+     */
+    private fun loadImageWithCrossfade(
+        request: com.bumptech.glide.RequestBuilder<android.graphics.drawable.Drawable>,
+        previousDrawable: android.graphics.drawable.Drawable?
+    ) {
+        if (isDestroyed || isFinishing) {
+            Log.d(TAG, "Activity destroyed, skipping crossfade")
+            return
+        }
+        
+                    request.into(object : CustomTarget<android.graphics.drawable.Drawable>() {
+                        override fun onResourceReady(
+                            resource: android.graphics.drawable.Drawable,
+                            transition: Transition<in android.graphics.drawable.Drawable>?
+                        ) {
+                // КРИТИЧНО: Проверяем состояние Activity
+                if (isDestroyed || isFinishing) {
+                    Log.d(TAG, "Activity destroyed during image load, skipping")
+                    return
+                }
+                
+                            if (previousDrawable == null) {
+                    // Нет предыдущего изображения - показываем сразу без fade-in (чтобы избежать черного экрана)
+                    imageView.alpha = 1f
+                    imageView.setImageDrawable(resource)
+                    return
+                }
+
+                // Создаем кроссфейд между предыдущим и новым изображением
+                // КРИТИЧНО: Создаем полную независимую копию bitmap, чтобы избежать recycled bitmap
+                val previousCopy = try {
+                    createIndependentDrawableCopy(previousDrawable)
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Failed to copy previous drawable, using fade-in instead: ${e.message}")
+                    // Если не удалось создать копию, используем простой fade-in
+                                imageView.alpha = 0f
+                                imageView.setImageDrawable(resource)
+                    fadeInView(imageView, 500)
+                                return
+                            }
+
+                if (previousCopy == null) {
+                    // Не удалось создать копию - используем простой fade-in
+                    imageView.alpha = 0f
+                    imageView.setImageDrawable(resource)
+                    fadeInView(imageView, 500)
+                    return
+                }
+                
+                // КРИТИЧНО: Убеждаемся, что imageView видим и имеет правильный alpha перед кроссфейдом
+                // Это предотвращает черный экран при переходе
+                imageView.visibility = View.VISIBLE
+                imageView.alpha = 1f
+                imageView.bringToFront()
+                statusText.bringToFront()
+                
+                val transitionDrawable = TransitionDrawable(arrayOf(previousCopy, resource))
+                            transitionDrawable.isCrossFadeEnabled = true
+                            imageView.setImageDrawable(transitionDrawable)
+                            transitionDrawable.startTransition(500)
+                            
+                // Заменяем TransitionDrawable на финальное изображение после завершения анимации
+                            Handler(Looper.getMainLooper()).postDelayed({
+                    if (!isDestroyed && !isFinishing && imageView.drawable == transitionDrawable) {
+                                imageView.setImageDrawable(resource)
+                    }
+                            }, 500)
+                        }
+
+                        override fun onLoadCleared(placeholder: android.graphics.drawable.Drawable?) {
+                // Glide очищает ресурс - это нормально
+            }
+        })
     }
     
     /**
@@ -1394,6 +1601,12 @@ class MainActivity : AppCompatActivity() {
             if (currentPage > 1) pagesToPreload.add(currentPage - 1)  // Предыдущий
             if (currentPage < totalPages) pagesToPreload.add(currentPage + 1)  // Следующий
             
+            // КРИТИЧНО: При первом показе (currentPage == 1) предзагружаем также второе изображение
+            // Это предотвращает черный экран при переходе на второй кадр
+            if (currentPage == 1 && totalPages > 1) {
+                pagesToPreload.add(2)
+            }
+            
             pagesToPreload.forEach { page ->
                 val url = when (type) {
                     "pdf" -> "$SERVER_URL/api/devices/$DEVICE_ID/converted/${Uri.encode(file)}/page/$page"
@@ -1406,6 +1619,7 @@ class MainActivity : AppCompatActivity() {
                 Glide.with(this)
                     .load(url)
                     .diskCacheStrategy(DiskCacheStrategy.ALL)
+                    .skipMemoryCache(false)  // Используем memory cache для мгновенного показа
                     .preload()
                 
                 Log.d(TAG, "📥 Preloading $type page $page")
@@ -1415,79 +1629,35 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadPlaceholder(skipLogoTransition: Boolean = false) {
+    private fun loadPlaceholder(skipLogoTransition: Boolean = false, forceReload: Boolean = false) {
         // КРИТИЧНО: Защита от параллельных вызовов
         if (isLoadingPlaceholder) {
             Log.d(TAG, "⚠️ loadPlaceholder() уже выполняется, пропускаем...")
             return
         }
+
+        if (!forceReload) {
+            val isPlaceholderVisible = isPlayingPlaceholder && (
+                (playerView.visibility == View.VISIBLE && playerView.alpha > 0f) ||
+                (imageView.visibility == View.VISIBLE && imageView.alpha > 0f)
+            )
+            
+            if (isPlaceholderVisible) {
+                Log.d(TAG, "ℹ️ Placeholder уже отображается, пропускаем повторный запуск")
+                return
+            }
+            
+            if (pendingPlayer != null && pendingVideoIsPlaceholder) {
+                Log.d(TAG, "ℹ️ Placeholder уже готовится (${pendingVideoFileName ?: "unknown"}), ждём завершения")
+                return
+            }
+        }
         
         isLoadingPlaceholder = true
         Log.i(TAG, "🔍 Loading placeholder...")
         
-        // Сбрасываем currentVideoFile для корректной загрузки заглушки заново
-        currentVideoFile = null
-        savedPosition = 0
-        isVideoReadyToShow = false
-        pendingVideoFileName = null
-        
-        // КРИТИЧНО: Логика переходов как в JS плеере
-        // При skipLogoTransition=true (из player/stop) - без дополнительного показа логотипа
-        // Иначе - показываем логотип перед заглушкой если нужно
-        
-        // Плавный переход: fade-out текущего контента
-        val hasVisibleContent = (playerView.alpha > 0f && playerView.visibility == View.VISIBLE) ||
-                                (imageView.alpha > 0f && imageView.visibility == View.VISIBLE)
-        
-        if (hasVisibleContent && !skipLogoTransition) {
-            Log.d(TAG, "🎬 Fade-out текущего контента перед заглушкой...")
-            
-            // Fade-out видео если видимо
-            if (playerView.alpha > 0f && playerView.visibility == View.VISIBLE) {
-                player?.pause()
-                fadeOutView(playerView, 500) {
-                    player?.stop()
-                    player?.clearMediaItems()  // КРИТИЧНО: Очищаем медиа-элементы для освобождения ресурсов
-                    playerView.alpha = 0f
-                    loadPlaceholderAfterFade(false)  // После fade-out - обычный переход
-                }
-            } 
-            // Fade-out изображения если видимо
-            else if (imageView.alpha > 0f && imageView.visibility == View.VISIBLE) {
-                fadeOutView(imageView, 500) {
-                    imageView.alpha = 0f
-                    imageView.visibility = View.GONE
-                    Glide.with(this).clear(imageView)
-                    imageView.setImageDrawable(null)
-                    loadPlaceholderAfterFade(false)  // После fade-out - обычный переход
-                }
-            }
-        } else {
-            // Контента не было или skipLogoTransition - сразу загружаем заглушку
-            loadPlaceholderAfterFade(skipLogoTransition)
-        }
-    }
-    
-    private fun loadPlaceholderAfterFade(skipLogoTransition: Boolean = false) {
-        // КРИТИЧНО: Очищаем плеер полностью перед загрузкой заглушки
-        player?.stop()
-        player?.clearMediaItems()
-        
-        // Очищаем ImageView
-        Glide.with(this).clear(imageView)
-        imageView.setImageDrawable(null)
-        imageView.visibility = View.GONE
-        imageView.alpha = 0f
-        
-        // КРИТИЧНО: НЕ скрываем playerView - заглушка должна сразу показаться
-        // playerView будет показан когда заглушка загрузится через playVideo
-        
-        // КРИТИЧНО: Логотип показываем ТОЛЬКО для переходов (если не skipLogoTransition)
-        // После загрузки заглушки логотип скроется, заглушка будет видна
-        if (!skipLogoTransition) {
-            showLogoBackground()
-        }
-        
+        cancelPendingBuffer("loadPlaceholder")
+
         // Проверяем кэш - если есть, загружаем сразу без запроса к серверу!
         if (cachedPlaceholderFile != null && cachedPlaceholderType != null) {
             Log.i(TAG, "✅ Using cached placeholder: $cachedPlaceholderFile ($cachedPlaceholderType)")
@@ -1857,76 +2027,8 @@ class MainActivity : AppCompatActivity() {
     }
     
     // Загрузка логотипа в brandBg с cache-busting
-    private fun loadBrandLogo() {
-        try {
-            // Используем timestamp для обхода кэша и получения свежего логотипа
-            val logoUrl = "$SERVER_URL/branding/logo.svg?t=${System.currentTimeMillis()}"
-            Log.d(TAG, "🖼️ Loading brand logo: $logoUrl")
-            
-            Glide.with(this)
-                .load(logoUrl)
-                .diskCacheStrategy(DiskCacheStrategy.NONE) // Не кэшируем, чтобы всегда получать свежий логотип
-                .skipMemoryCache(true)
-                .timeout(5000)
-                .error(android.graphics.Color.BLACK) // Fallback на черный цвет
-                .listener(object : com.bumptech.glide.request.RequestListener<android.graphics.drawable.Drawable> {
-                    override fun onResourceReady(
-                        resource: android.graphics.drawable.Drawable,
-                        model: Any,
-                        target: com.bumptech.glide.request.target.Target<android.graphics.drawable.Drawable>,
-                        dataSource: com.bumptech.glide.load.DataSource,
-                        isFirstResource: Boolean
-                    ): Boolean {
-                        Log.d(TAG, "✅ Brand logo loaded successfully")
-                        return false
-                    }
-                    
-                    override fun onLoadFailed(
-                        e: com.bumptech.glide.load.engine.GlideException?,
-                        model: Any?,
-                        target: com.bumptech.glide.request.target.Target<android.graphics.drawable.Drawable>,
-                        isFirstResource: Boolean
-                    ): Boolean {
-                        Log.w(TAG, "⚠️ Brand logo failed to load, using black background")
-                        brandBg.setBackgroundColor(android.graphics.Color.BLACK)
-                        return false
-                    }
-                })
-                .into(brandBg)
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error loading brand logo", e)
-            brandBg.setBackgroundColor(android.graphics.Color.BLACK)
-        }
-    }
-    
-    // Периодическое обновление логотипа (каждые 5 минут)
-    private fun startLogoRefreshTimer() {
-        stopLogoRefreshTimer()
-        
-        logoRefreshRunnable = Runnable {
-            // КРИТИЧНО: Проверяем что Activity еще жива
-            if (isDestroyed || isFinishing) {
-                Log.d(TAG, "Activity destroyed, stopping logo refresh timer")
-                return@Runnable
-            }
-            
-            loadBrandLogo()
-            // Планируем следующее обновление через 5 минут
-            logoRefreshHandler.postDelayed(logoRefreshRunnable!!, 5 * 60 * 1000)
-        }
-        
-        // Первое обновление через 5 минут
-        logoRefreshHandler.postDelayed(logoRefreshRunnable!!, 5 * 60 * 1000)
-        Log.d(TAG, "✅ Logo refresh timer started (every 5 minutes)")
-    }
-    
-    private fun stopLogoRefreshTimer() {
-        logoRefreshRunnable?.let {
-            logoRefreshHandler.removeCallbacks(it)
-            logoRefreshRunnable = null
-            Log.d(TAG, "⏹️ Logo refresh timer stopped")
-        }
-    }
+    // Логотип больше не используется - смена контента идет через кроссфейд
+    // Функции удалены
 
     override fun onDestroy() {
         super.onDestroy()
@@ -1936,11 +2038,11 @@ class MainActivity : AppCompatActivity() {
         stopPingTimer()
         stopConnectionWatchdog()
         stopProgressUpdates()
-        stopLogoRefreshTimer()
+        // stopLogoRefreshTimer() удален - логотип больше не используется
         statusHandler.removeCallbacks(hideStatusRunnable)
         retryHandler.removeCallbacksAndMessages(null)
         progressHandler.removeCallbacksAndMessages(null)
-        logoRefreshHandler.removeCallbacksAndMessages(null)
+        // logoRefreshHandler удален - логотип больше не используется
         
         // Отменяем корутины
         placeholderJob?.cancel()
@@ -1953,6 +2055,16 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "Error releasing player: ${e.message}", e)
         }
+
+        try {
+            bufferPlayer?.release()
+            bufferPlayer = null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing buffer player: ${e.message}", e)
+        }
+
+        pendingPlayer = null
+        pendingPlayerView = null
         
         try {
             socket?.disconnect()
