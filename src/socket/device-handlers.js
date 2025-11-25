@@ -215,6 +215,19 @@ export function setupDeviceHandlers(socket, deps) {
         timestamp: Date.now()
       });
       
+      if (typeof getVolumeState === 'function') {
+        try {
+          const volumeState = getVolumeState(device_id);
+          socket.emit('player/volume', {
+            level: volumeState.level,
+            muted: volumeState.muted,
+            reason: 'sync'
+          });
+        } catch (err) {
+          logger.warn('[Device] Failed to sync volume state', { deviceId: device_id, error: err.message });
+        }
+      }
+      
       logSocket('info', `Player registered: ${device_id}`, { 
         socketId: socket.id, 
         transport: socket.conn.transport.name,
@@ -275,6 +288,33 @@ export function setupDeviceHandlers(socket, deps) {
       io.emit('player/progress', { device_id, type: 'video', file, currentTime, duration });
     } catch (e) {
       // swallow
+    }
+  });
+  
+  socket.on('player/volumeState', (payload = {}) => {
+    if (typeof persistVolumeState !== 'function') {
+      return;
+    }
+    const device_id = payload?.device_id || socket.data?.device_id;
+    if (!device_id || !devices[device_id]) {
+      return;
+    }
+    const levelValue = typeof payload.level === 'number'
+      ? payload.level
+      : (typeof payload.volume === 'number' ? payload.volume : undefined);
+    const mutedValue = typeof payload.muted === 'boolean' ? payload.muted : undefined;
+    if (typeof levelValue === 'undefined' && typeof mutedValue === 'undefined') {
+      return;
+    }
+    
+    try {
+      persistVolumeState(
+        device_id,
+        { level: levelValue, muted: mutedValue },
+        { source: 'device' }
+      );
+    } catch (err) {
+      logger.warn('[Device] Failed to store volume state', { deviceId: device_id, error: err.message });
     }
   });
   

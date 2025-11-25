@@ -14,7 +14,14 @@ import logger from '../utils/logger.js';
  * @param {Object} deps - Зависимости {devices, getPageSlideCount}
  */
 export function setupSocketHandlers(io, deps) {
-  const { devices, getPageSlideCount } = deps;
+  const { 
+    devices, 
+    getPageSlideCount,
+    deviceVolumeState,
+    getVolumeState,
+    persistVolumeState,
+    applyVolumeCommand
+  } = deps;
   
   io.on('connection', socket => {
     const transport = socket.conn?.transport?.name;
@@ -38,10 +45,26 @@ export function setupSocketHandlers(io, deps) {
     } catch (e) {
       logger.error(`[Socket.IO] ❌ Ошибка отправки snapshot`, { error: e.message, stack: e.stack, socketId: socket.id });
     }
+
+    if (deviceVolumeState) {
+      try {
+        const volumeSnapshot = {};
+        for (const [deviceId, state] of Object.entries(deviceVolumeState)) {
+          volumeSnapshot[deviceId] = {
+            level: state.level,
+            muted: state.muted,
+            updated_at: state.updatedAt
+          };
+        }
+        socket.emit('devices/volume/stateBatch', volumeSnapshot);
+      } catch (e) {
+        logger.error(`[Socket.IO] ❌ Ошибка отправки volume snapshot`, { error: e.message, stack: e.stack, socketId: socket.id });
+      }
+    }
     
     // Настраиваем обработчики
-    setupDeviceHandlers(socket, { devices, io });
-    setupControlHandlers(socket, { devices, io, getPageSlideCount });
+    setupDeviceHandlers(socket, { devices, io, getVolumeState, persistVolumeState });
+    setupControlHandlers(socket, { devices, io, getPageSlideCount, applyVolumeCommand, getVolumeState });
     handleDisconnect(socket, { io });
   });
 }

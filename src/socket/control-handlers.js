@@ -119,7 +119,7 @@ function scheduleNextFolderSlide(loopState, devices, io) {
  * @param {Object} deps - Зависимости {devices, io, getPageSlideCount}
  */
 export function setupControlHandlers(socket, deps) {
-  const { devices, io, getPageSlideCount } = deps;
+  const { devices, io, getPageSlideCount, applyVolumeCommand } = deps;
   
   // control/play - Запустить воспроизведение
   socket.on('control/play', ({ device_id, file, page }) => {
@@ -142,6 +142,59 @@ export function setupControlHandlers(socket, deps) {
     }
     
     if (file) {
+      // КРИТИЧНО: Если текущий контент - видео, и запускается другой тип контента,
+      // нужно сначала остановить видео, чтобы звук не продолжал играть
+      const wasVideo = d.current && d.current.type === 'video' && d.current.state === 'playing';
+      const willBeNonVideo = (() => {
+        const hasExtension = file.includes('.');
+        const ext = hasExtension ? file.split('.').pop().toLowerCase() : '';
+        return !hasExtension || ext === 'pdf' || ext === 'pptx' || 
+               ['png','jpg','jpeg','gif','webp'].includes(ext) || ext === 'zip';
+      })();
+      
+      if (wasVideo && willBeNonVideo) {
+        logger.info(`[Control] Останавливаем видео перед запуском другого контента`, { 
+          deviceId: device_id, 
+          currentFile: d.current?.file,
+          newFile: file 
+        });
+        io.to(`device:${device_id}`).emit('player/stop');
+        // Даем время на остановку видео перед запуском нового контента
+        setTimeout(() => {
+          // Проверяем, что устройство все еще существует и команда актуальна
+          const deviceStillExists = devices[device_id];
+          if (!deviceStillExists) return;
+          
+          // Определяем тип нового контента
+          const hasExtension = file.includes('.');
+          const ext = hasExtension ? file.split('.').pop().toLowerCase() : '';
+          let type = 'video';
+          if (!hasExtension) {
+            type = 'folder';
+          } else if (ext === 'pdf') {
+            type = 'pdf';
+          } else if (ext === 'pptx') {
+            type = 'pptx';
+          } else if (['png','jpg','jpeg','gif','webp'].includes(ext)) {
+            type = 'image';
+          } else if (ext === 'zip') {
+            type = 'folder';
+          }
+          
+          const pageNum = page || 1;
+          d.current = { 
+            type, 
+            file, 
+            state: 'playing', 
+            page: (type === 'pdf' || type === 'pptx' || type === 'folder') ? pageNum : undefined 
+          };
+          
+          io.to(`device:${device_id}`).emit('player/play', d.current);
+          io.emit('preview/refresh', { device_id });
+        }, 150);
+        return; // Выходим, запуск нового контента произойдет в setTimeout
+      }
+      
       // Проверяем есть ли расширение у файла
       const hasExtension = file.includes('.');
       const ext = hasExtension ? file.split('.').pop().toLowerCase() : '';
@@ -224,6 +277,25 @@ export function setupControlHandlers(socket, deps) {
     io.to(`device:${device_id}`).emit('player/stop');
     io.emit('preview/refresh', { device_id });
     stopServerPlaylistLoop(device_id, 'control stop');
+  });
+  
+  socket.on('control/volume', ({ device_id, level, delta, muted }) => {
+    if (!device_id || typeof applyVolumeCommand !== 'function') {
+      return;
+    }
+    try {
+      applyVolumeCommand(
+        device_id,
+        {
+          level: typeof level === 'number' ? level : undefined,
+          delta: typeof delta === 'number' ? delta : undefined,
+          muted: typeof muted === 'boolean' ? muted : undefined
+        },
+        { source: 'control' }
+      );
+    } catch (err) {
+      logger.warn('[Control] Volume command failed', { deviceId: device_id, error: err.message });
+    }
   });
 
   // control/playlistStart - Запуск плейлиста папки
