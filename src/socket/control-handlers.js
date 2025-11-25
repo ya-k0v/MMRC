@@ -119,7 +119,24 @@ function scheduleNextFolderSlide(loopState, devices, io) {
  * @param {Object} deps - Зависимости {devices, io, getPageSlideCount}
  */
 export function setupControlHandlers(socket, deps) {
-  const { devices, io, getPageSlideCount, applyVolumeCommand } = deps;
+  const { devices, io, getPageSlideCount, applyVolumeCommand, getVolumeState } = deps;
+
+  const emitDeviceVolumeState = (deviceId, reason = 'control_play') => {
+    if (typeof getVolumeState !== 'function') {
+      return;
+    }
+    try {
+      const state = getVolumeState(deviceId);
+      if (!state) return;
+      io.to(`device:${deviceId}`).emit('player/volume', {
+        level: state.level,
+        muted: state.muted,
+        reason
+      });
+    } catch (err) {
+      logger.warn('[Control] Failed to emit volume state', { deviceId, error: err.message });
+    }
+  };
   
   // control/play - Запустить воспроизведение
   socket.on('control/play', ({ device_id, file, page }) => {
@@ -190,6 +207,7 @@ export function setupControlHandlers(socket, deps) {
           };
           
           io.to(`device:${device_id}`).emit('player/play', d.current);
+          emitDeviceVolumeState(device_id, 'control_play');
           io.emit('preview/refresh', { device_id });
         }, 150);
         return; // Выходим, запуск нового контента произойдет в setTimeout
@@ -226,6 +244,7 @@ export function setupControlHandlers(socket, deps) {
       };
       
       io.to(`device:${device_id}`).emit('player/play', d.current);
+      emitDeviceVolumeState(device_id, 'control_play');
     } else {
       // КРИТИЧНО: Если файл не указан - это RESUME после паузы
       // Отправляем команду player/resume чтобы плеер продолжил с места паузы
@@ -234,6 +253,7 @@ export function setupControlHandlers(socket, deps) {
         d.current.state = 'playing';
       }
       io.to(`device:${device_id}`).emit('player/resume');
+      emitDeviceVolumeState(device_id, 'control_resume');
       logger.info(`[Control] ▶️ Resume: ${device_id} (продолжение с места паузы)`, { deviceId: device_id });
     }
     
