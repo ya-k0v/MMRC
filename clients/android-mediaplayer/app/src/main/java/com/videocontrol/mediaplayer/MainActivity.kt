@@ -1,12 +1,16 @@
 package com.videocontrol.mediaplayer
 
 import android.content.Intent
+import android.content.Context
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.media.AudioManager
 import android.util.Log
 import android.view.View
 import android.view.WindowManager
@@ -52,6 +56,8 @@ import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
+import android.os.Build
 
 class MainActivity : AppCompatActivity() {
 
@@ -74,6 +80,7 @@ class MainActivity : AppCompatActivity() {
     private val retryHandler = Handler(Looper.getMainLooper())
     private val progressHandler = Handler(Looper.getMainLooper())
     private val connectionWatchdogHandler = Handler(Looper.getMainLooper())
+    private val volumeHandler = Handler(Looper.getMainLooper())
     private var retryRunnable: Runnable? = null
     private var placeholderJob: Job? = null
     private var isPlayingPlaceholder: Boolean = false
@@ -98,6 +105,14 @@ class MainActivity : AppCompatActivity() {
     private var lastSocketReconnectAttempt = 0L
     private var isSocketReconnecting = false
     private var socketBackoffMs = 2000L
+    private lateinit var audioManager: AudioManager
+    private var currentVolumePercent: Int = 100
+    private var currentMuteState: Boolean = false
+    private var volumeChangeReceiver: BroadcastReceiver? = null
+    private var suppressVolumeBroadcast = false
+    private val volumeStep = 5
+    private var awaitingVolumeSync = false
+    private var pendingVolumeCommand: JSONObject? = null // Отложенная команда громкости
 
     private val TAG = "VCMediaPlayer"
     private var SERVER_URL = ""
@@ -122,6 +137,188 @@ class MainActivity : AppCompatActivity() {
         pendingVideoIsPlaceholder = false
         isVideoReadyToShow = false
         hasVideoSize = false
+    }
+
+    private fun initializeVolumeState() {
+        try {
+            audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val stream = AudioManager.STREAM_MUSIC
+            val maxVolume = audioManager.getStreamMaxVolume(stream).coerceAtLeast(1)
+            val currentVolume = audioManager.getStreamVolume(stream)
+            currentVolumePercent = normalizeVolumePercent(((currentVolume.toFloat() / maxVolume) * 100f).roundToInt())
+            currentMuteState = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                audioManager.isStreamMute(stream)
+            } else {
+                currentVolume == 0
+            }
+            Log.d(TAG, "🔊 Volume initialized: level=$currentVolumePercent muted=$currentMuteState")
+            registerVolumeReceiver()
+            
+            // КРИТИЧНО: Применяем отложенную команду громкости, если она была получена до инициализации
+            pendingVolumeCommand?.let { pending ->
+                Log.d(TAG, "🔊 Applying pending volume command after initialization")
+                handleVolumeCommand(pending)
+                pendingVolumeCommand = null
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ Failed to initialize audio manager", e)
+        }
+    }
+
+    private fun normalizeVolumePercent(value: Int): Int {
+        val clamped = value.coerceIn(0, 100)
+        return ((clamped.toFloat() / volumeStep).roundToInt() * volumeStep).coerceIn(0, 100)
+    }
+
+    private fun handleVolumeCommand(data: JSONObject) {
+        val targetLevel = if (data.has("level") && !data.isNull("level")) data.optInt("level") else null
+        val delta = if (data.has("delta") && !data.isNull("delta")) data.optInt("delta") else null
+        val muted = if (data.has("muted") && !data.isNull("muted")) data.optBoolean("muted") else null
+        val reason = data.optString("reason", "server")
+        
+        // КРИТИЧНО: Если audioManager еще не инициализирован - сохраняем команду для применения позже
+        if (!::audioManager.isInitialized) {
+            Log.d(TAG, "🔊 Volume command received before audioManager init, saving for later: level=$targetLevel muted=$muted reason=$reason")
+            pendingVolumeCommand = data
+            // Если это синхронизация - не сбрасываем awaitingVolumeSync, применим позже
+            if (reason != "sync") {
+                awaitingVolumeSync = false
+            }
+            return
+        }
+        
+        // Сначала применяем громкость из команды (даже при sync)
+        applyVolumeChange(targetLevel, delta, muted, reason)
+        
+        // Если это синхронизация при регистрации - отправляем подтверждение
+        if (awaitingVolumeSync && reason == "sync") {
+            awaitingVolumeSync = false
+            Log.d(TAG, "🔁 Server sync volume applied, reporting device state")
+            emitVolumeState("sync_override")
+        } else {
+            awaitingVolumeSync = false
+        }
+    }
+
+    private fun applyVolumeChange(level: Int?, delta: Int?, muted: Boolean?, reason: String = "server") {
+        if (!::audioManager.isInitialized) {
+            Log.w(TAG, "⚠️ applyVolumeChange called but audioManager not initialized, saving command")
+            pendingVolumeCommand = JSONObject().apply {
+                if (level != null) put("level", level)
+                if (delta != null) put("delta", delta)
+                if (muted != null) put("muted", muted)
+                put("reason", reason)
+            }
+            return
+        }
+        val targetLevel = when {
+            level != null -> normalizeVolumePercent(level)
+            delta != null -> normalizeVolumePercent(currentVolumePercent + delta)
+            else -> currentVolumePercent
+        }
+        val targetMuted = muted ?: currentMuteState
+        val stream = AudioManager.STREAM_MUSIC
+        val maxVolume = audioManager.getStreamMaxVolume(stream).coerceAtLeast(1)
+        val targetStreamValue = ((targetLevel / 100f) * maxVolume).roundToInt().coerceIn(0, maxVolume)
+
+        Log.d(TAG, "🔊 applyVolumeChange: level=$level delta=$delta muted=$muted -> targetLevel=$targetLevel targetMuted=$targetMuted reason=$reason")
+
+        if (targetLevel != currentVolumePercent) {
+            try {
+                suppressVolumeBroadcast = true
+                audioManager.setStreamVolume(stream, targetStreamValue, 0)
+                currentVolumePercent = targetLevel
+                Log.d(TAG, "🔊 Volume level set to $currentVolumePercent% (streamValue=$targetStreamValue/$maxVolume, reason=$reason)")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Failed to set volume level", e)
+            } finally {
+                volumeHandler.postDelayed({ suppressVolumeBroadcast = false }, 200)
+            }
+        } else {
+            Log.d(TAG, "🔊 Volume level unchanged: $currentVolumePercent%")
+        }
+
+        if (targetMuted != currentMuteState) {
+            try {
+                suppressVolumeBroadcast = true
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    audioManager.adjustStreamVolume(
+                        stream,
+                        if (targetMuted) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE,
+                        0
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    audioManager.setStreamMute(stream, targetMuted)
+                }
+                currentMuteState = targetMuted
+                Log.d(TAG, "🔇 Mute state set to $currentMuteState (reason=$reason)")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Failed to update mute state", e)
+            } finally {
+                volumeHandler.postDelayed({ suppressVolumeBroadcast = false }, 200)
+            }
+        } else {
+            Log.d(TAG, "🔇 Mute state unchanged: $currentMuteState")
+        }
+
+        emitVolumeState(reason)
+    }
+
+    private fun emitVolumeState(trigger: String? = null) {
+        if (socket?.connected() != true) return
+        try {
+            val payload = JSONObject().apply {
+                put("device_id", DEVICE_ID)
+                put("level", if (currentMuteState) 0 else currentVolumePercent)
+                put("muted", currentMuteState)
+                trigger?.let { put("reason", it) }
+            }
+            socket?.emit("player/volumeState", payload)
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ Failed to emit volume state", e)
+        }
+    }
+
+    private fun registerVolumeReceiver() {
+        if (!::audioManager.isInitialized || volumeChangeReceiver != null) return
+        val filter = IntentFilter("android.media.VOLUME_CHANGED_ACTION")
+        volumeChangeReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action != "android.media.VOLUME_CHANGED_ACTION" || suppressVolumeBroadcast) return
+                val streamType = intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_TYPE", -1)
+                if (streamType != AudioManager.STREAM_MUSIC) return
+                val newVolume = intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_VALUE", -1)
+                if (newVolume < 0) return
+                val stream = AudioManager.STREAM_MUSIC
+                val maxVolume = audioManager.getStreamMaxVolume(stream).coerceAtLeast(1)
+                currentVolumePercent = normalizeVolumePercent(((newVolume.toFloat() / maxVolume) * 100f).roundToInt())
+                currentMuteState = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    audioManager.isStreamMute(stream)
+                } else {
+                    currentVolumePercent == 0
+                }
+                Log.d(TAG, "📣 Hardware volume changed: level=$currentVolumePercent muted=$currentMuteState")
+                emitVolumeState("hardware")
+            }
+        }
+        try {
+            registerReceiver(volumeChangeReceiver, filter)
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ Failed to register volume receiver", e)
+            volumeChangeReceiver = null
+        }
+    }
+
+    private fun unregisterVolumeReceiver() {
+        if (volumeChangeReceiver == null) return
+        try {
+            unregisterReceiver(volumeChangeReceiver)
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ Failed to unregister volume receiver", e)
+        } finally {
+            volumeChangeReceiver = null
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -149,6 +346,7 @@ class MainActivity : AppCompatActivity() {
         config = RemoteConfig.Config()
         
         setContentView(R.layout.activity_main)
+        initializeVolumeState()
 
         // Fullscreen и не гасим экран
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -654,6 +852,17 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             
+            socket?.on("player/volume") { args ->
+                if (args.isNotEmpty()) {
+                    val data = args[0] as? JSONObject ?: return@on
+                    runOnUiThread { handleVolumeCommand(data) }
+                }
+            }
+
+            socket?.on("player/registered") {
+                runOnUiThread { emitVolumeState("register") }
+            }
+            
             socket?.on("player/pong") {
                 // Pong получен - соединение работает нормально
                 // Socket.IO сам управляет reconnect, Watchdog больше не нужен
@@ -697,6 +906,7 @@ class MainActivity : AppCompatActivity() {
                 })
             }
 
+            awaitingVolumeSync = true
             socket?.emit("player/register", data)
             Log.i(TAG, "📡 Device registration sent: $DEVICE_ID (${android.os.Build.MODEL})")
             
@@ -1060,12 +1270,11 @@ class MainActivity : AppCompatActivity() {
             val hasPreviousImage = imageView.drawable != null && imageView.alpha > 0f && imageView.visibility == View.VISIBLE
             val hasVideo = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
 
-            if (!hasVideo) {
-                player?.stop()
-                player?.clearMediaItems()
-                playerView.visibility = View.GONE
-                playerView.alpha = 0f
-            }
+            // КРИТИЧНО: Всегда останавливаем видео при запуске изображения, чтобы звук не продолжал играть
+            player?.stop()
+            player?.clearMediaItems()
+            playerView.visibility = View.GONE
+            playerView.alpha = 0f
 
             loadImageToView(
                 imageUrl,
@@ -1134,12 +1343,11 @@ class MainActivity : AppCompatActivity() {
             val hasPreviousImage = imageView.drawable != null
             val hasVideo = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
 
-            if (!hasVideo) {
-                player?.stop()
-                player?.clearMediaItems()
-                playerView.visibility = View.GONE
-                playerView.alpha = 0f
-            }
+            // КРИТИЧНО: Всегда останавливаем видео при запуске PDF, чтобы звук не продолжал играть
+            player?.stop()
+            player?.clearMediaItems()
+            playerView.visibility = View.GONE
+            playerView.alpha = 0f
 
             loadImageToView(
                 pageUrl,
@@ -1192,12 +1400,11 @@ class MainActivity : AppCompatActivity() {
             val hasPreviousImage = imageView.drawable != null
             val hasVideo = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
 
-            if (!hasVideo) {
-                player?.stop()
-                player?.clearMediaItems()
-                playerView.visibility = View.GONE
-                playerView.alpha = 0f
-            }
+            // КРИТИЧНО: Всегда останавливаем видео при запуске PPTX, чтобы звук не продолжал играть
+            player?.stop()
+            player?.clearMediaItems()
+            playerView.visibility = View.GONE
+            playerView.alpha = 0f
 
             loadImageToView(
                 slideUrl,
@@ -1250,12 +1457,11 @@ class MainActivity : AppCompatActivity() {
             val hasPreviousImage = imageView.drawable != null
             val hasVideo = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
 
-            if (!hasVideo) {
-                player?.stop()
-                player?.clearMediaItems()
-                playerView.visibility = View.GONE
-                playerView.alpha = 0f
-            }
+            // КРИТИЧНО: Всегда останавливаем видео при запуске папки, чтобы звук не продолжал играть
+            player?.stop()
+            player?.clearMediaItems()
+            playerView.visibility = View.GONE
+            playerView.alpha = 0f
 
             loadImageToView(
                 imageUrl,
@@ -2043,6 +2249,7 @@ class MainActivity : AppCompatActivity() {
         retryHandler.removeCallbacksAndMessages(null)
         progressHandler.removeCallbacksAndMessages(null)
         // logoRefreshHandler удален - логотип больше не используется
+        unregisterVolumeReceiver()
         
         // Отменяем корутины
         placeholderJob?.cancel()
