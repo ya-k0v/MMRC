@@ -29,6 +29,29 @@ export function getAndroidIcon(size = 20, color = '#A4C639') {
 </svg>`;
 }
 
+export function getVolumeMutedIcon(size = 18, color = 'currentColor') {
+  return `<svg class="volume-icon-svg" xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 15H8.5L13 19V5L8.5 9H5V15Z"></path>
+    <path d="M16 9L20 15"></path>
+    <path d="M20 9L16 15"></path>
+  </svg>`;
+}
+
+export function getVolumeOnIcon(size = 18, color = 'currentColor') {
+  return `<svg class="volume-icon-svg" xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 15H8.5L13 19V5L8.5 9H5V15Z"></path>
+    <path d="M17 9C18.2 10.2 18.2 13.8 17 15"></path>
+    <path d="M19.5 6.5C22 9 22 15 19.5 17.5"></path>
+  </svg>`;
+}
+
+export function getVolumeUnknownIcon(size = 18, color = 'currentColor') {
+  return `<svg class="volume-icon-svg" xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 15H8.5L13 19V5L8.5 9H5V15Z"></path>
+    <circle cx="18" cy="12" r="1.5" fill="${color}" stroke="none"></circle>
+  </svg>`;
+}
+
 /**
  * Получить SVG иконку галочки (готов)
  * @param {number} size - Размер иконки (по умолчанию 16)
