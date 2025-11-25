@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=1920, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <title>Герои</title>
+  <link rel="icon" type="image/svg+xml" href="/icon.svg"/>
+  <link rel="stylesheet" href="/css/app.css"/>
+  <link rel="stylesheet" href="/css/hero.css"/>
+  <script type="module" src="/js/hero.js"></script>
+</head>
+<body class="hero-page">
+  <main class="hero-container">
+    <div class="hero-frame">
+      <header class="hero-header">
+        <div class="search-panel-wrapper">
+    <div class="search-panel">
+      <input id="searchInput" type="text" placeholder="Введите ФИО..." autocomplete="off"/>
+      <div id="suggestions" class="suggestions-dropdown" style="display:none;"></div>
+    </div>
+        </div>
+      </header>
+      <section class="hero-content-wrapper">
+        <div id="heroContent" class="hero-content"></div>
+        <div id="emptyState" class="hero-empty-state">
+      <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+          <p>Введите ФИО для поиска героя</p>
+        </div>
+      </section>
+    </div>
+  </main>
+  <div id="lightbox" style="display:none;"></div>
+</body>
+</html>
+

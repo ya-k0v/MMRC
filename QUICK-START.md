@@ -1,84 +1,91 @@
-# 🚀 VideoControl - Быстрая установка
+# 🚀 VideoControl 2.7.1 — Быстрая установка
 
 ## ⚡ Установка одной командой
 
-### Для Ubuntu/Debian (чистая ОС):
+### Ubuntu/Debian (чистая ОС)
 
 ```bash
-# Скачиваем и запускаем установщик
 wget -O - https://raw.githubusercontent.com/ya-k0v/VideoControl/main/scripts/quick-install.sh | sudo bash
 ```
 
-**Или клонируйте репозиторий:**
+> `scripts/quick-install.sh` — production‑установщик, который проверяет ОС, ставит Node.js 20 LTS, все системные утилиты, клонирует репозиторий в `/vid/videocontrol`, настраивает хранилище контента, применяет сетевые оптимизации, разворачивает Nginx и создаёт systemd‑сервис `videocontrol`.
+
+### Нон-интерактивный запуск
+
+```bash
+STORAGE_MODE=external \
+CONTENT_DIR=/mnt/vc-content \
+CONTENT_SOURCE="UUID=xxxx-xxxx" \
+sudo bash scripts/quick-install.sh /vid/videocontrol
+```
+
+- `STORAGE_MODE`: `local` | `external` | `external_fstab`
+- `CONTENT_DIR`: каталог с медиа (обязателен для external режимов)
+- `CONTENT_SOURCE`: устройство/UUID для записи в `/etc/fstab` (только `external_fstab`)
+- `CONTENT_FSTAB_OPTS`: параметры монтирования (по умолчанию `ext4 defaults,noatime 0 2`)
+
+### Ручная установка (dev / кастомные окружения)
 
 ```bash
 git clone https://github.com/ya-k0v/VideoControl.git
 cd VideoControl
-sudo bash scripts/quick-install.sh
+npm install
+cp config/video-optimization.json.example config/video-optimization.json  # при необходимости
+node server.js
 ```
 
 ---
 
-## 📦 Что установится автоматически:
+## 📦 Что делает quick-install
 
-### **Системные зависимости:**
-- ✅ Node.js 20.x LTS (если не установлен)
-- ✅ FFmpeg + FFprobe (обработка видео)
+### Системные зависимости
+- ✅ Node.js 20.x LTS (Nodesource)
+- ✅ FFmpeg + FFprobe
 - ✅ LibreOffice (конвертация PDF/PPTX)
-- ✅ ImageMagick (обработка изображений)
-- ✅ SQLite3 (база данных)
-- ✅ Nginx (веб-сервер)
-- ✅ unzip, curl, wget, git
+- ✅ ImageMagick (рендер изображений)
+- ✅ SQLite3 + sqlite CLI
+- ✅ build-essential, curl, wget, git, unzip
+- ✅ Nginx (reverse proxy)
 
-### **Node.js пакеты:**
+### Node.js пакеты
 - ✅ express, socket.io
-- ✅ bcrypt, jsonwebtoken (аутентификация)
-- ✅ better-sqlite3, multer
+- ✅ bcrypt, jsonwebtoken, cookie-parser
+- ✅ better-sqlite3, multer, uuid
 - ✅ pdf-lib, pdf2pic
-- ✅ winston (логирование)
-- ✅ И другие (см. package.json)
+- ✅ winston, rotating-file-stream
+- ✅ см. `package.json` для полного списка
 
-### **Настройка системы:**
-- ✅ Создаёт директории: `/vid/videocontrol`
-- ✅ Настраивает права доступа
-- ✅ Генерирует JWT secret
-- ✅ Инициализирует SQLite базу
-- ✅ Создаёт дефолтного админа
-- ✅ Оптимизирует сеть (TCP буферы 16MB)
-- ✅ Настраивает Nginx reverse proxy
-- ✅ Создаёт systemd service
-- ✅ Автозапуск при загрузке
+### Настройка системы
+- ✅ Создаёт структуру `/vid/videocontrol` (config, logs, .converted, temp)
+- ✅ Генерирует `.env` c JWT secret (access 12h, refresh 30d)
+- ✅ Инициализирует `config/main.db` (admin/admin123) и `config/video-optimization.json`
+- ✅ Добавляет пользователя в `vcgroup`, готовит `~/.cache` для LibreOffice
+- ✅ Запускает `scripts/optimize-network.sh` (TCP буферы 16 MB)
+- ✅ Разворачивает `nginx/videocontrol-secure.conf` и включает Nginx
+- ✅ Создаёт и активирует `videocontrol.service` (systemd)
+- ✅ Настраивает права и симлинки для контента, tail логов `logs/combined-*.log`
 
-### **Хранение контента:**
-- При установке можно выбрать один из режимов:
-  - `local` — хранить файлы в `public/content` (внутри проекта)
-  - `external` — внешний каталог через symlink (`public/content -> $CONTENT_DIR`)
-  - `external_fstab` — запись в `/etc/fstab` для диска → `$CONTENT_DIR` → symlink
+### Режимы хранения контента
+- `local` — файлы живут в `public/content`
+- `external` — контент лежит в `CONTENT_DIR`, а `public/content` = symlink
+- `external_fstab` — внешний диск монтируется в `CONTENT_DIR` через `/etc/fstab`, далее symlink
 
-Подробнее команды и примеры — в `docs/MANUAL.md`.
+> Параметры можно менять после установки через админ‑панель → "Настройки → Хранилище контента".
 
 ---
 
-## 🎯 После установки:
+## 🎯 После установки
 
-### **Доступ к системе:**
-```
-🌐 Admin Panel:   http://YOUR_SERVER_IP/
-🎤 Speaker Panel: http://YOUR_SERVER_IP/speaker.html
-🎮 Player:        http://YOUR_SERVER_IP/player-videojs.html?device_id=DEVICE_ID
-```
-
-### **Дефолтные учетные данные:**
-```
-Username: admin
-Password: admin123
-```
-
-**🚨 ОБЯЗАТЕЛЬНО смените пароль после первого входа!**
+- 🌐 Admin Panel: `http://YOUR_SERVER_IP/`
+- 🎤 Speaker Panel: `http://YOUR_SERVER_IP/speaker.html`
+- 🎮 Player: `http://YOUR_SERVER_IP/player-videojs.html?device_id=DEVICE_ID`
+- 👤 По умолчанию: `admin / admin123` (обязательно сменить)
+- 📂 Контент: `/vid/videocontrol/public/content` или ваш `CONTENT_DIR`
+- 📋 Логи: `/vid/videocontrol/logs/combined-*.log`, `/vid/videocontrol/logs/error-*.log`
 
 ---
 
-## 🔧 Управление сервисом:
+## 🔧 Управление сервисом
 
 ```bash
 # Проверить статус
@@ -87,27 +94,26 @@ sudo systemctl status videocontrol
 # Перезапустить
 sudo systemctl restart videocontrol
 
-# Остановить
+# Остановить / Запустить
 sudo systemctl stop videocontrol
-
-# Запустить
 sudo systemctl start videocontrol
 
-# Логи (journalctl)
+# Логи приложения
 sudo journalctl -u videocontrol -f
 
-# Логи (файлы)
 tail -f /vid/videocontrol/logs/combined-*.log
 tail -f /vid/videocontrol/logs/error-*.log
 
-# Nginx логи
+# Nginx
 sudo tail -f /var/log/nginx/videocontrol_error.log
 sudo tail -f /var/log/nginx/videocontrol_access.log
 ```
 
+> Quick-install автоматически включает `videocontrol.service` и `nginx`. При ручной установке скопируйте `videocontrol.service` в `/etc/systemd/system/` и выполните `systemctl enable videocontrol`.
+
 ---
 
-## 📊 Структура проекта:
+## 📊 Структура проекта
 
 ```
 /vid/videocontrol/
@@ -117,35 +123,32 @@ sudo tail -f /var/log/nginx/videocontrol_access.log
 ├── public/
 │   ├── content/                         # Контент устройств (до 5GB на файл)
 │   ├── admin.html, speaker.html         # Интерфейсы
+│   ├── hero.html, hero-admin.html       # Hero-модуль
 │   └── player-videojs.html              # Плеер
 ├── logs/
 │   ├── combined-YYYY-MM-DD.log          # Все логи
-│   └── error-YYYY-MM-DD.log             # Только ошибки
+│   └── error-YYYY-MM-DD.log             # Ошибки
 ├── .converted/                          # Кэш конвертированных PDF/PPTX
 ├── temp/
 │   └── nginx_upload/                    # Временные файлы загрузки
 ├── server.js                            # Главный файл сервера
+├── src/                                 # Backend/Socket/Modules
 └── .env                                 # JWT secret (автоген)
 ```
 
 ---
 
-## 🔒 Безопасность:
+## 🔒 Безопасность
 
-### **Двухуровневая защита:**
+- ✅ **Nginx geo ACL** — доступ разрешён только из автоопределённой подсети (правки в `/etc/nginx/sites-available/videocontrol`)
+- ✅ **JWT аутентификация** — access 12h, refresh 30d, refresh endpoint защищён
+- ✅ **Audit log** — все действия пишутся в таблицу `audit_log`
+- ✅ **Rate limiting** — включён для внешних IP, отключен для LAN
+- ✅ **Winston** — структурированные логи с ротацией
+- ✅ **Path traversal / MIME guard** — защита загрузок и отдачи файлов
 
-1. **Nginx geo-блокировка:**
-   - Доступ только из локальной сети (автоопределение)
-   - Редактируй: `/etc/nginx/sites-available/videocontrol`
+### Смена пароля
 
-2. **JWT аутентификация:**
-   - Access token: 12 часов
-   - Refresh token: 30 дней
-   - Все действия логируются в `audit_log` таблицу
-
-### **Смена пароля:**
-
-**Через API:**
 ```bash
 curl -X POST http://YOUR_IP/api/auth/change-password \
   -H "Content-Type: application/json" \
@@ -156,16 +159,15 @@ curl -X POST http://YOUR_IP/api/auth/change-password \
   }'
 ```
 
-**Через админ панель:**
-1. Войти → Настройки → Сменить пароль
+Или через админ панель: **Настройки → Сменить пароль**.
 
 ---
 
-## ⚙️ Дополнительная настройка:
+## ⚙️ Дополнительная настройка
 
-### **Видео оптимизация:**
+### Видео оптимизация
 
-Редактируй `config/video-optimization.json`:
+Редактируйте `config/video-optimization.json`:
 
 ```json
 {
@@ -182,177 +184,151 @@ curl -X POST http://YOUR_IP/api/auth/change-password \
 }
 ```
 
-### **Nginx настройки:**
+### Nginx
+- Конфиг: `/etc/nginx/sites-available/videocontrol`
+- `client_max_body_size`: 5GB (увеличивается при необходимости)
+- Таймауты: 300–900 секунд
+- `sendfile on;` для оптимальной отдачи видео
 
-- **Файл:** `/etc/nginx/sites-available/videocontrol`
-- **Максимальный размер файла:** 5GB (можно увеличить)
-- **Таймауты:** 300-900 секунд
-- **Sendfile:** включен (оптимизация для видео)
+### Сети
+- Скрипт `scripts/optimize-network.sh` выставляет:
+  - `net.core.rmem_max = net.core.wmem_max = 16777216`
+  - `net.ipv4.tcp_rmem = 4096 87380 16777216`
+  - `net.ipv4.tcp_wmem = 4096 65536 16777216`
+- Повторный запуск: `sudo bash scripts/optimize-network.sh`
 
-### **Сеть оптимизация:**
-
-Уже настроено автоматически:
-```
-net.core.rmem_max = 16777216
-net.core.wmem_max = 16777216
-net.ipv4.tcp_rmem = 4096 87380 16777216
-net.ipv4.tcp_wmem = 4096 65536 16777216
-```
+### Hero-модуль
+- База `config/heroes.db` создаётся автоматически при старте (`src/modules/hero/database/hero-db.js`)
+- Ручной ресинк схемы: `sqlite3 config/heroes.db < src/modules/hero/database/schema.sql`
 
 ---
 
-## 🐛 Решение проблем:
+## 🐛 Решение проблем
 
-### **Сервер не запускается:**
-
+### Сервер не запускается
 ```bash
-# Проверить логи
 sudo journalctl -u videocontrol -n 100
-
-# Проверить Node.js
-node --version  # Должно быть 20.x
-
-# Проверить порт 3000
+node --version  # должно быть 20.x
 sudo netstat -tulpn | grep 3000
-
-# Проверить права
 ls -la /vid/videocontrol/config/main.db
 ```
 
-### **Nginx ошибка:**
-
+### Nginx ошибка
 ```bash
-# Тест конфигурации
 sudo nginx -t
-
-# Проверить порт 80
 sudo netstat -tulpn | grep :80
-
-# Логи
 sudo tail -50 /var/log/nginx/videocontrol_error.log
 ```
 
-### **LibreOffice не работает:**
-
+### LibreOffice не работает
 ```bash
-# Проверить установку
 libreoffice --version
-
-# Права на cache директорию
 ls -la ~/.cache
-
-# Создать вручную
 mkdir -p ~/.cache ~/.config
 chmod 755 ~/.cache ~/.config
 ```
 
-### **Загрузка файлов не работает:**
-
+### Загрузка файлов не работает
 ```bash
-# Проверить права
 ls -la /vid/videocontrol/public/content/
 ls -la /vid/videocontrol/temp/nginx_upload/
-
-# Дать права
 sudo chown -R $USER:vcgroup /vid/videocontrol/
 sudo chmod 755 /vid/videocontrol/temp/nginx_upload/
 ```
 
 ---
 
-## 📱 Клиенты:
+## 📱 Клиенты
 
-### **Android TV / Media Player:**
-
-1. Скачай APK: `clients/android-mediaplayer/`
-2. Установи на устройство
-3. Настрой server URL и device ID
-4. Готово!
-
-### **MPV Player (Linux):**
-
-```bash
-cd clients/mpv
-sudo bash quick-install.sh
-```
-
-### **Браузер (любой):**
-
-Просто открой: `http://SERVER_IP/player-videojs.html?device_id=YOUR_ID`
+- **Android TV / Media Player**
+  - APK: `VCMplayer-v2.8.0.apk` (и предыдущие версии в корне репозитория)
+  - Автонастройка через `scripts/quick-setup-android.sh` (ADB, установка APK, device ID, отключение энергосбережения)
+  - Вручную: `adb install -r VCMplayer-v2.8.0.apk`, затем прописать `Server URL` и `Device ID`
+- **MPV Player (Linux):** `cd clients/mpv && sudo bash quick-install.sh`
+- **Hero дисплеи:** `public/hero.html`, `public/hero-admin.html`
+- **Браузер:** `http://SERVER_IP/player-videojs.html?device_id=YOUR_ID`
 
 ---
 
-## 🔄 Обновление:
+## 🔄 Обновление
 
 ```bash
 cd /vid/videocontrol
 sudo systemctl stop videocontrol
 
-# Бэкап БД
+# Бэкап
 cp config/main.db config/main.db.backup
 
-# Обновление
+# Pull + deps
 git pull origin main
 npm install
 
-# Применить миграции (если есть)
-# sqlite3 config/main.db < src/database/migrations/XXX.sql
+# Применить схему (идемпотентно)
+sqlite3 config/main.db < src/database/init.sql
 
 sudo systemctl start videocontrol
 ```
 
 ---
 
-## 📚 Документация:
+## 📚 Документация
 
-- **README.md** — общее описание и быстрый старт
-- **docs/MANUAL.md** — команды для SQLite, systemd, Nginx, бэкапы, health check, metrics
-- **clients/android-mediaplayer/** — документация Android‑клиента
-- **clients/mpv/** — документация MPV‑клиента
+- `README.md` — обзор и архитектура
+- `docs/MANUAL.md` — SQLite, systemd, Nginx, бэкапы, health check, metrics
+- `plan/ROADMAP.md`, `plan/SECURITY_LEVELS.md` — планы и уровни безопасности
+- `clients/android-mediaplayer/` и `clients/mpv/` — документация клиентов
 
-## 🔍 Мониторинг и диагностика:
+---
+
+## 🔍 Мониторинг и диагностика
 
 ### Health Check
 ```bash
-# Проверка состояния сервера
 curl http://YOUR_SERVER_IP/health
-# Возвращает: status, uptime, memory, database, circuitBreakers
+# → status, uptime, memory, database, circuitBreakers
 ```
 
-### Metrics (требует admin авторизации)
+### Metrics (admin auth)
 ```bash
-# Получить метрики производительности
 TOKEN=$(curl -s -X POST http://YOUR_SERVER_IP/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin123"}' | jq -r '.accessToken')
 
 curl -H "Authorization: Bearer $TOKEN" http://YOUR_SERVER_IP/api/metrics
-# Возвращает: метрики запросов, БД, Socket.IO, перцентили времени ответа
+# → запросы, БД, Socket.IO, перцентили времени ответа
 ```
 
 ---
 
-## 💬 Поддержка:
+## 🧰 Скрипты автоматизации
 
-- **GitHub:** https://github.com/ya-k0v/VideoControl
-- **Issues:** https://github.com/ya-k0v/VideoControl/issues
+- `scripts/quick-install.sh` — полный production install (Ubuntu/Debian)
+- `scripts/install-server.sh` — упрощённый серверный install (Ubuntu/Debian/CentOS/RHEL)
+- `scripts/optimize-network.sh` — sysctl тюнинг для больших загрузок
+- `scripts/setup-kiosk.sh` — настройка Linux медиаплеера в kiosk‑режим
+- `scripts/quick-setup-android.sh` — конфигурация Android клиентов через ADB
+- `scripts/generate-favicons.js` — генерация фавиконок для UI
 
 ---
 
-## ✅ Checklist после установки:
+## 💬 Поддержка
 
-- [ ] Сервер запущен: `systemctl status videocontrol`
-- [ ] Nginx работает: `systemctl status nginx`
-- [ ] Админ панель открывается: `http://YOUR_IP/`
-- [ ] Вход с `admin / admin123` работает
-- [ ] **Пароль изменён на безопасный!** 🔒
-- [ ] Созданы пользователи (если нужно)
-- [ ] Добавлены устройства
-- [ ] Загружен тестовый контент
-- [ ] Speaker панель работает
-- [ ] Player подключается
+- GitHub: https://github.com/ya-k0v/VideoControl
+- Issues: https://github.com/ya-k0v/VideoControl/issues
+
+---
+
+## ✅ Checklist после установки
+
+- [ ] `systemctl status videocontrol`
+- [ ] `systemctl status nginx`
+- [ ] Админ панель доступна (`http://YOUR_IP/`)
+- [ ] Вход `admin / admin123` работает, пароль сменён
+- [ ] Созданы пользователи/устройства
+- [ ] Загружен тестовый контент и отображается в плеере
+- [ ] Speaker панель получает события в реальном времени
+- [ ] Android/MPV/браузер клиенты подключаются
 
 ---
 
 **Готово! 🎉 VideoControl установлен и готов к работе!**
-

@@ -50,6 +50,127 @@ let progressInterval = null; // периодическая отправка пр
 // КРИТИЧНО: Функция для отправки сигнала об остановке прогресса (очистка информации на панели спикера)
 let emitProgressStop = null; // Будет установлена при инициализации Video.js
 
+const VOLUME_MIN = 0;
+const VOLUME_MAX = 100;
+const VOLUME_STEP = 5;
+let currentVolumeLevel = 100;
+let currentMuteState = true;
+let awaitingVolumeSync = false;
+let volumeStateSynced = false;
+let pendingVolumeApply = false;
+
+try {
+  if (
+    typeof localStorage !== 'undefined' &&
+    !preview &&
+    !forceMuted &&
+    localStorage.getItem('vc_sound') === '1'
+  ) {
+    currentMuteState = false;
+    volumeStateSynced = true;
+  }
+} catch (err) {
+  currentMuteState = true;
+}
+
+function normalizeVolumeLevel(value) {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return null;
+  }
+  const clamped = Math.max(VOLUME_MIN, Math.min(VOLUME_MAX, Math.round(value)));
+  const stepped = Math.round(clamped / VOLUME_STEP) * VOLUME_STEP;
+  return Math.max(VOLUME_MIN, Math.min(VOLUME_MAX, stepped));
+}
+
+function applyVolumeToPlayer(reason = 'server') {
+  if (!vjsPlayer) {
+    pendingVolumeApply = true;
+    return;
+  }
+  pendingVolumeApply = false;
+  const isPlaceholderActive = currentFileState.type === 'placeholder';
+  const shouldMute = isPlaceholderActive || forceMuted || currentMuteState || !soundUnlocked;
+  const targetGain = shouldMute ? 0 : Math.max(0, Math.min(1, currentVolumeLevel / 100));
+  try {
+    vjsPlayer.muted(shouldMute);
+    vjsPlayer.volume(targetGain);
+  } catch (err) {
+    console.warn(`[Player] ⚠️ applyVolumeToPlayer error (${reason}):`, err);
+  }
+}
+
+function emitVolumeState(reason) {
+  if (!device_id || preview || !socket || !socket.connected) {
+    return;
+  }
+  const payload = {
+    device_id,
+    level: currentMuteState ? 0 : currentVolumeLevel,
+    muted: forceMuted ? true : currentMuteState
+  };
+  if (reason) {
+    payload.reason = reason;
+  }
+  socket.emit('player/volumeState', payload);
+}
+
+function applyVolumeChange({ level, delta, muted, reason = 'server' } = {}) {
+  let nextLevel = currentVolumeLevel;
+  if (typeof level === 'number') {
+    const normalized = normalizeVolumeLevel(level);
+    if (normalized !== null) {
+      nextLevel = normalized;
+    }
+  } else if (typeof delta === 'number') {
+    const normalized = normalizeVolumeLevel(currentVolumeLevel + delta);
+    if (normalized !== null) {
+      nextLevel = normalized;
+    }
+  }
+  currentVolumeLevel = nextLevel;
+  if (typeof muted === 'boolean') {
+    currentMuteState = muted;
+  }
+  volumeStateSynced = true;
+  applyVolumeToPlayer(reason);
+  emitVolumeState(reason);
+}
+
+function handleVolumeCommand(payload = {}) {
+  if (!payload || typeof payload !== 'object') {
+    return;
+  }
+  const rawLevel = typeof payload.level !== 'undefined' ? payload.level : payload.volume;
+  const levelNumber = Number(rawLevel);
+  const levelValue = Number.isFinite(levelNumber) ? levelNumber : undefined;
+  const deltaNumber = Number(payload.delta);
+  const deltaValue = Number.isFinite(deltaNumber) ? deltaNumber : undefined;
+  const mutedValue = typeof payload.muted === 'boolean' ? payload.muted : undefined;
+  const reason = typeof payload.reason === 'string' ? payload.reason : 'server';
+
+  if (
+    typeof levelValue === 'undefined' &&
+    typeof deltaValue === 'undefined' &&
+    typeof mutedValue === 'undefined'
+  ) {
+    return;
+  }
+
+  applyVolumeChange({
+    level: levelValue,
+    delta: deltaValue,
+    muted: mutedValue,
+    reason
+  });
+
+  if (awaitingVolumeSync && reason === 'sync') {
+    awaitingVolumeSync = false;
+    emitVolumeState('sync_override');
+  } else {
+    awaitingVolumeSync = false;
+  }
+}
+
 // Режим фона: 'logo' для видео, 'black' для слайдов/папок/статического контента
 function setBrandBackgroundMode(mode) {
   if (!brandBg) return;
@@ -168,6 +289,7 @@ if (!device_id || !device_id.trim()) {
           
           // КРИТИЧНО: Скрываем все контролы при инициализации
           hideVideoJsControls();
+          applyVolumeToPlayer('player_ready');
           
           // Автовключение звука ПОСЛЕ готовности Video.js
           if (!preview && forceSound && !forceMuted) {
@@ -736,12 +858,24 @@ if (!device_id || !device_id.trim()) {
 
   function enableSound(){
     if (forceMuted) return;
+    if (soundUnlocked) {
+      applyVolumeToPlayer('unlock');
+      return;
+    }
     soundUnlocked = true;
     try { localStorage.setItem('vc_sound', '1'); } catch {}
+    if (!volumeStateSynced) {
+      currentMuteState = false;
+      currentVolumeLevel = 100;
+      volumeStateSynced = true;
+    }
+    applyVolumeToPlayer('unlock');
+    emitVolumeState('unlock');
     if (vjsPlayer) {
-      vjsPlayer.muted(false);
-      vjsPlayer.volume(1.0);
-      vjsPlayer.play();
+      try {
+        vjsPlayer.play();
+      } catch (err) {
+      }
     }
     if (unmuteBtn) unmuteBtn.style.display = 'none';
   }
@@ -1694,8 +1828,7 @@ if (!device_id || !device_id.trim()) {
         // Resume текущего видео (нет файла = продолжить с паузы)
         currentFileState = { type: 'video', file: currentFileState.file, page: 1 };
         
-        vjsPlayer.muted(soundUnlocked && !forceMuted ? false : true);
-        vjsPlayer.volume(soundUnlocked && !forceMuted ? 1.0 : 0.0);
+        applyVolumeToPlayer('resume_video');
         
         // Не трогаем currentTime - продолжаем с места паузы
         vjsPlayer.play().then(() => {
@@ -1717,8 +1850,7 @@ if (!device_id || !device_id.trim()) {
           // Тот же файл - просто возобновляем (это нажатие Play после паузы или переподключение)
           currentFileState = { type: 'video', file, page: 1 };
           
-          vjsPlayer.muted(soundUnlocked && !forceMuted ? false : true);
-          vjsPlayer.volume(soundUnlocked && !forceMuted ? 1.0 : 0.0);
+          applyVolumeToPlayer('resume_video_same_file');
           
           // Показываем videoContainer если он скрыт (без трогания display)
           if (!videoContainer.classList.contains('visible')) {
@@ -1754,8 +1886,7 @@ if (!device_id || !device_id.trim()) {
         
         if (vjsPlayer) {
           vjsPlayer.loop(false);
-          vjsPlayer.muted(soundUnlocked && !forceMuted ? false : true);
-          vjsPlayer.volume(soundUnlocked && !forceMuted ? 1.0 : 0.0);
+          applyVolumeToPlayer('prepare_new_video');
           
           // Скрываем контролы ДО установки src
           hideVideoJsControls();
@@ -1850,12 +1981,9 @@ if (!device_id || !device_id.trim()) {
                           // Задержка для завершения CSS fade-in (500ms transition)
                           setTimeout(() => {
                             vjsPlayer.play().then(() => {
-                              if (soundUnlocked && !forceMuted) {
-                                setTimeout(() => {
-                                  vjsPlayer.muted(false);
-                                  vjsPlayer.volume(1.0);
-                                }, 200);
-                              }
+                              setTimeout(() => {
+                                applyVolumeToPlayer('canplay_autounmute');
+                              }, 200);
                             }).catch(err => {
                               console.error('[Player] ❌ Ошибка воспроизведения:', err);
                               hideVideoJsControls();
@@ -1883,12 +2011,9 @@ if (!device_id || !device_id.trim()) {
                         vjsPlayer.one('canplay', () => {
                           setTimeout(() => {
                             vjsPlayer.play().then(() => {
-                              if (soundUnlocked && !forceMuted) {
-                                setTimeout(() => {
-                                  vjsPlayer.muted(false);
-                                  vjsPlayer.volume(1.0);
-                                }, 200);
-                              }
+                              setTimeout(() => {
+                                applyVolumeToPlayer('canplay_autounmute');
+                              }, 200);
                             }).catch(err => {
                               console.error('[Player] ❌ Ошибка воспроизведения:', err);
                               hideVideoJsControls();
@@ -2119,6 +2244,10 @@ if (!device_id || !device_id.trim()) {
     showFolderImage(currentFileState.file, imageNum);
   });
 
+  socket.on('player/volume', (payload) => {
+    handleVolumeCommand(payload || {});
+  });
+
   socket.on('player/state', (cur) => {
     if (!cur || cur.type === 'idle' || !cur.file) {
       // КРИТИЧНО: При получении idle НЕ прерываем контент если он уже играет (как в Android)
@@ -2276,6 +2405,7 @@ if (!device_id || !device_id.trim()) {
       return;
     }
     registerInFlight = true;
+    awaitingVolumeSync = true;
     
     // Отправляем запрос на регистрацию
     socket.emit('player/register', { 
@@ -2308,6 +2438,7 @@ if (!device_id || !device_id.trim()) {
     registerInFlight = false;
     isRegistered = true;
     startHeartbeat();
+    emitVolumeState('register');
     
     // КРИТИЧНО: При регистрации НЕ сбрасываем контент если он уже играет (как в Android)
     // Сервер отправит player/state, который обработает состояние корректно
@@ -2367,6 +2498,7 @@ if (!device_id || !device_id.trim()) {
     console.error('[Player] ❌ Регистрация отклонена:', reason);
     isRegistered = false;
     registerInFlight = false;
+    awaitingVolumeSync = false;
   });
 
   socket.on('connect', () => {
@@ -2378,6 +2510,7 @@ if (!device_id || !device_id.trim()) {
   socket.on('disconnect', (reason) => {
     isRegistered = false;
     registerInFlight = false;
+    awaitingVolumeSync = false;
     if (heartbeatInterval) {
       clearInterval(heartbeatInterval);
       heartbeatInterval = null;
@@ -2588,4 +2721,3 @@ if (!device_id || !device_id.trim()) {
     }
   }, 5000);
 }
-

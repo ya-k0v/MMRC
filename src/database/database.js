@@ -58,6 +58,239 @@ export function initDatabase(initialDbPath) {
     db.exec(initSQL);
     logger.info('[DB] Database schema initialized');
     
+    // Миграция: Добавляем роль hero_admin в существующие базы
+    try {
+      // Проверяем, есть ли таблица users
+      const usersTableExists = db.prepare(`
+        SELECT name FROM sqlite_master 
+        WHERE type='table' AND name='users'
+      `).get();
+      
+      if (usersTableExists) {
+        // Проверяем, нужно ли мигрировать CHECK constraint для роли hero_admin
+        // SQLite не поддерживает изменение CHECK constraint напрямую, нужно пересоздать таблицу
+        const tableInfo = db.prepare('PRAGMA table_info(users)').all();
+        const roleColumn = tableInfo.find(col => col.name === 'role');
+        
+        if (roleColumn) {
+          // Проверяем определение таблицы через sqlite_master
+          const tableDef = db.prepare(`
+            SELECT sql FROM sqlite_master 
+            WHERE type='table' AND name='users'
+          `).get();
+          
+          // Проверяем, содержит ли CHECK constraint роль hero_admin
+          const needsMigration = tableDef && tableDef.sql && !tableDef.sql.includes("'hero_admin'");
+          
+          if (needsMigration) {
+            logger.info('[DB] Migrating users table to support hero_admin role...');
+            
+            // Создаем резервную копию данных
+            const usersData = db.prepare('SELECT * FROM users').all();
+            logger.info(`[DB] Backed up ${usersData.length} user records`);
+            
+            // Переименовываем старую таблицу
+            db.exec('ALTER TABLE users RENAME TO users_old');
+            logger.info('[DB] Renamed old users table to users_old');
+            
+            // Создаем новую таблицу с обновленным CHECK constraint
+            db.exec(`
+              CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                full_name TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT DEFAULT 'speaker' CHECK(role IN ('admin', 'speaker', 'hero_admin')),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_login DATETIME,
+                is_active BOOLEAN DEFAULT 1
+              )
+            `);
+            logger.info('[DB] Created new users table with hero_admin role support');
+            
+            // Копируем данные из старой таблицы
+            if (usersData.length > 0) {
+              const insertStmt = db.prepare(`
+                INSERT INTO users (id, username, full_name, password_hash, role, created_at, updated_at, last_login, is_active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              `);
+              
+              const insertMany = db.transaction((users) => {
+                for (const user of users) {
+                  insertStmt.run(
+                    user.id,
+                    user.username,
+                    user.full_name,
+                    user.password_hash,
+                    user.role,
+                    user.created_at,
+                    user.updated_at,
+                    user.last_login,
+                    user.is_active
+                  );
+                }
+              });
+              
+              insertMany(usersData);
+              logger.info(`[DB] Migrated ${usersData.length} user records to new table`);
+            }
+            
+            // Восстанавливаем индексы
+            db.exec('CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)');
+            db.exec('CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)');
+            db.exec('CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active)');
+            logger.info('[DB] Restored indexes');
+            
+            // Исправляем foreign key в связанных таблицах (они могут ссылаться на users_old)
+            try {
+              // Исправляем refresh_tokens
+              const refreshTokensFK = db.prepare(`
+                SELECT sql FROM sqlite_master 
+                WHERE type='table' AND name='refresh_tokens'
+              `).get();
+              
+              if (refreshTokensFK && refreshTokensFK.sql && refreshTokensFK.sql.includes('users_old')) {
+                logger.info('[DB] Fixing foreign key in refresh_tokens table...');
+                
+                // Сохраняем данные
+                const tokensData = db.prepare('SELECT * FROM refresh_tokens').all();
+                
+                // Удаляем старую таблицу
+                db.exec('DROP TABLE refresh_tokens');
+                
+                // Создаем новую таблицу с правильным foreign key
+                db.exec(`
+                  CREATE TABLE refresh_tokens (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    token TEXT UNIQUE NOT NULL,
+                    expires_at DATETIME NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    ip_address TEXT,
+                    user_agent TEXT,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                  )
+                `);
+                
+                // Восстанавливаем данные
+                if (tokensData.length > 0) {
+                  const insertToken = db.prepare(`
+                    INSERT INTO refresh_tokens (id, user_id, token, expires_at, created_at, ip_address, user_agent)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                  `);
+                  
+                  const insertManyTokens = db.transaction((tokens) => {
+                    for (const token of tokens) {
+                      insertToken.run(
+                        token.id,
+                        token.user_id,
+                        token.token,
+                        token.expires_at,
+                        token.created_at,
+                        token.ip_address,
+                        token.user_agent
+                      );
+                    }
+                  });
+                  
+                  insertManyTokens(tokensData);
+                }
+                
+                // Восстанавливаем индексы
+                db.exec('CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token ON refresh_tokens(token)');
+                db.exec('CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id)');
+                db.exec('CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens(expires_at)');
+                
+                logger.info('[DB] Fixed foreign key in refresh_tokens table');
+              }
+              
+              // Исправляем audit_log
+              const auditLogFK = db.prepare(`
+                SELECT sql FROM sqlite_master 
+                WHERE type='table' AND name='audit_log'
+              `).get();
+              
+              if (auditLogFK && auditLogFK.sql && auditLogFK.sql.includes('users_old')) {
+                logger.info('[DB] Fixing foreign key in audit_log table...');
+                
+                // Сохраняем данные audit_log
+                const auditData = db.prepare('SELECT * FROM audit_log').all();
+                
+                // Удаляем старую таблицу audit_log
+                db.exec('DROP TABLE audit_log');
+                
+                // Создаем новую таблицу с правильным foreign key
+                db.exec(`
+                  CREATE TABLE audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    action TEXT NOT NULL,
+                    resource TEXT,
+                    details TEXT,
+                    ip_address TEXT,
+                    user_agent TEXT,
+                    status TEXT DEFAULT 'success',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+                  )
+                `);
+                
+                // Восстанавливаем данные
+                if (auditData.length > 0) {
+                  const insertAudit = db.prepare(`
+                    INSERT INTO audit_log (id, user_id, action, resource, details, ip_address, user_agent, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  `);
+                  
+                  const insertManyAudit = db.transaction((audits) => {
+                    for (const audit of audits) {
+                      insertAudit.run(
+                        audit.id,
+                        audit.user_id,
+                        audit.action,
+                        audit.resource,
+                        audit.details,
+                        audit.ip_address,
+                        audit.user_agent,
+                        audit.status,
+                        audit.created_at
+                      );
+                    }
+                  });
+                  
+                  insertManyAudit(auditData);
+                }
+                
+                // Восстанавливаем индексы audit_log
+                db.exec('CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id)');
+                db.exec('CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action)');
+                db.exec('CREATE INDEX IF NOT EXISTS idx_audit_log_resource ON audit_log(resource)');
+                db.exec('CREATE INDEX IF NOT EXISTS idx_audit_log_status ON audit_log(status)');
+                db.exec('CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at)');
+                
+                logger.info('[DB] Fixed foreign key in audit_log table');
+              }
+            } catch (fkErr) {
+              logger.warn('[DB] Failed to fix foreign keys (non-critical):', fkErr.message);
+            }
+            
+            // Удаляем старую таблицу
+            db.exec('DROP TABLE users_old');
+            logger.info('[DB] Removed old users table');
+            
+            logger.info('[DB] ✅ Migration completed successfully - hero_admin role is now supported');
+          } else {
+            logger.info('[DB] Users table already supports hero_admin role');
+          }
+        }
+      }
+    } catch (migrationErr) {
+      logger.error('[DB] Migration failed:', migrationErr);
+      // Не прерываем инициализацию, но логируем ошибку
+      logger.warn('[DB] Continuing with existing schema - hero_admin role may not be available');
+    }
+    
     reconnectAttempts = 0;
     return db;
   } catch (e) {
@@ -506,6 +739,57 @@ export function savePlaceholder(deviceId, placeholderFile, placeholderType) {
 export function deletePlaceholder(deviceId) {
   const stmt = db.prepare('DELETE FROM placeholders WHERE device_id = ?');
   stmt.run(deviceId);
+}
+
+// ========================================
+// DEVICE VOLUME STATE
+// ========================================
+
+export function getAllDeviceVolumeStates() {
+  const stmt = db.prepare(`
+    SELECT device_id, volume_level, is_muted, updated_at
+    FROM device_volume
+  `);
+  
+  const rows = stmt.all();
+  const volumeMap = {};
+  for (const row of rows) {
+    volumeMap[row.device_id] = {
+      level: row.volume_level ?? 50,
+      muted: Boolean(row.is_muted),
+      updatedAt: row.updated_at
+    };
+  }
+  return volumeMap;
+}
+
+export function getDeviceVolumeState(deviceId) {
+  const stmt = db.prepare(`
+    SELECT device_id, volume_level, is_muted, updated_at
+    FROM device_volume
+    WHERE device_id = ?
+  `);
+  
+  const row = stmt.get(deviceId);
+  if (!row) return null;
+  return {
+    level: row.volume_level ?? 50,
+    muted: Boolean(row.is_muted),
+    updatedAt: row.updated_at
+  };
+}
+
+export function saveDeviceVolumeState(deviceId, { volumeLevel, isMuted }) {
+  const stmt = db.prepare(`
+    INSERT INTO device_volume (device_id, volume_level, is_muted)
+    VALUES (?, ?, ?)
+    ON CONFLICT(device_id) DO UPDATE SET
+      volume_level = excluded.volume_level,
+      is_muted = excluded.is_muted,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+  
+  stmt.run(deviceId, Number(volumeLevel), isMuted ? 1 : 0);
 }
 
 // ========================================

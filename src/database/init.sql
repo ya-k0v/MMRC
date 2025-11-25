@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
   username TEXT UNIQUE NOT NULL,
   full_name TEXT NOT NULL,
   password_hash TEXT NOT NULL,
-  role TEXT DEFAULT 'speaker' CHECK(role IN ('admin', 'speaker')),
+  role TEXT DEFAULT 'speaker' CHECK(role IN ('admin', 'speaker', 'hero_admin')),
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_login DATETIME,
@@ -157,6 +157,17 @@ CREATE TABLE IF NOT EXISTS devices (
 CREATE INDEX IF NOT EXISTS idx_devices_type ON devices(device_type);
 CREATE INDEX IF NOT EXISTS idx_devices_folder ON devices(folder);
 CREATE INDEX IF NOT EXISTS idx_devices_last_seen ON devices(last_seen);
+
+-- ========================================
+-- DEVICE VOLUME STATE
+-- ========================================
+CREATE TABLE IF NOT EXISTS device_volume (
+  device_id TEXT PRIMARY KEY,
+  volume_level INTEGER NOT NULL DEFAULT 50 CHECK (volume_level BETWEEN 0 AND 100),
+  is_muted BOOLEAN NOT NULL DEFAULT 0,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE
+);
 
 -- ========================================
 -- FILE NAMES TABLE (маппинг safe_name -> original_name)
