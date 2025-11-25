@@ -1,7 +1,7 @@
 import { initThemeToggle } from './theme.js';
 import { sortDevices, debounce, loadNodeNames, getPageSize } from './utils.js';
 import { ensureAuth, speakerFetch, logout } from './speaker/auth.js';
-import { getCrossIcon } from './shared/svg-icons.js';
+import { getCrossIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon } from './shared/svg-icons.js';
 
 const SPEAKER_CACHE_SESSION_FLAG = 'vc-speaker-cache-cleared-v1';
 
@@ -68,6 +68,11 @@ const filePreview = document.getElementById('filePreview');
 const pdfPrevBtn = document.getElementById('pdfPrevBtn');
 const pdfNextBtn = document.getElementById('pdfNextBtn');
 const pdfCloseBtn = document.getElementById('pdfCloseBtn');
+const volumePanel = document.getElementById('volumePanel');
+const volumeSlider = document.getElementById('volumeSlider');
+const volumeLevelLabel = document.getElementById('volumeLevelLabel');
+const volumeMuteStatus = document.getElementById('volumeMuteStatus');
+const volumeMuteBtn = document.getElementById('volumeMuteBtn');
 
 const STATIC_CONTENT_TYPES = new Set(['pdf', 'pptx', 'folder']);
 const FOLDER_INTERVAL_OPTIONS = [5, 10, 15, 20];
@@ -80,6 +85,190 @@ const formatDuration = (value) => {
   const secs = Math.floor(seconds % 60);
   return `${String(mins).padStart(2, '0')}:${String(secs).toString().padStart(2, '0')}`;
 };
+
+function clampVolumePercent(value) {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return null;
+  }
+  const clamped = Math.max(0, Math.min(100, Math.round(value)));
+  return Math.max(0, Math.min(100, Math.round(clamped / VOLUME_STEP) * VOLUME_STEP));
+}
+
+function resolveVolumeIndicator(volumeState, isReady) {
+  const hasVolumeState = Boolean(volumeState);
+  const clampedLevel = hasVolumeState ? clampVolumePercent(volumeState.level) : null;
+  const levelText = (hasVolumeState && clampedLevel !== null) ? `${clampedLevel}%` : '--%';
+  const isMuted = Boolean(volumeState?.muted);
+  let statusText;
+  if (!isReady) {
+    statusText = 'Устройство офлайн';
+  } else if (!hasVolumeState) {
+    statusText = 'Нет данных';
+  } else {
+    statusText = isMuted ? 'Звук выключен' : 'Звук включен';
+  }
+  let color;
+  if (!isReady) {
+    color = 'var(--muted-2)';
+  } else if (!hasVolumeState) {
+    color = 'var(--muted)';
+  } else if (isMuted) {
+    color = 'var(--danger)';
+  } else {
+    color = 'var(--success)';
+  }
+  return { hasVolumeState, isMuted, levelText, statusText, color };
+}
+
+function getVolumeIconSvg({ hasVolumeState, isMuted, color, size = 18 }) {
+  if (hasVolumeState) {
+    return isMuted ? getVolumeMutedIcon(size, color) : getVolumeOnIcon(size, color);
+  }
+  return getVolumeUnknownIcon(size, color);
+}
+
+function updateVolumeMuteButtonUI(volumeState, isReady) {
+  if (!volumeMuteBtn) return;
+  const info = resolveVolumeIndicator(volumeState, isReady);
+  const iconHtml = getVolumeIconSvg({ ...info, size: 20 });
+  let actionLabel;
+  if (!isReady) {
+    actionLabel = 'Устройство офлайн';
+  } else if (!info.hasVolumeState) {
+    actionLabel = 'Нет данных';
+  } else {
+    actionLabel = info.isMuted ? 'Включить звук' : 'Заглушить звук';
+  }
+  volumeMuteBtn.innerHTML = `
+    <span class="volume-btn-icon" aria-hidden="true">${iconHtml}</span>
+  `;
+  volumeMuteBtn.setAttribute('aria-label', actionLabel);
+  volumeMuteBtn.setAttribute('title', actionLabel);
+}
+
+function storeVolumeState(deviceId, state = {}) {
+  if (!deviceId) return;
+  const prev = volumeStateByDevice.get(deviceId) || { level: 50, muted: false, updatedAt: null };
+  const levelCandidate = typeof state.level === 'number' ? clampVolumePercent(state.level) : null;
+  const nextLevel = levelCandidate !== null ? levelCandidate : prev.level;
+  const nextMuted = typeof state.muted === 'boolean' ? state.muted : prev.muted;
+  volumeStateByDevice.set(deviceId, {
+    level: nextLevel,
+    muted: nextMuted,
+    updatedAt: state.updated_at || prev.updatedAt || null
+  });
+  clearVolumeFallback(deviceId);
+  if (deviceId === currentDevice) {
+    updateVolumeUI();
+  }
+  if (tvList) {
+    renderTVList();
+  }
+}
+
+function getVolumeState(deviceId) {
+  return volumeStateByDevice.get(deviceId) || null;
+}
+
+async function fetchDeviceVolumeState(deviceId) {
+  if (!deviceId) return;
+  try {
+    const res = await speakerFetch(`/api/devices/${encodeURIComponent(deviceId)}/volume`);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    storeVolumeState(deviceId, data);
+  } catch (err) {
+    console.warn('[Speaker] Не удалось получить громкость устройства', deviceId, err.message);
+  }
+}
+
+async function ensureVolumeState(deviceId) {
+  if (!deviceId) {
+    updateVolumeUI();
+    return;
+  }
+  if (volumeStateByDevice.has(deviceId)) {
+    updateVolumeUI();
+    return;
+  }
+  setVolumeWaitingUI('Ждём данные от устройства...');
+  scheduleVolumeFallback(deviceId);
+}
+
+function sendVolumeCommand(command = {}) {
+  if (!currentDevice || !readyDevices.has(currentDevice)) return;
+  const payload = {
+    device_id: currentDevice,
+    ...command
+  };
+  const hasLevelChange = typeof payload.level === 'number' && !Number.isNaN(payload.level);
+  const hasDeltaChange = typeof payload.delta === 'number' && !Number.isNaN(payload.delta);
+  if (typeof payload.muted === 'undefined' && (hasLevelChange || hasDeltaChange)) {
+    payload.muted = false;
+  }
+  socket.emit('control/volume', payload);
+}
+
+/**
+ * Отправляет текущее состояние громкости перед запуском контента
+ * Это гарантирует, что громкость будет применена даже если синхронизация при регистрации не сработала
+ */
+function sendVolumeBeforePlay(deviceId) {
+  if (!deviceId) return;
+  const volumeState = getVolumeState(deviceId);
+  if (volumeState) {
+    // Отправляем текущее состояние громкости перед play
+    socket.emit('control/volume', {
+      device_id: deviceId,
+      level: volumeState.level,
+      muted: volumeState.muted
+    });
+    console.log('[Speaker] 🔊 Sending volume before play:', { deviceId, level: volumeState.level, muted: volumeState.muted });
+  }
+}
+
+function setVolumeControlsDisabled(disabled) {
+  if (volumeSlider) volumeSlider.disabled = disabled;
+  if (volumeMuteBtn) volumeMuteBtn.disabled = disabled;
+}
+
+function setVolumeWaitingUI(message) {
+  if (!volumePanel) return;
+  setVolumeControlsDisabled(true);
+  if (volumeLevelLabel) volumeLevelLabel.textContent = '--%';
+  if (volumeSlider) volumeSlider.value = 0;
+  updateVolumeMuteButtonUI(null, false);
+}
+
+function updateVolumeUI() {
+  if (!volumePanel) return;
+  const state = currentDevice ? getVolumeState(currentDevice) : null;
+  const isReady = currentDevice ? readyDevices.has(currentDevice) : false;
+  const hasDevice = Boolean(currentDevice);
+  const disabled = !state || !isReady;
+  setVolumeControlsDisabled(disabled);
+  
+  if (!state) {
+    if (!hasDevice) {
+      setVolumeWaitingUI('Выберите устройство');
+    } else if (!isReady) {
+      setVolumeWaitingUI('Устройство офлайн');
+    } else {
+      setVolumeWaitingUI();
+    }
+    return;
+  }
+  
+  const volumeInfo = resolveVolumeIndicator(state, isReady);
+  const displayLevel = clampVolumePercent(state.level) ?? 0;
+  if (volumeLevelLabel) volumeLevelLabel.textContent = volumeInfo.levelText;
+  if (volumeSlider) {
+    volumeSlider.value = displayLevel;
+  }
+  updateVolumeMuteButtonUI(state, isReady);
+}
 
 const THUMB_STYLE_ID = 'speaker-thumbnail-styles';
 function ensureThumbnailStyles() {
@@ -147,6 +336,47 @@ const playerStateByDevice = new Map(); // device_id -> { type, file, page }
 let currentPreviewContext = { deviceId: null, file: null, page: null };
 let folderPlaylistState = null;
 let folderPlaylistIntervalSeconds = DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS;
+const volumeStateByDevice = new Map();
+const VOLUME_STEP = 5;
+const VOLUME_SOCKET_WAIT_MS = 1500;
+const volumeFallbackTimers = new Map();
+
+function clearVolumeFallback(deviceId) {
+  if (!deviceId) return;
+  const timer = volumeFallbackTimers.get(deviceId);
+  if (timer) {
+    clearTimeout(timer);
+    volumeFallbackTimers.delete(deviceId);
+  }
+}
+
+function scheduleVolumeFallback(deviceId) {
+  if (!deviceId) return;
+  clearVolumeFallback(deviceId);
+  const timer = setTimeout(() => {
+    volumeFallbackTimers.delete(deviceId);
+    fetchDeviceVolumeState(deviceId);
+  }, VOLUME_SOCKET_WAIT_MS);
+  volumeFallbackTimers.set(deviceId, timer);
+}
+
+if (volumeSlider) {
+  volumeSlider.addEventListener('input', () => {
+    if (volumeLevelLabel) volumeLevelLabel.textContent = `${volumeSlider.value}%`;
+  });
+  volumeSlider.addEventListener('change', () => {
+    if (volumeSlider.disabled || !currentDevice) return;
+    sendVolumeCommand({ level: Number(volumeSlider.value) });
+  });
+}
+
+if (volumeMuteBtn) {
+  volumeMuteBtn.addEventListener('click', () => {
+    if (volumeMuteBtn.disabled) return;
+    const state = getVolumeState(currentDevice) || {};
+    sendVolumeCommand({ muted: !state.muted });
+  });
+}
 
 /**
  * Управление видимостью кнопок навигации (Назад, Вперёд, Закрыть)
@@ -158,6 +388,11 @@ function updatePreviewControlButtons() {
   // Проверяем, есть ли в превью сетка миниатюр папки (это означает, что открыто превью папки)
   const hasThumbnails = filePreview.querySelector('.thumbnail-preview');
   
+  // Проверяем, есть ли iframe напрямую в filePreview (видео превью) - если есть, кнопки должны быть скрыты
+  // НО если iframe внутри static-preview-layout, это не считается видео превью
+  const hasDirectIframe = filePreview.querySelector(':scope > iframe');
+  const hasStaticLayout = filePreview.querySelector('.static-preview-layout');
+  
   // Также проверяем, есть ли активный плейлист папки
   const device = devices.find(d => d.device_id === currentDevice);
   const isFolderWithPlaylist = device && 
@@ -165,12 +400,17 @@ function updatePreviewControlButtons() {
     device.current.type === 'folder' && 
     device.current.playlistActive === true;
   
-  // Показываем кнопки для папок: либо когда открыто превью (миниатюры), либо когда активен плейлист
-  const shouldShow = hasThumbnails || isFolderWithPlaylist;
+  // Показываем кнопки ТОЛЬКО для папок: либо когда открыто превью (миниатюры), либо когда активен плейлист
+  // НО скрываем, если показывается iframe напрямую (видео превью), а не внутри static-preview-layout
+  const shouldShow = (hasThumbnails || isFolderWithPlaylist) && !hasDirectIframe;
   
   pdfPrevBtn.style.display = shouldShow ? 'inline-block' : 'none';
   pdfNextBtn.style.display = shouldShow ? 'inline-block' : 'none';
   pdfCloseBtn.style.display = shouldShow ? 'inline-block' : 'none';
+
+  if (volumePanel) {
+    volumePanel.style.display = shouldShow ? 'none' : 'flex';
+  }
 }
 
 function resetPreviewHighlightState() {
@@ -562,6 +802,10 @@ function renderThumbnailGrid(deviceId, safeName, contentType, imageUrls) {
     thumb.addEventListener('click', () => {
       const page = idx + 1;
       stopFolderPlaylistIfNeeded('manual thumbnail click', { deviceId, file: safeName });
+      
+      // Отправляем громкость перед запуском контента
+      sendVolumeBeforePlay(deviceId);
+      
       socket.emit('control/play', {
         device_id: deviceId,
         file: safeName,
@@ -790,6 +1034,22 @@ function renderTVList() {
     const filesCount = d.files?.length ?? 0;
     const isActive = d.device_id === currentDevice;
     const isReady = readyDevices.has(d.device_id);
+    const volumeState = getVolumeState(d.device_id);
+    const volumeInfo = resolveVolumeIndicator(volumeState, isReady);
+    const volumeIcon = getVolumeIconSvg({ ...volumeInfo, size: 18 });
+    const ariaLabel = `Громкость ${volumeInfo.levelText}, ${volumeInfo.statusText}`;
+    const volumeRow = `
+        <div class="tvTile-volume${!isReady ? ' is-offline' : ''}" aria-label="${escapeAttr(ariaLabel)}">
+          ${volumeIcon}
+          <span class="volume-level">${volumeInfo.levelText}</span>
+        </div>
+      `;
+    const metaRow = `
+        <div class="tvTile-metaRow">
+          <span class="meta tvTile-meta">ID: ${d.device_id}</span>
+          <span class="meta tvTile-files">Файлов: ${filesCount}</span>
+        </div>
+      `;
     return `
       <li class="tvTile${isActive ? ' active' : ''}" data-id="${d.device_id}">
         <div class="tvTile-content">
@@ -799,8 +1059,8 @@ function renderTVList() {
                   title="${isReady ? 'Готов' : 'Не готов'}" 
                   aria-label="${isReady ? 'online' : 'offline'}"></span>
           </div>
-          <div class="meta tvTile-meta">ID: ${d.device_id}</div>
-          <div class="meta">Файлов: ${filesCount}</div>
+          ${metaRow}
+          ${volumeRow}
         </div>
       </li>
     `;
@@ -887,7 +1147,11 @@ function showLivePreviewForTV(deviceId, force = false) {
 
 /* Выбор устройства: обновляем подсветку и список файлов, не сбрасывая выбранный файл, если он ещё существует */
 async function selectDevice(id, resetPage = true) {
+  const previousDevice = currentDevice;
   currentDevice = id;
+  if (previousDevice && previousDevice !== id) {
+    clearVolumeFallback(previousDevice);
+  }
   
   // ИСПРАВЛЕНО: При явном выборе устройства сбрасываем выбранный файл
   if (resetPage) {
@@ -919,6 +1183,8 @@ async function selectDevice(id, resetPage = true) {
   
   await loadFiles();
   await syncPreviewWithPlayerState();
+  updateVolumeUI();
+  await ensureVolumeState(currentDevice);
   
 }
 
@@ -1210,6 +1476,8 @@ async function loadFiles() {
         } else {
           filePreview.innerHTML = `<iframe src="${src}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
         }
+        // Скрываем кнопки при показе фото/видео (вызываем после небольшой задержки, чтобы DOM обновился)
+        setTimeout(() => updatePreviewControlButtons(), 10);
       }
     };
   });
@@ -1225,6 +1493,9 @@ async function loadFiles() {
       // Сбрасываем флаг закрытия при новом воспроизведении
       previewManuallyClosed = false;
       stopFolderPlaylistIfNeeded('manual play button', { deviceId: currentDevice, file: safeName });
+      
+      // Отправляем громкость перед запуском контента
+      sendVolumeBeforePlay(currentDevice);
       
       socket.emit('control/play', { device_id: currentDevice, file: safeName });
       
@@ -1436,6 +1707,9 @@ document.getElementById('playBtn').onclick = () => {
   
   const device = devices.find(d => d.device_id === currentDevice);
   
+  // Отправляем громкость перед запуском контента
+  sendVolumeBeforePlay(currentDevice);
+  
   // Если устройство на паузе - продолжаем воспроизведение (resume)
   if (device && device.current && device.current.state === 'paused') {
     socket.emit('control/play', { device_id: currentDevice }); // Сервер отправит player/resume
@@ -1562,10 +1836,17 @@ const onDevicesUpdated = debounce(async () => {
 socket.on('player/online', ({ device_id }) => {
   readyDevices.add(device_id);
   renderTVList();
+  if (device_id === currentDevice) {
+    updateVolumeUI();
+    ensureVolumeState(device_id);
+  }
 });
 socket.on('player/offline', ({ device_id }) => {
   readyDevices.delete(device_id);
   renderTVList();
+  if (device_id === currentDevice) {
+    updateVolumeUI();
+  }
 });
 
 // Initialize online statuses on load/refresh
@@ -1576,6 +1857,7 @@ socket.on('players/onlineSnapshot', (list) => {
     readyDevices = new Set();
   }
   renderTVList();
+  updateVolumeUI();
 });
 
 // Синхронизация состояния плейлиста между панелями
@@ -1776,6 +2058,19 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
 }, 200);
 
 socket.on('preview/refresh', onPreviewRefresh);
+
+socket.on('devices/volume/stateBatch', (snapshot = {}) => {
+  if (!snapshot || typeof snapshot !== 'object') return;
+  Object.entries(snapshot).forEach(([deviceId, state]) => {
+    storeVolumeState(deviceId, state || {});
+  });
+});
+
+socket.on('devices/volume/state', (payload = {}) => {
+  const deviceId = payload.device_id || payload.deviceId;
+  if (!deviceId) return;
+  storeVolumeState(deviceId, payload);
+});
 
 // Функция для выделения текущей миниатюры
 function highlightCurrentThumbnail(pageNumber, context) {

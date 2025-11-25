@@ -23,6 +23,9 @@ let currentDeviceId = null;
 let tvPage = 0;
 let filePage = 0;
 let nodeNames = {};
+let user = null;
+const volumeStateByDevice = new Map();
+const VOLUME_STEP = 5;
 
 // Настройка Socket.IO обработчиков
 setupSocketListeners(socket, {
@@ -98,6 +101,8 @@ setupSocketListeners(socket, {
     renderTVList();
     if (currentDeviceId) openDevice(currentDeviceId);
   },
+  onVolumeBatch: handleVolumeBatch,
+  onVolumeUpdate: handleVolumeUpdate,
   onDeviceUpdated: (device_id, device) => {
     // КРИТИЧНО: Обновляем информацию об устройстве без перезагрузки страницы
     const deviceIndex = devicesCache.findIndex(d => d.device_id === device_id);
@@ -157,14 +162,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   initThemeToggle(document.getElementById('themeBtn'), 'vc_theme_admin');
   
   try {
-    const authorized = await ensureAuth();
-    if (!authorized) return;
+    user = await ensureAuth();
+    if (!user) return;
+    if (user.role === 'hero_admin') {
+      window.location.href = '/hero-admin.html';
+      return;
+    }
   } catch (err) {
     return;
   }
-  
+
   // Показываем ФИО пользователя
-  const user = JSON.parse(localStorage.getItem('user') || '{}');
   const userFullName = document.getElementById('userFullName');
   if (userFullName && user.full_name) {
     userFullName.textContent = user.full_name;
@@ -188,10 +196,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     usersBtn.onclick = () => {
       showUsersModal(adminFetch);
     };
+  } else if (usersBtn) {
+    usersBtn.style.display = 'none';
   }
   
   // Обработчик кнопки Настройки (только для admin)
   const settingsBtn = document.getElementById('settingsBtn');
+  const heroBtn = document.getElementById('heroBtn');
+  if (heroBtn) {
+    if (user.role === 'admin') {
+      heroBtn.onclick = () => {
+        window.location.href = '/hero-admin.html';
+      };
+    } else {
+      heroBtn.style.display = 'none';
+    }
+  }
   if (settingsBtn) {
     // Заменяем эмодзи на SVG иконку
     settingsBtn.innerHTML = getSettingsIcon(20);
@@ -213,7 +233,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     logoutBtn.style.cursor = 'pointer';
   }
-  
+
   await loadAndSetNodeNames();
   await loadDevices();
   renderLayout();
@@ -323,6 +343,7 @@ function openDevice(id) {
   if (!d) { clearDetail(); return; }
   pane.innerHTML = '';
   pane.appendChild(renderDeviceCard(d));
+  setupVolumePanel(d.device_id);
 }
 
 // renderDeviceCard перенесена в device-card.js
@@ -410,6 +431,176 @@ function updateFileProgress(deviceId, fileName, progress) {
 // setupUploadUI перенесена в upload-ui.js
 function setupUploadUI(card, deviceId, filesPanelEl) {
   return setupUploadUIModule(card, deviceId, filesPanelEl, renderFilesPane, socket);
+}
+
+function clampVolumePercent(value) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return null;
+  const clamped = Math.max(0, Math.min(100, Math.round(value)));
+  return Math.max(0, Math.min(100, Math.round(clamped / VOLUME_STEP) * VOLUME_STEP));
+}
+
+function storeVolumeState(deviceId, state = {}) {
+  if (!deviceId) return;
+  const prev = volumeStateByDevice.get(deviceId) || { level: 50, muted: false, updatedAt: null };
+  const levelCandidate = typeof state.level === 'number' ? clampVolumePercent(state.level) : null;
+  const nextLevel = levelCandidate !== null ? levelCandidate : prev.level;
+  const nextMuted = typeof state.muted === 'boolean' ? state.muted : prev.muted;
+  volumeStateByDevice.set(deviceId, {
+    level: nextLevel,
+    muted: nextMuted,
+    updatedAt: state.updated_at || prev.updatedAt || null
+  });
+  if (deviceId === currentDeviceId) {
+    updateVolumePanel(deviceId);
+  }
+}
+
+function handleVolumeBatch(snapshot = {}) {
+  if (!snapshot || typeof snapshot !== 'object') return;
+  Object.entries(snapshot).forEach(([deviceId, state]) => {
+    storeVolumeState(deviceId, state || {});
+  });
+}
+
+function handleVolumeUpdate(payload = {}) {
+  const deviceId = payload.device_id || payload.deviceId;
+  if (!deviceId) return;
+  storeVolumeState(deviceId, payload);
+}
+
+function sendVolumeCommand(deviceId, params = {}) {
+  if (!deviceId) return;
+  const payload = {
+    device_id: deviceId,
+    ...params
+  };
+  const hasLevelChange = typeof payload.level === 'number' && !Number.isNaN(payload.level);
+  const hasDeltaChange = typeof payload.delta === 'number' && !Number.isNaN(payload.delta);
+  if (typeof payload.muted === 'undefined' && (hasLevelChange || hasDeltaChange)) {
+    payload.muted = false;
+  }
+  socket.emit('control/volume', payload);
+
+  // Оптимистично обновляем локальное состояние, чтобы UI сразу реагировал
+  const current = volumeStateByDevice.get(deviceId) || {};
+  const nextLevel = hasLevelChange
+    ? clampVolumePercent(payload.level)
+    : hasDeltaChange && typeof current.level === 'number'
+      ? clampVolumePercent(current.level + payload.delta)
+      : current.level;
+  const nextMuted = typeof payload.muted === 'boolean' ? payload.muted : current.muted;
+  if (typeof nextLevel === 'number' || typeof nextMuted === 'boolean') {
+    storeVolumeState(deviceId, {
+      level: typeof nextLevel === 'number' ? nextLevel : current.level,
+      muted: typeof nextMuted === 'boolean' ? nextMuted : current.muted
+    });
+  }
+}
+
+function updateVolumePanel(deviceId = currentDeviceId) {
+  const slider = document.getElementById('adminVolumeSlider');
+  const valueEl = document.getElementById('adminVolumeValue');
+  const statusEl = document.getElementById('adminVolumeStatus');
+  const downBtn = document.getElementById('adminVolumeDown');
+  const upBtn = document.getElementById('adminVolumeUp');
+  const muteBtn = document.getElementById('adminVolumeMute');
+  const panel = document.getElementById('adminVolumePanel');
+  if (!panel) return;
+  
+  const hasDevice = Boolean(deviceId);
+  const state = deviceId ? volumeStateByDevice.get(deviceId) : null;
+  const isReady = deviceId ? readyDevices.has(deviceId) : false;
+  const disabled = !state;
+  const isOffline = hasDevice && !isReady;
+  
+  if (slider) {
+    slider.disabled = disabled;
+    if (state && typeof state.level === 'number') {
+      slider.value = clampVolumePercent(state.level) ?? slider.value;
+    }
+  }
+  if (downBtn) downBtn.disabled = disabled;
+  if (upBtn) upBtn.disabled = disabled;
+  if (muteBtn) muteBtn.disabled = disabled;
+  
+  if (!state) {
+    if (valueEl) valueEl.textContent = '--%';
+    if (statusEl) {
+      statusEl.textContent = hasDevice
+        ? 'Нет данных'
+        : 'Выберите устройство';
+    }
+    if (muteBtn) muteBtn.textContent = '🔇 Заглушить';
+    return;
+  }
+  
+  const level = clampVolumePercent(state.level) ?? 0;
+  if (valueEl) valueEl.textContent = `${level}%`;
+  if (statusEl) {
+    let statusText = state.muted ? 'Звук выключен' : 'Звук включен';
+    if (isOffline) {
+      statusText += ' · применится при подключении';
+    }
+    statusEl.textContent = statusText;
+  }
+  if (muteBtn) muteBtn.textContent = state.muted ? '🔊 Включить' : '🔇 Заглушить';
+}
+
+async function ensureVolumeState(deviceId) {
+  if (!deviceId) return;
+  if (!volumeStateByDevice.has(deviceId)) {
+    await fetchVolumeState(deviceId);
+  } else {
+    updateVolumePanel(deviceId);
+  }
+}
+
+async function fetchVolumeState(deviceId) {
+  if (!deviceId) return;
+  try {
+    const res = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/volume`);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    storeVolumeState(deviceId, data);
+  } catch (err) {
+    console.warn('[Admin] Не удалось получить громкость устройства', deviceId, err.message);
+  }
+}
+
+function setupVolumePanel(deviceId) {
+  const slider = document.getElementById('adminVolumeSlider');
+  const downBtn = document.getElementById('adminVolumeDown');
+  const upBtn = document.getElementById('adminVolumeUp');
+  const muteBtn = document.getElementById('adminVolumeMute');
+  const valueEl = document.getElementById('adminVolumeValue');
+  const statusEl = document.getElementById('adminVolumeStatus');
+  if (!slider || !downBtn || !upBtn || !muteBtn || !statusEl || !valueEl) return;
+  
+  slider.addEventListener('input', () => {
+    valueEl.textContent = `${slider.value}%`;
+  });
+  slider.addEventListener('change', () => {
+    if (slider.disabled) return;
+    sendVolumeCommand(deviceId, { level: Number(slider.value) });
+  });
+  downBtn.addEventListener('click', () => {
+    if (downBtn.disabled) return;
+    sendVolumeCommand(deviceId, { delta: -VOLUME_STEP });
+  });
+  upBtn.addEventListener('click', () => {
+    if (upBtn.disabled) return;
+    sendVolumeCommand(deviceId, { delta: VOLUME_STEP });
+  });
+  muteBtn.addEventListener('click', () => {
+    if (muteBtn.disabled) return;
+    const state = volumeStateByDevice.get(deviceId);
+    sendVolumeCommand(deviceId, { muted: !(state && state.muted) });
+  });
+  
+  updateVolumePanel(deviceId);
+  ensureVolumeState(deviceId);
 }
 
 // ------ Периодическая проверка статусов файлов в обработке ------

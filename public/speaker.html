@@ -97,6 +97,46 @@
       }
     }
     
+    .volume-panel {
+      margin-top: var(--space-md);
+      padding: var(--space-md);
+      background: var(--panel-2);
+      border-radius: var(--radius-md);
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-sm);
+    }
+    
+    .preview-panel {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-md);
+    }
+    
+    .preview-panel .volume-panel {
+      margin-top: auto;
+    }
+    
+    .volume-panel .volume-slider-row {
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm);
+      margin-top: auto;
+    }
+    
+    .volume-panel input[type="range"] {
+      flex: 1;
+      accent-color: var(--brand);
+    }
+    
+    .volume-panel .volume-value {
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: var(--text);
+      min-width: 64px;
+      text-align: right;
+    }
+    
   </style>
   <script src="/socket.io/socket.io.js"></script>
   <script type="module" src="/js/speaker.js"></script>
@@ -113,7 +153,7 @@
         <span id="logoutBtn" class="meta" style="font-weight:500; color:var(--text); text-decoration:underline; cursor:pointer;">Выйти</span>
       </div>
     </div>
-    <div class="button-group" style="display:flex; gap:8px; flex-shrink:0;">
+    <div class="button-group" style="display:flex; gap:8px; flex-shrink:0; flex-wrap:wrap;">
       <button id="playBtn" class="primary" type="button">▶ Play</button>
       <button id="pauseBtn" class="secondary" type="button">⏸ Pause</button>
       <button id="restartBtn" class="secondary" type="button">⏮ Restart</button>
@@ -151,6 +191,15 @@
           <button id="pdfPrevBtn" class="secondary" type="button">◀ Назад</button>
           <button id="pdfNextBtn" class="secondary" type="button">Вперёд ▶</button>
           <button id="pdfCloseBtn" class="danger" type="button">✕</button>
+        </div>
+        <div class="volume-panel" id="volumePanel">
+          <div class="volume-slider-row">
+            <input type="range" id="volumeSlider" min="0" max="100" step="5" value="50" disabled />
+            <div class="volume-value" id="volumeLevelLabel">--%</div>
+            <button id="volumeMuteBtn" class="secondary" type="button" disabled>
+              <span class="volume-btn-icon" aria-hidden="true">🔇</span>
+            </button>
+          </div>
         </div>
       </div>
     </section>

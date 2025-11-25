@@ -371,6 +371,40 @@ button.danger:hover:not(:disabled) {
   box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
 }
 
+#volumeMuteBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#volumeMuteBtn .volume-btn-icon {
+  display: inline-flex;
+  line-height: 0;
+}
+
+#volumeMuteBtn .volume-btn-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.volume-panel .volume-slider-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.volume-panel .volume-slider-row input[type="range"] {
+  flex: 1 1 auto;
+}
+
+.volume-panel .volume-value {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--text);
+  min-width: 64px;
+  text-align: right;
+}
+
 body.light button.danger {
   background: #fee2e2;
   color: #991b1b;
@@ -534,7 +568,7 @@ body.light .tvTile.active {
 .tvTile-content {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: 4px;
 }
 
 .tvTile-header {
@@ -550,6 +584,7 @@ body.light .tvTile.active {
   white-space: nowrap;
   flex: 1;
   min-width: 0;
+  margin-bottom: 0px;
 }
 
 .tvTile-status {
@@ -572,6 +607,49 @@ body.light .tvTile.active {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tvTile-metaRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.tvTile-metaRow .meta {
+  margin: 0;
+}
+
+.tvTile-volume {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+}
+
+.tvTile-volume .volume-level {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.tvTile-volume .volume-state {
+  text-transform: none;
+}
+
+.tvTile-volume .volume-icon-svg {
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.tvTile-volume.is-offline {
+  opacity: 0.8;
+}
+
+.tvTile-volume.is-offline .volume-state {
+  color: var(--muted-2);
 }
 
 /* ===== File Items - Фиксированная высота ===== */
@@ -691,7 +769,15 @@ body.light .resolution-badge {
 }
 
 .preview-panel .miniPreview {
+  flex: 0 0 auto;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+}
+
+/* Для папок с картинками - растягиваем на всю высоту */
+.preview-panel #filePreview:has(.static-preview-layout) {
   flex: 1;
+  aspect-ratio: auto;
   min-height: 0;
 }
 
@@ -703,15 +789,27 @@ body.light .resolution-badge {
   border-radius: var(--radius-md);
   overflow: hidden;
   border: var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .miniPreview iframe,
-.miniPreview img,
 .miniPreview video {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   border: 0;
+}
+
+.miniPreview img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border: 0;
+  display: block;
 }
 
 .previewHolder {
@@ -1220,4 +1318,29 @@ body.light ::-webkit-scrollbar-thumb {
 
 body.light ::-webkit-scrollbar-thumb:hover {
   background: var(--muted-2);
+}
+
+/* ========================================
+   КЛАССЫ ДЛЯ УПРАВЛЕНИЯ ВИДИМОСТЬЮ
+   ======================================== */
+
+/* Класс для скрытия элементов через opacity (не display:none - сохраняет transitions) */
+.hidden {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+}
+
+/* Мягкое скрытие для слоёв контента (сохраняет transitions) */
+.hidden-soft {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+  transition: opacity 0.5s ease-in-out;
+}
+
+/* Класс для управления z-index через CSS */
+.on-top {
+  z-index: 10 !important;
+  position: relative;
 }
