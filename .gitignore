@@ -47,6 +47,9 @@ nginx_upload/
 # Archives
 *.tar.gz
 *.zip
+*.apk
+*.ap_
+*.aab
 
 # IDE
 .vscode/
