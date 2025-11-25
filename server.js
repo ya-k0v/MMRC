@@ -8,7 +8,7 @@ import {
   ROOT, PUBLIC, DEVICES, CONVERTED_CACHE, MAX_FILE_SIZE, ALLOWED_EXT, PORT, HOST 
 } from './src/config/constants.js';
 import { createSocketServer } from './src/config/socket-config.js';
-import { initDatabase, closeDatabase, getDatabase } from './src/database/database.js';
+import { initDatabase, closeDatabase, getDatabase, getAllDeviceVolumeStates, saveDeviceVolumeState } from './src/database/database.js';
 import { 
   loadDevicesFromDB, 
   saveDevicesToDB, 
@@ -30,9 +30,11 @@ import { createSystemInfoRouter } from './src/routes/system-info.js';
 import { createFoldersRouter } from './src/routes/folders.js';
 import { createAuthRouter } from './src/routes/auth.js';
 import { createDeduplicationRouter } from './src/routes/deduplication.js';
+import { createHeroRouter } from './src/modules/hero/index.js';
+import { createVolumeRouter } from './src/routes/volume.js';
 import fileResolverRouter from './src/routes/file-resolver.js';
 import { createUploadMiddleware } from './src/middleware/multer-config.js';
-import { requireAuth, requireAdmin } from './src/middleware/auth.js';
+import { requireAuth, requireAdmin, requireHeroAdmin, requireSpeaker } from './src/middleware/auth.js';
 import { globalLimiter, apiSpeedLimiter } from './src/middleware/rate-limit.js';
 import { setupExpressMiddleware, setupStaticFiles } from './src/middleware/express-config.js';
 import { setupSocketHandlers } from './src/socket/index.js';
@@ -81,6 +83,7 @@ import('./src/config/settings-manager.js').then(module => {
 // Инициализация данных
 let devices = {};
 let fileNamesMap = {};
+const deviceVolumeState = {};
 
 // Загружаем данные из SQLite БД
 devices = loadDevicesFromDB();
@@ -126,6 +129,138 @@ for (const deviceId in devices) {
 // Сохраняем обновленное состояние в БД
 saveDevicesToDB(devices);
 
+// Загружаем состояние громкости устройств
+const persistedVolumeState = getAllDeviceVolumeStates();
+for (const [deviceId, state] of Object.entries(persistedVolumeState)) {
+  deviceVolumeState[deviceId] = {
+    level: typeof state.level === 'number' ? state.level : 50,
+    muted: Boolean(state.muted),
+    updatedAt: state.updatedAt || null
+  };
+}
+
+for (const deviceId of Object.keys(devices)) {
+  if (!deviceVolumeState[deviceId]) {
+    const now = new Date().toISOString();
+    deviceVolumeState[deviceId] = { level: 50, muted: false, updatedAt: now };
+    saveDeviceVolumeState(deviceId, { volumeLevel: 50, isMuted: false });
+  }
+}
+
+const VOLUME_MIN = 0;
+const VOLUME_MAX = 100;
+const VOLUME_STEP = 5;
+
+function normalizeVolumeLevel(value) {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return null;
+  }
+  const clamped = Math.max(VOLUME_MIN, Math.min(VOLUME_MAX, Math.round(value)));
+  const stepped = Math.round(clamped / VOLUME_STEP) * VOLUME_STEP;
+  return Math.max(VOLUME_MIN, Math.min(VOLUME_MAX, stepped));
+}
+
+function ensureVolumeState(deviceId) {
+  if (!deviceVolumeState[deviceId]) {
+    const now = new Date().toISOString();
+    deviceVolumeState[deviceId] = { level: 50, muted: false, updatedAt: now };
+    saveDeviceVolumeState(deviceId, { volumeLevel: 50, isMuted: false });
+  }
+  return deviceVolumeState[deviceId];
+}
+
+function getVolumeState(deviceId) {
+  const current = ensureVolumeState(deviceId);
+  return { ...current };
+}
+
+function persistVolumeState(deviceId, nextState = {}, options = {}) {
+  const current = ensureVolumeState(deviceId);
+  const normalizedLevel =
+    typeof nextState.level === 'number'
+      ? normalizeVolumeLevel(nextState.level)
+      : current.level;
+  const normalizedMuted =
+    typeof nextState.muted === 'boolean' ? nextState.muted : current.muted;
+  
+  if (
+    normalizedLevel === current.level &&
+    normalizedMuted === current.muted &&
+    !options.force
+  ) {
+    return current;
+  }
+  
+  const updatedAt = new Date().toISOString();
+  deviceVolumeState[deviceId] = {
+    level: normalizedLevel,
+    muted: normalizedMuted,
+    updatedAt
+  };
+  
+  saveDeviceVolumeState(deviceId, {
+    volumeLevel: normalizedLevel,
+    isMuted: normalizedMuted
+  });
+  
+  if (options.broadcast !== false) {
+    io.emit('devices/volume/state', {
+      device_id: deviceId,
+      level: normalizedLevel,
+      muted: normalizedMuted,
+      updated_at: updatedAt,
+      source: options.source || 'server'
+    });
+  }
+  
+  return deviceVolumeState[deviceId];
+}
+
+function emitVolumeCommand(deviceId, state, reason = 'control') {
+  io.to(`device:${deviceId}`).emit('player/volume', {
+    level: state.level,
+    muted: state.muted,
+    reason
+  });
+}
+
+function applyVolumeCommand(deviceId, params = {}, meta = {}) {
+  if (!devices[deviceId]) {
+    throw new Error('device not found');
+  }
+  
+  const current = ensureVolumeState(deviceId);
+  let nextLevel = current.level;
+  
+  if (typeof params.level === 'number' && !Number.isNaN(params.level)) {
+    const normalized = normalizeVolumeLevel(params.level);
+    if (normalized === null) {
+      throw new Error('invalid volume level');
+    }
+    nextLevel = normalized;
+  } else if (typeof params.delta === 'number' && !Number.isNaN(params.delta)) {
+    const normalized = normalizeVolumeLevel(current.level + params.delta);
+    if (normalized !== null) {
+      nextLevel = normalized;
+    }
+  }
+  
+  const nextMuted =
+    typeof params.muted === 'boolean' ? params.muted : current.muted;
+  
+  const updated = persistVolumeState(
+    deviceId,
+    { level: nextLevel, muted: nextMuted },
+    { source: meta.source, broadcast: meta.broadcast }
+  );
+  
+  if (!meta.skipEmit) {
+    emitVolumeCommand(deviceId, updated, meta.reason || meta.source || 'control');
+  }
+  
+  return updated;
+}
+
 // ========================================
 // UPLOAD MIDDLEWARE
 // ========================================
@@ -150,7 +285,20 @@ const devicesRouter = createDevicesRouter({
   saveDevicesJson: saveDevicesToDB, 
   fileNamesMap, 
   saveFileNamesMap: saveFileNamesToDB,
-  requireAdmin  // Передаем для защиты POST/DELETE
+  requireAdmin,  // Передаем для защиты POST/DELETE
+  onDeviceCreated: (deviceId) => {
+    const state = ensureVolumeState(deviceId);
+    io.emit('devices/volume/state', {
+      device_id: deviceId,
+      level: state.level,
+      muted: state.muted,
+      updated_at: state.updatedAt,
+      source: 'server'
+    });
+  },
+  onDeviceDeleted: (deviceId) => {
+    delete deviceVolumeState[deviceId];
+  }
 });
 
 const placeholderRouter = createPlaceholderRouter({ 
@@ -199,10 +347,20 @@ const deduplicationRouter = createDeduplicationRouter({
   updateDeviceFilesFromDB
 });
 
+const heroRouter = createHeroRouter({ requireHeroAdmin });
+const volumeRouter = createVolumeRouter({
+  devices,
+  getVolumeState,
+  applyVolumeCommand,
+  requireSpeaker
+});
+
 // Роутеры с избирательной защитой (применяют requireAuth внутри себя)
 app.use('/api/devices', conversionRouter);  
 app.use('/api/devices', foldersRouter);
 app.use('/api/devices', deduplicationRouter);  // Дедупликация (check-duplicate, copy-from-duplicate)
+app.use('/api/devices', volumeRouter);
+app.use('/api/hero', heroRouter);
 
 // ВАЖНО: devicesRouter, placeholderRouter, filesRouter, videoInfoRouter
 // используются устройствами (плеерами) БЕЗ JWT токенов!
@@ -397,7 +555,14 @@ async function autoConvertFileWrapper(deviceId, fileName) {
 // Все Socket.IO handlers перенесены в модули src/socket/
 
 // Настраиваем Socket.IO обработчики
-setupSocketHandlers(io, { devices, getPageSlideCount });
+setupSocketHandlers(io, { 
+  devices, 
+  getPageSlideCount,
+  getVolumeState,
+  persistVolumeState,
+  applyVolumeCommand,
+  deviceVolumeState
+});
 
 // Запуск сервера
 server.listen(PORT, HOST, () => {

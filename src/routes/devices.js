@@ -18,11 +18,20 @@ const router = express.Router();
 
 /**
  * Настройка роутера для устройств
- * @param {Object} deps - Зависимости {devices, io, saveDevicesJson, fileNamesMap, saveFileNamesMap}
+ * @param {Object} deps - Зависимости {devices, io, saveDevicesJson, fileNamesMap, saveFileNamesMap, onDeviceCreated, onDeviceDeleted}
  * @returns {express.Router} Настроенный роутер
  */
 export function createDevicesRouter(deps) {
-  const { devices, io, saveDevicesJson, fileNamesMap, saveFileNamesMap, requireAdmin } = deps;
+  const { 
+    devices, 
+    io, 
+    saveDevicesJson, 
+    fileNamesMap, 
+    saveFileNamesMap, 
+    requireAdmin,
+    onDeviceCreated,
+    onDeviceDeleted
+  } = deps;
   
   // GET /api/devices - Получить список всех устройств (доступно speaker)
   router.get('/', (req, res) => {
@@ -78,6 +87,14 @@ export function createDevicesRouter(deps) {
       files: [], 
       current: { type: 'idle', file: null, state: 'idle' } 
     };
+    
+    if (typeof onDeviceCreated === 'function') {
+      try {
+        onDeviceCreated(device_id);
+      } catch (err) {
+        logger.warn('[Devices] onDeviceCreated hook failed', { deviceId: device_id, error: err.message });
+      }
+    }
     
     io.emit('devices/updated');
     saveDevicesJson(devices);
@@ -147,6 +164,13 @@ export function createDevicesRouter(deps) {
     // 3. Удаляем из devices (память)
     delete devices[id];
     logDevice('info', `Device removed from memory`, { deviceId: id });
+    if (typeof onDeviceDeleted === 'function') {
+      try {
+        onDeviceDeleted(id);
+      } catch (err) {
+        logger.warn('[Devices] onDeviceDeleted hook failed', { deviceId: id, error: err.message });
+      }
+    }
     
     // 4. Удаляем из fileNamesMap
     if (fileNamesMap[id]) {

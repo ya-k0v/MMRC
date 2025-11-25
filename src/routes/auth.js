@@ -276,7 +276,7 @@ router.post('/register',
   body('username').trim().isLength({ min: 3, max: 50 }),
   body('full_name').trim().isLength({ min: 1, max: 100 }),
   body('password').isLength({ min: 8 }),
-  body('role').isIn(['admin', 'speaker']),
+  body('role').isIn(['admin', 'speaker', 'hero_admin']),
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
