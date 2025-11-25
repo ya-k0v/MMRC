@@ -1,4 +1,4 @@
-# 🚀 VideoControl 2.7.1 — Быстрая установка
+# 🚀 VideoControl 2.8.0 — Быстрая установка
 
 ## ⚡ Установка одной командой
 
@@ -63,7 +63,7 @@ node server.js
 - ✅ Запускает `scripts/optimize-network.sh` (TCP буферы 16 MB)
 - ✅ Разворачивает `nginx/videocontrol-secure.conf` и включает Nginx
 - ✅ Создаёт и активирует `videocontrol.service` (systemd)
-- ✅ Настраивает права и симлинки для контента, tail логов `logs/combined-*.log`
+- ✅ Настраивает права и симлинки для контента
 
 ### Режимы хранения контента
 - `local` — файлы живут в `public/content`
@@ -265,6 +265,7 @@ npm install
 
 # Применить схему (идемпотентно)
 sqlite3 config/main.db < src/database/init.sql
+sqlite3 config/heroes.db < src/modules/hero/database/schema.sql
 
 sudo systemctl start videocontrol
 ```

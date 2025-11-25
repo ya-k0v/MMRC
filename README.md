@@ -2,7 +2,7 @@
 
 **Система управления медиаконтентом для цифровых дисплеев**
 
-![Version](https://img.shields.io/badge/version-2.7.1-blue)
+![Version](https://img.shields.io/badge/version-2.8.0-blue)
 ![Node](https://img.shields.io/badge/node-20.x-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
@@ -37,13 +37,13 @@ node server.js
 - Сервер: `http://localhost:3000`
 - Админ: `admin / admin123`
 
-### Что нового (2.7.1)
+### Что нового (2.8.0)
 
-- 🖥️ **Speaker-panel = state of real player** — превью/подсветка слайдов теперь берётся из событий плеера, без локальных «догадок».
-- 📺 **Android клиент 24/7** — плавные переходы через бренд-фон, обработка OutOfMemory в фоне, lifecycle-aware корутины, безопасные placeholder'ы.
-- ⚙️ **Обновлённый quick-install** — ставит Node.js 20 LTS и позволяет выбрать режим хранения (local/external/external_fstab) через ENV.
-- 🔄 **Production-ready 24/7** — health check endpoint, circuit breaker, retry логика для БД, автоматическое восстановление при сбоях, метрики производительности.
-- 🛡️ **Улучшенная надежность** — таймауты для HTTP запросов, улучшенная обработка ошибок БД, автоматическое переподключение к БД.
+- 🧭 **Hero-модуль** — публичные `hero.html`/`hero-admin.html` с отдельной `heroes.db`, импортом биографий и медиагалереей для мемориальных панелей.
+- 🗃️ **Автоматические миграции heroes.db** — база создаётся/синхронизируется на старте, доступен API для экспорта и резервного копирования.
+- ⚡ **Quick-install 2.0** — интерактивный выбор хранилища, автоматический sysctl-тюнинг и готовый systemd unit с geo-блоком в Nginx.
+- 📚 **Обновлённая документация** — переписан `QUICK-START.md`, мануалы и скрипты описывают новые режимы и health/metrics флоу.
+- 📱 **Android APK v2.8.0** — свежая сборка плеера в корне репозитория, автоматическая настройка через `scripts/quick-setup-android.sh`.
 
 ### Быстрая установка (production, с Nginx и systemd)
 
@@ -95,8 +95,8 @@ cd scripts
 **Вручную:**
 
 ```bash
-# 1. Установить актуальный APK (v2.7.1)
-adb install -r VCMplayer-v2.7.1.apk
+# 1. Установить актуальный APK (v2.8.0)
+adb install -r VCMplayer-v2.8.0.apk
 
 # 2. Запустить
 adb shell am start -n com.videocontrol.mediaplayer/.MainActivity
@@ -297,7 +297,7 @@ npm install
 sudo systemctl start videocontrol
 
 # 5. Обновить Android APK
-adb install -r VCMplayer-v2.7.1.apk
+adb install -r VCMplayer-v2.8.0.apk
 ```
 
 ---
@@ -312,4 +312,4 @@ MIT License - свободное использование
 
 **ya-k0v** - [GitHub](https://github.com/ya-k0v/VideoControl)
 
-**Версия:** 2.7.1
+**Версия:** 2.8.0

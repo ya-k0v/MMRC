@@ -1,40 +1,44 @@
 # Dependencies
 node_modules/
 
-# Logs
+# Logs & runtime artifacts
+logs/
 *.log
 npm-debug.log*
-
-# Runtime data
 *.pid
 *.seed
 .converted/
+temp/
+backups/
 
-# SQLite database (хранится локально, не коммитим)
+# SQLite databases (local only)
 config/main.db
 config/main.db-wal
 config/main.db-shm
+config/main.db.backup
 config/main.db.backup.*
 config/json-backup-*/
+config/heroes.db
+config/heroes.db-wal
+config/heroes.db-shm
+config/heroes.db.backup
+config/heroes.db.backup.*
+config/heroes_backup_*.db
+config/biographies.db
+config/biographies.db-shm
+config/biographies.db-wal
 
-# Deprecated JSON files (backup only)
+# Legacy JSON artifacts
 config/devices.json
 config/devices.json.backup
 config/file-names-map.json
 config/file-names-map.json.backup
 
-# Production (контент файлы не коммитим)
+# Content storage (keeps .gitkeep)
 public/content/*
 !public/content/.gitkeep
 
-# Temporary directories
-temp/
-nginx_upload/
-
-# Data disk (если используется симлинк)
-# public/content может быть симлинком на /mnt/videocontrol-data/content
-
-# Environment
+# Environment & secrets
 .env
 .env.local
 .test
@@ -45,45 +49,35 @@ nginx_upload/
 *.swo
 *~
 .DS_Store
+Thumbs.db
+.git-remotes-cheatsheet
 
-# Archives
+# Archives / releases
 *.tar.gz
 *.zip
+*.apk
+!VCMplayer-v2.8.0.apk
+VCMplayer-v2.5.4.apk
+VCMplayer-v2.7.0.apk
+*.ap_
+*.aab
 
-# IDE
+# IDE / tooling
 .vscode/
 .idea/
 
-# System
-Thumbs.db
-
-# Android build files
+# Android project build output
 clients/android-mediaplayer/app/build/
 clients/android-mediaplayer/.gradle/
 clients/android-mediaplayer/local.properties
 clients/android-mediaplayer/.cxx/
 clients/android-mediaplayer/captures/
 clients/android-mediaplayer/*.iml
-clients/android-mediaplayer/*.apk
-clients/android-mediaplayer/*.ap_
-clients/android-mediaplayer/*.aab
 
-# Gradle
+# Gradle (keep wrapper + configs)
 *.gradle
 !gradle-wrapper.jar
 !clients/android-mediaplayer/gradle/
 !clients/android-mediaplayer/build.gradle
 !clients/android-mediaplayer/app/build.gradle
 !clients/android-mediaplayer/settings.gradle
-*.apk
-logs/
-backups/
-backups/
-*.log
-.DS_Store
-.git-remotes-cheatsheet
-
-# Biography module database
-config/heroes.db
-config/heroes.db-shm
-config/heroes.db-wal

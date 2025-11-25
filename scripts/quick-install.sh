@@ -11,7 +11,7 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${BLUE}============================================${NC}"
-echo -e "${BLUE}  VideoControl v2.7.1 - Quick Install${NC}"
+echo -e "${BLUE}  VideoControl v2.8.0 - Quick Install${NC}"
 echo -e "${BLUE}============================================${NC}"
 echo ""
 
@@ -377,7 +377,7 @@ echo -e "${GREEN}============================================${NC}"
 echo -e "${GREEN}  ✅ Installation Complete!${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo ""
-echo "🎉 VideoControl v2.7.1 successfully installed!"
+echo "🎉 VideoControl v2.8.0 successfully installed!"
 echo ""
 echo "📂 Installation directory: $INSTALL_DIR"
 echo "📊 Database: config/main.db (SQLite)"
