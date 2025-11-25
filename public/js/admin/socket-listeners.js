@@ -21,7 +21,9 @@ export function setupSocketListeners(socket, callbacks) {
     onPreviewRefresh,
     onPlayerOnline,
     onPlayerOffline,
-    onPlayersSnapshot
+    onPlayersSnapshot,
+    onVolumeBatch,
+    onVolumeUpdate
   } = callbacks;
   
   // devices/updated - Обновление списка устройств
@@ -73,6 +75,14 @@ export function setupSocketListeners(socket, callbacks) {
   // players/onlineSnapshot - Снимок онлайн устройств
   socket.on('players/onlineSnapshot', (list) => {
     if (onPlayersSnapshot) onPlayersSnapshot(list);
+  });
+
+  socket.on('devices/volume/stateBatch', (snapshot) => {
+    if (onVolumeBatch) onVolumeBatch(snapshot);
+  });
+
+  socket.on('devices/volume/state', (payload) => {
+    if (onVolumeUpdate) onVolumeUpdate(payload);
   });
 }
 

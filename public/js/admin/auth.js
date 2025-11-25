@@ -27,13 +27,13 @@ export async function ensureAuth() {
       return false;
     }
   
-    if (user.role !== 'admin') {
+    if (!['admin', 'hero_admin'].includes(user.role)) {
       localStorage.clear();
       window.location.href = '/index.html';
       return false;
     }
 
-    return true;
+    return user;
   } catch (e) {
     console.error('[Admin Auth] Ошибка парсинга данных пользователя:', e);
     localStorage.clear();

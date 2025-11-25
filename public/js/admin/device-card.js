@@ -43,6 +43,20 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
       ${isAdmin ? '<button class="danger delBtn" style="flex:1; min-width:90px">Удалить</button>' : ''}
     </div>
 
+    <div class="card" style="margin-top:var(--space-md); padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);" id="adminVolumePanel">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm);">
+        <div class="title" style="margin:0; font-size:var(--font-size-base)">Громкость</div>
+        <div class="meta" id="adminVolumeValue" style="font-weight:600">--%</div>
+      </div>
+      <input type="range" id="adminVolumeSlider" min="0" max="100" step="5" value="50" disabled style="width:100%"/>
+      <div class="meta" id="adminVolumeStatus" style="color:var(--muted);">Выберите устройство</div>
+      <div class="button-group" style="display:flex; gap:var(--space-sm); flex-wrap:wrap;">
+        <button class="secondary" id="adminVolumeDown" style="flex:1; min-width:90px" type="button" disabled>-5</button>
+        <button class="secondary" id="adminVolumeUp" style="flex:1; min-width:90px" type="button" disabled>+5</button>
+        <button class="secondary" id="adminVolumeMute" style="flex:1; min-width:140px" type="button" disabled>🔇 Заглушить</button>
+      </div>
+    </div>
+
     <div class="preview panel" style="margin-top:var(--space-md); display:block; flex:1 1 auto; min-height:0; aspect-ratio:16/9; max-height:380px">
       <div class="previewHolder" style="width:100%; height:100%; background:rgba(0,0,0,.06); border-radius:var(--radius-md); overflow:hidden">
         <iframe src="/player-videojs.html?device_id=${did}&preview=1&muted=1" style="width:100%; height:100%; border:0"></iframe>

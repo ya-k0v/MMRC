@@ -58,8 +58,9 @@ export function closeModal() {
   }
 }
 
-// Глобальная функция для onclick
+// Глобальные функции для onclick
 window.closeModal = closeModal;
+window.showUsersModal = showUsersModal;
 
 export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevice, renderFilesPane) {
   const content = `
@@ -141,6 +142,9 @@ export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevi
 }
 
 export async function showUsersModal(adminFetch) {
+  // Сохраняем adminFetch в window для использования в inline onclick
+  window.adminFetch = adminFetch;
+  
   const content = `
     <div style="display:flex; flex-direction:column; gap:var(--space-lg);">
       <!-- Форма создания пользователя -->
@@ -153,6 +157,7 @@ export async function showUsersModal(adminFetch) {
           <select id="modalRole" class="input">
             <option value="speaker">Speaker (управление контентом)</option>
             <option value="admin">Admin (полный доступ)</option>
+            <option value="hero_admin">Hero Admin (управление карточками героев)</option>
           </select>
           <div id="modalUserError" style="color:var(--danger); font-size:0.875rem; display:none;"></div>
           <button id="modalCreateUser" class="primary">Создать пользователя</button>
@@ -262,6 +267,7 @@ async function loadModalUsersList(adminFetch) {
             <strong>${u.username}</strong>
             ${u.role === 'admin' ? '<span style="background:var(--brand); color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem;">ADMIN</span>' : ''}
             ${u.role === 'speaker' ? '<span style="background:var(--success); color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem;">SPEAKER</span>' : ''}
+            ${u.role === 'hero_admin' ? '<span style="background:var(--warning); color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem;">HERO ADMIN</span>' : ''}
             ${!u.is_active ? '<span style="background:var(--danger); color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem;">OFF</span>' : ''}
           </div>
           <div class="meta">${u.full_name}</div>
@@ -377,7 +383,7 @@ async function loadModalUsersList(adminFetch) {
                 <div style="text-align:center; padding:var(--space-lg);">
                   Пароль для <strong>${username}</strong> успешно изменен
                 </div>
-                <button onclick="closeModal(); showUsersModal(${adminFetch})" class="primary" style="width:100%;">OK</button>
+                <button onclick="closeModal(); setTimeout(() => window.showUsersModal && window.showUsersModal(window.adminFetch), 100)" class="primary" style="width:100%;">OK</button>
               `);
             } else {
               const error = await res.json();
