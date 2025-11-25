@@ -494,7 +494,10 @@ class MainActivity : AppCompatActivity() {
                                 Player.STATE_ENDED -> {
                                 if (isActivePlayer) {
                                     Log.d(TAG, "Player STATE_ENDED (active)")
-                                    if (!isPlayingPlaceholder) {
+                                    if (skipPlaceholderOnVideoEnd) {
+                                        Log.d(TAG, "🎬 STATE_ENDED suppressed (transitioning to non-video)")
+                                        skipPlaceholderOnVideoEnd = false
+                                    } else if (!isPlayingPlaceholder) {
                                         Log.i(TAG, "Контент закончился, fade-out перед возвратом на заглушку")
                                         if (playerView.alpha > 0f && playerView.visibility == View.VISIBLE) {
                                             player?.pause()
@@ -1006,6 +1009,7 @@ class MainActivity : AppCompatActivity() {
     private var pendingVideoFileName: String? = null
     private var pendingVideoIsPlaceholder = false
     private var hasVideoSize = false // Флаг что размер видео известен (первый кадр готов)
+    private var skipPlaceholderOnVideoEnd = false // Пропустить возврат на заглушку при управляемом переходе
     
     // Функция для начала fade-in видео (вызывается когда и STATE_READY и onVideoSizeChanged получены)
     // Логика аналогична JS плееру: loadeddata → requestAnimationFrame → fade-in → canplay → play()
@@ -1109,7 +1113,7 @@ class MainActivity : AppCompatActivity() {
             Log.d(TAG, "Activity destroyed, skipping playVideo")
             return
         }
-        
+        skipPlaceholderOnVideoEnd = false
         try {
             // НОВОЕ: Используем API resolver для поддержки shared storage (дедупликация)
             // Вместо /content/{device}/{file} используем /api/files/resolve/{device}/{file}
@@ -1291,6 +1295,7 @@ class MainActivity : AppCompatActivity() {
             val hasVideo = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
 
             // КРИТИЧНО: Всегда останавливаем видео при запуске изображения, чтобы звук не продолжал играть
+            skipPlaceholderOnVideoEnd = true
             player?.stop()
             player?.clearMediaItems()
             playerView.visibility = View.GONE
@@ -1367,6 +1372,7 @@ class MainActivity : AppCompatActivity() {
             val hasVideo = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
 
             // КРИТИЧНО: Всегда останавливаем видео при запуске PDF, чтобы звук не продолжал играть
+            skipPlaceholderOnVideoEnd = true
             player?.stop()
             player?.clearMediaItems()
             playerView.visibility = View.GONE
@@ -1424,6 +1430,7 @@ class MainActivity : AppCompatActivity() {
             val hasVideo = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
 
             // КРИТИЧНО: Всегда останавливаем видео при запуске PPTX, чтобы звук не продолжал играть
+            skipPlaceholderOnVideoEnd = true
             player?.stop()
             player?.clearMediaItems()
             playerView.visibility = View.GONE
@@ -1481,6 +1488,7 @@ class MainActivity : AppCompatActivity() {
             val hasVideo = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
 
             // КРИТИЧНО: Всегда останавливаем видео при запуске папки, чтобы звук не продолжал играть
+            skipPlaceholderOnVideoEnd = true
             player?.stop()
             player?.clearMediaItems()
             playerView.visibility = View.GONE

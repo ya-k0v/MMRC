@@ -270,7 +270,8 @@ export function setupDeviceHandlers(socket, deps) {
       if (!device_id) return;
       const currentTime = Number(payload?.currentTime) || 0;
       let duration = Number(payload?.duration) || 0;
-      const type = typeof payload?.type === 'string' ? payload.type : 'video';
+      const rawType = typeof payload?.type === 'string' ? payload.type : 'video';
+      const type = rawType.toLowerCase();
       const file = (typeof payload?.file === 'string' && payload.file) ? payload.file : null;
       
       // Если длительность не пришла от клиента (0), пытаемся получить из БД
@@ -294,7 +295,7 @@ export function setupDeviceHandlers(socket, deps) {
             device.current = { type: 'video', file, state: 'playing' };
             stateChanged = true;
           }
-        } else if (type !== 'video') {
+        } else if (type === 'idle' || type === 'placeholder') {
           const prev = device.current || {};
           if (prev.type !== 'idle' || prev.state !== 'idle') {
             device.current = { type: 'idle', file: null, state: 'idle' };
