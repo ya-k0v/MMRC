@@ -270,7 +270,8 @@ export function setupDeviceHandlers(socket, deps) {
       if (!device_id) return;
       const currentTime = Number(payload?.currentTime) || 0;
       let duration = Number(payload?.duration) || 0;
-      const file = payload?.file || null;
+      const type = typeof payload?.type === 'string' ? payload.type : 'video';
+      const file = (typeof payload?.file === 'string' && payload.file) ? payload.file : null;
       
       // Если длительность не пришла от клиента (0), пытаемся получить из БД
       if (duration === 0 && file) {
@@ -284,8 +285,30 @@ export function setupDeviceHandlers(socket, deps) {
         }
       }
       
+      let stateChanged = false;
+      const device = devices[device_id];
+      if (device) {
+        if (type === 'video' && file) {
+          const prev = device.current || {};
+          if (prev.type !== 'video' || prev.file !== file || prev.state !== 'playing') {
+            device.current = { type: 'video', file, state: 'playing' };
+            stateChanged = true;
+          }
+        } else if (type !== 'video') {
+          const prev = device.current || {};
+          if (prev.type !== 'idle' || prev.state !== 'idle') {
+            device.current = { type: 'idle', file: null, state: 'idle' };
+            stateChanged = true;
+          }
+        }
+      }
+      
       // Отправляем всем слушателям (speaker UI) агрегированный прогресс
-      io.emit('player/progress', { device_id, type: 'video', file, currentTime, duration });
+      io.emit('player/progress', { device_id, type, file, currentTime, duration });
+      
+      if (stateChanged) {
+        io.emit('preview/refresh', { device_id });
+      }
     } catch (e) {
       // swallow
     }

@@ -1695,6 +1695,15 @@ function updatePlaybackInfoUI() {
 // Прием прогресса от плееров
 socket.on('player/progress', ({ device_id, type, file, currentTime, duration }) => {
   if (!device_id) return;
+  
+  if (type !== 'video' || !file) {
+    playbackProgressByDevice.delete(device_id);
+    if (device_id === currentDevice) {
+      updatePlaybackInfoUI();
+    }
+    return;
+  }
+  
   playbackProgressByDevice.set(device_id, { file, currentTime: Number(currentTime)||0, duration: Number(duration)||0 });
   if (device_id === currentDevice) {
     updatePlaybackInfoUI();

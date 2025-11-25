@@ -280,6 +280,23 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun emitIdleProgress(reason: String = "placeholder") {
+        if (socket?.connected() != true) return
+        try {
+            val payload = JSONObject().apply {
+                put("device_id", DEVICE_ID)
+                put("type", "idle")
+                put("file", JSONObject.NULL)
+                put("currentTime", 0)
+                put("duration", 0)
+                put("reason", reason)
+            }
+            socket?.emit("player/progress", payload)
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ Failed to emit idle progress", e)
+        }
+    }
+
     private fun registerVolumeReceiver() {
         if (!::audioManager.isInitialized || volumeChangeReceiver != null) return
         val filter = IntentFilter("android.media.VOLUME_CHANGED_ACTION")
@@ -1216,6 +1233,9 @@ class MainActivity : AppCompatActivity() {
             }
             
             isPlayingPlaceholder = isPlaceholder
+            if (isPlaceholder) {
+                emitIdleProgress("placeholder_video")
+            }
             
             Log.i(TAG, "✅ Video source set, waiting for STATE_READY and fade-in...")
             
@@ -1286,6 +1306,9 @@ class MainActivity : AppCompatActivity() {
 
             // Отмечаем тип контента
             isPlayingPlaceholder = isPlaceholder
+            if (isPlaceholder) {
+                emitIdleProgress("placeholder_image")
+            }
             
             Log.i(TAG, "✅ Image loading: isPlaceholder=$isPlaceholder")
             
