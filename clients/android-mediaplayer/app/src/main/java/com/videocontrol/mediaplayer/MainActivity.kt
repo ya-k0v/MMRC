@@ -86,6 +86,7 @@ class MainActivity : AppCompatActivity() {
     private var isPlayingPlaceholder: Boolean = false
     private var isLoadingPlaceholder: Boolean = false  // Защита от параллельных вызовов loadPlaceholder()
     private var progressRunnable: Runnable? = null
+    private var mediaCodecInitRunnable: Runnable? = null // Для отмены pending инициализации MediaCodec
     
     // Новые компоненты
     private var config: RemoteConfig.Config = RemoteConfig.Config()
@@ -122,6 +123,11 @@ class MainActivity : AppCompatActivity() {
         val pending = pendingPlayer ?: return
         val pendingView = pendingPlayerView
         Log.d(TAG, "🧹 Cancel pending buffer ($reason)")
+        // КРИТИЧНО: Отменяем pending инициализацию MediaCodec
+        mediaCodecInitRunnable?.let {
+            Handler(Looper.getMainLooper()).removeCallbacks(it)
+            mediaCodecInitRunnable = null
+        }
         try {
             pending.stop()
             pending.clearMediaItems()
@@ -475,20 +481,6 @@ class MainActivity : AppCompatActivity() {
                                     errorRetryCount = 0
                                     hideStatus()
                                 }
-                                    
-                                if (isPendingPlayerInstance && !isVideoReadyToShow && pendingVideoFileName != null) {
-                                        if (hasVideoSize) {
-                                            startVideoFadeIn()
-                                        } else {
-                                            Log.d(TAG, "📸 STATE_READY получен, ждем onVideoSizeChanged для: ${pendingVideoFileName}")
-                                            Handler(Looper.getMainLooper()).postDelayed({
-                                            if (!isDestroyed && !isFinishing && !isVideoReadyToShow && pendingVideoFileName != null && pendingPlayer === exoPlayer) {
-                                                    Log.d(TAG, "⏱️ Таймаут ожидания onVideoSizeChanged, начинаем fade-in")
-                                                    startVideoFadeIn()
-                                                }
-                                        }, 500)
-                                        }
-                                    }
                                 }
 
                                 Player.STATE_ENDED -> {
@@ -502,11 +494,21 @@ class MainActivity : AppCompatActivity() {
                                         if (playerView.alpha > 0f && playerView.visibility == View.VISIBLE) {
                                             player?.pause()
                                             fadeOutView(playerView, 500) {
+                                                // КРИТИЧНО: Правильный порядок освобождения ресурсов MediaCodec
+                                                // 1. Сначала отвязываем плеер от Surface, чтобы MediaCodec освободил ресурсы
+                                                playerView.player = null
+                                                // 2. Затем останавливаем плеер и очищаем медиа
                                                 player?.stop()
                                                 player?.clearMediaItems()
+                                                // 3. Скрываем View
                                                 playerView.alpha = 0f
                                                 playerView.visibility = View.GONE
-                                        loadPlaceholder()
+                                                // 4. Небольшая задержка для полного освобождения ресурсов MediaCodec
+                                                Handler(Looper.getMainLooper()).postDelayed({
+                                                    if (!isDestroyed && !isFinishing) {
+                                                        loadPlaceholder()
+                                                    }
+                                                }, 100)
                                             }
                                         } else {
                                             loadPlaceholder()
@@ -599,15 +601,10 @@ class MainActivity : AppCompatActivity() {
                         }
                         
                         override fun onVideoSizeChanged(videoSize: com.google.android.exoplayer2.video.VideoSize) {
-                        if (exoPlayer !== pendingPlayer) {
+                        if (exoPlayer !== player) {
                             return
                         }
-                        Log.d(TAG, "📐 Video size changed (buffer): ${videoSize.width}x${videoSize.height}")
-                            hasVideoSize = true
-                            
-                        if (!isVideoReadyToShow && pendingVideoFileName != null) {
-                                startVideoFadeIn()
-                            }
+                        Log.d(TAG, "📐 Video size changed: ${videoSize.width}x${videoSize.height}")
                         }
                     })
         }
@@ -1011,8 +1008,13 @@ class MainActivity : AppCompatActivity() {
         // Логотип больше не используется - просто fade-out видео
         player?.pause()
         fadeOutView(playerView, durationMs) {
+            // КРИТИЧНО: Правильный порядок освобождения ресурсов MediaCodec
+            // 1. Отвязываем плеер от Surface
+            playerView.player = null
+            // 2. Останавливаем плеер и очищаем медиа
             player?.stop()
             player?.clearMediaItems()
+            // 3. Скрываем View
             playerView.alpha = 0f
             playerView.visibility = View.GONE
             onComplete()
@@ -1082,8 +1084,15 @@ class MainActivity : AppCompatActivity() {
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: android.animation.Animator) {
                     if (hasOutgoingVideo) {
+                        // КРИТИЧНО: Правильный порядок освобождения ресурсов MediaCodec
+                        // 1. Отвязываем плеер от Surface
+                        if (outgoingView is StyledPlayerView) {
+                            outgoingView.player = null
+                        }
+                        // 2. Останавливаем плеер и очищаем медиа
                         outgoingPlayer?.stop()
                         outgoingPlayer?.clearMediaItems()
+                        // 3. Скрываем View
                         outgoingView.alpha = 0f
                         outgoingView.visibility = View.GONE
                     }
@@ -1129,6 +1138,10 @@ class MainActivity : AppCompatActivity() {
             return
         }
         skipPlaceholderOnVideoEnd = false
+        // КРИТИЧНО: Сбрасываем счетчик ошибок при начале нового контента
+        errorRetryCount = 0
+        retryRunnable?.let { retryHandler.removeCallbacks(it) }
+        retryRunnable = null
         try {
             // НОВОЕ: Используем API resolver для поддержки shared storage (дедупликация)
             // Вместо /content/{device}/{file} используем /api/files/resolve/{device}/{file}
@@ -1171,27 +1184,22 @@ class MainActivity : AppCompatActivity() {
                 }
                 return
             }
-            
-        cancelPendingBuffer("new playVideo command for $fileName")
 
-            // Новый файл - плавный переход с двойной буферизацией
-            Log.i(TAG, "🎬 Загрузка НОВОГО видео с буферизацией: $fileName")
+            // Новый файл - загружаем напрямую в активный плеер (без двойной буферизации)
+            Log.i(TAG, "🎬 Загрузка НОВОГО видео: $fileName")
             stopProgressUpdates()
             currentVideoFile = fileName
             savedPosition = 0
-            isVideoReadyToShow = false
-            hasVideoSize = false
 
-        val targetPlayer = bufferPlayer ?: player
-        val targetView = if (targetPlayer === player) playerView else bufferPlayerView
-
-            if (targetPlayer == null || targetView == null) {
-                Log.e(TAG, "❌ Нет свободного буфера для загрузки видео")
+            val activePlayer = player
+            val activePlayerView = playerView
+            if (activePlayer == null || activePlayerView == null) {
+                Log.e(TAG, "❌ Плеер не инициализирован")
                 showStatus("Ошибка подготовки видео")
                 return
             }
 
-            loadNewVideo(videoUrl, fileName, isPlaceholder, targetPlayer, targetView)
+            loadNewVideo(videoUrl, fileName, isPlaceholder, activePlayer, activePlayerView)
             
         } catch (e: OutOfMemoryError) {
             Log.e(TAG, "❌ OutOfMemoryError playing video: $fileName", e)
@@ -1236,32 +1244,50 @@ class MainActivity : AppCompatActivity() {
             val mediaSource = ProgressiveMediaSource.Factory(cacheDataSourceFactory)
                 .createMediaSource(mediaItem)
 
-            pendingPlayer = targetPlayer
-            pendingPlayerView = targetView
-            pendingVideoFileName = originalFileName
-            pendingVideoIsPlaceholder = isPlaceholder
-            isVideoReadyToShow = false
-            hasVideoSize = false
-
-        targetView.visibility = View.VISIBLE
-        targetView.alpha = 0f
-        targetView.bringToFront()
-        statusText.bringToFront()
-
-            targetPlayer.apply {
-                stop()
-                setMediaSource(mediaSource)
-                repeatMode = if (isPlaceholder) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
-                prepare()
-                playWhenReady = false
+            // КРИТИЧНО: Отменяем предыдущую pending инициализацию MediaCodec, если была
+            mediaCodecInitRunnable?.let { 
+                Handler(Looper.getMainLooper()).removeCallbacks(it)
             }
             
-            isPlayingPlaceholder = isPlaceholder
-            if (isPlaceholder) {
-                emitIdleProgress("placeholder_video")
-            }
+            // КРИТИЧНО: Полностью освобождаем активный плеер перед загрузкой нового видео
+            // Отвязываем от Surface для полного освобождения MediaCodec
+            targetView.player = null
+            // Останавливаем и очищаем
+            targetPlayer.stop()
+            targetPlayer.clearMediaItems()
             
-            Log.i(TAG, "✅ Video source set, waiting for STATE_READY and fade-in...")
+            // Небольшая задержка для полного освобождения ресурсов MediaCodec
+            val handler = Handler(Looper.getMainLooper())
+            mediaCodecInitRunnable = Runnable {
+                if (!isDestroyed && !isFinishing) {
+                    // Привязываем обратно и инициализируем
+                    targetView.player = targetPlayer
+                    targetView.visibility = View.VISIBLE
+                    targetView.alpha = 1f
+                    targetView.bringToFront()
+                    statusText.bringToFront()
+                    
+                    targetPlayer.apply {
+                        setMediaSource(mediaSource)
+                        repeatMode = if (isPlaceholder) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+                        prepare()
+                        playWhenReady = true
+                        play()
+                    }
+                    mediaCodecInitRunnable = null
+                    
+                    isPlayingPlaceholder = isPlaceholder
+                    if (isPlaceholder) {
+                        emitIdleProgress("placeholder_video")
+                    }
+                    if (!isPlaceholder) {
+                        startProgressUpdates()
+                    }
+                }
+            }
+            handler.postDelayed(mediaCodecInitRunnable!!, 100)
+            
+            Log.i(TAG, "✅ Video source set, initializing...")
             
         } catch (e: OutOfMemoryError) {
             Log.e(TAG, "❌ OutOfMemoryError loading new video", e)
@@ -1290,6 +1316,10 @@ class MainActivity : AppCompatActivity() {
             Log.d(TAG, "Activity destroyed, skipping showImage")
             return
         }
+        // КРИТИЧНО: Сбрасываем счетчик ошибок при начале нового контента
+        errorRetryCount = 0
+        retryRunnable?.let { retryHandler.removeCallbacks(it) }
+        retryRunnable = null
         
         try {
             // НОВОЕ: Используем API resolver для поддержки shared storage
@@ -1321,12 +1351,15 @@ class MainActivity : AppCompatActivity() {
             cancelPendingBuffer("showImage - switching to image")
             stopProgressUpdates()
             
-            // Останавливаем активный плеер
+            // КРИТИЧНО: Правильный порядок освобождения ресурсов MediaCodec
+            // 1. Отвязываем плееры от Surface перед остановкой
+            playerView.player = null
+            bufferPlayerView.player = null
+            // 2. Останавливаем активный плеер
             player?.pause()
             player?.stop()
             player?.clearMediaItems()
-            
-            // Останавливаем буферный плеер
+            // 3. Останавливаем буферный плеер
             bufferPlayer?.pause()
             bufferPlayer?.stop()
             bufferPlayer?.clearMediaItems()
@@ -1378,6 +1411,10 @@ class MainActivity : AppCompatActivity() {
             Log.d(TAG, "Activity destroyed, skipping showPdfPage")
             return
         }
+        // КРИТИЧНО: Сбрасываем счетчик ошибок при начале нового контента
+        errorRetryCount = 0
+        retryRunnable?.let { retryHandler.removeCallbacks(it) }
+        retryRunnable = null
         
         try {
             val file = fileName ?: currentPdfFile
@@ -1413,16 +1450,19 @@ class MainActivity : AppCompatActivity() {
             cancelPendingBuffer("showPdfPage - switching to PDF")
             stopProgressUpdates()
             
-            // Останавливаем активный плеер
+            // КРИТИЧНО: Правильный порядок освобождения ресурсов MediaCodec
+            // 1. Отвязываем плееры от Surface перед остановкой
+            playerView.player = null
+            bufferPlayerView.player = null
+            // 2. Останавливаем активный плеер
             player?.pause()
             player?.stop()
             player?.clearMediaItems()
-            
-            // Останавливаем буферный плеер
+            // 3. Останавливаем буферный плеер
             bufferPlayer?.pause()
             bufferPlayer?.stop()
             bufferPlayer?.clearMediaItems()
-            
+            // 4. Скрываем View
             playerView.visibility = View.GONE
             playerView.alpha = 0f
             bufferPlayerView.visibility = View.GONE
@@ -1451,6 +1491,10 @@ class MainActivity : AppCompatActivity() {
             Log.d(TAG, "Activity destroyed, skipping showPptxSlide")
             return
         }
+        // КРИТИЧНО: Сбрасываем счетчик ошибок при начале нового контента
+        errorRetryCount = 0
+        retryRunnable?.let { retryHandler.removeCallbacks(it) }
+        retryRunnable = null
         
         try {
             val file = fileName ?: currentPptxFile
@@ -1486,16 +1530,19 @@ class MainActivity : AppCompatActivity() {
             cancelPendingBuffer("showPptxSlide - switching to PPTX")
             stopProgressUpdates()
             
-            // Останавливаем активный плеер
+            // КРИТИЧНО: Правильный порядок освобождения ресурсов MediaCodec
+            // 1. Отвязываем плееры от Surface перед остановкой
+            playerView.player = null
+            bufferPlayerView.player = null
+            // 2. Останавливаем активный плеер
             player?.pause()
             player?.stop()
             player?.clearMediaItems()
-            
-            // Останавливаем буферный плеер
+            // 3. Останавливаем буферный плеер
             bufferPlayer?.pause()
             bufferPlayer?.stop()
             bufferPlayer?.clearMediaItems()
-            
+            // 4. Скрываем View
             playerView.visibility = View.GONE
             playerView.alpha = 0f
             bufferPlayerView.visibility = View.GONE
@@ -1524,6 +1571,10 @@ class MainActivity : AppCompatActivity() {
             Log.d(TAG, "Activity destroyed, skipping showFolderImage")
             return
         }
+        // КРИТИЧНО: Сбрасываем счетчик ошибок при начале нового контента
+        errorRetryCount = 0
+        retryRunnable?.let { retryHandler.removeCallbacks(it) }
+        retryRunnable = null
         
         try {
             val folder = folderName ?: currentFolderName
@@ -1559,16 +1610,19 @@ class MainActivity : AppCompatActivity() {
             cancelPendingBuffer("showFolderImage - switching to folder")
             stopProgressUpdates()
             
-            // Останавливаем активный плеер
+            // КРИТИЧНО: Правильный порядок освобождения ресурсов MediaCodec
+            // 1. Отвязываем плееры от Surface перед остановкой
+            playerView.player = null
+            bufferPlayerView.player = null
+            // 2. Останавливаем активный плеер
             player?.pause()
             player?.stop()
             player?.clearMediaItems()
-            
-            // Останавливаем буферный плеер
+            // 3. Останавливаем буферный плеер
             bufferPlayer?.pause()
             bufferPlayer?.stop()
             bufferPlayer?.clearMediaItems()
-            
+            // 4. Скрываем View
             playerView.visibility = View.GONE
             playerView.alpha = 0f
             bufferPlayerView.visibility = View.GONE
@@ -1678,8 +1732,15 @@ class MainActivity : AppCompatActivity() {
                                 }
                                 addListener(object : AnimatorListenerAdapter() {
                                     override fun onAnimationEnd(animation: android.animation.Animator) {
+                                        // КРИТИЧНО: Правильный порядок освобождения ресурсов MediaCodec
+                                        // 1. Отвязываем плеер от Surface
+                                        if (outgoingView is StyledPlayerView) {
+                                            outgoingView.player = null
+                                        }
+                                        // 2. Останавливаем плеер и очищаем медиа
                                         outgoingPlayer?.stop()
                                         outgoingPlayer?.clearMediaItems()
+                                        // 3. Скрываем View
                                         outgoingView.alpha = 0f
                                         outgoingView.visibility = View.GONE
                                     }
@@ -2359,6 +2420,11 @@ class MainActivity : AppCompatActivity() {
         statusHandler.removeCallbacks(hideStatusRunnable)
         retryHandler.removeCallbacksAndMessages(null)
         progressHandler.removeCallbacksAndMessages(null)
+        // Отменяем pending инициализацию MediaCodec
+        mediaCodecInitRunnable?.let {
+            Handler(Looper.getMainLooper()).removeCallbacks(it)
+            mediaCodecInitRunnable = null
+        }
         // logoRefreshHandler удален - логотип больше не используется
         unregisterVolumeReceiver()
         

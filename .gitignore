@@ -42,6 +42,7 @@ public/content/*
 .env
 .env.local
 .test
+*.backup
 
 # Temporary files
 *.tmp

@@ -2113,7 +2113,30 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
   }
 
   if (device_id === currentDevice) {
-    requestPreviewSync();
+    // КРИТИЧНО: Обновляем выделение сразу после обновления состояния
+    if (device_id === currentDevice && device.current) {
+      const state = playerStateByDevice.get(device_id);
+      if (state && state.file && state.page) {
+        // Проверяем, открыто ли превью этой папки/файла
+        const currentPreviewFile = filePreview.querySelector('.thumbnail-preview')?.getAttribute('data-file');
+        const deviceFile = device.current.file || state.file;
+        // Нормализуем имена файлов (убираем .zip если есть)
+        const normalizedDeviceFile = deviceFile.replace(/\.zip$/i, '');
+        const normalizedPreviewFile = currentPreviewFile ? currentPreviewFile.replace(/\.zip$/i, '') : null;
+        
+        if (normalizedPreviewFile === normalizedDeviceFile && isStaticContent(state.type)) {
+          // Превью этой папки/файла открыто - обновляем выделение напрямую
+          highlightCurrentThumbnail(state.page, { deviceId: currentDevice, file: deviceFile });
+        } else {
+          // Превью не открыто или другой файл - используем синхронизацию
+          requestPreviewSync();
+        }
+      } else {
+        requestPreviewSync();
+      }
+    } else {
+      requestPreviewSync();
+    }
     // Обновляем информацию о плейлисте после обновления состояния устройства
     updatePlaybackInfoUI();
   }
@@ -2137,8 +2160,27 @@ socket.on('devices/volume/state', (payload = {}) => {
 // Функция для выделения текущей миниатюры
 function highlightCurrentThumbnail(pageNumber, context) {
   const normalizedPage = Math.max(1, Number(pageNumber) || 1);
-  const previewContext = context || getPreviewContext();
-  if (!previewContext.deviceId || !previewContext.file) return;
+  let previewContext = context;
+  
+  // Если контекст не передан, пытаемся получить из текущего превью
+  if (!previewContext || !previewContext.file) {
+    previewContext = getPreviewContext();
+    // Также проверяем DOM на наличие открытого превью
+    const thumbnails = filePreview.querySelectorAll('.thumbnail-preview');
+    if (thumbnails.length > 0 && !previewContext.file) {
+      const firstThumb = thumbnails[0];
+      previewContext = {
+        deviceId: firstThumb.getAttribute('data-device-id'),
+        file: firstThumb.getAttribute('data-file'),
+        page: null
+      };
+    }
+  }
+  
+  if (!previewContext || !previewContext.deviceId || !previewContext.file) {
+    console.warn('[Speaker] highlightCurrentThumbnail: нет контекста', { context, previewContext, currentDevice });
+    return;
+  }
 
   currentPreviewContext = { ...previewContext, page: normalizedPage };
 
@@ -2172,46 +2214,62 @@ function highlightCurrentThumbnail(pageNumber, context) {
   socket.on(`player/${eventName}`, (pageNumber) => {
     // Событие приходит как число (номер страницы), а не объект
     const page = Math.max(1, Number(pageNumber) || 1);
+    
+    if (!currentDevice) return;
+    
+    // Получаем актуальное состояние устройства из списка устройств
+    const device = devices.find(d => d.device_id === currentDevice);
+    if (!device || !device.current) {
+      return;
+    }
+    
+    // Определяем тип контента из eventName
+    const contentType = eventName === 'folderPage' ? 'folder' : 
+                       eventName === 'pptxPage' ? 'pptx' : 'pdf';
+    
+    // Проверяем, что тип контента совпадает
+    if (device.current.type !== contentType) {
+      return;
+    }
+    
+    const deviceFile = device.current.file;
+    if (!deviceFile) {
+      return;
+    }
+    
+    // Обновляем состояние
     const state = playerStateByDevice.get(currentDevice) || {};
-    
-    // Определяем, с каким файлом связано событие
-    const previewFileFromContext = currentPreviewContext.deviceId === currentDevice
-      ? currentPreviewContext.file
-      : null;
-    const previewFileFromDom = filePreview.querySelector('.thumbnail-preview')?.getAttribute('data-file');
-    const fallbackFile = state.file || previewFileFromContext || previewFileFromDom;
-    if (!fallbackFile) return;
-    
-    // Обновляем состояние с новой страницей и актуальным файлом
-    const updatedState = { ...state, file: fallbackFile, page };
+    const updatedState = { ...state, type: contentType, file: deviceFile, page };
     playerStateByDevice.set(currentDevice, updatedState);
     
-    // Обновляем device.current.page для плейлиста папки
-    const device = devices.find(d => d.device_id === currentDevice);
-    if (device && device.current) {
-      // Определяем тип контента из eventName
-      const contentType = eventName === 'folderPage' ? 'folder' : 
-                         eventName === 'pptxPage' ? 'pptx' : 'pdf';
+    // Обновляем device.current.page
+    device.current.page = page;
+    if (device.current.type === 'folder' && device.current.playlistActive) {
+      updatePlaybackInfoUI();
+    }
+    
+    // КРИТИЧНО: Сразу обновляем выделение напрямую
+    // Проверяем, открыто ли превью этой папки/файла
+    const thumbnails = filePreview.querySelectorAll('.thumbnail-preview');
+    if (thumbnails.length > 0) {
+      // Есть превью - проверяем, соответствует ли оно текущему файлу
+      const firstThumb = thumbnails[0];
+      const previewDeviceId = firstThumb.getAttribute('data-device-id');
+      const previewFile = firstThumb.getAttribute('data-file');
       
-      // Обновляем только если тип совпадает
-      if (device.current.type === contentType) {
-        device.current.page = page;
-        if (device.current.type === 'folder' && device.current.playlistActive) {
-          updatePlaybackInfoUI();
-        }
+      // Нормализуем имена файлов (убираем .zip если есть) для корректного сравнения
+      const normalizedPreviewFile = previewFile ? previewFile.replace(/\.zip$/i, '') : null;
+      const normalizedDeviceFile = deviceFile ? deviceFile.replace(/\.zip$/i, '') : null;
+      
+      if (previewDeviceId === currentDevice && normalizedPreviewFile === normalizedDeviceFile) {
+        // Превью этой папки/файла открыто - обновляем выделение напрямую
+        highlightCurrentThumbnail(page, { deviceId: currentDevice, file: deviceFile });
+        return;
       }
     }
     
-    // КРИТИЧНО: Сразу обновляем выделение напрямую, не через requestPreviewSync
-    // Это гарантирует, что выделение обновится сразу после смены картинки
-    const currentPreviewFile = previewFileFromContext || previewFileFromDom;
-    if (currentPreviewFile === fallbackFile) {
-      // Превью этой папки/файла открыто - обновляем выделение напрямую
-      highlightCurrentThumbnail(page, { deviceId: currentDevice, file: fallbackFile });
-    } else {
-      // Превью не открыто или другой файл - используем синхронизацию
-      requestPreviewSync();
-    }
+    // Превью не открыто или другой файл - используем синхронизацию
+    requestPreviewSync();
   });
 });
 
