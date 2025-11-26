@@ -385,7 +385,7 @@ if (volumeMuteBtn) {
 function updatePreviewControlButtons() {
   if (!pdfPrevBtn || !pdfNextBtn || !pdfCloseBtn) return;
   
-  // Проверяем, есть ли в превью сетка миниатюр папки (это означает, что открыто превью папки)
+  // Проверяем, есть ли в превью сетка миниатюр папки/PDF/PPTX (это означает, что открыто превью статического контента)
   const hasThumbnails = filePreview.querySelector('.thumbnail-preview');
   
   // Проверяем, есть ли iframe напрямую в filePreview (видео превью) - если есть, кнопки должны быть скрыты
@@ -400,16 +400,32 @@ function updatePreviewControlButtons() {
     device.current.type === 'folder' && 
     device.current.playlistActive === true;
   
-  // Показываем кнопки ТОЛЬКО для папок: либо когда открыто превью (миниатюры), либо когда активен плейлист
+  // Показываем кнопки навигации для статического контента (папки, PDF, PPTX):
+  // - когда открыто превью с миниатюрами (hasThumbnails)
+  // - или когда активен плейлист папки
   // НО скрываем, если показывается iframe напрямую (видео превью), а не внутри static-preview-layout
-  const shouldShow = (hasThumbnails || isFolderWithPlaylist) && !hasDirectIframe;
+  const shouldShowNavButtons = (hasThumbnails || isFolderWithPlaylist) && !hasDirectIframe;
   
-  pdfPrevBtn.style.display = shouldShow ? 'inline-block' : 'none';
-  pdfNextBtn.style.display = shouldShow ? 'inline-block' : 'none';
-  pdfCloseBtn.style.display = shouldShow ? 'inline-block' : 'none';
+  // Кнопки навигации (Назад/Вперед/Закрыть) показываем только для превью папок
+  pdfPrevBtn.style.display = shouldShowNavButtons ? 'block' : 'none';
+  pdfNextBtn.style.display = shouldShowNavButtons ? 'block' : 'none';
+  pdfCloseBtn.style.display = shouldShowNavButtons ? 'block' : 'none';
+  
+  // Включаем/отключаем pointer-events для надежности
+  pdfPrevBtn.style.pointerEvents = shouldShowNavButtons ? 'auto' : 'none';
+  pdfNextBtn.style.pointerEvents = shouldShowNavButtons ? 'auto' : 'none';
+  pdfCloseBtn.style.pointerEvents = shouldShowNavButtons ? 'auto' : 'none';
 
+  // Кнопки управления плеером (Play/Pause/Restart/Stop) скрываем когда открыто превью папки
+  // и показываем когда показывается видео или заглушка
+  const playerControls = document.getElementById('playerControls');
+  if (playerControls) {
+    playerControls.style.display = shouldShowNavButtons ? 'none' : 'flex';
+  }
+
+  // Панель громкости скрываем когда показываются кнопки навигации (превью папки)
   if (volumePanel) {
-    volumePanel.style.display = shouldShow ? 'none' : 'flex';
+    volumePanel.style.display = shouldShowNavButtons ? 'none' : 'flex';
   }
 }
 
@@ -874,14 +890,40 @@ async function showStaticPreview(deviceId, safeName, contentType, { initiatedByU
     // Обновляем состояние кнопки плейлиста
     updateFolderPlaylistButtonState();
   }
-  updatePreviewControlButtons();
+  
+  // КРИТИЧНО: Обновляем видимость кнопок после рендера миниатюр
+  // Используем небольшой timeout, чтобы DOM успел обновиться
+  setTimeout(() => {
+    updatePreviewControlButtons();
+  }, 10);
 }
 
 async function syncPreviewWithPlayerState() {
   if (!currentDevice || previewManuallyClosed) return;
   const state = playerStateByDevice.get(currentDevice);
+  
+  // КРИТИЧНО: Если показывается превью папки (миниатюры), не перезаписывать заглушкой
+  // Пользователь только что открыл папку через playBtn - даем время на обновление состояния
+  const hasThumbnails = filePreview.querySelector('.thumbnail-preview');
+  if (hasThumbnails) {
+    // Если есть миниатюры и состояние еще не обновилось - ждем немного
+    if (!state || !state.file) {
+      // Не перезаписываем превью папки заглушкой сразу после открытия
+      return;
+    }
+    // Если состояние обновилось и это та же папка - синхронизируем страницу
+    const currentPreviewFile = filePreview.querySelector('.thumbnail-preview')?.getAttribute('data-file');
+    if (state.file === currentPreviewFile && isStaticContent(state.type)) {
+      highlightCurrentThumbnail(state.page || 1, { deviceId: currentDevice, file: state.file });
+      return;
+    }
+  }
+  
   if (!state || !state.file || !isStaticContent(state.type)) {
-    showLivePreviewForTV(currentDevice, true);
+    // Показываем заглушку только если нет превью папки
+    if (!hasThumbnails) {
+      showLivePreviewForTV(currentDevice, true);
+    }
     return;
   }
 
@@ -1711,29 +1753,28 @@ socket.on('player/progress', ({ device_id, type, file, currentTime, duration }) 
 });
 
 /* Верхняя панель управления */
+// playBtn в head - ТОЛЬКО для снятия видео с паузы (resume)
+// Для запуска файла используется playBtn в списке файлов
 document.getElementById('playBtn').onclick = () => {
   if (!currentDevice) return;
   
   const device = devices.find(d => d.device_id === currentDevice);
   
-  // Отправляем громкость перед запуском контента
-  sendVolumeBeforePlay(currentDevice);
-  
   // Если устройство на паузе - продолжаем воспроизведение (resume)
   if (device && device.current && device.current.state === 'paused') {
+    // Отправляем громкость перед возобновлением
+    sendVolumeBeforePlay(currentDevice);
     socket.emit('control/play', { device_id: currentDevice }); // Сервер отправит player/resume
     // Обновляем локальное состояние
     device.current.state = 'playing';
   } 
-  // Если выбран файл из списка - воспроизводим его
-  else if (currentFile) {
-    stopFolderPlaylistIfNeeded('toolbar play', { deviceId: currentDevice, file: currentFile });
-    socket.emit('control/play', { device_id: currentDevice, file: currentFile });
-  }
-  // Иначе пробуем resume (если было что-то до перезапуска сервера)
+  // Иначе пробуем resume (если было что-то до перезапуска сервера, но состояние не обновилось)
   else {
-    socket.emit('control/play', { device_id: currentDevice });
+    // Отправляем громкость перед возобновлением
+    sendVolumeBeforePlay(currentDevice);
+    socket.emit('control/play', { device_id: currentDevice }); // Сервер отправит player/resume если есть текущий контент
   }
+  // КРИТИЧНО: НЕ запускаем файл из currentFile - для этого используется playBtn в списке файлов
 };
 
 document.getElementById('pauseBtn').onclick = () => {
@@ -1760,14 +1801,26 @@ document.getElementById('stopBtn').onclick = () => {
   playbackProgressByDevice.delete(currentDevice);
   updatePlaybackInfoUI();
 };
-document.getElementById('pdfPrevBtn').onclick = () => {
-  if (!currentDevice) return;
-  socket.emit('control/pdfPrev', { device_id: currentDevice });
-};
-document.getElementById('pdfNextBtn').onclick = () => {
-  if (!currentDevice) return;
-  socket.emit('control/pdfNext', { device_id: currentDevice });
-};
+// Обработчики для кнопок навигации (Назад/Вперед) - используются для папок, PDF, PPTX
+// Используем уже полученные ссылки на элементы вместо getElementById
+if (pdfPrevBtn) {
+  pdfPrevBtn.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!currentDevice) return;
+    console.log('[Speaker] ◀ Назад clicked');
+    socket.emit('control/pdfPrev', { device_id: currentDevice });
+  };
+}
+if (pdfNextBtn) {
+  pdfNextBtn.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!currentDevice) return;
+    console.log('[Speaker] Вперёд ▶ clicked');
+    socket.emit('control/pdfNext', { device_id: currentDevice });
+  };
+}
 document.getElementById('pdfCloseBtn').onclick = () => {
   if (!currentDevice) return;
   
@@ -2120,17 +2173,45 @@ function highlightCurrentThumbnail(pageNumber, context) {
     // Событие приходит как число (номер страницы), а не объект
     const page = Math.max(1, Number(pageNumber) || 1);
     const state = playerStateByDevice.get(currentDevice) || {};
-    if (!state.file) return;
-    playerStateByDevice.set(currentDevice, { ...state, page });
+    
+    // Определяем, с каким файлом связано событие
+    const previewFileFromContext = currentPreviewContext.deviceId === currentDevice
+      ? currentPreviewContext.file
+      : null;
+    const previewFileFromDom = filePreview.querySelector('.thumbnail-preview')?.getAttribute('data-file');
+    const fallbackFile = state.file || previewFileFromContext || previewFileFromDom;
+    if (!fallbackFile) return;
+    
+    // Обновляем состояние с новой страницей и актуальным файлом
+    const updatedState = { ...state, file: fallbackFile, page };
+    playerStateByDevice.set(currentDevice, updatedState);
     
     // Обновляем device.current.page для плейлиста папки
     const device = devices.find(d => d.device_id === currentDevice);
-    if (device && device.current && device.current.type === 'folder' && device.current.playlistActive) {
-      device.current.page = page;
-      updatePlaybackInfoUI();
+    if (device && device.current) {
+      // Определяем тип контента из eventName
+      const contentType = eventName === 'folderPage' ? 'folder' : 
+                         eventName === 'pptxPage' ? 'pptx' : 'pdf';
+      
+      // Обновляем только если тип совпадает
+      if (device.current.type === contentType) {
+        device.current.page = page;
+        if (device.current.type === 'folder' && device.current.playlistActive) {
+          updatePlaybackInfoUI();
+        }
+      }
     }
     
-    requestPreviewSync();
+    // КРИТИЧНО: Сразу обновляем выделение напрямую, не через requestPreviewSync
+    // Это гарантирует, что выделение обновится сразу после смены картинки
+    const currentPreviewFile = previewFileFromContext || previewFileFromDom;
+    if (currentPreviewFile === fallbackFile) {
+      // Превью этой папки/файла открыто - обновляем выделение напрямую
+      highlightCurrentThumbnail(page, { deviceId: currentDevice, file: fallbackFile });
+    } else {
+      // Превью не открыто или другой файл - используем синхронизацию
+      requestPreviewSync();
+    }
   });
 });
 

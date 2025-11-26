@@ -50,8 +50,26 @@ export function setupExpressMiddleware(app) {
  * @param {express.Application} app - Express приложение
  */
 export function setupStaticFiles(app) {
-  // Статичные файлы интерфейса
-  app.use(express.static(PUBLIC));
+  // Статичные файлы интерфейса с правильной обработкой JS файлов
+  app.use(express.static(PUBLIC, {
+    setHeaders: (res, filePath) => {
+      // Для JS файлов устанавливаем правильные заголовки
+      // КРИТИЧНО: Отключаем compression/gzip для JS файлов чтобы избежать ERR_CONTENT_LENGTH_MISMATCH
+      if (/\.js$/i.test(filePath)) {
+        // Удаляем заголовки компрессии если они есть
+        if (res.getHeader('Content-Encoding')) {
+          res.removeHeader('Content-Encoding');
+        }
+        res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+        res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      }
+      // Для CSS файлов
+      if (/\.css$/i.test(filePath)) {
+        res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+        res.setHeader('Content-Type', 'text/css; charset=utf-8');
+      }
+    }
+  }));
   
   // Контент устройств с настройками кэширования
   app.use('/content', express.static(DEVICES, {

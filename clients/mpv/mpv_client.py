@@ -461,8 +461,17 @@ class MPVClient:
             self.saved_position = 0.0
         
         @self.sio.on('player/stop')
-        def on_stop():
-            print('[MPV] ⏹️ STOP')
+        def on_stop(data=None):
+            reason = ''
+            if isinstance(data, dict):
+                reason = data.get('reason') or ''
+            elif isinstance(data, str):
+                reason = data
+            print(f'[MPV] ⏹️ STOP reason={reason or "n/a"}')
+            if reason == 'switch_content':
+                # При смене контента просто паузим текущее видео и ждём новую команду
+                self.send_command('set_property', 'pause', True)
+                return
             self._load_placeholder()
         
         @self.sio.on('player/pdfPage')

@@ -85,23 +85,25 @@ export function getPageSize(itemHeight = null) {
       ITEM_HEIGHT = 60 + 6; // Высота файла 60px + gap 6px в панели спикера
     } else {
       // По умолчанию используем высоту устройств из CSS переменной
-    const rootStyles = getComputedStyle(document.documentElement);
-    const itemMinHeight = parseInt(rootStyles.getPropertyValue('--item-min-height')) || 100;
-    const itemGap = parseInt(rootStyles.getPropertyValue('--item-gap')) || 8;
-      ITEM_HEIGHT = itemMinHeight + itemGap;
+      // Учитываем, что реальная высота .tvTile = calc(var(--item-min-height) - 8px)
+      const rootStyles = getComputedStyle(document.documentElement);
+      const itemMinHeight = parseInt(rootStyles.getPropertyValue('--item-min-height')) || 100;
+      const itemGap = parseInt(rootStyles.getPropertyValue('--item-gap')) || 8;
+      // Реальная высота устройства уменьшена на 8px (см. CSS .tvTile)
+      ITEM_HEIGHT = (itemMinHeight - 8) + itemGap;
     }
     
     // Получаем высоту видимой области
     const viewportHeight = window.innerHeight;
     
     // Вычитаем высоту header/toolbar, header панели, отступы и пагинации
-    // Оставляем запас для комфортного отображения без скролла
+    // Уменьшены отступы для более точного расчета
     const HEADER_HEIGHT = 80; // Верхний toolbar
     const PANEL_HEADER_HEIGHT = itemHeight === 'file' ? 50 : 50; // Header панели файлов/устройств
     const PANEL_HEADER_MARGIN = 8; // margin-bottom header
-    const PANEL_GAP = itemHeight === 'file' ? 12 : 12; // gap между header и списком, и между списком и пагинацией
+    const PANEL_GAP = itemHeight === 'file' ? 8 : 4; // gap между header и списком, и между списком и пагинацией (уменьшено)
     const PAGINATION_HEIGHT = 40; // Высота пагинации
-    const PADDING = 16; // Внешние отступы
+    const PADDING = 8; // Внешние отступы (уменьшено с 16)
     
     const availableHeight = viewportHeight 
       - HEADER_HEIGHT 
@@ -111,8 +113,13 @@ export function getPageSize(itemHeight = null) {
       - PAGINATION_HEIGHT 
       - PADDING;
     
-    // Рассчитываем сколько элементов влезает (используем Math.floor для консервативного расчета)
-    const itemsPerPage = Math.floor(availableHeight / ITEM_HEIGHT);
+    // Рассчитываем сколько элементов влезает
+    const itemsPerPageFloat = availableHeight / ITEM_HEIGHT;
+    
+    // Если остается больше 60% высоты элемента - округляем вверх, иначе вниз
+    // Это позволит показывать элемент, если для него есть достаточно места
+    const remainder = itemsPerPageFloat - Math.floor(itemsPerPageFloat);
+    const itemsPerPage = remainder > 0.6 ? Math.ceil(itemsPerPageFloat) : Math.floor(itemsPerPageFloat);
     
     // Минимум 3 элемента, максимум 20
     const result = Math.max(3, Math.min(20, itemsPerPage));

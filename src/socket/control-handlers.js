@@ -97,18 +97,24 @@ function scheduleNextFolderSlide(loopState, devices, io) {
 
     const totalPages = loopState.totalPages || 1;
     const currentPage = Number(deviceState.current.page) || loopState.currentPage || 1;
+    
+    // Вычисляем следующую страницу с зацикливанием (как было раньше)
+    // После последней страницы возвращаемся к первой
     const nextPage = totalPages === 1 ? 1 : (currentPage % totalPages) + 1;
 
     loopState.currentPage = nextPage;
     deviceState.current.page = nextPage;
 
     logger.info(`[Playlist] ${loopState.deviceId} -> slide ${nextPage}/${totalPages}`, { deviceId: loopState.deviceId, page: nextPage, totalPages });
-    // Показываем следующую страницу (первая страница уже была показана при запуске)
+    
+    // Показываем следующую страницу
+    const folderFile = deviceState.current?.playlistFile || deviceState.current?.file || loopState.file;
     io.to(`device:${loopState.deviceId}`).emit('player/folderPage', nextPage);
     io.emit('preview/refresh', { device_id: loopState.deviceId });
 
     loopState.hasAdvanced = true;
 
+    // Планируем следующую итерацию (зацикливание бесконечно)
     scheduleNextFolderSlide(loopState, devices, io);
   }, loopState.intervalMs);
 }
@@ -175,7 +181,7 @@ export function setupControlHandlers(socket, deps) {
           currentFile: d.current?.file,
           newFile: file 
         });
-        io.to(`device:${device_id}`).emit('player/stop');
+        io.to(`device:${device_id}`).emit('player/stop', { reason: 'switch_content' });
         // Даем время на остановку видео перед запуском нового контента
         setTimeout(() => {
           // Проверяем, что устройство все еще существует и команда актуальна
@@ -233,8 +239,60 @@ export function setupControlHandlers(socket, deps) {
         type = 'folder'; // ZIP = папка с изображениями
       }
       
+      // КРИТИЧНО: Если переключаемся между разными типами контента, останавливаем предыдущий
+      const currentType = d.current?.type;
+      const isTypeChange = currentType && currentType !== type;
+      
+      if (isTypeChange) {
+        logger.info(`[Control] Останавливаем предыдущий контент перед переключением типа`, { 
+          deviceId: device_id, 
+          fromType: currentType,
+          toType: type,
+          currentFile: d.current?.file,
+          newFile: file 
+        });
+        io.to(`device:${device_id}`).emit('player/stop', { reason: 'switch_content' });
+        // Даем время на остановку предыдущего контента
+        setTimeout(() => {
+          // Проверяем, что устройство все еще существует
+          const deviceStillExists = devices[device_id];
+          if (!deviceStillExists) return;
+          
+          const pageNum = page || 1;
+          
+          // КРИТИЧНО: Сохраняем флаги плейлиста, если плейлист был активен для этого файла
+          const wasPlaylistActive = deviceStillExists.current?.playlistActive && deviceStillExists.current?.playlistFile === file;
+          const savedPlaylistInterval = deviceStillExists.current?.playlistInterval;
+          
+          d.current = { 
+            type, 
+            file, 
+            state: 'playing', 
+            page: (type === 'pdf' || type === 'pptx' || type === 'folder') ? pageNum : undefined 
+          };
+          
+          // Восстанавливаем флаги плейлиста, если плейлист был активен
+          if (wasPlaylistActive && type === 'folder') {
+            d.current.playlistActive = true;
+            d.current.playlistFile = file;
+            d.current.playlistInterval = savedPlaylistInterval;
+          }
+          
+          io.to(`device:${device_id}`).emit('player/play', d.current);
+          emitDeviceVolumeState(device_id, 'control_play');
+          io.emit('preview/refresh', { device_id });
+        }, 100);
+        return; // Выходим, запуск нового контента произойдет в setTimeout
+      }
+      
       // Используем переданный номер страницы или 1 по умолчанию
       const pageNum = page || 1;
+      
+      // КРИТИЧНО: Сохраняем флаги плейлиста, если плейлист был активен для этого файла
+      // НЕ останавливаем плейлист, если запускается тот же файл
+      const wasPlaylistActive = d.current?.playlistActive && d.current?.playlistFile === file;
+      const savedPlaylistInterval = d.current?.playlistInterval;
+      const savedPlaylistFile = d.current?.playlistFile;
       
       d.current = { 
         type, 
@@ -242,6 +300,14 @@ export function setupControlHandlers(socket, deps) {
         state: 'playing', 
         page: (type === 'pdf' || type === 'pptx' || type === 'folder') ? pageNum : undefined 
       };
+      
+      // Восстанавливаем флаги плейлиста, если плейлист был активен для того же файла
+      if (wasPlaylistActive && type === 'folder' && file === savedPlaylistFile) {
+        d.current.playlistActive = true;
+        d.current.playlistFile = file;
+        d.current.playlistInterval = savedPlaylistInterval;
+        logger.info(`[Control] Плейлист сохранен при control/play для того же файла`, { deviceId: device_id, file });
+      }
       
       io.to(`device:${device_id}`).emit('player/play', d.current);
       emitDeviceVolumeState(device_id, 'control_play');
@@ -294,7 +360,7 @@ export function setupControlHandlers(socket, deps) {
     }
     
     d.current = { type: 'idle', file: null, state: 'idle' };
-    io.to(`device:${device_id}`).emit('player/stop');
+    io.to(`device:${device_id}`).emit('player/stop', { reason: 'manual_stop' });
     io.emit('preview/refresh', { device_id });
     stopServerPlaylistLoop(device_id, 'control stop');
   });
@@ -326,7 +392,7 @@ export function setupControlHandlers(socket, deps) {
     // Останавливаем текущее видео, если оно воспроизводится
     if (d.current && d.current.type === 'video' && d.current.state === 'playing') {
       logger.info(`[Playlist] Останавливаем текущее видео перед запуском плейлиста`, { deviceId: device_id, currentFile: d.current.file });
-      io.to(`device:${device_id}`).emit('player/stop');
+      io.to(`device:${device_id}`).emit('player/stop', { reason: 'switch_content' });
       // Даем время на остановку видео
       await new Promise(resolve => setTimeout(resolve, 100));
     }
@@ -399,9 +465,21 @@ export function setupControlHandlers(socket, deps) {
   });
 
   // control/pdfPrev - Предыдущая страница/слайд/изображение
-  socket.on('control/pdfPrev', ({ device_id }) => {
+  socket.on('control/pdfPrev', async ({ device_id }) => {
     const d = devices[device_id];
-    if (!d) return;
+    if (!d || !d.current) {
+      logger.warn(`[Control] pdfPrev: device or current state not found`, { deviceId: device_id, hasDevice: !!d, hasCurrent: !!d?.current });
+      return;
+    }
+    
+    logger.info(`[Control] pdfPrev received`, { deviceId: device_id, type: d.current.type, file: d.current.file, page: d.current.page });
+    
+    // КРИТИЧНО: Кнопки работают ТОЛЬКО для статических типов контента (PDF/PPTX/FOLDER)
+    // НЕ должны переключать на другие типы контента (видео, изображения, заглушка)
+    if (!d.current.type || (d.current.type !== 'pdf' && d.current.type !== 'pptx' && d.current.type !== 'folder')) {
+      logger.warn(`[Control] pdfPrev: unsupported content type for navigation`, { deviceId: device_id, type: d.current.type, file: d.current.file });
+      return; // Просто игнорируем, не делаем ничего
+    }
     
     if (d.current.type === 'pdf') {
       d.current.page = Math.max(1, (d.current.page || 1) - 1);
@@ -411,19 +489,47 @@ export function setupControlHandlers(socket, deps) {
       d.current.page = Math.max(1, (d.current.page || 1) - 1);
       io.to(`device:${device_id}`).emit('player/pptxPage', d.current.page);
       io.emit('player/pptxPage', d.current.page); // Для спикера
-    } else if (d.current.type === 'folder') {
-      d.current.page = Math.max(1, (d.current.page || 1) - 1);
-      io.to(`device:${device_id}`).emit('player/folderPage', d.current.page);
-      // КРИТИЧНО: НЕ отправляем всем - только конкретному устройству!
-      // Спикер обновится через preview/refresh
-      io.emit('preview/refresh', { device_id });
+    } else if (d.current.type === 'folder' && d.current.file) {
+      // Получаем количество изображений в папке для проверки границ
+      const folderName = d.current.file.replace(/\.zip$/i, ''); // Убираем .zip если есть
+      try {
+        const maxImages = await getFolderImagesCount(device_id, folderName);
+        logger.info(`[Control] pdfPrev folder: maxImages=${maxImages}, currentPage=${d.current.page}`, { deviceId: device_id, folderName, maxImages, currentPage: d.current.page });
+        if (maxImages > 0) {
+          const prevImage = Math.max(1, (d.current.page || 1) - 1);
+          logger.info(`[Control] pdfPrev folder: prevImage=${prevImage}, currentPage=${d.current.page}`, { deviceId: device_id, prevImage, currentPage: d.current.page });
+          d.current.page = prevImage;
+          logger.info(`[Control] 📁 Folder prev: ${device_id} -> page ${prevImage}/${maxImages}`, { deviceId: device_id, page: prevImage, maxImages, file: d.current.file });
+          io.to(`device:${device_id}`).emit('player/folderPage', d.current.page);
+          // КРИТИЧНО: НЕ отправляем всем - только конкретному устройству!
+          // Спикер обновится через preview/refresh
+          io.emit('preview/refresh', { device_id });
+        } else {
+          logger.warn(`[Control] pdfPrev folder: maxImages is 0`, { deviceId: device_id, folderName });
+        }
+      } catch (error) {
+        logger.error(`[Control] ❌ Error getting folder images count for ${device_id}/${folderName}`, { error: error.message, deviceId: device_id, folderName, stack: error.stack });
+      }
     }
+    // else больше не нужен - все несовместимые типы обработаны выше
   });
 
   // control/pdfNext - Следующая страница/слайд/изображение
   socket.on('control/pdfNext', async ({ device_id }) => {
     const d = devices[device_id];
-    if (!d) return;
+    if (!d || !d.current) {
+      logger.warn(`[Control] pdfNext: device or current state not found`, { deviceId: device_id, hasDevice: !!d, hasCurrent: !!d?.current });
+      return;
+    }
+    
+    logger.info(`[Control] pdfNext received`, { deviceId: device_id, type: d.current.type, file: d.current.file, page: d.current.page });
+    
+    // КРИТИЧНО: Кнопки работают ТОЛЬКО для статических типов контента (PDF/PPTX/FOLDER)
+    // НЕ должны переключать на другие типы контента (видео, изображения, заглушка)
+    if (!d.current.type || (d.current.type !== 'pdf' && d.current.type !== 'pptx' && d.current.type !== 'folder')) {
+      logger.warn(`[Control] pdfNext: unsupported content type for navigation`, { deviceId: device_id, type: d.current.type, file: d.current.file });
+      return; // Просто игнорируем, не делаем ничего
+    }
     
     if (d.current.type === 'pdf' && d.current.file) {
       const maxPages = await getPageSlideCount(device_id, d.current.file, 'page');
@@ -448,18 +554,26 @@ export function setupControlHandlers(socket, deps) {
     } else if (d.current.type === 'folder' && d.current.file) {
       // Получаем количество изображений в папке
       const folderName = d.current.file.replace(/\.zip$/i, ''); // Убираем .zip если есть
-      const maxImages = await getFolderImagesCount(device_id, folderName);
-      if (maxImages > 0) {
-        const nextImage = Math.min((d.current.page || 1) + 1, maxImages);
-        if (nextImage !== d.current.page) {
+      try {
+        const maxImages = await getFolderImagesCount(device_id, folderName);
+        logger.info(`[Control] pdfNext folder: maxImages=${maxImages}, currentPage=${d.current.page}`, { deviceId: device_id, folderName, maxImages, currentPage: d.current.page });
+        if (maxImages > 0) {
+          const nextImage = Math.min((d.current.page || 1) + 1, maxImages);
+          logger.info(`[Control] pdfNext folder: nextImage=${nextImage}, currentPage=${d.current.page}`, { deviceId: device_id, nextImage, currentPage: d.current.page });
           d.current.page = nextImage;
+          logger.info(`[Control] 📁 Folder next: ${device_id} -> page ${nextImage}/${maxImages}`, { deviceId: device_id, page: nextImage, maxImages, file: d.current.file });
           io.to(`device:${device_id}`).emit('player/folderPage', d.current.page);
           // КРИТИЧНО: НЕ отправляем всем - только конкретному устройству!
           // Спикер обновится через preview/refresh
           io.emit('preview/refresh', { device_id });
+        } else {
+          logger.warn(`[Control] pdfNext folder: maxImages is 0`, { deviceId: device_id, folderName });
         }
+      } catch (error) {
+        logger.error(`[Control] ❌ Error getting folder images count for ${device_id}/${folderName}`, { error: error.message, deviceId: device_id, folderName, stack: error.stack });
       }
     }
+    // else больше не нужен - все несовместимые типы обработаны выше
   });
 }
 

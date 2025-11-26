@@ -242,6 +242,15 @@ export function createFilesRouter(deps) {
       
       const uploaded = (req.files || []).map(f => f.filename);
       const folderName = req.body.folderName; // Имя папки если загружается через выбор папки
+
+      // КРИТИЧНО: Сохраняем оригинальные имена ДО любых конвертаций (PDF/PPTX используют их сразу)
+      if (req.originalFileNames && req.originalFileNames.size > 0) {
+        if (!fileNamesMap[id]) fileNamesMap[id] = {};
+        for (const [safeName, originalName] of req.originalFileNames) {
+          fileNamesMap[id][safeName] = originalName;
+        }
+        saveFileNamesMap(fileNamesMap);
+      }
       
       // ИСПРАВЛЕНО: Перемещаем PDF/PPTX/ZIP в /content/{device}/
       // Только видео/аудио/одиночные изображения остаются в /content/ для дедупликации
@@ -478,16 +487,6 @@ export function createFilesRouter(deps) {
           }
         }
       }
-      
-      if (req.originalFileNames && req.originalFileNames.size > 0) {
-        if (!fileNamesMap[id]) fileNamesMap[id] = {};
-        for (const [safeName, originalName] of req.originalFileNames) {
-          fileNamesMap[id][safeName] = originalName;
-        }
-        saveFileNamesMap(fileNamesMap);
-      }
-      
-      // Маппинг папки уже сохранен выше при создании папки
       
       // Обрабатываем файлы ТОЛЬКО если это не прямая загрузка папки
       if (!folderName) {
@@ -1051,7 +1050,7 @@ export function createFilesRouter(deps) {
       logger.info(`[DELETE file] Сбрасываем состояние устройства ${id}, т.к. удален текущий файл ${deletedFileName}`);
       devices[id].current = { type: 'idle', file: null, state: 'idle' };
       // Отправляем команду остановки на устройство
-      io.to(`device:${id}`).emit('player/stop');
+      io.to(`device:${id}`).emit('player/stop', { reason: 'file_deleted' });
     }
     
     // НОВОЕ: Обновляем список файлов из БД (а не из файловой системы)

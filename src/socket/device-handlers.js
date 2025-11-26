@@ -288,6 +288,8 @@ export function setupDeviceHandlers(socket, deps) {
       
       let stateChanged = false;
       const device = devices[device_id];
+      const page = typeof payload?.page === 'number' ? payload.page : (type !== 'video' ? currentTime : undefined);
+      
       if (device) {
         if (type === 'video' && file) {
           const prev = device.current || {};
@@ -301,11 +303,24 @@ export function setupDeviceHandlers(socket, deps) {
             device.current = { type: 'idle', file: null, state: 'idle' };
             stateChanged = true;
           }
+        } else if ((type === 'folder' || type === 'pdf' || type === 'pptx') && file && typeof page === 'number') {
+          // КРИТИЧНО: Обновляем текущую страницу для папок/PDF/PPTX
+          const prev = device.current || {};
+          if (prev.type !== type || prev.file !== file || prev.page !== page) {
+            if (!device.current) device.current = { type, file, state: 'playing', page };
+            else {
+              device.current.type = type;
+              device.current.file = file;
+              device.current.state = 'playing';
+              device.current.page = page;
+            }
+            stateChanged = true;
+          }
         }
       }
       
       // Отправляем всем слушателям (speaker UI) агрегированный прогресс
-      io.emit('player/progress', { device_id, type, file, currentTime, duration });
+      io.emit('player/progress', { device_id, type, file, currentTime, duration, page });
       
       if (stateChanged) {
         io.emit('preview/refresh', { device_id });

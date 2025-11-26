@@ -153,12 +153,6 @@
         <span id="logoutBtn" class="meta" style="font-weight:500; color:var(--text); text-decoration:underline; cursor:pointer;">Выйти</span>
       </div>
     </div>
-    <div class="button-group" style="display:flex; gap:8px; flex-shrink:0; flex-wrap:wrap;">
-      <button id="playBtn" class="primary" type="button">▶ Play</button>
-      <button id="pauseBtn" class="secondary" type="button">⏸ Pause</button>
-      <button id="restartBtn" class="secondary" type="button">⏮ Restart</button>
-      <button id="stopBtn" class="danger" type="button">⏹ Stop</button>
-    </div>
   </header>
 
   <main class="speaker-layout">
@@ -199,6 +193,12 @@
             <button id="volumeMuteBtn" class="secondary" type="button" disabled>
               <span class="volume-btn-icon" aria-hidden="true">🔇</span>
             </button>
+          </div>
+          <div class="player-controls" id="playerControls" style="display:flex; gap:8px; flex-wrap:wrap; margin-top:var(--space-md);">
+            <button id="playBtn" class="primary" type="button" style="flex:1; min-width:90px;">▶ Play</button>
+            <button id="pauseBtn" class="secondary" type="button" style="flex:1; min-width:90px;">⏸ Pause</button>
+            <button id="restartBtn" class="secondary" type="button" style="flex:1; min-width:90px;">⏮ Restart</button>
+            <button id="stopBtn" class="danger" type="button" style="flex:1; min-width:90px;">⏹ Stop</button>
           </div>
         </div>
       </div>

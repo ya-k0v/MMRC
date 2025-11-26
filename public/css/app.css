@@ -539,8 +539,8 @@ body.light .input {
   transition: all var(--transition-base);
   cursor: pointer;
   box-sizing: border-box;
-  height: var(--item-min-height);  /* Фиксированная высота */
-  min-height: var(--item-min-height);
+  height: calc(var(--item-min-height) - 8px);  /* Фиксированная высота, уменьшена на 8px */
+  min-height: calc(var(--item-min-height) - 8px);
   overflow: hidden;
 }
 
@@ -569,6 +569,8 @@ body.light .tvTile.active {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  margin: 0;
+  padding: 0;
 }
 
 .tvTile-header {
@@ -576,15 +578,20 @@ body.light .tvTile.active {
   align-items: center;
   gap: var(--space-sm);
   justify-content: space-between;
+  margin: 0;
+  padding: 0;
 }
 
-.tvTile-name {
+.tvTile-name,
+.title.tvTile-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
   min-width: 0;
-  margin-bottom: 0px;
+  margin: 0 !important; /* Убираем все отступы, включая margin-bottom */
+  font-size: var(--font-size-base) !important; /* Уменьшено с --font-size-lg */
+  line-height: 1.2; /* Уменьшена высота строки */
 }
 
 .tvTile-status {
@@ -742,6 +749,13 @@ body.light .resolution-badge {
 .preview-panel .title {
   margin: 0 0 var(--space-md) 0;
   padding: 0;
+}
+
+/* Исключаем .tvTile-name из правила выше */
+.devices-panel .title.tvTile-name,
+.files-panel .title.tvTile-name,
+.preview-panel .title.tvTile-name {
+  margin: 0 !important;
 }
 
 .devices-panel .list,

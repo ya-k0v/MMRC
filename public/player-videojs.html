@@ -162,9 +162,6 @@
       pointer-events: none !important;
     }
     
-    /* Фон простоя (idle) — ЧЕРНЫЙ для переходов внутри серий (папки/слайды) */
-    #idle { background: #000 !important; background-color: #000 !important; }
-    
     /* Фоновый бренд-слой под контентом */
     #brandBg {
       position: absolute;
@@ -284,13 +281,10 @@
 <body>
   <div id="stage">
     <div id="brandBg"></div>
-    <div id="idle" class="layer"></div>
     <div id="videoContainer" class="layer">
       <video id="v" class="video-js" playsinline webkit-playsinline muted autoplay preload="auto" disablePictureInPicture x5-video-player-type="h5" x5-video-player-fullscreen="true" x5-video-orientation="landscape"></video>
     </div>
-    <!-- Двойная буферизация для плавных переходов слайдов (ping-pong buffer) -->
-    <img id="img1" class="layer img-buffer" alt="image" decoding="async"/>
-    <img id="img2" class="layer img-buffer" alt="image" decoding="async"/>
+    <img id="img1" class="layer" alt="image" decoding="async"/>
     <iframe id="pdf" class="layer" title="pdf" allowfullscreen></iframe>
   </div>
   <button id="unmute" class="hidden" type="button" aria-label="Включить звук">Включить звук</button>

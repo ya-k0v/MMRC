@@ -18,11 +18,10 @@ const forceMuted = url.searchParams.get('muted') === '1';
 const forceSound = (url.searchParams.get('sound') === '1') || (url.searchParams.get('autoplay') === '1');
 const previewFile = url.searchParams.get('file');
 
-const idle = document.getElementById('idle');
+// const idle = document.getElementById('idle'); // Убрано - больше не используется
 const v = document.getElementById('v');
 const videoContainer = document.getElementById('videoContainer'); // Контейнер для Video.js
 const img1 = document.getElementById('img1');
-const img2 = document.getElementById('img2');
 const img = img1; // Для обратной совместимости со старым кодом
 const pdf = document.getElementById('pdf');
 const unmuteBtn = document.getElementById('unmute');
@@ -43,12 +42,19 @@ let vjsPlayer = null;
 let isLoadingPlaceholder = false; // Флаг для предотвращения двойной загрузки
 let registerInFlight = false; // Предотвращаем одновременные попытки регистрации
 let slidesCache = {}; // Кэш предзагруженных слайдов PPTX/PDF: { 'filename': { count: N, images: [Image, ...] } }
-let currentImgBuffer = 1; // Текущий активный буфер изображений (1 или 2) для двойной буферизации
 let wakeLock = null; // Wake Lock для предотвращения suspend
 let lastProgressEmitTs = 0; // троттлинг отправки прогресса
 let progressInterval = null; // периодическая отправка прогресса (fallback)
 // КРИТИЧНО: Функция для отправки сигнала об остановке прогресса (очистка информации на панели спикера)
 let emitProgressStop = null; // Будет установлена при инициализации Video.js
+
+// Функция для остановки отправки прогресса
+function stopProgressInterval() {
+  if (progressInterval) {
+    clearInterval(progressInterval);
+    progressInterval = null;
+  }
+}
 
 const VOLUME_MIN = 0;
 const VOLUME_MAX = 100;
@@ -251,7 +257,7 @@ function hideVideoJsControls() {
 }
 
 if (!device_id || !device_id.trim()) {
-  [idle, v, img1, img2, pdf].forEach(el => el && el.classList.remove('visible'));
+  [v, img1, pdf].forEach(el => el && el.classList.remove('visible'));
   document.documentElement.style.background = 'transparent';
   document.body.style.background = 'transparent';
   // В режиме без device_id используем черный фон без логотипа
@@ -284,6 +290,17 @@ if (!device_id || !device_id.trim()) {
         
         // Ждем полной готовности Video.js
         vjsPlayer.ready(function() {
+          // КРИТИЧНО: При загрузке страницы сбрасываем состояние и останавливаем видео
+          // Это предотвращает продолжение воспроизведения из кэша браузера
+          currentFileState = { type: null, file: null, page: 1 };
+          if (vjsPlayer) {
+            vjsPlayer.pause();
+            vjsPlayer.currentTime(0);
+            // НЕ устанавливаем пустой src - это вызывает ошибку Video.js
+            // Просто останавливаем и скрываем
+            videoContainer.classList.remove('visible', 'preloading');
+          }
+          
           // По умолчанию для видео включаем логотип на фоне
           setBrandBackgroundMode('logo');
           
@@ -330,10 +347,17 @@ if (!device_id || !device_id.trim()) {
               return;
             }
             
-            if (!preview && isActuallyEnded && (currentFileState.type === null || currentFileState.type === 'video')) {
+            // КРИТИЧНО: Показываем заглушку ТОЛЬКО если видео действительно закончилось 
+            // И текущий контент - это видео (не изображение/PDF/PPTX/папка/заглушка)
+            if (!preview && isActuallyEnded && currentFileState.type === 'video') {
+              console.log('[Player] ✅ Видео закончилось, переключаемся на заглушку');
+              // Сбрасываем состояние перед показом заглушки
+              currentFileState = { type: null, file: null, page: 1 };
               showPlaceholder();
             } else if (!isActuallyEnded) {
+              // Видео не закончилось - игнорируем
             } else {
+              // Контент не видео - игнорируем (изображение/PDF/PPTX/папка/заглушка уже показывается)
             }
           });
           
@@ -433,7 +457,7 @@ if (!device_id || !device_id.trim()) {
                           requestAnimationFrame(() => {
                             videoContainer.classList.remove('preloading');
                             videoContainer.classList.add('visible');
-                            idle.classList.remove('visible');
+                            // idle убран
                             vjsPlayer.one('canplay', () => {
                               setTimeout(() => {
                                 vjsPlayer.play().catch(err => {
@@ -449,11 +473,13 @@ if (!device_id || !device_id.trim()) {
                     // Используем изображение заглушку
                     const tempImg = new Image();
                     tempImg.onload = () => {
-                      idle.classList.remove('visible');
+                      // idle убран
                       img.src = cachedPlaceholderSrc;
                       currentPlaceholderSrc = cachedPlaceholderSrc;
                       currentFileState = { type: 'placeholder', file: cachedPlaceholderSrc, page: 1 };
-                      show(img);
+                      // Если уже показывается изображение - не трогаем класс visible (однотипное переключение)
+                      const isSameTypeSwitch = img.classList.contains('visible');
+                      show(img, true, isSameTypeSwitch);
                     };
                     tempImg.src = cachedPlaceholderSrc;
                   }
@@ -758,8 +784,8 @@ if (!device_id || !device_id.trim()) {
               } catch (e) {
                 console.error('[Player] ❌ Ошибка загрузки заглушки при инициализации:', e);
                 // Убираем черный экран при ошибке, показываем бренд-фон
-                idle.classList.remove('visible');
-                [videoContainer, img1, img2, pdf].forEach(e => {
+                // idle убран
+                [videoContainer, img1, pdf].forEach(e => {
                   if (e) e.classList.remove('visible', 'preloading');
                 });
                 // Отправляем сигнал об остановке прогресса при ошибке
@@ -778,70 +804,795 @@ if (!device_id || !device_id.trim()) {
     }
   });
   
-  // Функция для получения текущего и следующего буфера изображений
-  function getImageBuffers() {
-    const current = currentImgBuffer === 1 ? img1 : img2;
-    const next = currentImgBuffer === 1 ? img2 : img1;
-    return { current, next };
+  // Унифицированная функция для полной очистки всех буферов при переключении типа контента
+  function clearAllBuffers() {
+    // КРИТИЧНО: Полная очистка видео плеера
+    if (vjsPlayer) {
+      vjsPlayer.pause();
+      vjsPlayer.currentTime(0);
+      // Останавливаем воспроизведение и очищаем медиа-источник
+      try {
+        // Используем load() для полной очистки состояния плеера
+        vjsPlayer.load();
+      } catch (e) {
+        // Игнорируем ошибки при очистке (load() должен работать всегда)
+      }
+      hideVideoJsControls();
+    }
+    
+    // Останавливаем отправку прогресса
+    stopProgressInterval();
+    if (typeof emitProgressStop === 'function') {
+      emitProgressStop();
+    }
+    
+    // Скрываем видео контейнер
+    videoContainer.classList.remove('visible', 'preloading');
+    
+    // КРИТИЧНО: Полная очистка буфера изображений
+    if (img1) {
+      img1.removeAttribute('src');
+      img1.src = '';
+      // Очищаем обработчики событий
+      img1.onload = null;
+      img1.onerror = null;
+      img1.classList.remove('visible', 'preloading');
+      // Убираем все inline стили при остановке папок/PDF/PPTX
+      img1.removeAttribute('style');
+    }
+    
+    // Также очищаем PDF
+    if (pdf) {
+      pdf.removeAttribute('src');
+      pdf.src = '';
+      pdf.classList.remove('visible', 'preloading');
+      // Убираем все inline стили при остановке
+      pdf.removeAttribute('style');
+    }
+    
+    
+    // Очистка PDF
+    if (pdf) {
+      pdf.removeAttribute('src');
+      pdf.src = '';
+      pdf.classList.remove('visible', 'preloading');
+      // Убираем все inline стили при остановке папок/PDF/PPTX
+      pdf.removeAttribute('style');
+    }
+    
+    console.log('[Player] 🧹 Все буферы очищены');
   }
   
-  // Плавный показ элемента с ОБЯЗАТЕЛЬНЫМ переходом через черный экран
-  function show(el, skipTransition = false) {
+  // ============================================================================
+  // УНИВЕРСАЛЬНАЯ СИСТЕМА ПЛАВНОГО ПЕРЕКЛЮЧЕНИЯ КОНТЕНТА
+  // ============================================================================
+  
+  // Переменная для отслеживания текущего активного перехода (для отмены при новой команде)
+  let currentTransition = null;
+  const TRANSITION_DURATION = 500; // Длительность перехода в мс
+  
+  /**
+   * Предзагрузка видео (загружает метаданные и первый кадр)
+   * НЕ изменяет текущий src, если видео уже воспроизводится
+   */
+  async function preloadVideo(src) {
+    if (!vjsPlayer || !src) return null;
+    
+    return new Promise((resolve, reject) => {
+      const currentSrc = vjsPlayer.currentSrc();
+      
+      // Если это тот же источник и уже загружен - возвращаем сразу
+      if (currentSrc === src || currentSrc.includes(src.split('/').pop())) {
+        if (vjsPlayer.readyState() >= 2) {
+          resolve({ 
+            src, 
+            readyState: vjsPlayer.readyState(), 
+            duration: vjsPlayer.duration() 
+          });
+          return;
+        }
+        // Если тот же src, но еще загружается - ждем
+        const onReady = () => {
+          vjsPlayer.off('loadedmetadata', onReady);
+          vjsPlayer.off('error', onError);
+          resolve({ 
+            src, 
+            readyState: vjsPlayer.readyState(),
+            duration: vjsPlayer.duration()
+          });
+        };
+        const onError = (error) => {
+          vjsPlayer.off('loadedmetadata', onReady);
+          vjsPlayer.off('error', onError);
+          reject(new Error(`Video preload failed: ${error?.message || 'Unknown error'}`));
+        };
+        vjsPlayer.one('loadedmetadata', onReady);
+        vjsPlayer.one('error', onError);
+      return;
+    }
+    
+      // Проверяем существование файла перед загрузкой
+      fetch(src, { method: 'HEAD', cache: 'no-store' })
+        .then(response => {
+          if (!response.ok) {
+            reject(new Error(`Video file not found: ${response.status}`));
+            return;
+          }
+          
+          // Устанавливаем источник для предзагрузки метаданных
+          // Сохраняем текущий src для восстановления (если нужно)
+          const wasPaused = vjsPlayer.paused();
+          
+          const cleanup = () => {
+            vjsPlayer.off('loadedmetadata', onLoaded);
+            vjsPlayer.off('error', onError);
+          };
+          
+          const onLoaded = () => {
+            cleanup();
+            resolve({ 
+              src, 
+              readyState: vjsPlayer.readyState(),
+              duration: vjsPlayer.duration()
+            });
+          };
+          
+          const onError = (error) => {
+            cleanup();
+            reject(new Error(`Video preload failed: ${error?.message || 'Unknown error'}`));
+          };
+          
+          vjsPlayer.one('loadedmetadata', onLoaded);
+          vjsPlayer.one('error', onError);
+          
+          // Устанавливаем источник
+          try {
+            vjsPlayer.src({ src, type: 'video/mp4' });
+          } catch (e) {
+            cleanup();
+            reject(e);
+          }
+        })
+        .catch(error => {
+          // Ошибка проверки - пробуем все равно загрузить
+          const cleanup = () => {
+            vjsPlayer.off('loadedmetadata', onLoaded);
+            vjsPlayer.off('error', onError);
+          };
+          
+          const onLoaded = () => {
+            cleanup();
+            resolve({ 
+              src, 
+              readyState: vjsPlayer.readyState(),
+              duration: vjsPlayer.duration()
+            });
+          };
+          
+          const onError = (error) => {
+            cleanup();
+            reject(new Error(`Video preload failed: ${error?.message || 'Unknown error'}`));
+          };
+          
+          vjsPlayer.one('loadedmetadata', onLoaded);
+          vjsPlayer.one('error', onError);
+          
+          try {
+            vjsPlayer.src({ src, type: 'video/mp4' });
+          } catch (e) {
+            cleanup();
+            reject(e);
+          }
+        });
+    });
+  }
+  
+  /**
+   * Предзагрузка изображения
+   */
+  async function preloadImage(src) {
+    if (!src) return null;
+    
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      
+      img.onload = () => {
+        resolve({ src, width: img.naturalWidth, height: img.naturalHeight, image: img });
+      };
+      
+      img.onerror = () => {
+        reject(new Error(`Image preload failed: ${src}`));
+      };
+      
+      img.src = src;
+    });
+  }
+  
+  /**
+   * Предзагрузка PDF страницы или PPTX слайда
+   */
+  async function preloadConvertedSlide(file, type, num) {
+    // Проверяем кэш
+    if (slidesCache[file] && slidesCache[file].images) {
+      const cached = slidesCache[file];
+      const index = Math.max(0, Math.min(num - 1, cached.count - 1));
+      const cachedImage = cached.images[index];
+      
+      if (cachedImage && cachedImage.complete && cachedImage.naturalWidth > 0) {
+        const urlType = type === 'pdf' ? 'page' : 'slide';
+        const expectedUrl = `/api/devices/${encodeURIComponent(device_id)}/converted/${encodeURIComponent(file)}/${urlType}/${num}`;
+        const cachedSrc = cachedImage.src || expectedUrl;
+        return Promise.resolve({ src: cachedSrc, image: cachedImage });
+      }
+    }
+    
+    // Загружаем через API
+    const urlType = type === 'pdf' ? 'page' : 'slide';
+    const imageUrl = `/api/devices/${encodeURIComponent(device_id)}/converted/${encodeURIComponent(file)}/${urlType}/${num}`;
+    
+    return preloadImage(imageUrl);
+  }
+  
+  /**
+   * Предзагрузка изображения из папки
+   */
+  async function preloadFolderImage(folderName, num) {
+    // Проверяем кэш
+    if (slidesCache[folderName] && slidesCache[folderName].images) {
+      const cached = slidesCache[folderName];
+      const index = Math.max(0, Math.min(num - 1, cached.count - 1));
+      const cachedImage = cached.images[index];
+      
+      if (cachedImage && cachedImage.complete && cachedImage.naturalWidth > 0) {
+        const expectedUrl = `/api/devices/${encodeURIComponent(device_id)}/folder/${encodeURIComponent(folderName)}/image/${num}`;
+        const cachedSrc = cachedImage.src || expectedUrl;
+        return Promise.resolve({ src: cachedSrc, image: cachedImage });
+      }
+    }
+    
+    // Загружаем через API
+    const imageUrl = `/api/devices/${encodeURIComponent(device_id)}/folder/${encodeURIComponent(folderName)}/image/${num}`;
+    
+    return preloadImage(imageUrl);
+  }
+  
+  /**
+   * Универсальная функция предзагрузки любого типа контента
+   */
+  async function preloadContent(type, file, page = 1, options = {}) {
+    try {
+      switch (type) {
+        case 'video':
+          const videoSrc = content(file);
+          return await preloadVideo(videoSrc);
+          
+        case 'image':
+          const imageSrc = content(file);
+          return await preloadImage(imageSrc);
+          
+        case 'pdf':
+          return await preloadConvertedSlide(file, 'pdf', page);
+          
+        case 'pptx':
+          return await preloadConvertedSlide(file, 'pptx', page);
+          
+        case 'folder':
+          const folderName = file.replace(/\.zip$/i, '');
+          return await preloadFolderImage(folderName, page);
+          
+        case 'placeholder':
+          // Для placeholder определяем тип по расширению или используем resolvePlaceholder
+          // file может быть либо URL, либо именем файла
+          if (file.startsWith('/') || file.startsWith('http')) {
+            // Это уже URL - определяем тип по расширению
+            const ext = file.split('.').pop().toLowerCase().split('?')[0];
+            if (['mp4', 'webm', 'ogg', 'mkv', 'mov', 'avi'].includes(ext)) {
+              return await preloadVideo(file);
+            } else {
+              return await preloadImage(file);
+            }
+          } else {
+            // Это имя файла или путь - используем resolvePlaceholder
+            const placeholderData = await resolvePlaceholder(false);
+            if (placeholderData && placeholderData.type) {
+              if (placeholderData.type === 'video') {
+                return await preloadVideo(placeholderData.src);
+              } else {
+                return await preloadImage(placeholderData.src);
+              }
+            }
+            throw new Error('Placeholder not found');
+          }
+          
+        default:
+          throw new Error(`Unsupported content type: ${type}`);
+      }
+    } catch (error) {
+      console.error(`[Player] ❌ Ошибка предзагрузки ${type}:`, error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Получает DOM элемент для указанного типа контента
+   */
+  function getElementForContentType(type, placeholderType = null) {
+    switch (type) {
+      case 'video':
+        return videoContainer;
+      case 'image':
+      case 'pdf':
+      case 'pptx':
+      case 'folder':
+        return img1;
+      case 'placeholder':
+        // Для placeholder определяем элемент по типу заглушки
+        if (placeholderType === 'video') {
+          return videoContainer;
+        } else {
+          return img1;
+        }
+      default:
+        return null;
+    }
+  }
+  
+  /**
+   * Получает текущее состояние для перехода
+   */
+  function getCurrentStateForTransition() {
+    const activeElement = [videoContainer, img1, pdf].find(el => 
+      el && el.classList.contains('visible')
+    );
+    
+    return {
+      type: currentFileState.type || null,
+      file: currentFileState.file || null,
+      page: currentFileState.page || 1,
+      element: activeElement || null
+    };
+  }
+  
+  /**
+   * Плавное переключение между контентами (crossfade)
+   */
+  async function smoothTransition(fromState, toConfig, options = {}) {
+    const {
+      duration = TRANSITION_DURATION,
+      crossfade = true,
+      skipTransition = false,
+      onProgress = null
+    } = options;
+    
+    // Отменяем текущий переход, если есть
+    if (currentTransition) {
+      currentTransition.cancelled = true;
+      currentTransition = null;
+    }
+    
+    // Создаем объект перехода для отслеживания
+    const transition = { cancelled: false };
+    currentTransition = transition;
+    
+    try {
+      const fromType = fromState?.type;
+      const fromElement = fromState?.element;
+      const toType = toConfig.type;
+      const toFile = toConfig.file;
+      const toPage = toConfig.page || 1;
+      
+      // Для placeholder определяем тип заглушки заранее (до предзагрузки)
+      let placeholderType = null;
+      if (toType === 'placeholder') {
+        // Если file это URL, определяем тип по расширению
+        if (toFile && (toFile.startsWith('/') || toFile.startsWith('http'))) {
+          const ext = toFile.split('.').pop().toLowerCase().split('?')[0];
+          placeholderType = ['mp4', 'webm', 'ogg', 'mkv', 'mov', 'avi'].includes(ext) ? 'video' : 'image';
+        } else {
+          // Используем cachedPlaceholderType если есть
+          placeholderType = cachedPlaceholderType || 'image';
+        }
+      }
+      
+      // Определяем целевой элемент (может быть переопределен для placeholder после предзагрузки)
+      let toElement = getElementForContentType(toType, placeholderType);
+      if (!toElement && toType !== 'placeholder') {
+        throw new Error(`No element for content type: ${toType}`);
+      }
+      
+      // Проверяем, не тот же ли это контент
+      const isSameContent = fromType === toType && 
+                           fromState?.file === toFile && 
+                           fromState?.page === toPage;
+      
+      if (isSameContent && fromElement && fromElement.classList.contains('visible')) {
+        console.log('[Player] ℹ️ Тот же контент, переход не требуется');
+        transition.cancelled = true;
+        currentTransition = null;
+        return;
+      }
+      
+      // Предзагружаем новый контент
+      if (onProgress) onProgress({ stage: 'preloading', progress: 0 });
+      
+      let preloadedData;
+      try {
+        preloadedData = await preloadContent(toType, toFile, toPage);
+        
+        // Если это placeholder и тип еще не определен, определяем по src
+        if (toType === 'placeholder' && !placeholderType && preloadedData && preloadedData.src) {
+          const ext = preloadedData.src.split('.').pop().toLowerCase().split('?')[0];
+          placeholderType = ['mp4', 'webm', 'ogg', 'mkv', 'mov', 'avi'].includes(ext) ? 'video' : 'image';
+          // Обновляем toElement на основе реального типа placeholder
+          toElement = getElementForContentType(toType, placeholderType);
+          if (!toElement) {
+            throw new Error(`No element for placeholder type: ${placeholderType}`);
+          }
+        }
+      } catch (error) {
+        // Если предзагрузка не удалась, пробуем все равно показать (может быть кэш)
+        console.warn('[Player] ⚠️ Предзагрузка не удалась, продолжаем:', error);
+        preloadedData = null;
+      }
+      
+      if (transition.cancelled) return;
+      if (onProgress) onProgress({ stage: 'preloaded', progress: 50 });
+      
+      // Мгновенное переключение (без анимации)
+    if (skipTransition) {
+        // Скрываем старое
+        if (fromElement && fromElement !== toElement) {
+          fromElement.classList.remove('visible', 'preloading');
+        }
+        
+        // Показываем новое
+        if ((toType === 'video' || (toType === 'placeholder' && placeholderType === 'video')) && vjsPlayer && preloadedData) {
+          // Для видео устанавливаем src и показываем
+          if (vjsPlayer.currentSrc() !== preloadedData.src) {
+            vjsPlayer.src({ src: preloadedData.src, type: 'video/mp4' });
+          }
+          vjsPlayer.loop(toType === 'placeholder' ? true : false); // Зацикливаем только placeholder
+          if (toType === 'placeholder') {
+            vjsPlayer.muted(true);
+            vjsPlayer.volume(0);
+          } else {
+            applyVolumeToPlayer('prepare_new_video');
+          }
+          
+          videoContainer.classList.remove('preloading');
+          videoContainer.classList.add('visible');
+          
+          vjsPlayer.play().catch(() => {});
+        } else if (preloadedData) {
+          // Для изображений устанавливаем src и показываем
+          toElement.removeAttribute('src');
+          toElement.src = preloadedData.src;
+          toElement.classList.remove('preloading');
+          toElement.classList.add('visible');
+        }
+        
+        // Скрываем другие элементы
+        [videoContainer, img1, pdf].forEach(el => {
+          if (el && el !== toElement) {
+            el.classList.remove('visible', 'preloading');
+          }
+        });
+        
+        currentTransition = null;
+      return;
+    }
+    
+      // Плавное переключение
+      const isSameElement = fromElement === toElement;
+      const canCrossfade = crossfade && !isSameElement && fromElement && fromElement.classList.contains('visible');
+      
+      if (canCrossfade) {
+        // Crossfade: одновременно fade-out старого и fade-in нового
+        
+        // 1. Подготовка нового элемента
+        if ((toType === 'video' || (toType === 'placeholder' && placeholderType === 'video')) && vjsPlayer && preloadedData) {
+          // Для видео устанавливаем src и готовим к показу
+          if (vjsPlayer.currentSrc() !== preloadedData.src) {
+            vjsPlayer.src({ src: preloadedData.src, type: 'video/mp4' });
+          }
+          vjsPlayer.loop(toType === 'placeholder' ? true : false); // Зацикливаем только placeholder
+          if (toType === 'placeholder') {
+            vjsPlayer.muted(true);
+            vjsPlayer.volume(0);
+          } else {
+            applyVolumeToPlayer('prepare_new_video');
+          }
+          hideVideoJsControls();
+          videoContainer.classList.add('preloading');
+          
+          // Ждем готовности видео
+          await new Promise((resolve) => {
+            if (vjsPlayer.readyState() >= 2) {
+              resolve();
+            } else {
+              vjsPlayer.one('loadeddata', resolve);
+            }
+          });
+          
+          if (transition.cancelled) return;
+        } else if (preloadedData) {
+          // Для изображений устанавливаем src и готовим к показу
+          toElement.removeAttribute('src');
+          toElement.src = preloadedData.src;
+          toElement.classList.add('preloading');
+          
+          // Ждем загрузки изображения
+          if (preloadedData.image && preloadedData.image.complete) {
+            // Уже загружено
+          } else {
+            await new Promise((resolve, reject) => {
+              const timeout = setTimeout(() => reject(new Error('Image load timeout')), 5000);
+              toElement.onload = () => {
+                clearTimeout(timeout);
+                resolve();
+              };
+              toElement.onerror = () => {
+                clearTimeout(timeout);
+                reject(new Error('Image load error'));
+              };
+            });
+          }
+          
+          if (transition.cancelled) return;
+        }
+        
+        // 2. Одновременный crossfade
+        toElement.style.opacity = '0';
+        toElement.classList.remove('preloading');
+        toElement.classList.add('visible');
+        
+        // Запускаем fade-out старого и fade-in нового одновременно
+        fromElement.style.transition = `opacity ${duration}ms ease-in-out`;
+        toElement.style.transition = `opacity ${duration}ms ease-in-out`;
+        
+        requestAnimationFrame(() => {
+          if (transition.cancelled) return;
+          
+          fromElement.style.opacity = '0';
+          toElement.style.opacity = '1';
+          
+          if (onProgress) onProgress({ stage: 'transitioning', progress: 75 });
+        });
+        
+        // Ждем завершения перехода
+        await new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            resolve();
+          }, duration + 50); // Небольшая задержка для завершения
+          
+          const onTransitionEnd = (e) => {
+            if (e.target === fromElement || e.target === toElement) {
+              clearTimeout(timeout);
+              fromElement.removeEventListener('transitionend', onTransitionEnd);
+              toElement.removeEventListener('transitionend', onTransitionEnd);
+              resolve();
+            }
+          };
+          
+          fromElement.addEventListener('transitionend', onTransitionEnd);
+          toElement.addEventListener('transitionend', onTransitionEnd);
+        });
+        
+        if (transition.cancelled) return;
+        
+        // 3. Очистка после перехода
+        fromElement.classList.remove('visible', 'preloading');
+        fromElement.style.opacity = '';
+        fromElement.style.transition = '';
+        toElement.style.opacity = '';
+        toElement.style.transition = '';
+        
+        // Останавливаем старое видео, если это был видео элемент
+        if (fromElement === videoContainer && vjsPlayer) {
+          vjsPlayer.pause();
+        }
+        
+        // Запускаем новое видео, если это видео
+        if (toElement === videoContainer && vjsPlayer) {
+          vjsPlayer.play().catch(() => {});
+        }
+        
+      } else {
+        // Последовательное переключение: сначала fade-out старого, потом fade-in нового
+        
+        // 1. Fade-out старого
+        if (fromElement && fromElement.classList.contains('visible')) {
+          fromElement.style.transition = `opacity ${duration}ms ease-in-out`;
+          fromElement.style.opacity = '0';
+          
+          await new Promise((resolve) => {
+            const timeout = setTimeout(resolve, duration + 50);
+            fromElement.addEventListener('transitionend', () => {
+              clearTimeout(timeout);
+              resolve();
+            }, { once: true });
+          });
+          
+          if (transition.cancelled) return;
+          
+          fromElement.classList.remove('visible', 'preloading');
+          fromElement.style.opacity = '';
+          fromElement.style.transition = '';
+          
+          // Останавливаем видео, если это был видео элемент
+          if (fromElement === videoContainer && vjsPlayer) {
+            vjsPlayer.pause();
+          }
+        }
+        
+        // 2. Подготовка нового элемента
+        if ((toType === 'video' || (toType === 'placeholder' && placeholderType === 'video')) && vjsPlayer && preloadedData) {
+          if (vjsPlayer.currentSrc() !== preloadedData.src) {
+            vjsPlayer.src({ src: preloadedData.src, type: 'video/mp4' });
+          }
+          vjsPlayer.loop(toType === 'placeholder' ? true : false); // Зацикливаем только placeholder
+          if (toType === 'placeholder') {
+            vjsPlayer.muted(true);
+            vjsPlayer.volume(0);
+          } else {
+            applyVolumeToPlayer('prepare_new_video');
+          }
+          hideVideoJsControls();
+          videoContainer.classList.add('preloading');
+          
+          // Ждем готовности видео
+          await new Promise((resolve) => {
+            if (vjsPlayer.readyState() >= 2) {
+              resolve();
+            } else {
+              vjsPlayer.one('loadeddata', resolve);
+            }
+          });
+          
+          if (transition.cancelled) return;
+        } else if (preloadedData) {
+          toElement.removeAttribute('src');
+          toElement.src = preloadedData.src;
+          toElement.classList.add('preloading');
+          
+          // Ждем загрузки изображения
+          if (preloadedData.image && preloadedData.image.complete) {
+            // Уже загружено
+          } else {
+            await new Promise((resolve, reject) => {
+              const timeout = setTimeout(() => reject(new Error('Image load timeout')), 5000);
+              toElement.onload = () => {
+                clearTimeout(timeout);
+                resolve();
+              };
+              toElement.onerror = () => {
+                clearTimeout(timeout);
+                reject(new Error('Image load error'));
+              };
+            });
+          }
+          
+          if (transition.cancelled) return;
+        }
+        
+        // 3. Fade-in нового
+        toElement.style.opacity = '0';
+        toElement.classList.remove('preloading');
+        toElement.classList.add('visible');
+        
+        // Скрываем другие элементы
+        [videoContainer, img1, pdf].forEach(el => {
+          if (el && el !== toElement) {
+            el.classList.remove('visible', 'preloading');
+          }
+        });
+        
+        requestAnimationFrame(() => {
+          if (transition.cancelled) return;
+          
+          toElement.style.transition = `opacity ${duration}ms ease-in-out`;
+          toElement.style.opacity = '1';
+          
+          if (onProgress) onProgress({ stage: 'transitioning', progress: 90 });
+        });
+        
+        await new Promise((resolve) => {
+          const timeout = setTimeout(resolve, duration + 50);
+          toElement.addEventListener('transitionend', () => {
+            clearTimeout(timeout);
+            resolve();
+          }, { once: true });
+        });
+        
+        if (transition.cancelled) return;
+        
+        toElement.style.opacity = '';
+        toElement.style.transition = '';
+        
+        // Запускаем новое видео, если это видео
+        if (toElement === videoContainer && vjsPlayer) {
+          // Применяем настройки звука перед запуском (не для placeholder)
+          if (toType !== 'placeholder') {
+            applyVolumeToPlayer('canplay_autounmute');
+          }
+          vjsPlayer.play().catch(() => {});
+        }
+      }
+      
+      // Обновляем currentFileState после успешного перехода
+      currentFileState = { 
+        type: toType, 
+        file: toFile, 
+        page: toPage 
+      };
+      
+      // Останавливаем отправку прогресса для не-видео контента
+      if (toType !== 'video') {
+        stopProgressInterval();
+        if (typeof emitProgressStop === 'function') {
+          emitProgressStop();
+        }
+      }
+      
+      // Устанавливаем правильный режим фона
+      if (toType === 'video') {
+        setBrandBackgroundMode('logo');
+      } else {
+        setBrandBackgroundMode('black');
+      }
+      
+      if (onProgress) onProgress({ stage: 'completed', progress: 100 });
+      currentTransition = null;
+      
+    } catch (error) {
+      console.error('[Player] ❌ Ошибка плавного переключения:', error);
+      currentTransition = null;
+      throw error;
+    }
+  }
+  
+  // Плавный показ элемента (без черного экрана)
+  function show(el, skipTransition = false, isSameType = false) {
     if (!el) {
       return;
     }
     
-    
-    // Убедимся что body черный
+    // Убедимся что body прозрачный
     document.body.style.background = 'transparent';
     document.documentElement.style.background = 'transparent';
     
-    // Если нужен мгновенный показ (например для слайдов презентации)
-    if (skipTransition) {
-      // Сначала показываем новый
-      el.classList.add('visible');
+    // Если это переключение однотипного контента - не трогаем класс visible
+    if (isSameType && el.classList.contains('visible')) {
+      // Просто обновляем preloading статус
       el.classList.remove('preloading');
-      
-      // Потом скрываем остальные (включая оба буфера)
-      [idle, videoContainer, img1, img2, pdf].forEach(e => {
+      // Скрываем только другие элементы
+      [videoContainer, img1, pdf].forEach(e => {
         if (e && e !== el) {
           e.classList.remove('visible', 'preloading');
         }
       });
-      
       return;
     }
     
-    // ПЕРЕХОД ЧЕРЕЗ ЧЕРНЫЙ: Сначала показываем черный экран
+    // КРИТИЧНО: Проверяем, что у img1 есть src перед показом
+    if (el === img1 && (!el.src || el.src === '')) {
+      console.warn('[Player] ⚠️ Попытка показать img1 без src, отменяем');
+      // КРИТИЧНО: Убеждаемся что элемент скрыт, если нет src
+      el.classList.remove('visible');
+      return;
+    }
     
-    // 1. Скрываем все кроме idle
-    [videoContainer, img1, img2, pdf].forEach(e => {
-      if (e) {
+    // Всегда мгновенный показ (черный экран убран)
+    // Сначала показываем новый элемент
+    el.classList.add('visible');
+    el.classList.remove('preloading');
+    
+    // Потом скрываем остальные
+    [videoContainer, img1, pdf].forEach(e => {
+      if (e && e !== el) {
         e.classList.remove('visible', 'preloading');
       }
     });
-    
-    // 2. Показываем черный экран (idle)
-    idle.classList.add('visible');
-    
-    // 3. После fade in черного (0.5s) - показываем новый контент
-    setTimeout(() => {
-      // Если новый контент это не сам idle
-      if (el !== idle) {
-        el.classList.remove('preloading');
-        el.style.zIndex = '3';
-        
-        requestAnimationFrame(() => {
-          el.classList.add('visible'); // Fade in нового контента
-          idle.classList.remove('visible'); // Fade out черного экрана
-          
-          
-          setTimeout(() => {
-            if (el) el.style.zIndex = '';
-          }, 500);
-        });
-      }
-    }, 500); // Время показа черного экрана
   }
   
   // Предзагрузка элемента (скрыто)
@@ -890,6 +1641,8 @@ if (!device_id || !device_id.trim()) {
   }
 
   // Поиск заглушки
+  // Возвращает: { src: string, mimeType: string } или null (заглушка не найдена, но сервер доступен)
+  // Выбрасывает исключение только при реальных сетевых ошибках (сервер недоступен)
   async function resolvePlaceholder(force = false) {
     // КРИТИЧНО: При force=true генерируем timestamp для полного обхода кэша
     const cacheBuster = force ? `?t=${Date.now()}` : '';
@@ -926,21 +1679,52 @@ if (!device_id || !device_id.trim()) {
             }, 3000);
             
             if (checkRes.ok) {
-              // Возвращаем URL с cache-busting если force=true
-              return url + cacheBuster;
+              // Определяем тип по MIME type из метаданных
+              const mimeType = data.mimeType || null;
+              let type = null;
+              
+              if (mimeType) {
+                // Определяем тип из MIME type
+                if (mimeType.startsWith('image/')) {
+                  type = 'image';
+                } else if (mimeType.startsWith('video/')) {
+                  type = 'video';
+                }
             } else {
+                // Fallback: определяем тип по расширению файла, если mimeType не доступен
+                const fileName = data.placeholder || '';
+                const ext = fileName.split('.').pop().toLowerCase();
+                if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) {
+                  type = 'image';
+                } else if (['mp4', 'webm', 'ogg', 'mkv', 'mov', 'avi'].includes(ext)) {
+                  type = 'video';
+                }
+              }
+              
+              // Возвращаем объект с URL и типом
+              return { 
+                src: url + cacheBuster,
+                mimeType: mimeType,
+                type: type
+              };
             }
+            // Файл недоступен (404 и т.д.) - сервер доступен, но заглушки нет
+            return null;
           } catch (e) {
+            // Ошибка сети при проверке файла - считаем это недоступностью сервера
+            throw new Error('Network error checking placeholder file: ' + e.message);
           }
         }
+        // API вернул ответ, но нет заглушки - сервер доступен, заглушки просто нет
+        return null;
       }
+      // API вернул не-OK статус (например, 404) - сервер доступен, но заглушки нет
+      return null;
     } catch (e) {
+      // Реальная сетевая ошибка (timeout, network error, CORS и т.д.) - сервер недоступен
+      // Выбрасываем исключение, чтобы вызывающий код мог отличить это от "заглушки нет"
+      throw new Error('Server unavailable: ' + e.message);
     }
-    
-    // НОВОЕ: Fallback больше не используется с новой архитектурой
-    // Заглушки управляются через БД (is_placeholder flag)
-    // Если API не вернул заглушку - значит её нет, и не должно быть fallback поиска
-    return null;
   }
 
   let currentPlaceholderSrc = null; // Отслеживаем текущую заглушку
@@ -954,10 +1738,34 @@ if (!device_id || !device_id.trim()) {
       currentPlaceholderSrc = null;
     }
     
-    const src = await resolvePlaceholder(forceRefresh);
+    let placeholderData = null;
+    let serverUnavailable = false;
     
-    // КРИТИЧНО: Если сервер недоступен (src === null), но есть кэшированная заглушка - используем её
-    if (!src && cachedPlaceholderSrc && !forceRefresh) {
+    try {
+      placeholderData = await resolvePlaceholder(forceRefresh);
+      // placeholderData === null означает, что заглушка не найдена, но сервер доступен
+    } catch (e) {
+      // Исключение означает, что сервер недоступен (сетевая ошибка)
+      serverUnavailable = true;
+    }
+    
+    const src = placeholderData ? placeholderData.src : null;
+    const mimeType = placeholderData ? placeholderData.mimeType : null;
+    let placeholderType = placeholderData ? placeholderData.type : null;
+    
+    // Fallback: если тип не определен из метаданных, пытаемся определить по расширению файла
+    if (!placeholderType && src) {
+      const fileName = src.split('/').pop().split('?')[0];
+      const ext = fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : '';
+      if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) {
+        placeholderType = 'image';
+      } else if (['mp4', 'webm', 'ogg', 'mkv', 'mov', 'avi'].includes(ext)) {
+        placeholderType = 'video';
+      }
+    }
+    
+    // КРИТИЧНО: Используем кэшированную заглушку ТОЛЬКО если сервер действительно недоступен
+    if (serverUnavailable && cachedPlaceholderSrc && !forceRefresh) {
       console.log('[Player] ⚠️ Сервер недоступен, используем кэшированную заглушку');
       const cachedSrc = cachedPlaceholderSrc;
       const cachedType = cachedPlaceholderType;
@@ -979,7 +1787,7 @@ if (!device_id || !device_id.trim()) {
               requestAnimationFrame(() => {
                 videoContainer.classList.remove('preloading');
                 videoContainer.classList.add('visible');
-                idle.classList.remove('visible');
+                // idle убран
                 vjsPlayer.one('canplay', () => {
                   setTimeout(() => {
                     vjsPlayer.play().catch(err => {
@@ -996,15 +1804,17 @@ if (!device_id || !device_id.trim()) {
         // Восстанавливаем изображение заглушку из кэша
         const tempImg = new Image();
         tempImg.onload = () => {
-          idle.classList.remove('visible');
+          // idle убран
           img.src = cachedSrc;
           currentPlaceholderSrc = cachedSrc;
           currentFileState = { type: 'placeholder', file: cachedSrc, page: 1 };
-          show(img);
+          // Если уже показывается изображение - не трогаем класс visible (однотипное переключение)
+          const isSameTypeSwitch = img.classList.contains('visible');
+          show(img, true, isSameTypeSwitch);
         };
         tempImg.onerror = () => {
           // Если даже кэш не загрузился - показываем ошибку
-          idle.classList.remove('visible');
+          // idle убран
           [videoContainer, img1, img2, pdf].forEach(el => el && el.classList.remove('visible', 'preloading'));
         };
         tempImg.src = cachedSrc;
@@ -1020,7 +1830,7 @@ if (!device_id || !device_id.trim()) {
         emitProgressStop();
       }
       // КРИТИЧНО: Убираем черный экран, чтобы показывался бренд-фон
-      idle.classList.remove('visible');
+      // idle убран
       
       // Показываем сообщение об отсутствии заглушки
       if (preview) {
@@ -1059,7 +1869,7 @@ if (!device_id || !device_id.trim()) {
         show(pdf);
       } else {
         // В обычном плеере скрываем все слои (включая idle) - показывается бренд-фон
-        [videoContainer, img1, img2, pdf, idle].forEach(el => el && el.classList.remove('visible', 'preloading'));
+        [videoContainer, img1, pdf].forEach(el => el && el.classList.remove('visible', 'preloading'));
       }
       return;
     }
@@ -1068,11 +1878,10 @@ if (!device_id || !device_id.trim()) {
     // Также не прерываем воспроизведение при перезагрузке заглушки, если она уже играет
     const isSamePlaceholderPlaying = !forceRefresh && currentPlaceholderSrc === src && 
                                      ((vjsPlayer && !vjsPlayer.paused() && currentFileState.type === 'placeholder' && videoContainer.classList.contains('visible')) ||
-                                      (img1.classList.contains('visible') && img1.src === src) ||
-                                      (img2.classList.contains('visible') && img2.src === src));
+                                      (img1.classList.contains('visible') && img1.src === src));
     if (isSamePlaceholderPlaying) {
       // КРИТИЧНО: Убеждаемся что черный экран скрыт
-      idle.classList.remove('visible');
+      // idle убран
       return;
     }
     
@@ -1084,11 +1893,26 @@ if (!device_id || !device_id.trim()) {
       emitProgressStop();
     }
     
-    // КРИТИЧНО: Сохраняем заглушку в кэш для восстановления при ошибках
-    cachedPlaceholderSrc = src;
-    cachedPlaceholderType = /\.(png|jpg|jpeg|gif|webp)$/i.test(src) ? 'image' : 'video';
+    // Проверяем, что тип определен (из метаданных или fallback)
+    if (!placeholderType) {
+      console.error('[Player] ❌ Тип заглушки не определен из метаданных и не удалось определить по расширению', { src, mimeType });
+      currentFileState = { type: 'idle', file: null, page: 1 };
+      if (emitProgressStop) {
+        emitProgressStop();
+      }
+      // idle убран
+      [videoContainer, img1, img2, pdf].forEach(el => el && el.classList.remove('visible', 'preloading'));
+      return;
+    }
     
-    const isImage = /\.(png|jpg|jpeg|gif|webp)$/i.test(src);
+    // Сохраняем заглушку в кэш для использования при недоступности сервера
+    if (src && placeholderType) {
+    cachedPlaceholderSrc = src;
+      cachedPlaceholderType = placeholderType;
+    }
+    
+    // Определяем тип заглушки по метаданным (mimeType)
+    const isImage = placeholderType === 'image';
     
     if (isImage) {
       // КРИТИЧНО: Скрываем видео и PDF перед показом изображения-заглушки
@@ -1100,25 +1924,33 @@ if (!device_id || !device_id.trim()) {
       pdf.removeAttribute('src');
       pdf.classList.remove('visible', 'preloading');
       
-      // КРИТИЧНО: Скрываем оба буфера изображений перед показом нового
-      img1.classList.remove('visible', 'preloading');
-      img2.classList.remove('visible', 'preloading');
+      // КРИТИЧНО: Если уже показывается изображение (заглушка или другое) - не удаляем класс visible
+      // Это предотвратит моргание при переключении заглушка-изображение → изображение
+      const isImageCurrentlyVisible = img1.classList.contains('visible');
+      if (!isImageCurrentlyVisible) {
+        img1.classList.remove('preloading');
+      }
       
       // КРИТИЧНО: Дожидаемся загрузки изображения ПЕРЕД показом!
       // Иначе показывается черный экран
+      img.classList.add('preloading');
       const tempImg = new Image();
       
       const showImagePlaceholder = () => {
-        // КРИТИЧНО: Убираем черный экран перед показом заглушки
-        idle.classList.remove('visible');
-        
-        // Для заглушки-изображения никогда не показываем черный экран —
-        // мгновенно показываем кадр поверх видео/других слоев
+        // КРИТИЧНО: Для заглушки-изображения - просто замена src без переходов
+        // Если уже показывается изображение - не трогаем класс visible, только обновляем src и убираем preloading
         img.src = src;
-        show(img, true); // skipTransition = true чтобы избежать черного экрана
+        if (isImageCurrentlyVisible && img.classList.contains('visible')) {
+          // Однотипное переключение - только убираем preloading, не трогаем visible
+          img.classList.remove('preloading');
+        } else {
+          // Если это смена типа или первое показывание - используем show()
+          show(img, true, false);
+        }
       };
       
       tempImg.onload = () => {
+        // Тип уже сохранен в кэш выше на основе метаданных
         showImagePlaceholder();
       };
       
@@ -1148,7 +1980,7 @@ if (!device_id || !device_id.trim()) {
                   requestAnimationFrame(() => {
                     videoContainer.classList.remove('preloading');
                     videoContainer.classList.add('visible');
-                    idle.classList.remove('visible');
+                    // idle убран
                     vjsPlayer.one('canplay', () => {
                       setTimeout(() => {
                         vjsPlayer.play().catch(err => {
@@ -1165,7 +1997,7 @@ if (!device_id || !device_id.trim()) {
             // Пробуем загрузить кэшированное изображение
             const cachedImg = new Image();
             cachedImg.onload = () => {
-              idle.classList.remove('visible');
+              // idle убран
               img.src = cachedSrc;
               currentPlaceholderSrc = cachedSrc;
               currentFileState = { type: 'placeholder', file: cachedSrc, page: 1 };
@@ -1173,7 +2005,7 @@ if (!device_id || !device_id.trim()) {
             };
             cachedImg.onerror = () => {
               // Если даже кэш не загрузился - показываем ошибку
-              idle.classList.remove('visible');
+              // idle убран
               if (preview) {
                 pdf.srcdoc = `
                   <!DOCTYPE html>
@@ -1202,7 +2034,7 @@ if (!device_id || !device_id.trim()) {
                 `;
                 show(pdf);
               } else {
-                [videoContainer, img1, img2, pdf, idle].forEach(el => el && el.classList.remove('visible', 'preloading'));
+                [videoContainer, img1, pdf].forEach(el => el && el.classList.remove('visible', 'preloading'));
               }
             };
             cachedImg.src = cachedSrc;
@@ -1212,7 +2044,7 @@ if (!device_id || !device_id.trim()) {
         
         // Если кэша нет - показываем ошибку
         // КРИТИЧНО: Убираем черный экран при ошибке загрузки
-        idle.classList.remove('visible');
+        // idle убран
         
         // Показываем сообщение об ошибке
         if (preview) {
@@ -1244,7 +2076,7 @@ if (!device_id || !device_id.trim()) {
           show(pdf);
         } else {
           // В обычном плеере скрываем все - показывается бренд-фон
-          [videoContainer, img1, img2, pdf, idle].forEach(el => el && el.classList.remove('visible', 'preloading'));
+          [videoContainer, img1, pdf].forEach(el => el && el.classList.remove('visible', 'preloading'));
         }
       };
       
@@ -1267,93 +2099,13 @@ if (!device_id || !device_id.trim()) {
                 if (!finalCheck.ok) {
                   console.error(`[Player] ❌ Файл заглушки недоступен: ${finalCheck.status}`);
                   
-                  // КРИТИЧНО: При недоступности сервера используем кэшированную заглушку
-                  if (cachedPlaceholderSrc && cachedPlaceholderSrc !== src) {
-                    console.log('[Player] ⚠️ Сервер недоступен, используем кэшированную заглушку');
-                    // Используем кэшированную заглушку вместо новой
-                    const cachedSrc = cachedPlaceholderSrc;
-                    const cachedType = cachedPlaceholderType;
-                    if (cachedType === 'video' && vjsPlayer) {
-                      vjsPlayer.loop(true);
-                      vjsPlayer.muted(true);
-                      vjsPlayer.volume(0);
-                      currentPlaceholderSrc = cachedSrc;
-                      currentFileState = { type: 'placeholder', file: cachedSrc, page: 1 };
-                      hideVideoJsControls();
-                      
-                      vjsPlayer.src({ src: cachedSrc, type: 'video/mp4' });
-                      vjsPlayer.one('loadedmetadata', () => {
-                        hideVideoJsControls();
-                        vjsPlayer.one('loadeddata', () => {
-                          requestAnimationFrame(() => {
-                            requestAnimationFrame(() => {
-                              videoContainer.classList.remove('preloading');
-                              videoContainer.classList.add('visible');
-                              idle.classList.remove('visible');
-                              vjsPlayer.one('canplay', () => {
-                                setTimeout(() => {
-                                  vjsPlayer.play().catch(err => {
-                                    console.error('[Player] ❌ Ошибка воспроизведения кэшированной заглушки:', err);
-                                  });
-                                }, 200);
-                              });
-                            });
-                          });
-                        });
-                      });
+                  // Статус не OK (например, 404) - сервер доступен, но файл не найден
+                  // Не используем кэшированную заглушку, просто логируем ошибку
                       return;
-                    } else if (cachedType === 'image') {
-                      const tempImg = new Image();
-                      tempImg.onload = () => {
-                        idle.classList.remove('visible');
-                        img.src = cachedSrc;
-                        currentPlaceholderSrc = cachedSrc;
-                        currentFileState = { type: 'placeholder', file: cachedSrc, page: 1 };
-                        show(img);
-                      };
-                      tempImg.src = cachedSrc;
-                      return;
-                    }
-                  }
-                  
-                  // Если кэша нет - показываем ошибку
-                  // КРИТИЧНО: Убираем черный экран при ошибке загрузки
-                  idle.classList.remove('visible');
-                  
-                  // Показываем предупреждение вместо ошибки Video.js
-                  if (preview) {
-                pdf.srcdoc = `
-                  <!DOCTYPE html>
-                  <html>
-                    <head>
-                      <meta charset="utf-8">
-                      <style>
-                        body { 
-                          margin:0; padding:2rem; 
-                          display:flex; align-items:center; justify-content:center; 
-                          min-height:100vh; 
-                          background:#1e293b; color:#fff; 
-                          font-family:sans-serif; text-align:center;
-                        }
-                        h2 { color: #fbbf24; margin-bottom: 1rem; }
-                        p { color: #cbd5e1; line-height: 1.5; margin: 0.5rem 0; }
-                      </style>
-                    </head>
-                    <body>
-                      <div>
-                        <h2>⚠️ Заглушка недоступна</h2>
-                      </div>
-                    </body>
-                  </html>
-                `;
-                show(pdf);
-              } else {
-                // В обычном плеере скрываем все - показывается бренд-фон
-                [videoContainer, img1, img2, pdf, idle].forEach(el => el && el.classList.remove('visible', 'preloading'));
-              }
-              return;
-            }
-            
+                }
+                
+                // Файл доступен - продолжаем загрузку
+                // Тип уже сохранен в кэш выше на основе метаданных
             
             vjsPlayer.loop(true);
             vjsPlayer.muted(true);
@@ -1369,7 +2121,7 @@ if (!device_id || !device_id.trim()) {
             
             if (isAlreadyPlayingPlaceholder && !forceRefresh) {
               // Заглушка уже играет - ничего не делаем, убираем черный экран
-              idle.classList.remove('visible');
+              // idle убран
               return;
             }
             
@@ -1391,7 +2143,7 @@ if (!device_id || !device_id.trim()) {
               
               if (isStillPlaying && !forceRefresh) {
                 // Заглушка уже играет - ничего не делаем, только убираем черный экран
-                idle.classList.remove('visible');
+                // idle убран
                 return;
               }
               
@@ -1410,7 +2162,7 @@ if (!device_id || !device_id.trim()) {
                       videoContainer.classList.remove('preloading');
                       videoContainer.classList.add('visible');
                       // КРИТИЧНО: Убираем черный экран сразу, не ждем fade-in
-                      idle.classList.remove('visible');
+                      // idle убран
                       
                       // Ждём canplay перед запуском воспроизведения
                       vjsPlayer.one('canplay', () => {
@@ -1459,7 +2211,7 @@ if (!device_id || !device_id.trim()) {
                       requestAnimationFrame(() => {
                         videoContainer.classList.remove('preloading');
                         videoContainer.classList.add('visible');
-                        idle.classList.remove('visible');
+                        // idle убран
                         vjsPlayer.one('canplay', () => {
                           setTimeout(() => {
                             vjsPlayer.play().catch(err => {
@@ -1475,7 +2227,7 @@ if (!device_id || !device_id.trim()) {
               } else if (cachedType === 'image') {
                 const tempImg = new Image();
                 tempImg.onload = () => {
-                  idle.classList.remove('visible');
+                  // idle убран
                   img.src = cachedSrc;
                   currentPlaceholderSrc = cachedSrc;
                   currentFileState = { type: 'placeholder', file: cachedSrc, page: 1 };
@@ -1488,9 +2240,9 @@ if (!device_id || !device_id.trim()) {
             
             // Если кэша нет - показываем ошибку
             // КРИТИЧНО: Убираем черный экран при ошибке
-            idle.classList.remove('visible');
+            // idle убран
             // Скрываем все слои - показывается бренд-фон
-            [videoContainer, img1, img2, pdf, idle].forEach(el => el && el.classList.remove('visible', 'preloading'));
+            [videoContainer, img1, pdf].forEach(el => el && el.classList.remove('visible', 'preloading'));
           }
         })();
       } else {
@@ -1606,26 +2358,80 @@ if (!device_id || !device_id.trim()) {
   }
 
   // Показать изображение из папки
-  function showFolderImage(folderName, num) {
-    // КРИТИЧНО: Полностью останавливаем и скрываем Video.js плеер
+  function showFolderImage(folderName, num, isTypeChange = false) {
+    // Проверяем номер изображения ДО обновления currentFileState
+    const previousPage = currentFileState.type === 'folder' && currentFileState.file === folderName 
+                        ? currentFileState.page 
+                        : null;
+    
+    // Защита от повторных вызовов: если уже показывается то же изображение, игнорируем
+    if (!isTypeChange && previousPage === num && img1.classList.contains('visible')) {
+      // Проверяем, действительно ли src соответствует нужному изображению
+      const expectedUrl = `/api/devices/${encodeURIComponent(device_id)}/folder/${encodeURIComponent(folderName)}/image/${num}`;
+      if (img1.src && (img1.src.includes(`/image/${num}`) || img1.src.endsWith(`/image/${num}`))) {
+        // КРИТИЧНО: Убеждаемся что черный экран скрыт
+        // idle убран
+        return; // Уже показывается то же изображение с правильным src
+      }
+    }
+    
+    // Если isTypeChange не передан, определяем автоматически
+    if (isTypeChange === false) {
+      const previousType = currentFileState.type;
+      isTypeChange = previousType && previousType !== 'folder';
+    }
+    
+    // КРИТИЧНО: Обновляем currentFileState СРАЗУ, чтобы он был актуальным
+    currentFileState = { type: 'folder', file: folderName, page: num };
+    
+    // КРИТИЧНО: При переключении изображения → изображение скрываем черный экран сразу
+    if (!isTypeChange && previousPage !== null) {
+      // idle убран
+    }
+    
+    // КРИТИЧНО: Полностью очищаем все буферы при переключении на папку
+    if (isTypeChange) {
+      clearAllBuffers();
+    } else {
+      // Если это просто переключение внутри папки, очищаем только видео и PDF
     if (vjsPlayer) {
       vjsPlayer.pause();
       vjsPlayer.currentTime(0);
-      // Скрываем все контролы Video.js
+        // НЕ устанавливаем пустой src - это вызывает ошибку
+        // Просто останавливаем и очищаем состояние через load()
+        try {
+          vjsPlayer.load();
+        } catch (e) {
+          // Игнорируем ошибки
+        }
       hideVideoJsControls();
     }
+      stopProgressInterval();
+      if (typeof emitProgressStop === 'function') {
+        emitProgressStop();
+      }
+      videoContainer.classList.remove('visible', 'preloading');
+      if (pdf) {
     pdf.removeAttribute('src');
+        pdf.src = '';
     pdf.classList.remove('visible', 'preloading');
+        // Убираем все inline стили при остановке папок/PDF/PPTX
+        pdf.removeAttribute('style');
+      }
+    }
     
-    // Убеждаемся что videoContainer скрыт классами (без display:none)
-    videoContainer.classList.remove('visible', 'preloading');
-    
-    const { current, next } = getImageBuffers();
     // Для папок (слайд-шоу) фон ДОЛЖЕН быть черным, без логотипа
     setBrandBackgroundMode('black');
     
-    // Определяем, это первый показ папки или переключение изображений
-    const isFirstShow = !current.classList.contains('visible') && !next.classList.contains('visible');
+    // КРИТИЧНО: При переключении изображения → изображение черный экран НЕ показывается
+    // Убеждаемся что idle скрыт перед началом переключения
+    if (!isTypeChange && previousPage !== null) {
+      // idle убран
+      // Также очищаем inline opacity если был установлен
+      // idle убран
+    }
+    
+    // Папки - это изображения, всегда мгновенный показ
     
     // Проверяем кэш
     if (slidesCache[folderName] && slidesCache[folderName].images) {
@@ -1634,28 +2440,33 @@ if (!device_id || !device_id.trim()) {
       const cachedImage = cached.images[index];
       
       if (cachedImage && cachedImage.complete && cachedImage.naturalWidth > 0) {
+        // КРИТИЧНО: Формируем правильный URL для сравнения
+        const expectedUrl = `/api/devices/${encodeURIComponent(device_id)}/folder/${encodeURIComponent(folderName)}/image/${num}`;
+        const cachedSrc = cachedImage.src || expectedUrl;
         
-        // Загружаем в следующий буфер
-        next.src = cachedImage.src;
-        
-        if (isFirstShow) {
-          // Первый показ папки - через черный, с фиксированным временем
-          [videoContainer, current, next].forEach(e => {
-            if (e) e.classList.remove('visible', 'preloading');
-          });
-          idle.classList.add('visible');
-          
-          setTimeout(() => {
-            next.classList.add('visible');
-            idle.classList.remove('visible');
-          }, 500);
+        // Всегда мгновенный показ - папки это изображения
+        // КРИТИЧНО: Принудительно обновляем src даже если он кажется таким же
+        // Это гарантирует обновление при переключении изображений
+        img1.classList.add('preloading');
+        if (img1.src !== cachedSrc) {
+          img1.removeAttribute('src');
+          img1.src = cachedSrc;
         } else {
-          // Переключение внутри папки - МГНОВЕННО, без плавного перехода
-          show(next, true); // skipTransition = true
+          // Если src совпадает, принудительно обновляем для гарантии
+          img1.removeAttribute('src');
+          img1.src = cachedSrc;
         }
         
-        // Переключаем активный буфер
-        currentImgBuffer = currentImgBuffer === 1 ? 2 : 1;
+        // Очищаем inline opacity если был установлен
+        img1.style.opacity = '';
+        // Если уже показывается изображение - не трогаем класс visible, только обновляем preloading
+        if (img1.classList.contains('visible') && !isTypeChange) {
+          // Однотипное переключение - только обновляем preloading, не трогаем visible
+          img1.classList.remove('preloading');
+          return;
+        }
+        // Если это смена типа или первое показывание - используем show()
+        show(img1, true, false);
         return;
       }
     }
@@ -1663,70 +2474,118 @@ if (!device_id || !device_id.trim()) {
     // Fallback: загружаем через API если нет в кэше
     const imageUrl = `/api/devices/${encodeURIComponent(device_id)}/folder/${encodeURIComponent(folderName)}/image/${num}`;
     
-    // Предзагружаем в следующий буфер
+    // КРИТИЧНО: Принудительно обновляем src при переключении
+    img1.classList.add('preloading');
+    if (img1.src !== imageUrl) {
+      // Удаляем старый src для гарантии обновления
+      img1.removeAttribute('src');
+    }
+    
+    // Предзагружаем изображение
     const tempImg = new Image();
     tempImg.onload = () => {
+      // Изображение предзагружено, теперь безопасно устанавливаем src
       
-      // Устанавливаем в следующий буфер
-      next.src = imageUrl;
-      
-      if (isFirstShow) {
-        // Первый показ папки - через черный, с фиксированным временем
-        [videoContainer, current, next].forEach(e => {
-          if (e) e.classList.remove('visible', 'preloading');
-        });
-        idle.classList.add('visible');
-        
-        setTimeout(() => {
-          next.classList.add('visible');
-          idle.classList.remove('visible');
-        }, 500);
-      } else {
-        // Переключение внутри папки - МГНОВЕННО
-        show(next, true);
+      // Всегда мгновенный показ - папки это изображения
+      // tempImg уже загружен, устанавливаем src и мгновенно показываем
+      if (img1.src !== imageUrl) {
+        img1.removeAttribute('src');
+        img1.src = imageUrl;
       }
       
-      // Переключаем активный буфер
-      currentImgBuffer = currentImgBuffer === 1 ? 2 : 1;
+      // Очищаем inline opacity если был установлен
+      img1.style.opacity = '';
+      // Если уже показывается изображение - не трогаем класс visible, только обновляем preloading
+      if (img1.classList.contains('visible') && !isTypeChange) {
+        // Однотипное переключение - только обновляем preloading, не трогаем visible
+        img1.classList.remove('preloading');
+        // НЕ отправляем прогресс - выделение обновится через preview/refresh от сервера
+        return;
+      }
+      // Если это смена типа или первое показывание - используем show()
+      show(img1, true, false);
+      // НЕ отправляем прогресс - выделение обновится через preview/refresh от сервера
     };
     tempImg.onerror = () => {
       console.error(`[Player] ❌ Ошибка загрузки изображения ${num}`);
-      next.src = imageUrl;
+      img1.src = imageUrl;
       // При ошибке тоже используем черный экран
-      [videoContainer, current, next].forEach(e => {
+      [videoContainer, img1, pdf].forEach(e => {
         if (e) e.classList.remove('visible', 'preloading');
       });
-      idle.classList.add('visible');
+      // idle убран
       setTimeout(() => {
-        next.classList.add('visible');
-        idle.classList.remove('visible');
+        // КРИТИЧНО: Проверяем, что src установлен перед показом
+        if (img1.src && img1.src !== '') {
+          // КРИТИЧНО: Проверяем, что src установлен перед показом
+          if (img1.src && img1.src !== '') {
+            img1.classList.add('visible');
+          } else {
+            console.warn('[Player] ⚠️ Попытка показать img1 без src, пропускаем');
+          }
+        } else {
+          console.warn('[Player] ⚠️ Попытка показать img1 без src, пропускаем');
+        }
+        // idle убран
       }, 500);
-      currentImgBuffer = currentImgBuffer === 1 ? 2 : 1;
     };
     tempImg.src = imageUrl;
   }
 
-  function showConvertedPage(file, type, num) {
-    // КРИТИЧНО: Полностью останавливаем и скрываем Video.js плеер
+  function showConvertedPage(file, type, num, isTypeChange = false) {
+    // Определяем тип контента (pdf или pptx)
+    const contentType = type === 'page' ? 'pdf' : 'pptx';
+    
+    // Если isTypeChange не передан, определяем автоматически
+    if (isTypeChange === false) {
+      const previousType = currentFileState.type;
+      isTypeChange = previousType && previousType !== contentType;
+    }
+    
+    // КРИТИЧНО: Обновляем currentFileState СРАЗУ, чтобы он был актуальным
+    currentFileState = { type: contentType, file: file, page: num };
+    
+    // НЕ отправляем прогресс для PDF/PPTX - выделение обновится через preview/refresh от сервера
+    // (как в Android плеере)
+    
+    // КРИТИЧНО: Полностью очищаем все буферы при переключении на PDF/PPTX
+    if (isTypeChange) {
+      clearAllBuffers();
+    } else {
+      // Если это просто переключение внутри презентации, очищаем только видео
     if (vjsPlayer) {
       vjsPlayer.pause();
       vjsPlayer.currentTime(0);
-      // Скрываем все контролы Video.js
+        // НЕ устанавливаем пустой src - это вызывает ошибку
+        // Просто останавливаем и очищаем состояние через load()
+        try {
+          vjsPlayer.load();
+        } catch (e) {
+          // Игнорируем ошибки
+        }
       hideVideoJsControls();
     }
-    pdf.removeAttribute('src');
-    
-    // КРИТИЧНО: Скрываем videoContainer и оба буфера изображений перед показом PDF/PPTX
+      stopProgressInterval();
+      if (typeof emitProgressStop === 'function') {
+        emitProgressStop();
+      }
     videoContainer.classList.remove('visible', 'preloading');
+      if (pdf) {
+        pdf.removeAttribute('src');
+        pdf.src = '';
+        pdf.classList.remove('visible', 'preloading');
+        // Убираем все inline стили при остановке папок/PDF/PPTX
+        pdf.removeAttribute('style');
+      }
+      // Очищаем буфер изображений
     img1.classList.remove('visible', 'preloading');
-    img2.classList.remove('visible', 'preloading');
+    }
     
-    const { current, next } = getImageBuffers();
     // Для презентаций фон ДОЛЖЕН быть черным, без логотипа
     setBrandBackgroundMode('black');
     
     // Определяем, это первый показ презентации или переключение слайдов
-    const isFirstShow = !current.classList.contains('visible') && !next.classList.contains('visible');
+    const isFirstShow = !img1.classList.contains('visible');
     
     // Проверяем кэш
     if (slidesCache[file] && slidesCache[file].images) {
@@ -1736,28 +2595,41 @@ if (!device_id || !device_id.trim()) {
       
       if (cachedImage && cachedImage.complete && cachedImage.naturalWidth > 0) {
         
-        // Загружаем в следующий буфер
-        next.src = cachedImage.src;
+        // Загружаем изображение
+        img1.classList.add('preloading');
+        img1.src = cachedImage.src;
         
         // Первый показ - сразу черный, потом фиксированный fade in; переключение слайдов - мгновенно
         if (isFirstShow) {
-          // Сразу черный экран
-          [videoContainer, img1, img2, pdf].forEach(e => {
+          // Сразу черный экран - убираем preloading перед показом
+          [videoContainer, img1, pdf].forEach(e => {
             if (e) e.classList.remove('visible', 'preloading');
           });
-          idle.classList.add('visible');
+          // idle убран
           
           // Затем fade in слайда (фиксированное время)
           setTimeout(() => {
-            next.classList.add('visible');
-            idle.classList.remove('visible');
+            // КРИТИЧНО: Проверяем, что src установлен перед показом
+          if (img1.src && img1.src !== '') {
+            img1.classList.add('visible');
+            // НЕ отправляем прогресс - выделение обновится через preview/refresh от сервера
+          } else {
+            console.warn('[Player] ⚠️ Попытка показать img1 без src, пропускаем');
+          }
+            // idle убран
           }, 500);
         } else {
-          show(next, true); // skipTransition = true для мгновенной смены
+          // Переключение внутри презентации - не трогаем класс visible, только обновляем preloading
+          if (img1.classList.contains('visible') && !isTypeChange) {
+            // Однотипное переключение - только убираем preloading, не трогаем visible
+            img1.classList.remove('preloading');
+            // НЕ отправляем прогресс - выделение обновится через preview/refresh от сервера
+          } else {
+            // Если это смена типа или первое показывание - используем show()
+            show(img1, true, false);
+            // НЕ отправляем прогресс - выделение обновится через preview/refresh от сервера
+          }
         }
-        
-        // Переключаем активный буфер
-        currentImgBuffer = currentImgBuffer === 1 ? 2 : 1;
         return;
       }
     }
@@ -1765,38 +2637,53 @@ if (!device_id || !device_id.trim()) {
     // Fallback: загружаем через API если нет в кэше
     const imageUrl = `/api/devices/${encodeURIComponent(device_id)}/converted/${encodeURIComponent(file)}/${type}/${num}`;
     
-    // Предзагружаем в следующий буфер
+    // Предзагружаем изображение
+    img1.classList.add('preloading');
     const tempImg = new Image();
     tempImg.onload = () => {
       
-      // Устанавливаем в следующий буфер
-      next.src = imageUrl;
+      // Устанавливаем изображение
+      img1.src = imageUrl;
       
       // Первый показ - сразу черный, потом фиксированный fade in; переключение слайдов - мгновенно
       if (isFirstShow) {
         // Сразу черный экран
-        [videoContainer, img1, img2, pdf].forEach(e => {
+        [videoContainer, img1, pdf].forEach(e => {
           if (e) e.classList.remove('visible', 'preloading');
         });
-        idle.classList.add('visible');
+        // idle убран
         
         // Затем fade in слайда (фиксированное время)
         setTimeout(() => {
-          next.classList.add('visible');
-          idle.classList.remove('visible');
+          // КРИТИЧНО: Проверяем, что src установлен перед показом
+          if (img1.src && img1.src !== '') {
+            img1.classList.add('visible');
+            // НЕ отправляем прогресс - выделение обновится через preview/refresh от сервера
+          } else {
+            console.warn('[Player] ⚠️ Попытка показать img1 без src, пропускаем');
+          }
+          // idle убран
         }, 500);
       } else {
-        show(next, true); // skipTransition = true для мгновенной смены
+        // Переключение внутри презентации - не трогаем класс visible, только обновляем preloading
+        if (img1.classList.contains('visible') && !isTypeChange) {
+          // Однотипное переключение - только убираем preloading, не трогаем visible
+          img1.classList.remove('preloading');
+          // КРИТИЧНО: Отправляем на сервер информацию о текущей странице для синхронизации выделения
+          sendPageProgress();
+        } else {
+          // Если это смена типа или первое показывание - используем show()
+          show(img1, true, false);
+          // КРИТИЧНО: Отправляем на сервер информацию о текущей странице для синхронизации выделения
+          sendPageProgress();
+        }
       }
-      
-      // Переключаем активный буфер
-      currentImgBuffer = currentImgBuffer === 1 ? 2 : 1;
     };
     tempImg.onerror = () => {
       console.error(`[Player] ❌ Ошибка загрузки слайда ${num}`);
-      next.src = imageUrl;
-      show(next, isFirstShow ? false : true);
-      currentImgBuffer = currentImgBuffer === 1 ? 2 : 1;
+      img1.src = imageUrl;
+      const isSameTypeSwitch = !isFirstShow && img1.classList.contains('visible') && !isTypeChange;
+      show(img1, isFirstShow ? false : true, isSameTypeSwitch);
     };
     tempImg.src = imageUrl;
   }
@@ -1809,23 +2696,16 @@ if (!device_id || !device_id.trim()) {
         vjsPlayer.pause();
       }
       // Скрываем заглушку (изображение или видео)
-      [videoContainer, img1, img2].forEach(e => {
+      [videoContainer, img1].forEach(e => {
         if (e) e.classList.remove('visible', 'preloading');
       });
       currentPlaceholderSrc = null;
     }
     
     if (type === 'video') {
-      // КРИТИЧНО: Скрываем оба буфера изображений перед показом видео
-      img1.removeAttribute('src');
-      img2.removeAttribute('src');
-      img1.classList.remove('visible', 'preloading');
-      img2.classList.remove('visible', 'preloading');
-      pdf.removeAttribute('src');
-      pdf.classList.remove('visible', 'preloading');
-      
       if (!file && vjsPlayer) {
         // Resume текущего видео (нет файла = продолжить с паузы)
+        // НЕ очищаем буферы - продолжаем то же видео
         currentFileState = { type: 'video', file: currentFileState.file, page: 1 };
         
         applyVolumeToPlayer('resume_video');
@@ -1845,9 +2725,19 @@ if (!device_id || !device_id.trim()) {
         const currentSrc = vjsPlayer ? vjsPlayer.currentSrc() : '';
         const isSameFile = currentSrc.includes(encodeURIComponent(file)) || currentSrc.endsWith(fileUrl);
         
+        // Проверяем, меняется ли тип контента
+        // КРИТИЧНО: Если предыдущий тип был НЕ 'video', а сейчас включается 'video' - это смена типа
+        // Даже если файл тот же (видео -> картинка -> то же видео должно начаться с начала)
+        const previousType = currentFileState.type;
+        const isTypeChange = previousType && previousType !== 'video';
+        const isBackToVideo = previousType && previousType !== 'video' && previousType !== null && type === 'video';
         
-        if (isSameFile && vjsPlayer) {
-          // Тот же файл - просто возобновляем (это нажатие Play после паузы или переподключение)
+        // Возобновляем только если:
+        // 1. Тот же файл И
+        // 2. Предыдущий тип был 'video' И
+        // 3. Не было смены типа (не переключались на картинку/PDF/папку)
+        if (isSameFile && vjsPlayer && previousType === 'video' && !isTypeChange && !isBackToVideo) {
+          // Тот же файл и тот же тип - просто возобновляем (это нажатие Play после паузы или переподключение)
           currentFileState = { type: 'video', file, page: 1 };
           
           applyVolumeToPlayer('resume_video_same_file');
@@ -1874,11 +2764,43 @@ if (!device_id || !device_id.trim()) {
           return;
         }
         
-        // Новый файл - загружаем с начала
+        // Новый файл или смена типа контента - загружаем с начала
         currentFileState = { type: 'video', file, page: 1 };
+        
+        // КРИТИЧНО: Полностью очищаем все буферы при переключении на видео
+        // Это также включает возврат к видео после картинки/PDF/папки (isBackToVideo)
+        if (isTypeChange || isBackToVideo) {
+          clearAllBuffers();
+          // КРИТИЧНО: Сбрасываем позицию видео в начало при возврате к видео после другого типа контента
+          if (vjsPlayer && isBackToVideo) {
+            vjsPlayer.pause();
+            vjsPlayer.currentTime(0);
+          }
+        } else {
+          // Если это просто новое видео (не смена типа), очищаем только изображения
+          // КРИТИЧНО: Сразу очищаем img1, чтобы не показывалась старая картинка
+          img1.removeAttribute('src');
+          img1.src = '';
+          img1.classList.remove('visible', 'preloading');
+          // Убираем все inline стили при остановке папок/PDF/PPTX
+          img1.removeAttribute('style');
+          if (pdf) {
+            pdf.removeAttribute('src');
+            pdf.src = '';
+            pdf.classList.remove('visible', 'preloading');
+            // Убираем все inline стили при остановке
+            pdf.removeAttribute('style');
+          }
+        }
+        
+        // Очищаем кэш слайдов для освобождения памяти
+        slidesCache = {};
         
         // Плавный переход через бренд‑фон (без черного экрана)
         // Шаг 1: уводим текущий видео-слой в прозрачность (старое видео продолжает играть во время fade-out)
+        // КРИТИЧНО: Сразу скрываем img1, чтобы не показывалась старая картинка
+        img1.classList.remove('visible', 'preloading');
+        
         const TRANSITION_MS = 500;
         const needFadeOut = videoContainer.classList.contains('visible');
         videoContainer.classList.remove('visible');
@@ -1932,7 +2854,7 @@ if (!device_id || !device_id.trim()) {
                               requestAnimationFrame(() => {
                                 videoContainer.classList.remove('preloading');
                                 videoContainer.classList.add('visible');
-                                idle.classList.remove('visible');
+                                // idle убран
                                 vjsPlayer.one('canplay', () => {
                                   setTimeout(() => {
                                     vjsPlayer.play().catch(err => {
@@ -1947,9 +2869,11 @@ if (!device_id || !device_id.trim()) {
                       } else if (cachedPlaceholderType === 'image') {
                         const tempImg = new Image();
                         tempImg.onload = () => {
-                          idle.classList.remove('visible');
+                          // idle убран
                           img.src = cachedPlaceholderSrc;
-                          show(img);
+                          // Если уже показывается изображение - не трогаем класс visible (однотипное переключение)
+                          const isSameTypeSwitch = img.classList.contains('visible');
+                          show(img, true, isSameTypeSwitch);
                         };
                         tempImg.src = cachedPlaceholderSrc;
                       }
@@ -2038,42 +2962,52 @@ if (!device_id || !device_id.trim()) {
         }
       }
     } else if (type === 'image' && file) {
-      currentFileState = { type: 'image', file, page: 1 };
-      if (vjsPlayer) vjsPlayer.pause();
-      pdf.removeAttribute('src');
+      // Используем плавное переключение для изображений
+      const fromState = getCurrentStateForTransition();
+      const isTypeChange = fromState.type && fromState.type !== 'image';
       
-      // СРАЗУ показываем черный экран (мгновенная реакция)
-      [videoContainer, img1, img2, pdf].forEach(e => {
-        if (e) e.classList.remove('visible', 'preloading');
-      });
-      idle.classList.add('visible');
+      // Для однотипного переключения используем crossfade, для смены типа - последовательное
+      const useCrossfade = !isTypeChange && fromState.type === 'image';
       
-      const { next } = getImageBuffers();
+      smoothTransition(fromState, {
+        type: 'image',
+        file: file,
+        page: 1
+      }, {
+        crossfade: useCrossfade,
+        skipTransition: false
+      }).catch(error => {
+        console.error('[Player] ❌ Ошибка переключения на изображение:', error);
+        // Fallback на старый метод при ошибке
       const imageUrl = content(file);
-      
-      // Предзагружаем в фоне (пока черный экран)
-      const tempImg = new Image();
-      tempImg.onload = () => {
-        next.src = imageUrl;
-        
-        // Плавный переход из черного в изображение
-        setTimeout(() => {
-          next.classList.add('visible');
-          idle.classList.remove('visible');
-          currentImgBuffer = currentImgBuffer === 1 ? 2 : 1;
-        }, 300);
-      };
-      tempImg.onerror = () => {
-        next.src = imageUrl;
-        next.classList.add('visible');
-        idle.classList.remove('visible');
-        currentImgBuffer = currentImgBuffer === 1 ? 2 : 1;
-      };
-      tempImg.src = imageUrl;
+        img1.src = imageUrl;
+        show(img1);
+      });
     } else if (type === 'pdf' && file) {
       const pageNum = page || 1;
-      currentFileState = { type: 'pdf', file, page: pageNum };
-      showConvertedPage(file, 'page', pageNum);
+      
+      // КРИТИЧНО: Устанавливаем currentFileState сразу, чтобы обработчики pdfPage/pdfPrev/pdfNext работали
+      currentFileState = { type: 'pdf', file: file, page: pageNum };
+      
+      const fromState = getCurrentStateForTransition();
+      const contentType = 'pdf';
+      const isTypeChange = fromState.type && fromState.type !== contentType;
+      
+      // Для однотипного переключения используем crossfade
+      const useCrossfade = !isTypeChange && fromState.type === contentType;
+      
+      smoothTransition(fromState, {
+        type: contentType,
+        file: file,
+        page: pageNum
+      }, {
+        crossfade: useCrossfade,
+        skipTransition: false
+      }).catch(error => {
+        console.error('[Player] ❌ Ошибка переключения на PDF:', error);
+        // Fallback на старый метод
+        showConvertedPage(file, 'page', pageNum, isTypeChange);
+      });
       
       // КРИТИЧНО: Предзагружаем ВСЕ страницы в кэш для мгновенного переключения
       if (!slidesCache[file]) {
@@ -2081,8 +3015,29 @@ if (!device_id || !device_id.trim()) {
       }
     } else if (type === 'pptx' && file) {
       const slideNum = page || 1;
-      currentFileState = { type: 'pptx', file, page: slideNum };
-      showConvertedPage(file, 'slide', slideNum);
+      
+      // КРИТИЧНО: Устанавливаем currentFileState сразу, чтобы обработчики pptxPage/pdfPrev/pdfNext работали
+      currentFileState = { type: 'pptx', file: file, page: slideNum };
+      
+      const fromState = getCurrentStateForTransition();
+      const contentType = 'pptx';
+      const isTypeChange = fromState.type && fromState.type !== contentType;
+      
+      // Для однотипного переключения используем crossfade
+      const useCrossfade = !isTypeChange && fromState.type === contentType;
+      
+      smoothTransition(fromState, {
+        type: contentType,
+        file: file,
+        page: slideNum
+      }, {
+        crossfade: useCrossfade,
+        skipTransition: false
+      }).catch(error => {
+        console.error('[Player] ❌ Ошибка переключения на PPTX:', error);
+        // Fallback на старый метод
+        showConvertedPage(file, 'slide', slideNum, isTypeChange);
+      });
       
       // КРИТИЧНО: Предзагружаем ВСЕ слайды в кэш для мгновенного переключения
       if (!slidesCache[file]) {
@@ -2092,8 +3047,29 @@ if (!device_id || !device_id.trim()) {
       // Папка с изображениями
       const imageNum = page || 1;
       const folderName = file.replace(/\.zip$/i, ''); // Убираем .zip если есть
+      
+      // КРИТИЧНО: Устанавливаем currentFileState сразу, чтобы обработчики folderPage/pdfPrev/pdfNext работали
       currentFileState = { type: 'folder', file: folderName, page: imageNum };
-      showFolderImage(folderName, imageNum);
+      
+      const fromState = getCurrentStateForTransition();
+      const contentType = 'folder';
+      const isTypeChange = fromState.type && fromState.type !== contentType;
+      
+      // Для однотипного переключения используем crossfade
+      const useCrossfade = !isTypeChange && fromState.type === contentType;
+      
+      smoothTransition(fromState, {
+        type: contentType,
+        file: folderName,
+        page: imageNum
+      }, {
+        crossfade: useCrossfade,
+        skipTransition: false
+      }).catch(error => {
+        console.error('[Player] ❌ Ошибка переключения на папку:', error);
+        // Fallback на старый метод
+        showFolderImage(folderName, imageNum, isTypeChange);
+      });
       
       // КРИТИЧНО: Предзагружаем ВСЕ изображения в кэш для мгновенного переключения
       if (!slidesCache[folderName]) {
@@ -2123,48 +3099,150 @@ if (!device_id || !device_id.trim()) {
   });
 
   // Плавное завершение воспроизведения: контент уходит в прозрачность, под ним виден бренд-фон
-  socket.on('player/stop', () => {
-    if (vjsPlayer) vjsPlayer.pause();
-    const layers = [videoContainer, img1, img2, pdf].filter(Boolean);
-    const active = layers.find(el => el.classList.contains('visible'));
-    const TRANSITION_MS = 800;
-    
-    // КРИТИЧНО: Убираем черный экран сразу, чтобы не было перехода в черный
-    idle.classList.remove('visible');
-    
-    const afterFade = () => {
-      // Очистка источников после завершения fade-out
+  socket.on('player/stop', async (payload = {}) => {
+    const reason = typeof payload === 'string'
+      ? payload
+      : (payload && typeof payload === 'object' && payload.reason) || '';
+      
+    if (reason === 'switch_content') {
+      // При переключении контента просто останавливаем, не показываем заглушку
+      if (vjsPlayer) vjsPlayer.pause();
+      stopProgressInterval();
+      if (typeof emitProgressStop === 'function') {
+        emitProgressStop();
+      }
+      // Очищаем img1 и pdf, убираем inline стили при остановке папок/PDF/PPTX
+      if (img1) {
       img1.removeAttribute('src');
-      img2.removeAttribute('src');
+        img1.src = '';
+        img1.classList.remove('visible', 'preloading');
+        img1.removeAttribute('style');
+      }
+      if (pdf) {
       pdf.removeAttribute('src');
+        pdf.src = '';
+        pdf.classList.remove('visible', 'preloading');
+        pdf.removeAttribute('style');
+      }
       currentFileState = { type: null, file: null, page: 1 };
-      currentImgBuffer = 1;
-      
-      // Не показываем black/idle — оставляем бренд-фон видимым
-      layers.forEach(e => e.classList.remove('visible', 'preloading'));
-      idle.classList.remove('visible'); // КРИТИЧНО: Убираем черный экран
-      
-      // Загружаем заглушку в фоне, затем мягко показываем (без черного экрана)
-      setTimeout(async () => {
+      return;
+    }
+    
+    // Останавливаем прогресс
+    stopProgressInterval();
+    if (typeof emitProgressStop === 'function') {
+      emitProgressStop();
+    }
+    
+    // Получаем текущее состояние для плавного перехода
+    const fromState = getCurrentStateForTransition();
+    
+    // Если нет активного контента - сразу показываем заглушку
+    if (!fromState.element || !fromState.element.classList.contains('visible')) {
         try {
           await showPlaceholder();
         } catch (e) {
           console.error('[Player] ❌ Ошибка загрузки заглушки при stop:', e);
-          // Убираем черный экран при ошибке, показываем бренд-фон
-          idle.classList.remove('visible');
-          [videoContainer, img1, img2, pdf].forEach(e => {
-            if (e) e.classList.remove('visible', 'preloading');
+        [videoContainer, img1, pdf].forEach(el => {
+          if (el) el.classList.remove('visible', 'preloading');
+        });
+      }
+      return;
+    }
+    
+      // Используем плавный переход к заглушке
+      try {
+        // Сначала предзагружаем заглушку
+        const placeholderData = await resolvePlaceholder(false);
+        
+        if (placeholderData && placeholderData.src) {
+          // Используем smoothTransition для плавного перехода к заглушке
+          // Передаем URL заглушки напрямую (smoothTransition сам определит тип по расширению или использует placeholderData.type)
+          await smoothTransition(fromState, {
+            type: 'placeholder',
+            file: placeholderData.src, // Передаем полный URL
+            page: 1
+          }, {
+            crossfade: false, // Последовательный переход при СТОП
+            skipTransition: false
           });
+          
+          // Обновляем currentFileState для заглушки
+          currentPlaceholderSrc = placeholderData.src;
+          currentFileState = { type: 'placeholder', file: placeholderData.src, page: 1 };
+      } else {
+        // Заглушка не найдена - просто fade-out и очистка
+        const activeElement = fromState.element;
+        if (activeElement) {
+          activeElement.style.transition = `opacity ${TRANSITION_DURATION}ms ease-in-out`;
+          activeElement.style.opacity = '0';
+          
+          await new Promise((resolve) => {
+            setTimeout(resolve, TRANSITION_DURATION + 50);
+            activeElement.addEventListener('transitionend', resolve, { once: true });
+          });
+          
+          activeElement.classList.remove('visible', 'preloading');
+          activeElement.style.opacity = '';
+          activeElement.style.transition = '';
         }
-      }, 100);
-    };
+        
+        // Очищаем все элементы
+        [videoContainer, img1, pdf].forEach(el => {
+          if (el) {
+            el.removeAttribute('src');
+            el.src = '';
+            el.classList.remove('visible', 'preloading');
+            // Убираем все inline стили с img1 и pdf при остановке папок/PDF/PPTX
+            if (el === img1 || el === pdf) {
+              el.removeAttribute('style');
+            }
+          }
+        });
+        
+        currentFileState = { type: null, file: null, page: 1 };
+      }
+    } catch (error) {
+      console.error('[Player] ❌ Ошибка при плавном переходе к заглушке:', error);
+      
+      // Fallback: используем старый метод
+      if (vjsPlayer) vjsPlayer.pause();
+      const layers = [videoContainer, img1, pdf].filter(Boolean);
+      const active = layers.find(el => el.classList.contains('visible'));
+      
+      // Очищаем элементы
+      if (img1) {
+        img1.removeAttribute('src');
+        img1.src = '';
+        img1.classList.remove('visible', 'preloading');
+        // Убираем все inline стили с img1 при остановке папок/PDF/PPTX
+        img1.removeAttribute('style');
+      }
+      if (pdf) {
+        pdf.removeAttribute('src');
+        pdf.src = '';
+        pdf.classList.remove('visible', 'preloading');
+        // Убираем все inline стили с pdf при остановке
+        pdf.removeAttribute('style');
+      }
     
     if (active) {
-      // Запускаем fade-out текущего слоя
       active.classList.remove('visible');
-      setTimeout(afterFade, TRANSITION_MS);
+        setTimeout(async () => {
+          layers.forEach(e => e.classList.remove('visible', 'preloading'));
+          try {
+            await showPlaceholder();
+          } catch (e) {
+            console.error('[Player] ❌ Ошибка загрузки заглушки при stop (fallback):', e);
+          }
+        }, TRANSITION_DURATION);
     } else {
-      afterFade();
+        try {
+          await showPlaceholder();
+        } catch (e) {
+          console.error('[Player] ❌ Ошибка загрузки заглушки при stop (fallback):', e);
+        }
+      }
     }
   });
 
@@ -2181,10 +3259,10 @@ if (!device_id || !device_id.trim()) {
     
     // СРАЗУ показываем черный экран (мгновенная реакция)
     // Это предотвращает показ старой/поврежденной заглушки
-    [videoContainer, img1, img2, pdf].forEach(e => {
+    [videoContainer, img1, pdf].forEach(e => {
       if (e) e.classList.remove('visible', 'preloading');
     });
-    idle.classList.add('visible');
+    // idle убран
     
     // Останавливаем плеер (НЕ очищаем src - это вызывает ошибку, просто паузим)
     if (vjsPlayer) {
@@ -2199,10 +3277,11 @@ if (!device_id || !device_id.trim()) {
     // Небольшая задержка, затем ВСЕГДА загружаем новую заглушку
     const placeholderTimeout = setTimeout(() => {
       // Таймаут: если заглушка не загрузилась за 5 секунд, убираем черный экран
-      if (idle.classList.contains('visible')) {
+      // idle убран - проверка не нужна
+      {
         console.warn('[Player] ⚠️ Таймаут загрузки заглушки, показываем бренд-фон');
-        idle.classList.remove('visible');
-        [videoContainer, img1, img2, pdf].forEach(e => {
+        // idle убран
+        [videoContainer, img1, pdf].forEach(e => {
           if (e) e.classList.remove('visible', 'preloading');
         });
       }
@@ -2218,8 +3297,8 @@ if (!device_id || !device_id.trim()) {
         console.error('[Player] ❌ Ошибка загрузки заглушки при refresh:', e);
         // Убираем черный экран при ошибке
         clearTimeout(placeholderTimeout);
-        idle.classList.remove('visible');
-        [videoContainer, img1, img2, pdf].forEach(e => {
+        // idle убран
+        [videoContainer, img1, pdf].forEach(e => {
           if (e) e.classList.remove('visible', 'preloading');
         });
       }
@@ -2239,35 +3318,49 @@ if (!device_id || !device_id.trim()) {
   });
 
   socket.on('player/folderPage', (imageNum) => {
+    // Простая логика как в рабочей версии 2.7.0
     if (!currentFileState.file || currentFileState.type !== 'folder') return;
     currentFileState.page = imageNum;
-    showFolderImage(currentFileState.file, imageNum);
+    showFolderImage(currentFileState.file, imageNum, false);
   });
 
   socket.on('player/volume', (payload) => {
     handleVolumeCommand(payload || {});
   });
 
+  // Переменная для отслеживания последнего логированного состояния (защита от спама в консоль)
+  let lastLoggedState = null;
+
   socket.on('player/state', (cur) => {
     if (!cur || cur.type === 'idle' || !cur.file) {
-      // КРИТИЧНО: При получении idle НЕ прерываем контент если он уже играет (как в Android)
-      // Проверяем, играет ли контент (не заглушка)
+      // КРИТИЧНО: При получении idle проверяем реальное состояние воспроизведения
+      // Если видео закончилось и показывается заглушка - не трогаем
       const isContentPlaying = currentFileState.type && currentFileState.type !== 'placeholder' &&
-                               ((currentFileState.type === 'video' && vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) ||
-                                (currentFileState.type !== 'video' && (img1.classList.contains('visible') || img2.classList.contains('visible'))));
+                               ((currentFileState.type === 'video' && vjsPlayer && !vjsPlayer.paused() && !vjsPlayer.ended() && videoContainer.classList.contains('visible')) ||
+                                (currentFileState.type !== 'video' && img1.classList.contains('visible')));
       
       const isPlaceholderPlaying = currentFileState.type === 'placeholder' && 
                                     ((vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) || 
-                                     (img1.classList.contains('visible') || img2.classList.contains('visible')));
+                                     img1.classList.contains('visible'));
       
-      if (isContentPlaying) {
-        // КРИТИЧНО: Контент играет - продолжаем воспроизведение, НЕ показываем заглушку!
-        console.log('[Player] ✅ Получен idle, но контент играет - продолжаем воспроизведение из кэша...');
+      // КРИТИЧНО: Если видео закончилось (ended), не считаем его играющим
+      const isVideoEnded = currentFileState.type === 'video' && vjsPlayer && vjsPlayer.ended();
+      
+      if (isContentPlaying && !isVideoEnded) {
+        // КРИТИЧНО: Контент играет (и не закончился) - продолжаем воспроизведение, НЕ показываем заглушку!
+        console.log('[Player] ✅ Получен idle, но контент играет - продолжаем воспроизведение...');
         // НЕ меняем currentFileState - оставляем текущий контент
         return;
-      } else if (isPlaceholderPlaying) {
+      } else if (isPlaceholderPlaying || isVideoEnded) {
+        // Заглушка уже играет ИЛИ видео закончилось - показываем/продолжаем заглушку
+        if (!isPlaceholderPlaying) {
+          // Видео закончилось, но заглушка еще не показана - показываем её
+          console.log('[Player] ✅ Видео закончилось, показываем заглушку');
+          showPlaceholder();
+        } else {
         // Заглушка уже играет - просто обновляем состояние
         currentFileState = { type: 'placeholder', file: currentPlaceholderSrc || cachedPlaceholderSrc, page: 1 };
+        }
         return;
       } else {
         // Контент не играет и заглушка не играет - показываем заглушку
@@ -2280,7 +3373,6 @@ if (!device_id || !device_id.trim()) {
           // Кэша нет - загружаем заглушку
           showPlaceholder();
         }
-        currentFileState = { type: null, file: null, page: 1 };
       }
       return;
     }
@@ -2289,7 +3381,7 @@ if (!device_id || !device_id.trim()) {
     // Заглушка включилась после проблем с сетью - она должна продолжать играть
     const isPlaceholderPlaying = currentFileState.type === 'placeholder' && 
                                   ((vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) || 
-                                   (img1.classList.contains('visible') || img2.classList.contains('visible')));
+                                   img1.classList.contains('visible'));
     
     if (isPlaceholderPlaying) {
       // КРИТИЧНО: Заглушка играет - НЕ переключаемся на видео автоматически!
@@ -2299,30 +3391,52 @@ if (!device_id || !device_id.trim()) {
       return;
     }
     
+    // КРИТИЧНО: Проверяем, не закончилось ли видео - если да, не запускаем его снова
+    const isVideoEnded = currentFileState.type === 'video' && 
+                         currentFileState.file === cur.file && 
+                         cur.type === 'video' &&
+                         vjsPlayer && vjsPlayer.ended();
+    
+    if (isVideoEnded) {
+      // Видео закончилось - не запускаем его снова, показываем заглушку
+      console.log('[Player] ✅ Видео закончилось, не запускаем снова, показываем заглушку');
+      currentFileState = { type: null, file: null, page: 1 };
+      showPlaceholder();
+      return;
+    }
+    
     // КРИТИЧНО: При переподключении НЕ сбрасываем контент если он уже играет (как в Android)
     // Проверяем, не играет ли уже тот же файл
     const isSameContentPlaying = currentFileState.type === cur.type && 
                                   currentFileState.file === cur.file &&
-                                  ((cur.type === 'video' && vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) ||
-                                   (cur.type === 'image' && (img1.classList.contains('visible') || img2.classList.contains('visible'))) ||
-                                   (cur.type === 'pdf' && (img1.classList.contains('visible') || img2.classList.contains('visible'))) ||
-                                   (cur.type === 'pptx' && (img1.classList.contains('visible') || img2.classList.contains('visible'))) ||
-                                   (cur.type === 'folder' && (img1.classList.contains('visible') || img2.classList.contains('visible'))));
+                                  ((cur.type === 'video' && vjsPlayer && !vjsPlayer.paused() && !vjsPlayer.ended() && videoContainer.classList.contains('visible')) ||
+                                   (cur.type === 'image' && img1.classList.contains('visible')) ||
+                                   (cur.type === 'pdf' && img1.classList.contains('visible')) ||
+                                   (cur.type === 'pptx' && img1.classList.contains('visible')) ||
+                                   (cur.type === 'folder' && img1.classList.contains('visible')));
     
     if (isSameContentPlaying) {
       // Тот же контент уже играет - продолжаем воспроизведение, не перезагружаем
+      // Логируем только один раз для каждого файла (защита от спама)
+      const stateKey = `${cur.type}:${cur.file}:${cur.page || 1}`;
+      if (lastLoggedState !== stateKey) {
+        lastLoggedState = stateKey;
       console.log('[Player] ✅ Переподключено: контент уже играет, продолжаем воспроизведение...');
+      }
       // Обновляем состояние, но не перезагружаем
       currentFileState = { type: cur.type, file: cur.file, page: cur.page || 1 };
       
-      // Для видео - убеждаемся что воспроизведение продолжается
-      if (cur.type === 'video' && vjsPlayer && vjsPlayer.paused()) {
+      // Для видео - убеждаемся что воспроизведение продолжается (только если не закончилось)
+      if (cur.type === 'video' && vjsPlayer && vjsPlayer.paused() && !vjsPlayer.ended()) {
         vjsPlayer.play().catch(err => {
           console.error('[Player] ❌ Ошибка возобновления:', err);
         });
       }
       return;
     }
+    
+    // Сбрасываем отслеживание при изменении состояния
+    lastLoggedState = null;
     
     // Контент не играет или другой - проверяем существование файла перед загрузкой
     console.log('[Player] 📡 Применяем состояние при переподключении:', cur.type, cur.file);
@@ -2344,7 +3458,7 @@ if (!device_id || !device_id.trim()) {
             // Если есть текущий контент - продолжаем его
             const hasCurrentContent = currentFileState.type && currentFileState.type !== 'placeholder' &&
                                      ((currentFileState.type === 'video' && vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) ||
-                                      (currentFileState.type !== 'video' && (img1.classList.contains('visible') || img2.classList.contains('visible'))));
+                                      (currentFileState.type !== 'video' && img1.classList.contains('visible')));
             
             if (hasCurrentContent) {
               console.log('[Player] ✅ Продолжаем воспроизведение текущего контента');
@@ -2369,7 +3483,7 @@ if (!device_id || !device_id.trim()) {
           
           const hasCurrentContent = currentFileState.type && currentFileState.type !== 'placeholder' &&
                                    ((currentFileState.type === 'video' && vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) ||
-                                    (currentFileState.type !== 'video' && (img1.classList.contains('visible') || img2.classList.contains('visible'))));
+                                    (currentFileState.type !== 'video' && img1.classList.contains('visible')));
           
           if (hasCurrentContent) {
             console.log('[Player] ✅ Продолжаем воспроизведение текущего контента');
@@ -2444,7 +3558,7 @@ if (!device_id || !device_id.trim()) {
     // Сервер отправит player/state, который обработает состояние корректно
     const isContentPlaying = currentFileState.type && currentFileState.type !== 'placeholder' &&
                              ((currentFileState.type === 'video' && vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) ||
-                              (currentFileState.type !== 'video' && (img1.classList.contains('visible') || img2.classList.contains('visible'))));
+                              (currentFileState.type !== 'video' && img1.classList.contains('visible')));
     
     if (isContentPlaying) {
       console.log('[Player] ✅ Зарегистрировано: контент играет, продолжаем...');
@@ -2528,11 +3642,11 @@ if (!device_id || !device_id.trim()) {
     // Контент продолжает играть из кэша браузера, переподключение происходит в фоне
     const isContentPlaying = currentFileState.type && currentFileState.type !== 'placeholder' &&
                              ((currentFileState.type === 'video' && vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) ||
-                              (currentFileState.type !== 'video' && (img1.classList.contains('visible') || img2.classList.contains('visible'))));
+                              (currentFileState.type !== 'video' && img1.classList.contains('visible')));
     
     const isPlaceholderPlaying = currentFileState.type === 'placeholder' && 
                                   ((vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) || 
-                                   (img1.classList.contains('visible') || img2.classList.contains('visible')));
+                                   img1.classList.contains('visible'));
     
     if (isContentPlaying) {
       // КРИТИЧНО: Контент играет - продолжаем воспроизведение, НЕ показываем заглушку!
@@ -2561,7 +3675,7 @@ if (!device_id || !device_id.trim()) {
               requestAnimationFrame(() => {
                 videoContainer.classList.remove('preloading');
                 videoContainer.classList.add('visible');
-                idle.classList.remove('visible');
+                // idle убран
                 vjsPlayer.one('canplay', () => {
                   setTimeout(() => {
                     vjsPlayer.play().catch(err => {
@@ -2577,7 +3691,7 @@ if (!device_id || !device_id.trim()) {
         // Восстанавливаем изображение заглушку из кэша
         const tempImg = new Image();
         tempImg.onload = () => {
-          idle.classList.remove('visible');
+          // idle убран
           img.src = cachedPlaceholderSrc;
           currentFileState = { type: 'placeholder', file: cachedPlaceholderSrc, page: 1 };
           show(img);
@@ -2607,11 +3721,11 @@ if (!device_id || !device_id.trim()) {
     // Проверяем, играет ли контент или заглушка
     const isContentPlaying = currentFileState.type && currentFileState.type !== 'placeholder' &&
                              ((currentFileState.type === 'video' && vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) ||
-                              (currentFileState.type !== 'video' && (img1.classList.contains('visible') || img2.classList.contains('visible'))));
+                              (currentFileState.type !== 'video' && img1.classList.contains('visible')));
     
     const isPlaceholderPlaying = currentFileState.type === 'placeholder' && 
                                   ((vjsPlayer && !vjsPlayer.paused() && videoContainer.classList.contains('visible')) || 
-                                   (img1.classList.contains('visible') || img2.classList.contains('visible')));
+                                   img1.classList.contains('visible'));
     
     // КРИТИЧНО: Если показывается заглушка - НЕ переключаемся на контент автоматически!
     // Заглушка включилась после проблем с сетью - она должна продолжать играть

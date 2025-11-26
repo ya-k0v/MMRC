@@ -40,7 +40,7 @@ export function createPlaceholderRouter(deps) {
       // Ищем файл с флагом is_placeholder в БД
       const db = getDatabase();
       const placeholder = db.prepare(`
-        SELECT safe_name, file_path FROM files_metadata 
+        SELECT safe_name, file_path, mime_type FROM files_metadata 
         WHERE device_id = ? AND is_placeholder = 1
         LIMIT 1
       `).get(id);
@@ -48,9 +48,13 @@ export function createPlaceholderRouter(deps) {
       if (placeholder && fs.existsSync(placeholder.file_path)) {
         logger.info('[placeholder] ✅ Placeholder found in DB', { 
           deviceId: id, 
-          fileName: placeholder.safe_name 
+          fileName: placeholder.safe_name,
+          mimeType: placeholder.mime_type
         });
-        return res.json({ placeholder: placeholder.safe_name });
+        return res.json({ 
+          placeholder: placeholder.safe_name,
+          mimeType: placeholder.mime_type
+        });
       }
       
       logger.info('[placeholder] ℹ️ No placeholder set', { deviceId: id });
@@ -122,7 +126,7 @@ export function createPlaceholderRouter(deps) {
       });
 
     io.emit('devices/updated');
-    io.to(`device:${id}`).emit('player/stop');
+    io.to(`device:${id}`).emit('player/stop', { reason: 'placeholder_refresh' });
     
       // Возвращаем успешный ответ
       res.json({ ok: true, placeholder: file, instant: true });

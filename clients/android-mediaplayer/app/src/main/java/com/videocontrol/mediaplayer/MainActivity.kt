@@ -797,17 +797,32 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            socket?.on("player/stop") {
+            socket?.on("player/stop") { args ->
+                val reason = when (val payload = args.firstOrNull()) {
+                    is JSONObject -> payload.optString("reason", "")
+                    is String -> payload
+                    else -> ""
+                } ?: ""
+                
                 runOnUiThread {
                     // КРИТИЧНО: Заглушка НЕ реагирует на stop
-                    if (isPlayingPlaceholder) {
+                    if (isPlayingPlaceholder && reason != "placeholder_refresh") {
                         Log.d(TAG, "⏹️ Stop игнорируется - играет заглушка")
                         return@runOnUiThread
                     }
                     
                     stopProgressUpdates() // Останавливаем отправку прогресса
-                    Log.i(TAG, "⏹️ Stop - возврат на заглушку")
-                    loadPlaceholder(skipLogoTransition = true)
+                    
+                    if (reason == "switch_content") {
+                        Log.d(TAG, "⏹️ Stop (switch_content) - ждем следующий контент без заглушки")
+                        skipPlaceholderOnVideoEnd = true
+                        player?.pause()
+                        player?.playWhenReady = false
+                        return@runOnUiThread
+                    }
+                    
+                    Log.i(TAG, "⏹️ Stop - возврат на заглушку (reason=$reason)")
+                    loadPlaceholder(skipLogoTransition = reason == "manual_stop")
                 }
             }
 
@@ -1124,14 +1139,19 @@ class MainActivity : AppCompatActivity() {
             }
             Log.i(TAG, "🎬 Playing video: $videoUrl (isPlaceholder=$isPlaceholder)")
 
-            // КРИТИЧНО: Очищаем ImageView и останавливаем Glide загрузку
+            // КРИТИЧНО: Полностью очищаем изображения ДО запуска видео
             Glide.with(this).clear(imageView)
             imageView.setImageDrawable(null)
             imageView.visibility = View.GONE
             imageView.alpha = 0f
+            
+            // Сбрасываем состояние изображений/презентаций
+            currentPdfFile = null
+            currentPptxFile = null
+            currentFolderName = null
 
             // КРИТИЧНО: Проверяем тот же ли файл воспроизводится
-            val isSameFile = currentVideoFile == fileName
+            val isSameFile = currentVideoFile == fileName && !isPlaceholder
             
             if (isSameFile && player != null) {
                 // Тот же файл - продолжаем с сохраненной позиции (без переходов)
@@ -1294,12 +1314,27 @@ class MainActivity : AppCompatActivity() {
             val hasPreviousImage = imageView.drawable != null && imageView.alpha > 0f && imageView.visibility == View.VISIBLE
             val hasVideo = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
 
-            // КРИТИЧНО: Всегда останавливаем видео при запуске изображения, чтобы звук не продолжал играть
+            // КРИТИЧНО: Устанавливаем флаг ДО остановки видео, чтобы предотвратить показ заглушки
             skipPlaceholderOnVideoEnd = true
+            
+            // КРИТИЧНО: Останавливаем все плееры (активный и буферный) и отменяем pending буфер
+            cancelPendingBuffer("showImage - switching to image")
+            stopProgressUpdates()
+            
+            // Останавливаем активный плеер
+            player?.pause()
             player?.stop()
             player?.clearMediaItems()
+            
+            // Останавливаем буферный плеер
+            bufferPlayer?.pause()
+            bufferPlayer?.stop()
+            bufferPlayer?.clearMediaItems()
+            
             playerView.visibility = View.GONE
             playerView.alpha = 0f
+            bufferPlayerView.visibility = View.GONE
+            bufferPlayerView.alpha = 0f
 
             loadImageToView(
                 imageUrl,
@@ -1371,12 +1406,27 @@ class MainActivity : AppCompatActivity() {
             val hasPreviousImage = imageView.drawable != null
             val hasVideo = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
 
-            // КРИТИЧНО: Всегда останавливаем видео при запуске PDF, чтобы звук не продолжал играть
+            // КРИТИЧНО: Устанавливаем флаг ДО остановки видео, чтобы предотвратить показ заглушки
             skipPlaceholderOnVideoEnd = true
+            
+            // КРИТИЧНО: Останавливаем все плееры (активный и буферный) и отменяем pending буфер
+            cancelPendingBuffer("showPdfPage - switching to PDF")
+            stopProgressUpdates()
+            
+            // Останавливаем активный плеер
+            player?.pause()
             player?.stop()
             player?.clearMediaItems()
+            
+            // Останавливаем буферный плеер
+            bufferPlayer?.pause()
+            bufferPlayer?.stop()
+            bufferPlayer?.clearMediaItems()
+            
             playerView.visibility = View.GONE
             playerView.alpha = 0f
+            bufferPlayerView.visibility = View.GONE
+            bufferPlayerView.alpha = 0f
 
             loadImageToView(
                 pageUrl,
@@ -1429,12 +1479,27 @@ class MainActivity : AppCompatActivity() {
             val hasPreviousImage = imageView.drawable != null
             val hasVideo = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
 
-            // КРИТИЧНО: Всегда останавливаем видео при запуске PPTX, чтобы звук не продолжал играть
+            // КРИТИЧНО: Устанавливаем флаг ДО остановки видео, чтобы предотвратить показ заглушки
             skipPlaceholderOnVideoEnd = true
+            
+            // КРИТИЧНО: Останавливаем все плееры (активный и буферный) и отменяем pending буфер
+            cancelPendingBuffer("showPptxSlide - switching to PPTX")
+            stopProgressUpdates()
+            
+            // Останавливаем активный плеер
+            player?.pause()
             player?.stop()
             player?.clearMediaItems()
+            
+            // Останавливаем буферный плеер
+            bufferPlayer?.pause()
+            bufferPlayer?.stop()
+            bufferPlayer?.clearMediaItems()
+            
             playerView.visibility = View.GONE
             playerView.alpha = 0f
+            bufferPlayerView.visibility = View.GONE
+            bufferPlayerView.alpha = 0f
 
             loadImageToView(
                 slideUrl,
@@ -1487,12 +1552,27 @@ class MainActivity : AppCompatActivity() {
             val hasPreviousImage = imageView.drawable != null
             val hasVideo = playerView.alpha > 0f && playerView.visibility == View.VISIBLE
 
-            // КРИТИЧНО: Всегда останавливаем видео при запуске папки, чтобы звук не продолжал играть
+            // КРИТИЧНО: Устанавливаем флаг ДО остановки видео, чтобы предотвратить показ заглушки
             skipPlaceholderOnVideoEnd = true
+            
+            // КРИТИЧНО: Останавливаем все плееры (активный и буферный) и отменяем pending буфер
+            cancelPendingBuffer("showFolderImage - switching to folder")
+            stopProgressUpdates()
+            
+            // Останавливаем активный плеер
+            player?.pause()
             player?.stop()
             player?.clearMediaItems()
+            
+            // Останавливаем буферный плеер
+            bufferPlayer?.pause()
+            bufferPlayer?.stop()
+            bufferPlayer?.clearMediaItems()
+            
             playerView.visibility = View.GONE
             playerView.alpha = 0f
+            bufferPlayerView.visibility = View.GONE
+            bufferPlayerView.alpha = 0f
 
             loadImageToView(
                 imageUrl,
