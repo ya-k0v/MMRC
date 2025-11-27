@@ -1666,6 +1666,10 @@ function updatePlaybackInfoUI() {
   // Показываем таймер ТОЛЬКО когда реально играет видео
   if (device.current.type !== 'video') {
     infoEl.innerHTML = '';
+    const progressContainer = document.getElementById('videoProgressContainer');
+    if (progressContainer) {
+      progressContainer.style.display = 'none';
+    }
     updatePreviewControlButtons();
     return;
   }
@@ -1673,6 +1677,10 @@ function updatePlaybackInfoUI() {
   const prog = playbackProgressByDevice.get(currentDevice);
   if (!prog || !prog.file) {
     infoEl.innerHTML = '';
+    const progressContainer = document.getElementById('videoProgressContainer');
+    if (progressContainer) {
+      progressContainer.style.display = 'none';
+    }
     updatePreviewControlButtons();
     return;
   }
@@ -1680,6 +1688,10 @@ function updatePlaybackInfoUI() {
   // Проверяем, что файл в прогрессе совпадает с текущим файлом устройства
   if (prog.file !== device.current.file) {
     infoEl.innerHTML = '';
+    const progressContainer = document.getElementById('videoProgressContainer');
+    if (progressContainer) {
+      progressContainer.style.display = 'none';
+    }
     updatePreviewControlButtons();
     return;
   }
@@ -1687,6 +1699,10 @@ function updatePlaybackInfoUI() {
   // Проверяем, не закончилось ли видео (с небольшой погрешностью)
   if (prog.duration > 0 && prog.currentTime >= prog.duration - 0.5) {
     infoEl.innerHTML = '';
+    const progressContainer = document.getElementById('videoProgressContainer');
+    if (progressContainer) {
+      progressContainer.style.display = 'none';
+    }
     updatePreviewControlButtons();
     return;
   }
@@ -1701,6 +1717,10 @@ function updatePlaybackInfoUI() {
     );
     if (fileInfo && fileInfo.isPlaceholder) {
       infoEl.innerHTML = '';
+      const progressContainer = document.getElementById('videoProgressContainer');
+      if (progressContainer) {
+        progressContainer.style.display = 'none';
+      }
       updatePreviewControlButtons();
       return;
     }
@@ -1731,24 +1751,79 @@ function updatePlaybackInfoUI() {
       <span class="meta-value">${currentTimeLabel} / ${total}</span>
     </div>
   `;
+  
+  // Обновляем прогресс-бар
+  const progressContainer = document.getElementById('videoProgressContainer');
+  const progressBar = document.getElementById('videoProgressBar');
+  if (progressContainer && progressBar && prog.duration > 0) {
+    const progressPercent = Math.min(100, Math.max(0, (prog.currentTime / prog.duration) * 100));
+    progressBar.value = progressPercent;
+    progressBar.max = 100;
+    progressContainer.style.display = 'block';
+    
+    // Сохраняем данные для перемотки
+    progressBar.dataset.currentTime = prog.currentTime;
+    progressBar.dataset.duration = prog.duration;
+    progressBar.dataset.file = prog.file;
+  } else if (progressContainer) {
+    progressContainer.style.display = 'none';
+  }
+  
   updatePreviewControlButtons();
 }
 
 // Прием прогресса от плееров
-socket.on('player/progress', ({ device_id, type, file, currentTime, duration }) => {
+socket.on('player/progress', ({ device_id, type, file, currentTime, duration, page }) => {
   if (!device_id) return;
   
-  if (type !== 'video' || !file) {
-    playbackProgressByDevice.delete(device_id);
+  // Для видео - сохраняем прогресс воспроизведения
+  if (type === 'video' && file) {
+    playbackProgressByDevice.set(device_id, { file, currentTime: Number(currentTime)||0, duration: Number(duration)||0 });
     if (device_id === currentDevice) {
       updatePlaybackInfoUI();
     }
     return;
   }
   
-  playbackProgressByDevice.set(device_id, { file, currentTime: Number(currentTime)||0, duration: Number(duration)||0 });
-  if (device_id === currentDevice) {
-    updatePlaybackInfoUI();
+  // Для папок/PDF/PPTX - обновляем состояние устройства с информацией о текущей странице
+  if ((type === 'folder' || type === 'pdf' || type === 'pptx') && file && typeof page === 'number') {
+    const device = devices.find(d => d.device_id === device_id);
+    if (device && device.current && device.current.type === type && device.current.file === file) {
+      device.current.page = page;
+      
+      // Обновляем состояние в playerStateByDevice для синхронизации превью
+      const state = playerStateByDevice.get(device_id);
+      if (state && state.file === file && state.type === type) {
+        state.page = page;
+        playerStateByDevice.set(device_id, state);
+      }
+      
+      // Обновляем выделение текущего слайда на спикер панели
+      if (device_id === currentDevice) {
+        const currentPreviewFile = filePreview.querySelector('.thumbnail-preview')?.getAttribute('data-file');
+        const deviceFile = device.current.file;
+        // Нормализуем имена файлов (убираем .zip если есть)
+        const normalizedDeviceFile = deviceFile.replace(/\.zip$/i, '');
+        const normalizedPreviewFile = currentPreviewFile ? currentPreviewFile.replace(/\.zip$/i, '') : null;
+        
+        if (normalizedPreviewFile === normalizedDeviceFile && isStaticContent(type)) {
+          // Превью этой папки/файла открыто - обновляем выделение напрямую
+          highlightCurrentThumbnail(page, { deviceId: device_id, file: deviceFile });
+        } else {
+          // Превью не открыто или другой файл - используем синхронизацию
+          requestPreviewSync();
+        }
+      }
+    }
+    return;
+  }
+  
+  // Для idle/placeholder - очищаем прогресс
+  if (type === 'idle' || type === 'placeholder') {
+    playbackProgressByDevice.delete(device_id);
+    if (device_id === currentDevice) {
+      updatePlaybackInfoUI();
+    }
   }
 });
 
@@ -1801,6 +1876,57 @@ document.getElementById('stopBtn').onclick = () => {
   playbackProgressByDevice.delete(currentDevice);
   updatePlaybackInfoUI();
 };
+
+// Обработчик перемотки видео через прогресс-бар
+const videoProgressBar = document.getElementById('videoProgressBar');
+if (videoProgressBar) {
+  let isSeeking = false;
+  
+  videoProgressBar.addEventListener('input', (e) => {
+    // При перетаскивании ползунка обновляем визуально, но не перематываем
+    isSeeking = true;
+  });
+  
+  videoProgressBar.addEventListener('change', (e) => {
+    if (!currentDevice || isSeeking === false) return;
+    
+    const progressBar = e.target;
+    const duration = parseFloat(progressBar.dataset.duration);
+    const file = progressBar.dataset.file;
+    
+    if (!duration || !file || duration <= 0) return;
+    
+    const percent = parseFloat(progressBar.value);
+    const targetTime = Math.floor((percent / 100) * duration);
+    
+    console.log('[Speaker] 🎯 Перемотка видео:', { file, targetTime, duration, percent });
+    
+    // Отправляем команду на перемотку напрямую на устройство
+    // Используем player/seek для прямой перемотки на устройстве
+    socket.emit('control/seek', { 
+      device_id: currentDevice, 
+      file: file,
+      position: targetTime 
+    });
+    
+    // Также отправляем напрямую на устройство через broadcast
+    // (если сервер поддерживает, он перешлет команду)
+    socket.emit('player/seek', { 
+      device_id: currentDevice, 
+      position: targetTime 
+    });
+    
+    // Обновляем локальный прогресс для мгновенной обратной связи
+    const prog = playbackProgressByDevice.get(currentDevice);
+    if (prog) {
+      prog.currentTime = targetTime;
+      playbackProgressByDevice.set(currentDevice, prog);
+      updatePlaybackInfoUI();
+    }
+    
+    isSeeking = false;
+  });
+}
 // Обработчики для кнопок навигации (Назад/Вперед) - используются для папок, PDF, PPTX
 // Используем уже полученные ссылки на элементы вместо getElementById
 if (pdfPrevBtn) {

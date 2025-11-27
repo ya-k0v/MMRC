@@ -356,6 +356,32 @@ export function setupDeviceHandlers(socket, deps) {
       logger.warn('[Device] Failed to store volume state', { deviceId: device_id, error: err.message });
     }
   });
+
+  // device/state - Обновление состояния устройства от плеера (текущая страница/слайд для папок/PDF/PPTX)
+  socket.on('device/state', ({ device_id, type, file, page }) => {
+    const device_id_from_socket = device_id || socket.data?.device_id;
+    if (!device_id_from_socket || !devices[device_id_from_socket]) {
+      return;
+    }
+    
+    const d = devices[device_id_from_socket];
+    if (!d.current) {
+      return;
+    }
+    
+    // Обновляем состояние только если это тот же тип контента и файл
+    if (d.current.type === type && d.current.file === file && typeof page === 'number' && page >= 1) {
+      d.current.page = page;
+      // Отправляем обновление спикер панели
+      io.emit('preview/refresh', { device_id: device_id_from_socket });
+      logger.debug(`[Device] State updated: ${device_id_from_socket} -> ${type}/${file} page=${page}`, { 
+        deviceId: device_id_from_socket, 
+        type, 
+        file, 
+        page 
+      });
+    }
+  });
   
   // Таймер неактивности для автоматического отключения
   socket.data.lastPing = Date.now();

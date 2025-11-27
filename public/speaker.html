@@ -137,6 +137,27 @@
       text-align: right;
     }
     
+    #videoProgressContainer {
+      margin: 0 0 var(--space-sm) 0;
+    }
+    
+    #videoProgressBar {
+      width: 100%;
+      height: 8px;
+      cursor: pointer;
+      accent-color: var(--brand);
+      background: var(--panel-2);
+      border-radius: var(--radius-sm);
+    }
+    
+    #videoProgressBar:hover {
+      accent-color: var(--brand-hover, var(--brand));
+    }
+    
+    #videoProgressBar:active {
+      cursor: grabbing;
+    }
+    
   </style>
   <script src="/socket.io/socket.io.js"></script>
   <script type="module" src="/js/speaker.js"></script>
@@ -180,6 +201,9 @@
       <div class="panel preview-panel">
         <h3 class="title">Превью</h3>
         <div id="previewPlaybackInfo" class="meta" style="margin:6px 0 8px 0; min-height:1.2em; color: var(--text);"></div>
+        <div id="videoProgressContainer" style="display:none; margin:0 0 8px 0;">
+          <input type="range" id="videoProgressBar" min="0" max="100" step="0.1" value="0" style="width:100%; cursor:pointer;" />
+        </div>
         <div id="filePreview" class="miniPreview"></div>
         <div class="preview-controls">
           <button id="pdfPrevBtn" class="secondary" type="button">◀ Назад</button>

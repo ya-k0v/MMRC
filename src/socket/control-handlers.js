@@ -346,6 +346,22 @@ export function setupControlHandlers(socket, deps) {
     io.emit('preview/refresh', { device_id });
   });
 
+  // control/seek - Перемотка видео
+  socket.on('control/seek', ({ device_id, position, file }) => {
+    const d = devices[device_id];
+    if (!d) return;
+    
+    // Проверяем, что текущий контент - видео
+    if (d.current && d.current.type === 'video') {
+      // Проверяем, что файл совпадает (если указан)
+      if (!file || d.current.file === file) {
+        const targetPosition = typeof position === 'number' && position >= 0 ? position : 0;
+        io.to(`device:${device_id}`).emit('player/seek', { position: targetPosition });
+        logger.info(`[Control] 🎯 Seek: ${device_id} -> ${targetPosition}s`, { deviceId: device_id, position: targetPosition });
+      }
+    }
+  });
+
   // control/stop - Остановка
   socket.on('control/stop', ({ device_id }) => {
     const d = devices[device_id];
