@@ -837,6 +837,55 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
+            socket?.on("player/seek") { args ->
+                runOnUiThread {
+                    // КРИТИЧНО: Заглушка НЕ реагирует на seek
+                    if (isPlayingPlaceholder) {
+                        Log.d(TAG, "🎯 Seek игнорируется - играет заглушка")
+                        return@runOnUiThread
+                    }
+                    
+                    // КРИТИЧНО: Seek работает только для видео
+                    if (currentVideoFile == null) {
+                        Log.d(TAG, "🎯 Seek игнорируется - не играет видео")
+                        return@runOnUiThread
+                    }
+                    
+                    // Получаем позицию из аргументов
+                    val position = when {
+                        args.isNotEmpty() -> {
+                            val data = args[0]
+                            when (data) {
+                                is JSONObject -> data.optDouble("position", 0.0)
+                                is Number -> data.toDouble()
+                                else -> 0.0
+                            }
+                        }
+                        else -> 0.0
+                    }
+                    
+                    if (position >= 0 && player != null) {
+                        // Конвертируем секунды в миллисекунды для ExoPlayer
+                        val positionMs = (position * 1000).toLong()
+                        val duration = player?.duration ?: 0
+                        
+                        // Проверяем, что позиция не превышает длительность
+                        val targetPosition = if (duration > 0 && positionMs > duration) {
+                            duration
+                        } else {
+                            positionMs
+                        }
+                        
+                        player?.seekTo(targetPosition)
+                        // Обновляем savedPosition для корректного сохранения позиции
+                        savedPosition = targetPosition
+                        Log.i(TAG, "🎯 Seek выполнен: ${position}s (${targetPosition}ms)")
+                    } else {
+                        Log.w(TAG, "🎯 Seek: неверная позиция или плеер не инициализирован")
+                    }
+                }
+            }
+
             socket?.on("placeholder/refresh") {
                 runOnUiThread { 
                     // КРИТИЧНО: Обновляем timestamp для обхода кэша ExoPlayer
