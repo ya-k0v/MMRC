@@ -314,6 +314,13 @@ export function setupDeviceHandlers(socket, deps) {
               device.current.state = 'playing';
               device.current.page = page;
             }
+            if (typeof duration === 'number' && duration > 0) {
+              if (type === 'folder') {
+                device.current.folderImageCount = duration;
+              } else {
+                device.current.totalSlides = duration;
+              }
+            }
             stateChanged = true;
           }
         }

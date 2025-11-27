@@ -30,18 +30,50 @@ export function createConversionRouter(deps) {
     }
     
     const fileName = req.query.file;
-    const type = req.query.type;
     
     if (!fileName) {
       return res.status(400).json({ error: 'file query parameter required' });
     }
     
-    if (!devices[id]) {
+    const device = devices[id];
+    if (!device) {
       return res.status(404).json({ error: 'device not found' });
     }
     
+    // Сначала пробуем взять количество кадров из текущего состояния устройства
+    const normalizedFile = fileName.replace(/\.zip$/i, '');
+    if (device.current && (device.current.file === fileName || device.current.file === normalizedFile || device.current.playlistFile === fileName)) {
+      const count = device.current.folderImageCount || device.current.totalSlides;
+      if (typeof count === 'number' && count > 0) {
+        return res.json({ count });
+      }
+    }
+    
+    // Затем пробуем взять из массива файлов (метаданные)
+    if (Array.isArray(device.fileMetadata) && device.fileMetadata.length) {
+      const meta = device.fileMetadata.find(m =>
+        m.safeName === fileName ||
+        m.safeName === normalizedFile ||
+        m.originalName === fileName ||
+        m.originalName === normalizedFile
+      );
+      if (meta && typeof meta.folderImageCount === 'number' && meta.folderImageCount > 0) {
+        return res.json({ count: meta.folderImageCount });
+      }
+    }
+    
     try {
-      const count = await getPageSlideCount(id, fileName);
+      const ext = path.extname(fileName).toLowerCase();
+      let count = 0;
+      if (!ext || ext === '.zip') {
+        // Папка с изображениями
+        const folderName = fileName.replace(/\.zip$/i, '');
+        count = await getFolderImagesCount(id, folderName);
+      } else if (ext === '.pdf' || ext === '.pptx') {
+        count = await getPageSlideCount(id, fileName);
+      } else {
+        count = await getPageSlideCount(id, fileName);
+      }
       res.json({ count });
     } catch (error) {
       logger.error(`[slides-count] ❌ Ошибка`, { error: error.message, stack: error.stack, deviceId: id, fileName });

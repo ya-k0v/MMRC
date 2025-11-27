@@ -333,6 +333,8 @@ let allFiles = []; // Список всех файлов для текущего
 // Прогресс воспроизведения по устройству
 const playbackProgressByDevice = new Map(); // device_id -> { file, currentTime, duration }
 const playerStateByDevice = new Map(); // device_id -> { type, file, page }
+const fileMetaCache = new Map(); // device_id -> Map(fileName|safeKey -> { displayName, folderImageCount })
+const staticMetaRequests = new Map(); // `${deviceId}:${file}` -> Promise
 let currentPreviewContext = { deviceId: null, file: null, page: null };
 let folderPlaylistState = null;
 let folderPlaylistIntervalSeconds = DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS;
@@ -1037,10 +1039,15 @@ async function loadDevices() {
     }
     const newDevices = await res.json();
     
+    newDevices.forEach(device => {
+      prefillDeviceFileMeta(device);
+    });
+    
     devices = newDevices;
     // Сортируем устройства по алфавиту: А-Я, A-Z, 0-9
     devices = sortDevices(devices, nodeNames);
     devices.forEach(d => {
+      prefillDeviceFileMeta(d);
       if (d.current && d.current.file) {
         playerStateByDevice.set(d.device_id, {
           type: d.current.type,
@@ -1060,6 +1067,52 @@ async function loadDevices() {
 }
 
 /* Рендер списка ТВ (информативный, с подсветкой выбранного) */
+function renderTvTile(device) {
+  const name = device.name || nodeNames[device.device_id] || device.device_id;
+  const filesCount = device.files?.length ?? 0;
+  const isActive = device.device_id === currentDevice;
+  const isReady = readyDevices.has(device.device_id);
+  const volumeState = getVolumeState(device.device_id);
+  const volumeInfo = resolveVolumeIndicator(volumeState, isReady);
+  const volumeIcon = getVolumeIconSvg({ ...volumeInfo, size: 18 });
+  const playbackInfo = buildPreviewPlaybackInfo(device);
+  const playbackBlock = `
+      <div class="tvTile-previewInfo${playbackInfo ? '' : ' is-empty'}">
+        ${playbackInfo ? getPlaybackInfoInnerHtml(playbackInfo) : ''}
+      </div>
+    `;
+  const ariaLabel = `Громкость ${volumeInfo.levelText}, ${volumeInfo.statusText}`;
+  const volumeRow = `
+      <div class="tvTile-volumeRow">
+        ${playbackBlock}
+        <div class="tvTile-volume${!isReady ? ' is-offline' : ''}" aria-label="${escapeAttr(ariaLabel)}">
+          ${volumeIcon}
+          <span class="volume-level">${volumeInfo.levelText}</span>
+        </div>
+      </div>
+    `;
+  const metaRow = `
+      <div class="tvTile-metaRow">
+        <span class="meta tvTile-meta">ID: ${device.device_id}</span>
+        <span class="meta tvTile-files">Файлов: ${filesCount}</span>
+      </div>
+    `;
+  return `
+    <li class="tvTile${isActive ? ' active' : ''}" data-id="${device.device_id}">
+      <div class="tvTile-content">
+        <div class="tvTile-header">
+          <div class="title tvTile-name">${name}</div>
+          <span class="tvTile-status ${isReady ? 'online' : 'offline'}" 
+                title="${isReady ? 'Готов' : 'Не готов'}" 
+                aria-label="${isReady ? 'online' : 'offline'}"></span>
+        </div>
+        ${metaRow}
+        ${volumeRow}
+      </div>
+    </li>
+  `;
+}
+
 function renderTVList() {
   // Сортируем устройства перед отображением (на случай если список обновился)
   const sortedDevices = sortDevices(devices);
@@ -1071,42 +1124,7 @@ function renderTVList() {
   const pageItems = sortedDevices.slice(start, end);
 
   // Рендерим устройства (стили задаются в CSS)
-  tvList.innerHTML = pageItems.map(d => {
-    const name = d.name || nodeNames[d.device_id] || d.device_id;
-    const filesCount = d.files?.length ?? 0;
-    const isActive = d.device_id === currentDevice;
-    const isReady = readyDevices.has(d.device_id);
-    const volumeState = getVolumeState(d.device_id);
-    const volumeInfo = resolveVolumeIndicator(volumeState, isReady);
-    const volumeIcon = getVolumeIconSvg({ ...volumeInfo, size: 18 });
-    const ariaLabel = `Громкость ${volumeInfo.levelText}, ${volumeInfo.statusText}`;
-    const volumeRow = `
-        <div class="tvTile-volume${!isReady ? ' is-offline' : ''}" aria-label="${escapeAttr(ariaLabel)}">
-          ${volumeIcon}
-          <span class="volume-level">${volumeInfo.levelText}</span>
-        </div>
-      `;
-    const metaRow = `
-        <div class="tvTile-metaRow">
-          <span class="meta tvTile-meta">ID: ${d.device_id}</span>
-          <span class="meta tvTile-files">Файлов: ${filesCount}</span>
-        </div>
-      `;
-    return `
-      <li class="tvTile${isActive ? ' active' : ''}" data-id="${d.device_id}">
-        <div class="tvTile-content">
-          <div class="tvTile-header">
-            <div class="title tvTile-name">${name}</div>
-            <span class="tvTile-status ${isReady ? 'online' : 'offline'}" 
-                  title="${isReady ? 'Готов' : 'Не готов'}" 
-                  aria-label="${isReady ? 'online' : 'offline'}"></span>
-          </div>
-          ${metaRow}
-          ${volumeRow}
-        </div>
-      </li>
-    `;
-  }).join('');
+  tvList.innerHTML = pageItems.map(renderTvTile).join('');
 
   tvList.querySelectorAll('.tvTile').forEach(item => {
     item.onclick = async () => { await selectDevice(item.dataset.id); };
@@ -1191,6 +1209,11 @@ function showLivePreviewForTV(deviceId, force = false) {
 async function selectDevice(id, resetPage = true) {
   const previousDevice = currentDevice;
   currentDevice = id;
+  const isDeviceSwitch = previousDevice && previousDevice !== id;
+  if (isDeviceSwitch) {
+    previewManuallyClosed = false;
+    showLivePreviewForTV(id, true);
+  }
   if (previousDevice && previousDevice !== id) {
     clearVolumeFallback(previousDevice);
   }
@@ -1274,6 +1297,9 @@ async function loadFiles() {
           folderImageCount: typeof item.folderImageCount === 'number' ? item.folderImageCount : null
         };
       });
+
+    cacheDeviceFileMeta(currentDevice, allFiles);
+    refreshTvTilePlaybackInfo(currentDevice);
 
   if (!allFiles || allFiles.length === 0) {
     fileList.innerHTML = `
@@ -1604,172 +1630,344 @@ function formatTime(sec) {
   return `${m}:${r.toString().padStart(2, '0')}`;
 }
 
+function cacheDeviceFileMeta(deviceId, files = [], { merge = false } = {}) {
+  if (!deviceId) return;
+  const map = merge && fileMetaCache.has(deviceId)
+    ? new Map(fileMetaCache.get(deviceId))
+    : new Map();
+
+  files.forEach(file => {
+    if (!file) return;
+    const safeName = file.safeName || file.name || file.fileName;
+    const originalName = file.originalName || file.displayName || file.name || safeName;
+    if (!safeName && !originalName) return;
+
+    const displayName = (originalName || safeName || '').replace(/\.[^.]+$/, '') || (originalName || safeName || '');
+    const folderImageCount = typeof file.folderImageCount === 'number' ? file.folderImageCount : null;
+    const meta = { displayName, folderImageCount };
+
+    const keys = new Set();
+    [safeName, originalName].forEach(name => {
+      normalizeFileNameVariants(name).forEach(v => keys.add(v));
+    });
+
+    keys.forEach(key => {
+      if (!key) return;
+      if (merge && map.has(key) && map.get(key)?.folderImageCount) {
+        return;
+      }
+      map.set(key, meta);
+    });
+  });
+
+  fileMetaCache.set(deviceId, map);
+}
+
+function resolveCachedFileMeta(deviceId, fileName) {
+  if (!deviceId || !fileName) return null;
+  const map = fileMetaCache.get(deviceId);
+  if (!map || map.size === 0) return null;
+  const candidates = normalizeFileNameVariants(fileName);
+  for (const key of candidates) {
+    if (map.has(key)) {
+      return map.get(key);
+    }
+  }
+  return null;
+}
+
+function normalizeFileNameVariants(name) {
+  if (!name) return [];
+  const trimmed = name.trim();
+  if (!trimmed) return [];
+  const variants = [trimmed.toLowerCase()];
+  const withoutExt = trimmed.replace(/\.[^.]+$/, '');
+  if (withoutExt && withoutExt !== trimmed) {
+    variants.push(withoutExt.toLowerCase());
+  }
+  return variants;
+}
+
+function findFileInfoForDevice(deviceId, fileName) {
+  if (!fileName || !allFiles || allFiles.length === 0 || deviceId !== currentDevice) {
+    return null;
+  }
+  const targetVariants = normalizeFileNameVariants(fileName);
+  if (!targetVariants.length) return null;
+  return allFiles.find(f => {
+    const variants = [
+      ...normalizeFileNameVariants(f.safeName),
+      ...normalizeFileNameVariants(f.originalName),
+    ];
+    if (!variants.length) return false;
+    return variants.some(value => targetVariants.includes(value));
+  }) || null;
+}
+
+function resolveFileDisplayData(deviceId, fileName) {
+  const device = devices.find(d => d.device_id === deviceId);
+  const baseInfo = findFileInfoForDevice(deviceId, fileName);
+  const currentMatches = device?.current && (device.current.file === fileName || device.current.playlistFile === fileName);
+  const fileInfo = currentMatches && device.current.folderImageCount
+    ? { ...baseInfo, folderImageCount: device.current.folderImageCount }
+    : baseInfo;
+  let displayName = (fileName || '').replace(/\.[^.]+$/, '') || (fileName || '');
+  let folderImageCount = fileInfo?.folderImageCount ?? null;
+  let cachedMeta = null;
+
+  if (fileInfo && fileInfo.originalName) {
+    displayName = fileInfo.originalName.replace(/\.[^.]+$/, '') || fileInfo.originalName;
+  } else {
+    cachedMeta = resolveCachedFileMeta(deviceId, fileName);
+    if (cachedMeta?.displayName) {
+      displayName = cachedMeta.displayName;
+    }
+  }
+
+  if (folderImageCount == null && cachedMeta?.folderImageCount != null) {
+    folderImageCount = cachedMeta.folderImageCount;
+  }
+
+  return { displayName, fileInfo, folderImageCount };
+}
+
+function formatStaticPlaybackLabel(type, page, _totalCount, isPlaylist) {
+  const descriptor = type === 'folder' ? 'Кадр' : type === 'pptx' ? 'Слайд' : 'Страница';
+  let label = `${descriptor} ${page}`;
+  if (type === 'folder' && isPlaylist) {
+    label += ' | Плейлист';
+  }
+  return label;
+}
+
+function prefillDeviceFileMeta(device) {
+  if (!device || !device.device_id) return;
+  const files = device.files || [];
+  const fileNames = device.fileNames || files;
+  const fileMetadata = device.fileMetadata || [];
+  if (!files.length && (!fileNames || !fileNames.length)) return;
+
+  const items = files.map((safeName, idx) => ({
+    safeName,
+    originalName: fileNames[idx] || safeName,
+    folderImageCount: fileMetadata[idx]?.folderImageCount ?? null,
+  }));
+
+  cacheDeviceFileMeta(device.device_id, items, { merge: true });
+}
+
+function ensureStaticContentMeta(deviceId, fileName, { force = false } = {}) {
+  if (!deviceId || !fileName) return;
+  const key = `${deviceId}:${fileName}`;
+  if (!force && staticMetaRequests.has(key)) {
+    return staticMetaRequests.get(key);
+  }
+  const request = (async () => {
+    try {
+      const res = await speakerFetch(`/api/devices/${encodeURIComponent(deviceId)}/slides-count?file=${encodeURIComponent(fileName)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const count = Number(data.count) || 0;
+      if (count > 0) {
+        cacheDeviceFileMeta(deviceId, [{
+          safeName: fileName,
+          originalName: fileName,
+          folderImageCount: count,
+        }], { merge: true });
+        // Обновляем текущее состояние устройства, если оно воспроизводит этот файл
+        const targetDevice = devices.find(d => d.device_id === deviceId);
+        if (targetDevice && targetDevice.current && (targetDevice.current.file === fileName || targetDevice.current.playlistFile === fileName)) {
+          targetDevice.current.folderImageCount = count;
+        }
+        refreshTvTilePlaybackInfo(deviceId);
+        if (deviceId === currentDevice) {
+          updatePlaybackInfoUI();
+        }
+      }
+    } catch (err) {
+      console.warn('[Speaker] Не удалось получить количество кадров', deviceId, fileName, err?.message);
+    } finally {
+      staticMetaRequests.delete(key);
+    }
+  })();
+  staticMetaRequests.set(key, request);
+  return request;
+}
+
+function getPlaybackInfoInnerHtml(playbackInfo) {
+  if (!playbackInfo) {
+    return '';
+  }
+  return `
+    <span class="tvTile-previewTitle">${playbackInfo.title}</span>
+    <span class="tvTile-previewValue">${playbackInfo.value}</span>
+  `;
+}
+
+function buildPreviewPlaybackInfo(device) {
+  if (!device || !device.current) {
+    return null;
+  }
+
+  if (STATIC_CONTENT_TYPES.has(device.current.type)) {
+    const staticFile = device.current.playlistFile || device.current.file;
+    const currentPage = Number(device.current.page) || 1;
+    const { displayName, fileInfo, folderImageCount: cachedFolderCount } = resolveFileDisplayData(device.device_id, staticFile);
+    let folderImageCount = cachedFolderCount || 0;
+
+    if (folderImageCount === 0) {
+      ensureStaticContentMeta(device.device_id, staticFile);
+      if (device.current.folderImageCount) {
+        folderImageCount = Number(device.current.folderImageCount) || 0;
+      }
+    }
+    const safeName = escapeHtml(truncateText(displayName, 50)) || '—';
+    const pageInfo = formatStaticPlaybackLabel(
+      device.current.type,
+      currentPage,
+      folderImageCount,
+      device.current.playlistActive
+    );
+    return {
+      title: safeName,
+      value: escapeHtml(pageInfo),
+      mode: 'static',
+      progress: null,
+    };
+  }
+
+  if (device.current.type !== 'video') {
+    return null;
+  }
+
+  const prog = playbackProgressByDevice.get(device.device_id);
+  if (!prog || !prog.file) {
+    return null;
+  }
+
+  if (prog.file !== device.current.file) {
+    return null;
+  }
+
+  if (prog.duration > 0 && prog.currentTime >= prog.duration - 0.5) {
+    return null;
+  }
+
+  const { displayName, fileInfo } = resolveFileDisplayData(device.device_id, prog.file);
+  if (fileInfo && fileInfo.isPlaceholder) {
+    return null;
+  }
+
+  const safeName = escapeHtml(truncateText(displayName, 50)) || '—';
+  const currentTimeLabel = formatTime(prog.currentTime);
+  const total = (prog.duration && prog.duration > 0) ? formatTime(prog.duration) : '--:--';
+
+  let progressPercent = null;
+  if (prog.duration > 0) {
+    progressPercent = Math.min(100, Math.max(0, (prog.currentTime / prog.duration) * 100));
+  }
+
+  return {
+    title: safeName,
+    value: escapeHtml(`${currentTimeLabel} / ${total}`),
+    mode: 'video',
+    progress: prog.duration > 0 ? {
+      percent: progressPercent,
+      duration: prog.duration,
+      currentTime: prog.currentTime,
+      file: prog.file,
+    } : null,
+  };
+}
+
 function updatePlaybackInfoUI() {
   const infoEl = document.getElementById('previewPlaybackInfo');
+  const progressContainer = document.getElementById('videoProgressContainer');
+  const progressBar = document.getElementById('videoProgressBar');
+
   if (!infoEl || !currentDevice) {
     if (infoEl) infoEl.innerHTML = '';
+    if (progressContainer) progressContainer.style.display = 'none';
     updatePreviewControlButtons();
     return;
   }
 
   const device = devices.find(d => d.device_id === currentDevice);
-  if (!device || !device.current) {
+  const playbackInfo = buildPreviewPlaybackInfo(device);
+
+  if (!device || !device.current || !playbackInfo) {
     infoEl.innerHTML = '';
+    if (progressContainer) progressContainer.style.display = 'none';
     updatePreviewControlButtons();
     return;
   }
 
-  // Показываем информацию о плейлисте папки
-  if (device.current.type === 'folder' && device.current.playlistActive === true) {
-    const playlistFile = device.current.playlistFile || device.current.file;
-    const currentPage = Number(device.current.page) || 1;
-    
-    // Находим папку в списке файлов для получения количества изображений
-    let folderImageCount = 0;
-    let displayName = (playlistFile || '').replace(/\.[^.]+$/, '');
-    
-    if (playlistFile && allFiles && allFiles.length > 0) {
-      const fileInfo = allFiles.find(f => 
-        f.safeName === playlistFile || 
-        f.originalName === playlistFile ||
-        f.safeName === playlistFile.replace(/\.[^.]+$/, '') ||
-        f.originalName === playlistFile.replace(/\.[^.]+$/, '')
-      );
-      if (fileInfo) {
-        if (fileInfo.originalName) {
-          displayName = fileInfo.originalName.replace(/\.[^.]+$/, '');
-        }
-        if (typeof fileInfo.folderImageCount === 'number' && fileInfo.folderImageCount > 0) {
-          folderImageCount = fileInfo.folderImageCount;
-        }
-      }
-    }
-    
-    // Если не нашли количество изображений в allFiles, пробуем получить из device
-    if (folderImageCount === 0 && device.current.folderImageCount) {
-      folderImageCount = Number(device.current.folderImageCount) || 0;
-    }
-    
-    const safeName = escapeHtml(truncateText(displayName, 50)) || '—';
-    const pageInfo = folderImageCount > 0 ? `Кадр ${currentPage} из ${folderImageCount}` : `Кадр ${currentPage}`;
-    
-    infoEl.innerHTML = `
-      <div class="meta-line">
-        <span class="meta-title">${safeName}</span>
-        <span class="meta-value">${pageInfo} | Плейлист</span>
-      </div>
-    `;
-    updatePreviewControlButtons();
-    return;
-  }
-
-  // Показываем таймер ТОЛЬКО когда реально играет видео
-  if (device.current.type !== 'video') {
-    infoEl.innerHTML = '';
-    const progressContainer = document.getElementById('videoProgressContainer');
-    if (progressContainer) {
-      progressContainer.style.display = 'none';
-    }
-    updatePreviewControlButtons();
-    return;
-  }
-
-  const prog = playbackProgressByDevice.get(currentDevice);
-  if (!prog || !prog.file) {
-    infoEl.innerHTML = '';
-    const progressContainer = document.getElementById('videoProgressContainer');
-    if (progressContainer) {
-      progressContainer.style.display = 'none';
-    }
-    updatePreviewControlButtons();
-    return;
-  }
-  
-  // Проверяем, что файл в прогрессе совпадает с текущим файлом устройства
-  if (prog.file !== device.current.file) {
-    infoEl.innerHTML = '';
-    const progressContainer = document.getElementById('videoProgressContainer');
-    if (progressContainer) {
-      progressContainer.style.display = 'none';
-    }
-    updatePreviewControlButtons();
-    return;
-  }
-  
-  // Проверяем, не закончилось ли видео (с небольшой погрешностью)
-  if (prog.duration > 0 && prog.currentTime >= prog.duration - 0.5) {
-    infoEl.innerHTML = '';
-    const progressContainer = document.getElementById('videoProgressContainer');
-    if (progressContainer) {
-      progressContainer.style.display = 'none';
-    }
-    updatePreviewControlButtons();
-    return;
-  }
-  
-  // Проверяем, не является ли файл заглушкой
-  if (prog.file && allFiles && allFiles.length > 0) {
-    const fileInfo = allFiles.find(f => 
-      f.safeName === prog.file || 
-      f.originalName === prog.file ||
-      f.safeName === prog.file.replace(/\.[^.]+$/, '') ||
-      f.originalName === prog.file.replace(/\.[^.]+$/, '')
-    );
-    if (fileInfo && fileInfo.isPlaceholder) {
-      infoEl.innerHTML = '';
-      const progressContainer = document.getElementById('videoProgressContainer');
-      if (progressContainer) {
-        progressContainer.style.display = 'none';
-      }
-      updatePreviewControlButtons();
-      return;
-    }
-  }
-  
-  // Находим файл в списке по имени файла (может быть safeName или originalName)
-  let displayName = (prog.file || '').replace(/\.[^.]+$/, ''); // Fallback на имя файла без расширения
-  if (prog.file && allFiles && allFiles.length > 0) {
-    const fileInfo = allFiles.find(f => 
-      f.safeName === prog.file || 
-      f.originalName === prog.file ||
-      f.safeName === prog.file.replace(/\.[^.]+$/, '') ||
-      f.originalName === prog.file.replace(/\.[^.]+$/, '')
-    );
-    if (fileInfo && fileInfo.originalName) {
-      // Используем originalName из списка файлов (как в списке на панели)
-      displayName = fileInfo.originalName.replace(/\.[^.]+$/, '');
-    }
-  }
-  
-  const safeName = escapeHtml(truncateText(displayName, 50)) || '—';
-  const currentTimeLabel = formatTime(prog.currentTime);
-  const total = (prog.duration && prog.duration > 0) ? formatTime(prog.duration) : '--:--';
-  
   infoEl.innerHTML = `
     <div class="meta-line">
-      <span class="meta-title">${safeName}</span>
-      <span class="meta-value">${currentTimeLabel} / ${total}</span>
+      <span class="meta-title">${playbackInfo.title}</span>
+      <span class="meta-value">${playbackInfo.value}</span>
     </div>
   `;
-  
-  // Обновляем прогресс-бар
-  const progressContainer = document.getElementById('videoProgressContainer');
-  const progressBar = document.getElementById('videoProgressBar');
-  if (progressContainer && progressBar && prog.duration > 0) {
-    const progressPercent = Math.min(100, Math.max(0, (prog.currentTime / prog.duration) * 100));
-    progressBar.value = progressPercent;
-    progressBar.max = 100;
-    progressContainer.style.display = 'block';
-    
-    // Сохраняем данные для перемотки
-    progressBar.dataset.currentTime = prog.currentTime;
-    progressBar.dataset.duration = prog.duration;
-    progressBar.dataset.file = prog.file;
-  } else if (progressContainer) {
-    progressContainer.style.display = 'none';
+
+  if (progressContainer && progressBar) {
+    if (
+      playbackInfo.mode === 'video' &&
+      playbackInfo.progress &&
+      playbackInfo.progress.duration &&
+      playbackInfo.progress.duration >= 600
+    ) {
+      progressBar.value = playbackInfo.progress.percent ?? 0;
+      progressBar.max = 100;
+      progressBar.dataset.currentTime = playbackInfo.progress.currentTime;
+    progressBar.dataset.duration = playbackInfo.progress.duration;
+      progressBar.dataset.file = playbackInfo.progress.file;
+      progressContainer.style.display = 'block';
+    } else {
+      progressContainer.style.display = 'none';
+    }
   }
-  
+
   updatePreviewControlButtons();
+  refreshTvTilePlaybackInfo(currentDevice);
+}
+
+function refreshTvTilePlaybackInfo(deviceId) {
+  if (!tvList || !deviceId) return;
+  const index = devices.findIndex(d => d.device_id === deviceId);
+
+  const actualTile = tvList.querySelector(`.tvTile[data-id="${deviceId}"]`);
+  if (!actualTile) return;
+
+  const volumeRow = actualTile.querySelector('.tvTile-volumeRow');
+  if (!volumeRow) return;
+
+  const playbackInfo = buildPreviewPlaybackInfo(devices.find(d => d.device_id === deviceId));
+  let infoEl = volumeRow.querySelector('.tvTile-previewInfo');
+  const volumeEl = volumeRow.querySelector('.tvTile-volume');
+
+  if (!infoEl) {
+    infoEl = document.createElement('div');
+    infoEl.className = 'tvTile-previewInfo is-empty';
+    if (volumeEl) {
+      volumeRow.insertBefore(infoEl, volumeEl);
+    } else {
+      volumeRow.appendChild(infoEl);
+    }
+  }
+
+  if (!playbackInfo) {
+    infoEl.classList.add('is-empty');
+    infoEl.innerHTML = '';
+    return;
+  }
+
+  infoEl.classList.remove('is-empty');
+  infoEl.innerHTML = getPlaybackInfoInnerHtml(playbackInfo);
+  const indicator = actualTile.querySelector('.tvTile-status');
+  if (indicator) {
+    indicator.setAttribute('title', playbackInfo.value);
+    indicator.setAttribute('aria-label', playbackInfo.value.replace(/<[^>]+>/g, ''));
+  }
 }
 
 // Прием прогресса от плееров
@@ -1779,6 +1977,7 @@ socket.on('player/progress', ({ device_id, type, file, currentTime, duration, pa
   // Для видео - сохраняем прогресс воспроизведения
   if (type === 'video' && file) {
     playbackProgressByDevice.set(device_id, { file, currentTime: Number(currentTime)||0, duration: Number(duration)||0 });
+    refreshTvTilePlaybackInfo(device_id);
     if (device_id === currentDevice) {
       updatePlaybackInfoUI();
     }
@@ -1788,15 +1987,32 @@ socket.on('player/progress', ({ device_id, type, file, currentTime, duration, pa
   // Для папок/PDF/PPTX - обновляем состояние устройства с информацией о текущей странице
   if ((type === 'folder' || type === 'pdf' || type === 'pptx') && file && typeof page === 'number') {
     const device = devices.find(d => d.device_id === device_id);
-    if (device && device.current && device.current.type === type && device.current.file === file) {
-      device.current.page = page;
+    if (device) {
+      if (!device.current) {
+        device.current = { type, file, page, state: 'playing' };
+      } else {
+        device.current.type = type;
+        device.current.file = file;
+        device.current.page = page;
+        device.current.state = 'playing';
+      }
+      if ((type === 'folder' || type === 'pdf' || type === 'pptx') && typeof duration === 'number' && duration > 0) {
+        if (type === 'folder') {
+          device.current.folderImageCount = duration;
+        } else {
+          device.current.totalSlides = duration;
+        }
+      }
       
       // Обновляем состояние в playerStateByDevice для синхронизации превью
-      const state = playerStateByDevice.get(device_id);
-      if (state && state.file === file && state.type === type) {
-        state.page = page;
-        playerStateByDevice.set(device_id, state);
+      const state = playerStateByDevice.get(device_id) || {};
+      state.type = type;
+      state.file = file;
+      state.page = page;
+      if ((type === 'folder' || type === 'pdf' || type === 'pptx') && typeof duration === 'number' && duration > 0) {
+        state.total = duration;
       }
+      playerStateByDevice.set(device_id, state);
       
       // Обновляем выделение текущего слайда на спикер панели
       if (device_id === currentDevice) {
@@ -1815,12 +2031,17 @@ socket.on('player/progress', ({ device_id, type, file, currentTime, duration, pa
         }
       }
     }
+    refreshTvTilePlaybackInfo(device_id);
+    if (device_id === currentDevice) {
+      updatePlaybackInfoUI();
+    }
     return;
   }
   
   // Для idle/placeholder - очищаем прогресс
   if (type === 'idle' || type === 'placeholder') {
     playbackProgressByDevice.delete(device_id);
+    refreshTvTilePlaybackInfo(device_id);
     if (device_id === currentDevice) {
       updatePlaybackInfoUI();
     }
@@ -2082,6 +2303,7 @@ socket.on('playlist/state', ({ device_id, active, file, intervalSeconds }) => {
     if (device_id === currentDevice) {
       updatePlaybackInfoUI();
     }
+    refreshTvTilePlaybackInfo(device_id);
   }, 50);
   
   // Если это текущее устройство - обновляем локальное состояние
@@ -2113,6 +2335,8 @@ socket.on('playlist/state', ({ device_id, active, file, intervalSeconds }) => {
     // Обновляем UI кнопки плейлиста
     updateFolderPlaylistButtonState();
   }
+  
+  refreshTvTilePlaybackInfo(device_id);
 });
 
 socket.on('devices/updated', onDevicesUpdated);
@@ -2148,6 +2372,7 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
     
     devices = newDevices;
     updateDevicesCount();
+    renderTVList();
   } catch (err) {
     console.error('Не удалось обновить устройства:', err);
     return;
@@ -2266,6 +2491,7 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
     // Обновляем информацию о плейлисте после обновления состояния устройства
     updatePlaybackInfoUI();
   }
+  refreshTvTilePlaybackInfo(device_id);
 }, 200);
 
 socket.on('preview/refresh', onPreviewRefresh);

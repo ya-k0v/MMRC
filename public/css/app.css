@@ -627,12 +627,22 @@ body.light .tvTile.active {
   margin: 0;
 }
 
+.tvTile-volumeRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 24px;
+  width: 100%;
+}
+
 .tvTile-volume {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: var(--font-size-sm);
   color: var(--muted);
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .tvTile-volume .volume-level {
@@ -657,6 +667,37 @@ body.light .tvTile.active {
 
 .tvTile-volume.is-offline .volume-state {
   color: var(--muted-2);
+}
+
+.tvTile-previewInfo {
+  margin-top: 0px;
+  font-size: var(--font-size-xs);
+  line-height: 1.3;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.tvTile-previewInfo.is-empty {
+  min-height: 24px;
+}
+
+.tvTile-previewTitle {
+  font-weight: var(--font-weight-medium);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tvTile-previewValue {
+  color: var(--muted-2);
+  font-weight: var(--font-weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ===== File Items - Фиксированная высота ===== */

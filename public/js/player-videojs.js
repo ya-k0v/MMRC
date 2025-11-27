@@ -1160,7 +1160,7 @@ if (!device_id || !device_id.trim()) {
       console.log(`[Player] 🔄 Предзагрузка слайдов: ${file}`);
       
       // Получаем количество слайдов через API (используем query параметр для поддержки пробелов в именах)
-      const response = await fetch(`/api/devices/${encodeURIComponent(device_id)}/slides-count?file=${encodeURIComponent(file)}`);
+      const response = await fetch(`/api/devices/${encodeURIComponent(device_id)}/slides-count?file=${encodeURIComponent(file)}&type=${type}`);
       if (!response.ok) {
         console.warn('[Player] ⚠️ Не удалось получить количество слайдов');
         return;
@@ -1816,14 +1816,14 @@ if (!device_id || !device_id.trim()) {
       // КРИТИЧНО: Отправляем информацию о текущей странице на сервер сразу после запуска
       // Используем player/progress с параметром page (как Android)
       if (device_id && !preview && socket && socket.connected) {
-        socket.emit('player/progress', {
-          device_id,
-          type: 'pdf',
-          file: file,
-          currentTime: pageNum,
-          duration: 0,
-          page: pageNum
-        });
+      socket.emit('player/progress', {
+        device_id,
+        type: 'pdf',
+        file: file,
+        currentTime: pageNum,
+        duration: slidesCache[file]?.count || 0,
+        page: pageNum
+      });
       }
     } else if (type === 'pptx' && file) {
       const slideNum = page || 1;
@@ -1855,14 +1855,14 @@ if (!device_id || !device_id.trim()) {
       // КРИТИЧНО: Отправляем информацию о текущей странице на сервер сразу после запуска
       // Используем player/progress с параметром page (как Android)
       if (device_id && !preview && socket && socket.connected) {
-        socket.emit('player/progress', {
-          device_id,
-          type: 'pptx',
-          file: file,
-          currentTime: slideNum,
-          duration: 0,
-          page: slideNum
-        });
+      socket.emit('player/progress', {
+        device_id,
+        type: 'pptx',
+        file: file,
+        currentTime: slideNum,
+        duration: slidesCache[file]?.count || 0,
+        page: slideNum
+      });
       }
     } else if (type === 'folder' && file) {
       // Папка с изображениями
@@ -1896,14 +1896,15 @@ if (!device_id || !device_id.trim()) {
       // КРИТИЧНО: Отправляем информацию о текущей странице на сервер сразу после запуска
       // Используем player/progress с параметром page (как Android)
       if (device_id && !preview && socket && socket.connected) {
-        socket.emit('player/progress', {
-          device_id,
-          type: 'folder',
-          file: folderName,
-          currentTime: imageNum,
-          duration: 0,
-          page: imageNum
-        });
+      const totalImages = slidesCache[folderName]?.count || 0;
+      socket.emit('player/progress', {
+        device_id,
+        type: 'folder',
+        file: folderName,
+        currentTime: imageNum,
+        duration: totalImages,
+        page: imageNum
+      });
       }
     }
   });
