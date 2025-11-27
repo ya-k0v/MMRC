@@ -342,6 +342,8 @@ const volumeStateByDevice = new Map();
 const VOLUME_STEP = 5;
 const VOLUME_SOCKET_WAIT_MS = 1500;
 const volumeFallbackTimers = new Map();
+let isVideoSeeking = false;
+let videoProgressTooltip = null;
 
 function clearVolumeFallback(deviceId) {
   if (!deviceId) return;
@@ -1916,10 +1918,12 @@ function updatePlaybackInfoUI() {
       playbackInfo.progress.duration &&
       playbackInfo.progress.duration >= 600
     ) {
-      progressBar.value = playbackInfo.progress.percent ?? 0;
+      if (!isVideoSeeking) {
+        progressBar.value = playbackInfo.progress.percent ?? 0;
+      }
       progressBar.max = 100;
       progressBar.dataset.currentTime = playbackInfo.progress.currentTime;
-    progressBar.dataset.duration = playbackInfo.progress.duration;
+      progressBar.dataset.duration = playbackInfo.progress.duration;
       progressBar.dataset.file = playbackInfo.progress.file;
       progressContainer.style.display = 'block';
     } else {
@@ -2101,43 +2105,72 @@ document.getElementById('stopBtn').onclick = () => {
 // Обработчик перемотки видео через прогресс-бар
 const videoProgressBar = document.getElementById('videoProgressBar');
 if (videoProgressBar) {
-  let isSeeking = false;
+  const progressBarContainer = document.getElementById('videoProgressContainer');
+  if (progressBarContainer) {
+    progressBarContainer.style.position = 'relative';
+    videoProgressTooltip = document.createElement('div');
+    videoProgressTooltip.className = 'video-progress-tooltip';
+    videoProgressTooltip.style.position = 'absolute';
+    videoProgressTooltip.style.padding = '2px 6px';
+    videoProgressTooltip.style.background = 'rgba(0,0,0,0.8)';
+    videoProgressTooltip.style.color = '#fff';
+    videoProgressTooltip.style.fontSize = '12px';
+    videoProgressTooltip.style.borderRadius = '4px';
+    videoProgressTooltip.style.pointerEvents = 'none';
+    videoProgressTooltip.style.transform = 'translate(-50%, -140%)';
+    videoProgressTooltip.style.display = 'none';
+    progressBarContainer.appendChild(videoProgressTooltip);
+  }
+  
+  const updateTooltipPosition = (progress) => {
+    if (!videoProgressTooltip) return;
+    const duration = parseFloat(videoProgressBar.dataset.duration);
+    if (!duration || duration <= 0) {
+      videoProgressTooltip.style.display = 'none';
+      return;
+    }
+    const targetTime = Math.floor((progress / 100) * duration);
+    videoProgressTooltip.textContent = formatTime(targetTime);
+    videoProgressTooltip.style.display = 'block';
+    if (progressBarContainer) {
+      const barRect = videoProgressBar.getBoundingClientRect();
+      const containerRect = progressBarContainer.getBoundingClientRect();
+      const offsetX = (barRect.left - containerRect.left) + (barRect.width * (progress / 100));
+      videoProgressTooltip.style.left = `${offsetX}px`;
+    }
+  };
   
   videoProgressBar.addEventListener('input', (e) => {
-    // При перетаскивании ползунка обновляем визуально, но не перематываем
-    isSeeking = true;
+    isVideoSeeking = true;
+    updateTooltipPosition(parseFloat(e.target.value));
   });
   
   videoProgressBar.addEventListener('change', (e) => {
-    if (!currentDevice || isSeeking === false) return;
+    if (!currentDevice) return;
     
     const progressBar = e.target;
     const duration = parseFloat(progressBar.dataset.duration);
     const file = progressBar.dataset.file;
     
-    if (!duration || !file || duration <= 0) return;
+    if (!duration || !file || duration <= 0) {
+      isVideoSeeking = false;
+      if (videoProgressTooltip) videoProgressTooltip.style.display = 'none';
+      return;
+    }
     
     const percent = parseFloat(progressBar.value);
     const targetTime = Math.floor((percent / 100) * duration);
     
-    console.log('[Speaker] 🎯 Перемотка видео:', { file, targetTime, duration, percent });
-    
-    // Отправляем команду на перемотку напрямую на устройство
-    // Используем player/seek для прямой перемотки на устройстве
     socket.emit('control/seek', { 
       device_id: currentDevice, 
       file: file,
       position: targetTime 
     });
-    
-    // Также отправляем напрямую на устройство через broadcast
-    // (если сервер поддерживает, он перешлет команду)
     socket.emit('player/seek', { 
       device_id: currentDevice, 
       position: targetTime 
     });
     
-    // Обновляем локальный прогресс для мгновенной обратной связи
     const prog = playbackProgressByDevice.get(currentDevice);
     if (prog) {
       prog.currentTime = targetTime;
@@ -2145,7 +2178,8 @@ if (videoProgressBar) {
       updatePlaybackInfoUI();
     }
     
-    isSeeking = false;
+    isVideoSeeking = false;
+    if (videoProgressTooltip) videoProgressTooltip.style.display = 'none';
   });
 }
 // Обработчики для кнопок навигации (Назад/Вперед) - используются для папок, PDF, PPTX

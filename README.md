@@ -76,6 +76,16 @@ sudo systemctl start videocontrol
 
 ---
 
+## 📚 Документация
+
+- `README.md` — обзор, архитектура и возможности
+- `QUICK-START.md` — пошаговая установка и подготовка окружения
+- `docs/MANUAL.md` — эксплуатация, мониторинг, бэкапы и сценарии устранения неполадок
+- `clients/android-mediaplayer/README.md` + `QUICK_SETUP.md` — Android/ADB инструкции
+- `clients/mpv/README.md` — MPV‑клиент для Linux‑плееров
+
+---
+
 ## 📱 Android клиент
 
 ### Быстрая установка

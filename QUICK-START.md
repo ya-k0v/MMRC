@@ -276,8 +276,8 @@ sudo systemctl start videocontrol
 
 - `README.md` — обзор и архитектура
 - `docs/MANUAL.md` — SQLite, systemd, Nginx, бэкапы, health check, metrics
-- `plan/ROADMAP.md`, `plan/SECURITY_LEVELS.md` — планы и уровни безопасности
-- `clients/android-mediaplayer/` и `clients/mpv/` — документация клиентов
+- `clients/android-mediaplayer/README.md` и `clients/android-mediaplayer/QUICK_SETUP.md` — Android‑клиент
+- `clients/mpv/README.md` — MPV‑клиент на Linux
 
 ---
 
