@@ -135,7 +135,7 @@ if [ -z "$DEVICE_ID" ] || [ -z "$SERVER_IP" ]; then
 fi
 
 SERVER_URL="http://${SERVER_IP}"
-PLAYER_URL="${SERVER_URL}/player.html?device_id=${DEVICE_ID}&autoplay=1"
+PLAYER_URL="${SERVER_URL}/player-videojs.html?device_id=${DEVICE_ID}&autoplay=1"
 CHECK_INTERVAL=30
 MAX_FAILURES=3
 failure_count=0

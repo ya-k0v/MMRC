@@ -51,9 +51,12 @@ node server.js
 # Интерактивная установка
 sudo bash scripts/quick-install.sh
 
-# Или non-interactive с выбором хранилища
-STORAGE_MODE=external CONTENT_DIR=/mnt/vc-content \
+# Или полностью non-interactive (AUTO_CONFIRM=1) с выбором хранилища
+AUTO_CONFIRM=1 STORAGE_MODE=external CONTENT_DIR=/mnt/vc-content \
   sudo bash scripts/quick-install.sh /vid/videocontrol
+
+# Базовый сервер без Nginx (auto-yes для systemd/Nginx вопросов)
+AUTO_CONFIRM=1 sudo bash scripts/install-server.sh
 ```
 
 Доступные режимы хранения:

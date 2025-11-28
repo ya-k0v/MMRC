@@ -1733,9 +1733,12 @@ function resolveFileDisplayData(deviceId, fileName) {
   return { displayName, fileInfo, folderImageCount };
 }
 
-function formatStaticPlaybackLabel(type, page, _totalCount, isPlaylist) {
+function formatStaticPlaybackLabel(type, page, totalCount, isPlaylist) {
   const descriptor = type === 'folder' ? 'Кадр' : type === 'pptx' ? 'Слайд' : 'Страница';
   let label = `${descriptor} ${page}`;
+  if (totalCount && Number(totalCount) > 0) {
+    label += ` из ${totalCount}`;
+  }
   if (type === 'folder' && isPlaylist) {
     label += ' | Плейлист';
   }

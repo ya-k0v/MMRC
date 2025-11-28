@@ -233,14 +233,18 @@ adb -s SERIAL shell monkey -p com.videocontrol.mediaplayer -c android.intent.cat
 ## Блок G — Быстрая установка и переменные
 ```bash
 # Переменные для quick-install.sh
-export STORAGE_MODE=external            # local | external | external_fstab
+export AUTO_CONFIRM=1                  # отключает все вопросы
+export STORAGE_MODE=external           # local | external | external_fstab
 export CONTENT_DIR=/mnt/vc-content
 export CONTENT_SOURCE=/dev/sdb1         # или UUID=xxxx-xxxx
 export CONTENT_FSTAB_OPTS="ext4 defaults,noatime 0 2"
 
 # Неблокирующий запуск
-sudo STORAGE_MODE=external CONTENT_DIR=/mnt/vc-content \
+sudo AUTO_CONFIRM=1 STORAGE_MODE=external CONTENT_DIR=/mnt/vc-content \
      bash scripts/quick-install.sh /vid/videocontrol
+
+# Быстрая установка server-only (без Nginx) с автоответами
+sudo AUTO_CONFIRM=1 bash scripts/install-server.sh
 ```
 
 ### Чистый сервер за 5 шагов

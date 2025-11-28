@@ -397,11 +397,10 @@ function renderHero(hero) {
               <h1>${escapeHtml(hero.full_name)}</h1>
               <div class="hero-info-item hero-rank-years">
                 <div class="hero-rank">
-                  <strong>Звание:</strong>
-                  <span>${hero.rank ? escapeHtml(hero.rank) : '—'}</span>
+                  <span>${hero.birth_year || '?'} – ${hero.death_year || 'н.в.'}</span>
       </div>
                 <div class="hero-years">
-                  <span>${hero.birth_year || '?'} – ${hero.death_year || 'н.в.'}</span>
+                 <span>${hero.rank ? escapeHtml(hero.rank) : '—'}</span> 
                 </div>
               </div>
             </div>

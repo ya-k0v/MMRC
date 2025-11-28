@@ -4,6 +4,9 @@
 
 set -e
 
+# AUTO_CONFIRM=1 отключает все интерактивные вопросы
+AUTO_CONFIRM="${AUTO_CONFIRM:-0}"
+
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
@@ -41,11 +44,15 @@ echo "Installation settings:"
 echo "  Directory: $INSTALL_DIR"
 echo "  User: $CURRENT_USER"
 echo ""
-read -p "Continue? (y/n): " -n 1 -r
-echo ""
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "Aborted."
-    exit 0
+if [ "$AUTO_CONFIRM" = "1" ]; then
+    echo "AUTO_CONFIRM=1 → продолжение без подтверждения"
+else
+    read -p "Continue? (y/n): " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Aborted."
+        exit 0
+    fi
 fi
 
 # Настройки хранения контента (можно переопределить переменными окружения)
@@ -60,23 +67,32 @@ CONTENT_FSTAB_OPTS="${CONTENT_FSTAB_OPTS:-ext4 defaults,noatime 0 2}"
 
 # Интерактивный выбор, если не задано через переменные
 if [ -z "$STORAGE_MODE" ]; then
-    echo ""
-    echo "Select content storage mode:"
-    echo "  [1] Local (inside project at public/content)"
-    echo "  [2] External directory via symlink (CONTENT_DIR=$CONTENT_DIR)"
-    echo "  [3] External device via /etc/fstab -> $CONTENT_DIR + symlink"
-    read -p "Choose [1-3]: " -n 1 -r
-    echo ""
-    case "$REPLY" in
-        1) STORAGE_MODE="local" ;;
-        2) STORAGE_MODE="external" ;;
-        3) STORAGE_MODE="external_fstab" ;;
-        *) echo "Invalid choice, defaulting to local"; STORAGE_MODE="local" ;;
-    esac
+    if [ "$AUTO_CONFIRM" = "1" ]; then
+        STORAGE_MODE="local"
+        echo "AUTO_CONFIRM=1 → STORAGE_MODE не задан, используем local"
+    else
+        echo ""
+        echo "Select content storage mode:"
+        echo "  [1] Local (inside project at public/content)"
+        echo "  [2] External directory via symlink (CONTENT_DIR=$CONTENT_DIR)"
+        echo "  [3] External device via /etc/fstab -> $CONTENT_DIR + symlink"
+        read -p "Choose [1-3]: " -n 1 -r
+        echo ""
+        case "$REPLY" in
+            1) STORAGE_MODE="local" ;;
+            2) STORAGE_MODE="external" ;;
+            3) STORAGE_MODE="external_fstab" ;;
+            *) echo "Invalid choice, defaulting to local"; STORAGE_MODE="local" ;;
+        esac
+    fi
 fi
 
 # Для режима external_fstab запросим источник, если не задан
 if [ "$STORAGE_MODE" = "external_fstab" ] && [ -z "$CONTENT_SOURCE" ]; then
+    if [ "$AUTO_CONFIRM" = "1" ]; then
+        echo "❌ CONTENT_SOURCE must be set when STORAGE_MODE=external_fstab in AUTO_CONFIRM mode"
+        exit 1
+    fi
     read -p "Enter content device/UUID for /etc/fstab (e.g., /dev/sdb1 or UUID=xxxx): " CONTENT_SOURCE
 fi
 
@@ -116,13 +132,18 @@ echo -e "${BLUE}[2/7] Setting up project...${NC}"
 
 if [ -d "$INSTALL_DIR" ]; then
     echo -e "${YELLOW}⚠️  Directory $INSTALL_DIR already exists${NC}"
-    read -p "Remove and reinstall? (y/n): " -n 1 -r
-    echo ""
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
+    if [ "$AUTO_CONFIRM" = "1" ]; then
+        echo "AUTO_CONFIRM=1 → removing existing directory"
         rm -rf "$INSTALL_DIR"
     else
-        echo "Installation cancelled."
-        exit 0
+        read -p "Remove and reinstall? (y/n): " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            rm -rf "$INSTALL_DIR"
+        else
+            echo "Installation cancelled."
+            exit 0
+        fi
     fi
 fi
 

@@ -4,6 +4,8 @@
 
 set -e
 
+AUTO_CONFIRM="${AUTO_CONFIRM:-0}"
+
 echo "==================================="
 echo "Video Control Server - Installation"
 echo "==================================="
@@ -111,8 +113,12 @@ fi
 
 # Setup systemd service
 echo ""
-read -p "Install as systemd service? (y/n): " -n 1 -r
-echo ""
+if [ "$AUTO_CONFIRM" = "1" ]; then
+    REPLY="y"
+else
+    read -p "Install as systemd service? (y/n): " -n 1 -r
+    echo ""
+fi
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     CURRENT_USER=$(whoami)
     CURRENT_DIR=$(pwd)
@@ -148,8 +154,12 @@ fi
 
 # Setup Nginx
 echo ""
-read -p "Install and configure Nginx? (y/n): " -n 1 -r
-echo ""
+if [ "$AUTO_CONFIRM" = "1" ]; then
+    REPLY="y"
+else
+    read -p "Install and configure Nginx? (y/n): " -n 1 -r
+    echo ""
+fi
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     if [ -f nginx/install-nginx.sh ]; then
         cd nginx

@@ -370,12 +370,6 @@ function renderHeroDetail(hero) {
             <div class="hero-info-header">
               <h1 data-edit="full_name" data-type="text">${escapeHtml(hero.full_name || 'Без имени')}</h1>
               <div class="hero-info-item hero-rank-years">
-                <div class="hero-rank">
-                  <strong>Звание:</strong>
-                  <span data-edit="rank" data-type="text" data-placeholder="Без звания">
-                    ${escapeHtml(hero.rank || '—')}
-                  </span>
-                </div>
                 <div class="hero-years">
                   <span data-edit="birth_year" data-type="text" data-placeholder="Дата рождения">
                     ${escapeHtml(hero.birth_year || '?')}
@@ -383,6 +377,11 @@ function renderHeroDetail(hero) {
                   <span>–</span>
                   <span data-edit="death_year" data-type="text" data-placeholder="н.в.">
                     ${escapeHtml(hero.death_year || 'н.в.')}
+                  </span>
+                </div>
+                <div class="hero-rank">
+                  <span data-edit="rank" data-type="text" data-placeholder="Без звания">
+                    ${escapeHtml(hero.rank || '—')}
                   </span>
                 </div>
               </div>

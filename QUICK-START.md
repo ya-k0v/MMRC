@@ -13,6 +13,7 @@ wget -O - https://raw.githubusercontent.com/ya-k0v/VideoControl/main/scripts/qui
 ### Нон-интерактивный запуск
 
 ```bash
+AUTO_CONFIRM=1 \
 STORAGE_MODE=external \
 CONTENT_DIR=/mnt/vc-content \
 CONTENT_SOURCE="UUID=xxxx-xxxx" \
@@ -23,6 +24,13 @@ sudo bash scripts/quick-install.sh /vid/videocontrol
 - `CONTENT_DIR`: каталог с медиа (обязателен для external режимов)
 - `CONTENT_SOURCE`: устройство/UUID для записи в `/etc/fstab` (только `external_fstab`)
 - `CONTENT_FSTAB_OPTS`: параметры монтирования (по умолчанию `ext4 defaults,noatime 0 2`)
+- `AUTO_CONFIRM=1`: отключает все вопросы “y/n” (на production серверах запуск полностью автоматический)
+
+### Упрощённая серверная установка без Nginx
+
+```bash
+AUTO_CONFIRM=1 sudo bash scripts/install-server.sh
+```
 
 ### Ручная установка (dev / кастомные окружения)
 

@@ -10,6 +10,7 @@ import mime from 'mime';
 import { DEVICES } from '../config/constants.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import logger from '../utils/logger.js';
+import { getFolderImagesCount } from '../converters/folder-converter.js';
 
 const router = express.Router();
 
