@@ -165,7 +165,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     user = await ensureAuth();
     if (!user) return;
     if (user.role === 'hero_admin') {
-      window.location.href = '/hero-admin.html';
+      window.location.href = '/hero/admin.html';
       return;
     }
   } catch (err) {
@@ -206,7 +206,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (heroBtn) {
     if (user.role === 'admin') {
       heroBtn.onclick = () => {
-        window.location.href = '/hero-admin.html';
+        window.location.href = '/hero/admin.html';
       };
     } else {
       heroBtn.style.display = 'none';

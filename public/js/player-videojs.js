@@ -625,7 +625,9 @@ if (!device_id || !device_id.trim()) {
                 vjsPlayer.loop(true);
                 vjsPlayer.muted(true);
                 vjsPlayer.volume(0);
-                vjsPlayer.src({ src: content(previewFile), type: 'video/mp4' });
+                const previewSeconds = parseInt(url.searchParams.get('seconds') || '10', 10);
+                const previewStart = parseInt(url.searchParams.get('start') || '0', 10);
+                vjsPlayer.src({ src: videoPreviewSource(previewFile, { start: previewStart, seconds: previewSeconds }), type: 'video/mp4' });
                 videoContainer.style.display = ''; // КРИТИЧНО: Сбрасываем display:none
                 show(videoContainer);
                 
@@ -780,6 +782,16 @@ if (!device_id || !device_id.trim()) {
   function content(file){ 
     // НОВОЕ: Используем API resolver для поддержки shared storage (дедупликация)
     return `/api/files/resolve/${encodeURIComponent(device_id)}/${encodeURIComponent(file)}`; 
+  }
+
+  function videoPreviewSource(file, options = {}) {
+    const params = new URLSearchParams();
+    const seconds = Number.isFinite(options.seconds) ? options.seconds : 10;
+    const start = Number.isFinite(options.start) ? options.start : 0;
+    if (start > 0) params.set('start', start);
+    params.set('seconds', Math.max(1, seconds));
+    const query = params.toString();
+    return `/api/files/preview/${encodeURIComponent(device_id)}/${encodeURIComponent(file)}${query ? `?${query}` : ''}`;
   }
 
   function enableSound(){

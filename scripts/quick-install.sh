@@ -152,6 +152,7 @@ echo ""
 echo -e "${BLUE}[4/7] Creating project structure...${NC}"
 
 mkdir -p config
+mkdir -p config/hero
 mkdir -p logs
 mkdir -p .converted
 mkdir -p temp/nginx_upload
@@ -232,6 +233,15 @@ if [ ! -f config/main.db ]; then
     echo -e "  ${RED}⚠️  CHANGE PASSWORD AFTER FIRST LOGIN!${NC}"
 else
     echo -e "  ${YELLOW}⚠️  Database already exists${NC}"
+fi
+
+echo "  Initializing hero module database..."
+if [ ! -f config/hero/heroes.db ]; then
+    sqlite3 config/hero/heroes.db < src/hero/database/schema.sql
+    chown $CURRENT_USER:$CURRENT_USER config/hero/heroes.db
+    echo -e "  ${GREEN}✅ Hero database initialized (config/hero/heroes.db)${NC}"
+else
+    echo -e "  ${YELLOW}⚠️  Hero database already exists${NC}"
 fi
 
 # Создаем конфигурацию видео-оптимизации если нет

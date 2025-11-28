@@ -30,7 +30,7 @@ import { createSystemInfoRouter } from './src/routes/system-info.js';
 import { createFoldersRouter } from './src/routes/folders.js';
 import { createAuthRouter } from './src/routes/auth.js';
 import { createDeduplicationRouter } from './src/routes/deduplication.js';
-import { createHeroRouter } from './src/modules/hero/index.js';
+import { createHeroRouter } from './src/hero/index.js';
 import { createVolumeRouter } from './src/routes/volume.js';
 import fileResolverRouter from './src/routes/file-resolver.js';
 import { createUploadMiddleware } from './src/middleware/multer-config.js';

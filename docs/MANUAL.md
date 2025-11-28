@@ -5,7 +5,7 @@
 Справочник разделён по областям: Videocontrol (systemd/Node.js), Nginx, SQL/SQLite, хранилище контента, бэкапы, Android/ADB, быстрые установки и дополнительные проверки.
 
 ### Новые возможности (v2.8.0)
-- **Hero Module** — отдельный модуль (`public/hero*.html`, `src/modules/hero`) с базой `config/heroes.db` и REST API для биографий.
+- **Hero Module** — отдельный модуль (`public/hero/`, `src/hero/`) с базой `config/hero/heroes.db` и REST API для биографий.
 - **Авто-миграции heroes.db** — база создаётся и синхронизируется при старте сервера, доступен экспорт `/api/hero/export-database`.
 - **Quick-install 2.0** — улучшенный скрипт с выбором режима хранилища, sysctl оптимизациями и готовым systemd unit.
 - **Документация** — обновлены QUICK-START/README, добавлены инструкции по hero и health/metrics сценариям.

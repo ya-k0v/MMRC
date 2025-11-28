@@ -123,7 +123,7 @@ sudo tail -f /var/log/nginx/videocontrol_access.log
 ├── public/
 │   ├── content/                         # Контент устройств (до 5GB на файл)
 │   ├── admin.html, speaker.html         # Интерфейсы
-│   ├── hero.html, hero-admin.html       # Hero-модуль
+│   ├── hero/ (index.html, admin.html, js/) # Hero-модуль
 │   └── player-videojs.html              # Плеер
 ├── logs/
 │   ├── combined-YYYY-MM-DD.log          # Все логи
@@ -198,8 +198,8 @@ curl -X POST http://YOUR_IP/api/auth/change-password \
 - Повторный запуск: `sudo bash scripts/optimize-network.sh`
 
 ### Hero-модуль
-- База `config/heroes.db` создаётся автоматически при старте (`src/modules/hero/database/hero-db.js`)
-- Ручной ресинк схемы: `sqlite3 config/heroes.db < src/modules/hero/database/schema.sql`
+- База `config/hero/heroes.db` создаётся автоматически при старте (`src/hero/database/hero-db.js`)
+- Ручной ресинк схемы: `sqlite3 config/hero/heroes.db < src/hero/database/schema.sql`
 
 ---
 
@@ -245,7 +245,7 @@ sudo chmod 755 /vid/videocontrol/temp/nginx_upload/
   - Автонастройка через `scripts/quick-setup-android.sh` (ADB, установка APK, device ID, отключение энергосбережения)
   - Вручную: `adb install -r VCMplayer-v2.8.0.apk`, затем прописать `Server URL` и `Device ID`
 - **MPV Player (Linux):** `cd clients/mpv && sudo bash quick-install.sh`
-- **Hero дисплеи:** `public/hero.html`, `public/hero-admin.html`
+- **Hero дисплеи:** `public/hero/index.html`, `public/hero/admin.html`
 - **Браузер:** `http://SERVER_IP/player-videojs.html?device_id=YOUR_ID`
 
 ---
@@ -265,7 +265,7 @@ npm install
 
 # Применить схему (идемпотентно)
 sqlite3 config/main.db < src/database/init.sql
-sqlite3 config/heroes.db < src/modules/hero/database/schema.sql
+sqlite3 config/hero/heroes.db < src/hero/database/schema.sql
 
 sudo systemctl start videocontrol
 ```

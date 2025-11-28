@@ -93,7 +93,7 @@
           
           // Редирект в зависимости от роли
           if (data.user.role === 'hero_admin') {
-            window.location.href = '/hero-admin.html';
+            window.location.href = '/hero/admin.html';
           } else if (data.user.role === 'admin') {
             window.location.href = '/admin.html';
           } else if (data.user.role === 'speaker') {
@@ -144,7 +144,7 @@
       if (user.role === 'speaker') {
               window.location.replace('/speaker.html');
             } else if (user.role === 'hero_admin') {
-              window.location.replace('/hero-admin.html');
+              window.location.replace('/hero/admin.html');
             } else if (user.role === 'admin') {
               window.location.replace('/admin.html');
             } else {

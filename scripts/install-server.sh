@@ -78,6 +78,7 @@ echo ""
 echo "Creating directories..."
 mkdir -p public/content
 mkdir -p config
+mkdir -p config/hero
 mkdir -p .converted
 mkdir -p logs
 
@@ -91,6 +92,15 @@ if [ ! -f config/main.db ]; then
     echo "   ⚠️  CHANGE PASSWORD AFTER FIRST LOGIN!"
 else
     echo "ℹ️  Database already exists, skipping initialization"
+fi
+
+# Initialize hero module database
+echo ""
+if [ ! -f config/hero/heroes.db ]; then
+    sqlite3 config/hero/heroes.db < src/hero/database/schema.sql
+    echo "✅ Hero database initialized (config/hero/heroes.db)"
+else
+    echo "ℹ️  Hero database already exists (config/hero/heroes.db)"
 fi
 
 # Create default config files if not exist
