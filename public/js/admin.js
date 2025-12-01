@@ -12,7 +12,7 @@ import { clearDetail, clearFilesPane, openDevice as openDeviceHelper } from './a
 import { renderDeviceCard as renderDeviceCardModule } from './admin/device-card.js';
 import { setupUploadUI as setupUploadUIModule } from './admin/upload-ui.js';
 import { showDevicesModal, showUsersModal, showSettingsModal } from './admin/modal.js';
-import { getSettingsIcon } from './shared/svg-icons.js';
+import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon } from './shared/svg-icons.js';
 
 const socket = io();
 const grid = document.getElementById('grid');
@@ -190,6 +190,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     devicesBtn.style.display = 'none'; // Speaker не может создавать устройства
   }
   
+  // Обработчик кнопки Спикер (в toolbar)
+  const speakerBtn = document.getElementById('speakerBtn');
+  if (speakerBtn) {
+    speakerBtn.onclick = () => {
+      window.open('/speaker.html', '_blank');
+    };
+  }
+
   // Обработчик кнопки Пользователи (только для admin)
   const usersBtn = document.getElementById('usersBtn');
   if (usersBtn && user.role === 'admin') {
@@ -295,7 +303,6 @@ function renderLayout() {
       <div class="header" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-sm)">
         <div class="title" id="filesPaneTitle" style="margin:0; font-size:var(--font-size-base)">Файлы</div>
         <div style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap">
-          <button class="secondary" id="addStreamBtn" style="display:none;">+ Стрим</button>
           <div class="meta" id="filesPaneMeta" style="margin:0; white-space:nowrap">Выберите устройство слева</div>
         </div>
       </div>
@@ -307,18 +314,6 @@ function renderLayout() {
   `;
 
   renderTVList();
-  setupAddStreamButton();
-}
-
-function setupAddStreamButton() {
-  const btn = document.getElementById('addStreamBtn');
-  if (!btn) return;
-  if (!user || user.role !== 'admin') {
-    btn.style.display = 'none';
-    return;
-  }
-  btn.style.display = 'inline-flex';
-  btn.onclick = () => promptAddStream();
 }
 
 async function promptAddStream() {
@@ -424,10 +419,6 @@ async function renderFilesPane(deviceId) {
   const updatedDevice = devicesCache.find(d => d.device_id === deviceId);
   const updatedFilesCount = updatedDevice ? (updatedDevice.files?.length || 0) : filesCount;
   if (meta) meta.textContent = `${updatedFilesCount} файл${updatedFilesCount === 1 ? '' : updatedFilesCount > 1 && updatedFilesCount < 5 ? 'а' : 'ов'}`;
-  const streamBtn = document.getElementById('addStreamBtn');
-  if (streamBtn) {
-    streamBtn.disabled = !deviceId;
-  }
 }
 
 
@@ -555,8 +546,6 @@ function updateVolumePanel(deviceId = currentDeviceId) {
   const slider = document.getElementById('adminVolumeSlider');
   const valueEl = document.getElementById('adminVolumeValue');
   const statusEl = document.getElementById('adminVolumeStatus');
-  const downBtn = document.getElementById('adminVolumeDown');
-  const upBtn = document.getElementById('adminVolumeUp');
   const muteBtn = document.getElementById('adminVolumeMute');
   const panel = document.getElementById('adminVolumePanel');
   if (!panel) return;
@@ -573,9 +562,37 @@ function updateVolumePanel(deviceId = currentDeviceId) {
       slider.value = clampVolumePercent(state.level) ?? slider.value;
     }
   }
-  if (downBtn) downBtn.disabled = disabled;
-  if (upBtn) upBtn.disabled = disabled;
   if (muteBtn) muteBtn.disabled = disabled;
+  
+  // Обновляем иконку кнопки mute
+  if (muteBtn) {
+    const iconEl = muteBtn.querySelector('.volume-btn-icon');
+    let iconHtml;
+    let actionLabel;
+    let iconColor = 'currentColor';
+    
+    if (!state) {
+      iconHtml = getVolumeUnknownIcon(20, iconColor);
+      actionLabel = hasDevice ? 'Нет данных' : 'Выберите устройство';
+    } else {
+      const isMuted = state.muted;
+      // Определяем цвет иконки: красный для muted, зеленый для unmuted
+      iconColor = isMuted ? 'var(--danger)' : 'var(--success)';
+      iconHtml = isMuted ? getVolumeMutedIcon(20, iconColor) : getVolumeOnIcon(20, iconColor);
+      actionLabel = isMuted ? 'Включить звук' : 'Заглушить звук';
+      if (isOffline) {
+        actionLabel += ' · применится при подключении';
+      }
+    }
+    
+    if (iconEl) {
+      iconEl.innerHTML = iconHtml;
+    } else {
+      muteBtn.innerHTML = `<span class="volume-btn-icon" aria-hidden="true">${iconHtml}</span>`;
+    }
+    muteBtn.setAttribute('aria-label', actionLabel);
+    muteBtn.setAttribute('title', actionLabel);
+  }
   
   if (!state) {
     if (valueEl) valueEl.textContent = '--%';
@@ -584,7 +601,6 @@ function updateVolumePanel(deviceId = currentDeviceId) {
         ? 'Нет данных'
         : 'Выберите устройство';
     }
-    if (muteBtn) muteBtn.textContent = '🔇 Заглушить';
     return;
   }
   
@@ -597,7 +613,6 @@ function updateVolumePanel(deviceId = currentDeviceId) {
     }
     statusEl.textContent = statusText;
   }
-  if (muteBtn) muteBtn.textContent = state.muted ? '🔊 Включить' : '🔇 Заглушить';
 }
 
 async function ensureVolumeState(deviceId) {
@@ -625,12 +640,10 @@ async function fetchVolumeState(deviceId) {
 
 function setupVolumePanel(deviceId) {
   const slider = document.getElementById('adminVolumeSlider');
-  const downBtn = document.getElementById('adminVolumeDown');
-  const upBtn = document.getElementById('adminVolumeUp');
   const muteBtn = document.getElementById('adminVolumeMute');
   const valueEl = document.getElementById('adminVolumeValue');
   const statusEl = document.getElementById('adminVolumeStatus');
-  if (!slider || !downBtn || !upBtn || !muteBtn || !statusEl || !valueEl) return;
+  if (!slider || !muteBtn || !statusEl || !valueEl) return;
   
   slider.addEventListener('input', () => {
     valueEl.textContent = `${slider.value}%`;
@@ -638,14 +651,6 @@ function setupVolumePanel(deviceId) {
   slider.addEventListener('change', () => {
     if (slider.disabled) return;
     sendVolumeCommand(deviceId, { level: Number(slider.value) });
-  });
-  downBtn.addEventListener('click', () => {
-    if (downBtn.disabled) return;
-    sendVolumeCommand(deviceId, { delta: -VOLUME_STEP });
-  });
-  upBtn.addEventListener('click', () => {
-    if (upBtn.disabled) return;
-    sendVolumeCommand(deviceId, { delta: VOLUME_STEP });
   });
   muteBtn.addEventListener('click', () => {
     if (muteBtn.disabled) return;

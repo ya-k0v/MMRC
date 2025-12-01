@@ -49,52 +49,69 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
       isBigFile
     });
     
-    // Проверяем есть ли дубликат на других устройствах (используем partial для больших файлов)
-    const searchMd5 = partialMd5 || md5Hash;
-    const duplicate = findDuplicateFile(searchMd5, fileSize, deviceId, !!partialMd5);
+    // Определяем тип файла для проверки необходимости дедупликации
+    const videoExtensions = ['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'];
+    const isVideoFile = videoExtensions.includes(ext);
+    
+    // Дедупликация применяется ТОЛЬКО для видео файлов
+    // Презентации и картинки не дедуплицируются
+    let duplicate = null;
     let deduplicationApplied = false;
     
-    if (duplicate && fs.existsSync(duplicate.file_path)) {
-      // Дубликат найден! НОВАЯ АРХИТЕКТУРА: удаляем загруженный файл, используем существующий
-      logFile('info', '⚡ Duplicate detected - using existing file (instant deduplication)', {
-        deviceId,
-        safeName,
-        duplicateDevice: duplicate.device_id,
-        duplicateFile: duplicate.safe_name,
-        sharedPath: duplicate.file_path,
-        md5: md5Hash.substring(0, 12),
-        savedSpaceMB: (fileSize / 1024 / 1024).toFixed(2)
-      });
+    if (isVideoFile) {
+      // Проверяем есть ли дубликат на других устройствах (используем partial для больших файлов)
+      const searchMd5 = partialMd5 || md5Hash;
+      duplicate = findDuplicateFile(searchMd5, fileSize, deviceId, !!partialMd5);
       
-      try {
-        // Удаляем только что загруженный файл (не нужен, используем существующий)
-        fs.unlinkSync(filePath);
-        
-        // НОВОЕ: Заменяем filePath на путь к существующему файлу (shared storage)
-        filePath = duplicate.file_path;
-        
-        deduplicationApplied = true;
-        
-        logFile('info', '✅ Instant deduplication applied (0 bytes copied, saved disk space!)', {
+      if (duplicate && fs.existsSync(duplicate.file_path)) {
+        // Дубликат найден! НОВАЯ АРХИТЕКТУРА: удаляем загруженный файл, используем существующий
+        logFile('info', '⚡ Duplicate detected - using existing file (instant deduplication)', {
           deviceId,
           safeName,
-          referencesTo: duplicate.file_path,
-          copiedMetadataFrom: `${duplicate.device_id}:${duplicate.safe_name}`
+          duplicateDevice: duplicate.device_id,
+          duplicateFile: duplicate.safe_name,
+          sharedPath: duplicate.file_path,
+          md5: md5Hash.substring(0, 12),
+          savedSpaceMB: (fileSize / 1024 / 1024).toFixed(2)
         });
-      } catch (e) {
-        logFile('error', 'Failed to deduplicate file', {
-          error: e.message,
+        
+        try {
+          // Удаляем только что загруженный файл (не нужен, используем существующий)
+          fs.unlinkSync(filePath);
+          
+          // НОВОЕ: Заменяем filePath на путь к существующему файлу (shared storage)
+          filePath = duplicate.file_path;
+          
+          deduplicationApplied = true;
+          
+          logFile('info', '✅ Instant deduplication applied (0 bytes copied, saved disk space!)', {
+            deviceId,
+            safeName,
+            referencesTo: duplicate.file_path,
+            copiedMetadataFrom: `${duplicate.device_id}:${duplicate.safe_name}`
+          });
+        } catch (e) {
+          logFile('error', 'Failed to deduplicate file', {
+            error: e.message,
+            deviceId,
+            safeName
+          });
+          deduplicationApplied = false;
+        }
+      } else if (duplicate) {
+        logFile('warn', 'Duplicate found but source file missing', {
           deviceId,
-          safeName
+          safeName,
+          duplicateDevice: duplicate.device_id,
+          missingFile: duplicate.file_path
         });
-        deduplicationApplied = false;
       }
-    } else if (duplicate) {
-      logFile('warn', 'Duplicate found but source file missing', {
+    } else {
+      logFile('debug', 'Skipping deduplication for non-video file', {
         deviceId,
         safeName,
-        duplicateDevice: duplicate.device_id,
-        missingFile: duplicate.file_path
+        extension: ext,
+        fileType: 'presentation/image/other'
       });
     }
     

@@ -1,6 +1,6 @@
 // device-card.js - ПОЛНЫЙ код renderDeviceCard из admin.js
 import { DEVICE_ICONS, DEVICE_TYPE_NAMES } from '../shared/constants.js';
-import { getCheckIcon, getCrossIcon, getFileIcon, getFolderIcon } from '../shared/svg-icons.js';
+import { getCheckIcon, getCrossIcon, getFileIcon, getFolderIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon } from '../shared/svg-icons.js';
 import { adminFetch } from './auth.js';
 import { clearDetail, clearFilesPane } from './ui-helpers.js';
 import { setupUploadUI } from './upload-ui.js';
@@ -17,13 +17,20 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   card.style.height = '100%';
   card.style.minHeight = '0';
   const name = d.name || nodeNames[d.device_id] || d.device_id;
+  const playerUrl = `${window.location.origin}/player-videojs.html?device_id=${did}`;
   card.innerHTML = `
     <div class="header" style="margin-bottom:0">
       <div style="flex:1; display:flex; align-items:stretch; gap:var(--space-sm)">
         <div class="title" id="deviceName" style="flex:1; ${isAdmin ? 'cursor:pointer;' : ''} padding:var(--space-sm) var(--space-md); border-radius:var(--radius-sm); transition:all 0.2s; display:flex; align-items:center; min-height:36px; font-size:var(--font-size-base); margin:0" contenteditable="false">${name}</div>
-        ${isAdmin ? `<button class="primary" id="renameSaveBtn" style="display:none; min-width:36px; width:36px; height:36px; padding:0; border-radius:var(--radius-sm); flex-shrink:0; align-items:center; justify-content:center; font-size:var(--font-size-lg); line-height:1; transition:all 0.2s; box-shadow:var(--shadow-sm)" title="Сохранить">
+        ${isAdmin ? `<button class="meta-lg" id="renameSaveBtn" style="display:none; min-width:36px; width:36px; height:36px; padding:0; border-radius:var(--radius-sm); flex-shrink:0; align-items:center; justify-content:center; font-size:var(--font-size-lg); line-height:1; transition:all 0.2s; box-shadow:var(--shadow-sm)" title="Сохранить">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:block">
             <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+        </button>` : ''}
+        ${isAdmin ? `<button class="danger meta-lg delBtn" style="min-width:36px; width:36px; height:36px; padding:0; border-radius:var(--radius-sm); flex-shrink:0; align-items:center; justify-content:center; font-size:var(--font-size-lg); line-height:1; transition:all 0.2s; box-shadow:var(--shadow-sm)" title="Удалить устройство">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:block">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
           </svg>
         </button>` : ''}
       </div>
@@ -35,55 +42,123 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
       <span>• ID: ${d.device_id}</span>
       <span>• Файлов: ${d.files?.length || 0}</span>
       <span style="display:inline-flex; align-items:center;">• ${readyDevices.has(d.device_id) ? getCheckIcon(14, 'var(--success)') + ' Готов' : getCrossIcon(14, 'var(--danger)') + ' Не готов'}</span>
+      <span>• <a href="#" style="color:var(--primary); text-decoration:underline; cursor:pointer;" class="playerLink" data-url="${playerUrl}">Плеер</a></span>
     </div>
 
-    <div style="display:flex; flex-wrap:wrap; gap:var(--space-sm); align-items:center; margin-top:var(--space-md)">
-      <button class="secondary playerBtn" style="flex:1; min-width:90px">Плеер</button>
-      <button class="secondary speakerBtn" style="flex:1; min-width:90px">Спикер</button>
-      ${isAdmin ? '<button class="danger delBtn" style="flex:1; min-width:90px">Удалить</button>' : ''}
-    </div>
-
-    <div class="card" style="margin-top:var(--space-md); padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);" id="adminVolumePanel">
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm);">
-        <div class="title" style="margin:0; font-size:var(--font-size-base)">Громкость</div>
-        <div class="meta" id="adminVolumeValue" style="font-weight:600">--%</div>
+    <!-- Превью (визуальный контроль) -->
+    <div class="preview-container" style="margin-top:var(--space-md); padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);">
+      <div class="preview panel preview-compact" style="display:block; aspect-ratio:16/9; max-height:120px; width:100%; position:relative; border-radius:var(--radius-md); overflow:hidden; background:rgba(0,0,0,.06);">
+        <div class="previewHolder" style="width:100%; height:100%; border-radius:var(--radius-md); overflow:hidden;">
+          <iframe src="/player-videojs.html?device_id=${did}&preview=1&muted=1" style="width:100%; height:100%; border:0;"></iframe>
+        </div>
       </div>
-      <input type="range" id="adminVolumeSlider" min="0" max="100" step="5" value="50" disabled style="width:100%"/>
-      <div class="meta" id="adminVolumeStatus" style="color:var(--muted);">Выберите устройство</div>
-      <div class="button-group" style="display:flex; gap:var(--space-sm); flex-wrap:wrap;">
-        <button class="secondary" id="adminVolumeDown" style="flex:1; min-width:90px" type="button" disabled>-5</button>
-        <button class="secondary" id="adminVolumeUp" style="flex:1; min-width:90px" type="button" disabled>+5</button>
-        <button class="secondary" id="adminVolumeMute" style="flex:1; min-width:140px" type="button" disabled>🔇 Заглушить</button>
+      <div class="preview panel preview-expanded" style="display:none; flex:1 1 auto; min-height:0; aspect-ratio:16/9; max-height:380px; position:relative; border-radius:var(--radius-md); overflow:hidden; background:rgba(0,0,0,.06);">
+        <div class="previewHolder" style="width:100%; height:100%; border-radius:var(--radius-md); overflow:hidden">
+          <iframe src="/player-videojs.html?device_id=${did}&preview=1&muted=1" style="width:100%; height:100%; border:0"></iframe>
+        </div>
       </div>
     </div>
 
-    <div class="preview panel" style="margin-top:var(--space-md); display:block; flex:1 1 auto; min-height:0; aspect-ratio:16/9; max-height:380px">
-      <div class="previewHolder" style="width:100%; height:100%; background:rgba(0,0,0,.06); border-radius:var(--radius-md); overflow:hidden">
-        <iframe src="/player-videojs.html?device_id=${did}&preview=1&muted=1" style="width:100%; height:100%; border:0"></iframe>
+    <!-- Управление воспроизведением -->
+    <div class="device-controls-row" style="margin-top:var(--space-md); display:grid; grid-template-columns:1fr; gap:var(--space-md); align-items:stretch;">
+      <!-- Громкость -->
+      <div class="card" style="padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);" id="adminVolumePanel">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm);">
+          <div class="title" style="margin:0; font-size:var(--font-size-base)">Громкость</div>
+          <div style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap;">
+            <div class="meta" id="adminVolumeStatus" style="color:var(--muted); font-size:var(--font-size-sm);">Выберите устройство</div>
+            <div class="meta" id="adminVolumeValue" style="font-weight:600">--%</div>
+            <button class="meta-lg" id="adminVolumeMute" style="min-width:auto; padding:4px 12px; display:flex; align-items:center; justify-content:center;" type="button" disabled>
+              <span class="volume-btn-icon" aria-hidden="true">${getVolumeUnknownIcon(20, 'var(--muted)')}</span>
+            </button>
+          </div>
+        </div>
+        <input type="range" id="adminVolumeSlider" min="0" max="100" step="5" value="50" disabled style="width:100%"/>
       </div>
     </div>
 
     <div class="uploadBox card" style="margin-top:var(--space-md)">
-      <div class="header">
-        <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; width:100%">
-          <input type="file" class="fileInput" multiple accept=".mp4,.webm,.ogg,.mkv,.mov,.avi,.mp3,.wav,.m4a,.png,.jpg,.jpeg,.gif,.webp,.pdf,.pptx,.zip" style="display:none"/>
-          <input type="file" class="folderInput" webkitdirectory directory multiple style="display:none"/>
-          <button class="secondary pickBtn" style="flex:1; min-width:110px; display:flex; align-items:center; justify-content:center; gap:4px;">${getFileIcon(16)}<span>Файлы</span></button>
-          <button class="secondary pickFolderBtn" style="flex:1; min-width:110px; display:flex; align-items:center; justify-content:center; gap:4px;">${getFolderIcon(16)}<span>Папка</span></button>
-          <button class="secondary clearBtn" style="flex:1; min-width:110px">Очистить</button>
-          <button class="primary uploadBtn" style="flex:1; min-width:110px">Загрузить</button>
-        </div>
+      <div class="header" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-sm);">
+        <div class="title" style="margin:0; font-size:var(--font-size-base)">Загрузка файлов</div>
+        <button class="meta-lg queueToggleBtn" style="min-width:auto; padding:4px 8px; display:none;" title="Показать очередь">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </button>
       </div>
-      <div class="dropZone">
-        Перетащите файлы/папки сюда или нажмите "${getFileIcon(14)} Файлы" / "${getFolderIcon(14)} Папка"
+      <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; width:100%">
+        <input type="file" class="fileInput" multiple accept=".mp4,.webm,.ogg,.mkv,.mov,.avi,.mp3,.wav,.m4a,.png,.jpg,.jpeg,.gif,.webp,.pdf,.pptx,.zip" style="display:none"/>
+        <input type="file" class="folderInput" webkitdirectory directory multiple style="display:none"/>
+        <button class="meta-lg pickBtn" style="flex:1; min-width:90px; display:flex; align-items:center; justify-content:center; gap:4px;">${getFileIcon(14)}<span>Файлы</span></button>
+        <button class="meta-lg pickFolderBtn" style="flex:1; min-width:90px; display:flex; align-items:center; justify-content:center; gap:4px;">${getFolderIcon(14)}<span>Папка</span></button>
+        ${isAdmin ? '<button class="meta-lg addStreamBtn" style="flex:1; min-width:90px;">+ Стрим</button>' : ''}
+        <button class="danger meta-lg clearBtn" style="flex:1; min-width:90px;">Очистить</button>
+        <button class="primary meta-lg uploadBtn" style="flex:1; min-width:90px;">Загрузить</button>
       </div>
-      <ul class="queue"></ul>
+      <div class="dropZone" style="margin-top:var(--space-sm); min-height:60px; padding:var(--space-md); font-size:var(--font-size-sm);">
+        Перетащите файлы/папки сюда или нажмите "${getFileIcon(12)} Файлы" / "${getFolderIcon(12)} Папка"
+      </div>
+      <ul class="queue" style="display:none; margin-top:var(--space-sm);"></ul>
     </div>
   `;
 
-  // Действия
-  card.querySelector('.playerBtn').onclick = () => window.open(`/player-videojs.html?device_id=${did}`, '_blank');
-  card.querySelector('.speakerBtn').onclick = () => window.open(`/speaker.html`, '_blank');
+  // Обработчик ссылки на плеер в meta (копирование в буфер обмена)
+  const playerLink = card.querySelector('.playerLink');
+  if (playerLink) {
+    playerLink.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const url = playerLink.getAttribute('data-url');
+      
+      // Функция копирования с fallback
+      const copyToClipboard = (text) => {
+        // Пробуем использовать Clipboard API
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          return navigator.clipboard.writeText(text).then(() => true).catch(() => false);
+        }
+        
+        // Fallback: используем старый метод через textarea
+        try {
+          const textarea = document.createElement('textarea');
+          textarea.value = text;
+          textarea.style.position = 'fixed';
+          textarea.style.left = '-999999px';
+          textarea.style.top = '-999999px';
+          document.body.appendChild(textarea);
+          textarea.focus();
+          textarea.select();
+          
+          const successful = document.execCommand('copy');
+          document.body.removeChild(textarea);
+          
+          return successful ? Promise.resolve(true) : Promise.resolve(false);
+        } catch (err) {
+          console.error('Failed to copy URL:', err);
+          return Promise.resolve(false);
+        }
+      };
+      
+      copyToClipboard(url).then((success) => {
+        if (success) {
+          const orig = playerLink.textContent;
+          playerLink.textContent = 'Скопировано!';
+          setTimeout(() => {
+            playerLink.textContent = orig;
+          }, 1000);
+        } else {
+          // Если не удалось скопировать, показываем URL в prompt
+          const userUrl = prompt('Скопируйте URL плеера:', url);
+          if (userUrl) {
+            // Пользователь мог скопировать вручную
+            playerLink.textContent = 'Скопировано!';
+            setTimeout(() => {
+              playerLink.textContent = 'Плеер';
+            }, 1000);
+          }
+        }
+      });
+    };
+  }
   
   // Удаление только для admin
   const delBtn = card.querySelector('.delBtn');
@@ -195,6 +270,133 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
 
   // Инициализация загрузки
   setupUploadUI(card, d.device_id, document.getElementById('filesPanel'), renderFilesPane, socket);
+
+  // Вспомогательная функция для определения типа потока
+  function guessStreamProtocolFromUrl(url = '') {
+    const lower = url.toLowerCase();
+    if (lower.includes('.m3u8') || lower.includes('format=m3u8')) return 'hls';
+    if (lower.includes('.mpd') || lower.includes('format=mpd') || lower.includes('dash')) return 'dash';
+    return 'mpegts';
+  }
+
+  // Обработчик кнопки добавления стрима
+  const addStreamBtn = card.querySelector('.addStreamBtn');
+  if (addStreamBtn && isAdmin) {
+    addStreamBtn.onclick = async () => {
+      const name = prompt('Название стрима');
+      if (!name) return;
+      const url = prompt('URL стрима (http/https)');
+      if (!url) return;
+      const suggested = guessStreamProtocolFromUrl(url);
+      const protoInput = prompt('Тип потока (hls/dash/mpegts, пусто = авто)', suggested || 'auto');
+      const protocol = (protoInput || '').trim().toLowerCase() || 'auto';
+      try {
+        const res = await adminFetch(`/api/devices/${encodeURIComponent(d.device_id)}/streams`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: name.trim(), url: url.trim(), protocol })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Не удалось создать стрим');
+        }
+        await renderFilesPane(d.device_id);
+      } catch (error) {
+        alert(error.message || 'Ошибка создания стрима');
+      }
+    };
+  }
+
+  // Функционал переключения превью (компактное/развернутое)
+  const previewToggleBtn = card.querySelector('.previewToggleBtn');
+  const previewCompact = card.querySelector('.preview-compact');
+  const previewExpanded = card.querySelector('.preview-expanded');
+  const previewContainer = card.querySelector('.preview-container');
+  const controlsRow = card.querySelector('.device-controls-row');
+  let isPreviewExpanded = false;
+
+  if (previewToggleBtn && previewCompact && previewExpanded && controlsRow) {
+    previewToggleBtn.onclick = () => {
+      isPreviewExpanded = !isPreviewExpanded;
+      
+      if (isPreviewExpanded) {
+        // Разворачиваем превью - перемещаем в отдельную строку
+        previewCompact.style.display = 'none';
+        previewExpanded.style.display = 'block';
+        previewContainer.style.gridColumn = '1 / -1'; // Занимает обе колонки
+        previewContainer.style.gridRow = '2'; // Перемещаем во вторую строку
+        previewToggleBtn.innerHTML = `
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3m18 0v3a2 2 0 0 1-2 2h-3M3 8V5a2 2 0 0 1 2-2h3"></path>
+          </svg>
+        `;
+        previewToggleBtn.title = 'Свернуть превью';
+        
+        // Обновляем iframe в развернутом превью
+        const expandedIframe = previewExpanded.querySelector('iframe');
+        if (expandedIframe) {
+          expandedIframe.src = `/player-videojs.html?device_id=${did}&preview=1&muted=1&t=${Date.now()}`;
+        }
+      } else {
+        // Сворачиваем превью - возвращаем в одну колонку
+        previewCompact.style.display = 'block';
+        previewExpanded.style.display = 'none';
+        previewContainer.style.gridColumn = ''; // Возвращаем в одну колонку
+        previewContainer.style.gridRow = ''; // Возвращаем в первую строку
+        previewToggleBtn.innerHTML = `
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+          </svg>
+        `;
+        previewToggleBtn.title = 'Развернуть превью';
+      }
+    };
+  }
+
+  // Функционал показа/скрытия очереди загрузки
+  const queueToggleBtn = card.querySelector('.queueToggleBtn');
+  const queue = card.querySelector('.queue');
+  
+  if (queueToggleBtn && queue) {
+    let isQueueVisible = false;
+    
+    // Показываем кнопку только если есть файлы в очереди
+    const updateQueueVisibility = () => {
+      const hasItems = queue.children.length > 0;
+      if (hasItems) {
+        queueToggleBtn.style.display = 'flex';
+        // Если очередь была скрыта пользователем, не показываем автоматически
+        if (!isQueueVisible) {
+          queue.style.display = 'none';
+        }
+      } else {
+        queueToggleBtn.style.display = 'none';
+        queue.style.display = 'none';
+        isQueueVisible = false;
+      }
+    };
+    
+    queueToggleBtn.onclick = () => {
+      isQueueVisible = !isQueueVisible;
+      queue.style.display = isQueueVisible ? 'block' : 'none';
+      
+      queueToggleBtn.innerHTML = isQueueVisible ? `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="18 15 12 9 6 15"></polyline>
+        </svg>
+      ` : `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+      `;
+      queueToggleBtn.title = isQueueVisible ? 'Скрыть очередь' : 'Показать очередь';
+    };
+    
+    // Наблюдаем за изменениями в очереди
+    const queueObserver = new MutationObserver(updateQueueVisibility);
+    queueObserver.observe(queue, { childList: true, subtree: true });
+    updateQueueVisibility();
+  }
 
   return card;
 }

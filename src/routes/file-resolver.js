@@ -154,6 +154,7 @@ router.get('/trailer/:deviceId/:fileName(*)', (req, res) => {
 /**
  * GET /api/files/preview/:deviceId/:fileName?start=0&seconds=10
  * Отдаёт превью-вырезку видео (по умолчанию первые 10 секунд) без полной загрузки файла
+ * КРИТИЧНО: Для обычных файлов отдаем напрямую (без ffmpeg), для стримов используем ffmpeg
  */
 router.get('/preview/:deviceId/:fileName(*)', (req, res) => {
   const deviceId = sanitizeDeviceId(req.params.deviceId);
@@ -164,7 +165,7 @@ router.get('/preview/:deviceId/:fileName(*)', (req, res) => {
   }
   
   const metadata = getFileMetadata(deviceId, fileName);
-  if (!metadata || !fs.existsSync(metadata.file_path)) {
+  if (!metadata) {
     return res.status(404).send('File not found');
   }
   
@@ -174,10 +175,66 @@ router.get('/preview/:deviceId/:fileName(*)', (req, res) => {
     return res.status(415).send('Preview supported only for video');
   }
   
+  // КРИТИЧНО: Проверяем, это стрим или обычный файл
+  const isStream = metadata.content_type === 'streaming';
+  
   // Параметры клипа
   const startSec = Math.max(0, parseInt(req.query.start || '0', 10) || 0);
   let seconds = Math.max(1, parseInt(req.query.seconds || '5', 10) || 5);
   seconds = Math.min(seconds, 30); // safety cap 30s
+  
+  // Для обычных файлов отдаем напрямую через Range requests (без ffmpeg)
+  if (!isStream) {
+    // Проверяем существование физического файла
+    if (!fs.existsSync(metadata.file_path)) {
+      return res.status(404).send('Physical file not found');
+    }
+    
+    // Отдаем файл напрямую с поддержкой Range requests
+    const options = {
+      root: '/',  // Абсолютный путь
+      headers: {
+        'Content-Type': mime || 'video/mp4',
+        'Accept-Ranges': 'bytes',
+        'X-Accel-Buffering': 'no',
+        'Cache-Control': 'public, max-age=3600'
+      }
+    };
+    
+    // Express автоматически обрабатывает Range requests
+    res.sendFile(metadata.file_path, options, (err) => {
+      if (err) {
+        if (err.message === 'Range Not Satisfiable') {
+          logger.warn('[Preview] Range not satisfiable', { 
+            deviceId, 
+            fileName,
+            range: req.headers.range,
+            fileSize: metadata.file_size
+          });
+          if (!res.headersSent) {
+            res.status(416).set('Content-Range', `bytes */${metadata.file_size}`).send('Range Not Satisfiable');
+          }
+        } else {
+          logger.error('[Preview] Error sending file', { 
+            error: err.message, 
+            deviceId, 
+            fileName,
+            statusCode: err.statusCode || err.status
+          });
+          if (!res.headersSent) {
+            res.status(err.statusCode || err.status || 500).send('Error sending file');
+          }
+        }
+      }
+    });
+    return;
+  }
+  
+  // Для стримов используем ffmpeg
+  const streamUrl = metadata.stream_url;
+  if (!streamUrl) {
+    return res.status(400).send('Stream URL not found');
+  }
   
   // Заголовки для стриминга
   res.setHeader('Content-Type', 'video/mp4');
@@ -191,7 +248,7 @@ router.get('/preview/:deviceId/:fileName(*)', (req, res) => {
     '-loglevel', 'error',
     '-ss', String(startSec),
     '-t', String(seconds),
-    '-i', metadata.file_path,
+    '-i', streamUrl,  // КРИТИЧНО: Используем stream_url для стримов
     '-analyzeduration', '0',
     '-probesize', '500000',
     '-vf', 'scale=trunc(min(iw\\,1920)/2)*2:trunc(min(ih\\,1080)/2)*2', // ограничение до 1080p, чётные размеры
@@ -218,14 +275,14 @@ router.get('/preview/:deviceId/:fileName(*)', (req, res) => {
   });
   
   ff.on('error', (err) => {
-    logger.error('[Preview] ffmpeg spawn error', { error: err.message });
+    logger.error('[Preview] ffmpeg spawn error', { error: err.message, streamUrl });
     if (!res.headersSent) res.status(500).end('Preview generation failed');
     try { ff.kill('SIGKILL'); } catch {}
   });
   
   ff.on('close', (code) => {
     if (code !== 0) {
-      logger.warn('[Preview] ffmpeg exited with code', { code, file: metadata.file_path });
+      logger.warn('[Preview] ffmpeg exited with code', { code, streamUrl });
       if (!res.headersSent) res.status(500).end('Preview generation failed');
     }
   });

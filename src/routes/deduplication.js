@@ -25,6 +25,7 @@ export function createDeduplicationRouter(deps) {
   /**
    * POST /api/devices/:id/check-duplicate
    * Проверить есть ли файл с таким MD5/размером на других устройствах
+   * Дедупликация применяется ТОЛЬКО для видео файлов
    */
   router.post('/:id/check-duplicate', async (req, res) => {
     const targetDeviceId = sanitizeDeviceId(req.params.id);
@@ -36,6 +37,23 @@ export function createDeduplicationRouter(deps) {
     
     if (!devices[targetDeviceId]) {
       return res.status(404).json({ error: 'device not found' });
+    }
+    
+    // Определяем тип файла по расширению
+    const ext = path.extname(filename || '').toLowerCase();
+    const videoExtensions = ['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'];
+    const isVideoFile = videoExtensions.includes(ext);
+    
+    // Дедупликация применяется ТОЛЬКО для видео файлов
+    if (!isVideoFile) {
+      logFile('info', 'Skipping deduplication check for non-video file', {
+        targetDevice: targetDeviceId,
+        filename,
+        extension: ext,
+        fileType: 'presentation/image/other'
+      });
+      
+      return res.json({ duplicate: false });
     }
     
     const isBigFile = size > 100 * 1024 * 1024;
@@ -82,6 +100,7 @@ export function createDeduplicationRouter(deps) {
   /**
    * POST /api/devices/:id/copy-from-duplicate
    * Мгновенное копирование файла через дедупликацию (только запись в БД)
+   * Дедупликация применяется ТОЛЬКО для видео файлов
    */
   router.post('/:id/copy-from-duplicate', async (req, res) => {
     const targetDeviceId = sanitizeDeviceId(req.params.id);
@@ -89,6 +108,20 @@ export function createDeduplicationRouter(deps) {
     
     if (!targetDeviceId || !sourceDevice || !sourceFile || !targetFilename) {
       return res.status(400).json({ error: 'missing required parameters' });
+    }
+    
+    // Проверяем тип файла - дедупликация только для видео
+    const ext = path.extname(targetFilename || '').toLowerCase();
+    const videoExtensions = ['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'];
+    const isVideoFile = videoExtensions.includes(ext);
+    
+    if (!isVideoFile) {
+      logFile('warn', 'Attempt to copy non-video file via deduplication - rejected', {
+        targetDevice: targetDeviceId,
+        targetFilename,
+        extension: ext
+      });
+      return res.status(400).json({ error: 'Deduplication is only allowed for video files' });
     }
     
     const targetDevice = devices[targetDeviceId];

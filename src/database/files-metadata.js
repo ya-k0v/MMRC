@@ -180,6 +180,7 @@ export function getAllStreamingMetadata() {
 
 /**
  * Найти файл с таким же MD5 на другом устройстве (дедупликация)
+ * Дедупликация применяется ТОЛЬКО для видео файлов
  * @param {string} md5Hash - MD5 хэш (может быть partial или full)
  * @param {number} fileSize
  * @param {string} excludeDeviceId - Исключить это устройство из поиска
@@ -194,10 +195,21 @@ export function findDuplicateFile(md5Hash, fileSize, excludeDeviceId = null, isP
     const isBigFile = fileSize > 100 * 1024 * 1024;
     const md5Column = (isPartial || isBigFile) ? 'partial_md5' : 'md5_hash';
     
+    // Дедупликация применяется ТОЛЬКО для видео файлов
+    // Фильтруем по расширению файла и MIME типу
     let query = `
       SELECT device_id, safe_name, file_path, original_name, md5_hash, partial_md5
       FROM files_metadata 
       WHERE ${md5Column} = ? AND file_size = ?
+        AND (
+          LOWER(safe_name) LIKE '%.mp4' OR
+          LOWER(safe_name) LIKE '%.webm' OR
+          LOWER(safe_name) LIKE '%.ogg' OR
+          LOWER(safe_name) LIKE '%.mkv' OR
+          LOWER(safe_name) LIKE '%.mov' OR
+          LOWER(safe_name) LIKE '%.avi' OR
+          mime_type LIKE 'video/%'
+        )
     `;
     
     const params = [md5Hash, fileSize];

@@ -278,7 +278,7 @@ async function loadModalUsersList(adminFetch) {
             ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="toggleUserInModal(${u.id}, false)" title="Отключить">${getLockIcon(16)}</button>`
             : `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="toggleUserInModal(${u.id}, true)" title="Включить">${getUnlockIcon(16)}</button>`
           }
-          ${u.id !== 1 ? `<button class="danger" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="deleteUserInModal(${u.id}, '${u.username}')" title="Удалить">${getTrashIcon(16)}</button>` : ''}
+          ${u.id !== 1 ? `<button class="danger meta-lg" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="deleteUserInModal(${u.id}, '${u.username}')" title="Удалить">${getTrashIcon(16)}</button>` : ''}
         </div>
       </div>
     `).join('');
@@ -512,8 +512,8 @@ async function loadSettingsContent(adminFetch) {
           <button id="checkFilesBtn" class="secondary" style="flex:1;">
             🔍 Проверить файлы
           </button>
-          <button id="cleanupFilesBtn" class="danger" style="flex:1;" disabled>
-            🗑️ Очистить БД
+          <button id="cleanupFilesBtn" class="danger meta-lg" style="flex:1;" disabled>
+            🗑️ Очистить
           </button>
         </div>
       </div>
@@ -645,17 +645,21 @@ async function loadSettingsContent(adminFetch) {
 
       let statusText = `Проверено: ${result.checked} файлов. `;
       if (result.missingOnDisk > 0) {
-        statusText += `Отсутствует на диске: ${result.missingOnDisk}. `;
-        cleanupFilesBtn.disabled = false;
+        statusText += `Отсутствует на диске (в БД есть): ${result.missingOnDisk}. `;
       }
       if (result.missingInDB > 0) {
-        statusText += `Отсутствует в БД: ${result.missingInDB}.`;
+        statusText += `Отсутствует в БД (на диске есть): ${result.missingInDB}.`;
+      }
+      
+      // Активируем кнопку, если есть что удалять
+      if (result.missingOnDisk > 0 || result.missingInDB > 0) {
+        cleanupFilesBtn.disabled = false;
       }
       
       if (result.missingOnDisk === 0 && result.missingInDB === 0) {
         statusText = '✅ Все файлы на месте. Проблем не обнаружено.';
         cleanupStatusEl.style.color = 'var(--success, #22c55e)';
-      } else if (result.missingOnDisk > 0) {
+      } else if (result.missingOnDisk > 0 || result.missingInDB > 0) {
         cleanupStatusEl.style.color = 'var(--warning, #f59e0b)';
       } else {
         cleanupStatusEl.style.color = 'var(--text-secondary)';
@@ -672,18 +676,27 @@ async function loadSettingsContent(adminFetch) {
   };
 
   cleanupFilesBtn.onclick = async () => {
-    if (!lastCheckResult || lastCheckResult.missingOnDisk === 0) {
+    if (!lastCheckResult || (lastCheckResult.missingOnDisk === 0 && lastCheckResult.missingInDB === 0)) {
       alert('Сначала выполните проверку файлов');
       return;
     }
 
-    if (!confirm(`Удалить ${lastCheckResult.missingOnDisk} записей о несуществующих файлах из базы данных?`)) {
+    let confirmMessage = '';
+    if (lastCheckResult.missingOnDisk > 0 && lastCheckResult.missingInDB > 0) {
+      confirmMessage = `Удалить:\n- ${lastCheckResult.missingOnDisk} записей из БД (файлов нет на диске)\n- ${lastCheckResult.missingInDB} файлов с диска (записей нет в БД)?`;
+    } else if (lastCheckResult.missingOnDisk > 0) {
+      confirmMessage = `Удалить ${lastCheckResult.missingOnDisk} записей из БД (файлов нет на диске)?`;
+    } else if (lastCheckResult.missingInDB > 0) {
+      confirmMessage = `Удалить ${lastCheckResult.missingInDB} файлов с диска (записей нет в БД)?`;
+    }
+
+    if (!confirm(confirmMessage)) {
       return;
     }
 
     cleanupFilesBtn.disabled = true;
     cleanupFilesBtn.textContent = 'Очистка...';
-    cleanupStatusEl.textContent = 'Удаление записей...';
+    cleanupStatusEl.textContent = 'Удаление...';
     cleanupStatusEl.style.color = 'var(--text-secondary)';
 
     try {
@@ -700,7 +713,18 @@ async function loadSettingsContent(adminFetch) {
 
       const result = await response.json();
       
-      cleanupStatusEl.textContent = `✅ Удалено ${result.deleted} записей из базы данных.`;
+      let resultText = '';
+      if (result.deletedFromDB > 0 && result.deletedFromDisk > 0) {
+        resultText = `✅ Удалено: ${result.deletedFromDB} записей из БД, ${result.deletedFromDisk} файлов с диска.`;
+      } else if (result.deletedFromDB > 0) {
+        resultText = `✅ Удалено ${result.deletedFromDB} записей из базы данных.`;
+      } else if (result.deletedFromDisk > 0) {
+        resultText = `✅ Удалено ${result.deletedFromDisk} файлов с диска.`;
+      } else {
+        resultText = '✅ Очистка завершена.';
+      }
+      
+      cleanupStatusEl.textContent = resultText;
       cleanupStatusEl.style.color = 'var(--success, #22c55e)';
       cleanupFilesBtn.disabled = true;
       lastCheckResult = null;
@@ -714,7 +738,7 @@ async function loadSettingsContent(adminFetch) {
       cleanupStatusEl.style.color = 'var(--danger)';
       cleanupFilesBtn.disabled = false;
     } finally {
-      cleanupFilesBtn.textContent = '🗑️ Очистить БД';
+      cleanupFilesBtn.textContent = '🗑️ Очистить';
     }
   };
 }

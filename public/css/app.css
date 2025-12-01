@@ -359,6 +359,38 @@ button.secondary.meta {
   font-size: var(--font-size-sm);
 }
 
+/* Кнопки с классом meta-lg - компактный стиль с размером шрифта lg */
+button.meta-lg {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-medium);
+  padding: 8px 16px;
+  min-height: 40px;
+  height: 40px;
+}
+
+button.primary.meta-lg {
+  background: var(--brand);
+  color: #fff;
+  border-color: var(--brand);
+}
+
+button.primary.meta-lg:hover:not(:disabled) {
+  background: var(--brand-2);
+  border-color: var(--brand-2);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+button.secondary.meta-lg {
+  background: var(--panel-2);
+  border-color: var(--border-2);
+}
+
+button.danger.meta-lg {
+  background: var(--danger-light);
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
 button.danger {
   background: var(--danger-light);
   color: var(--danger);
@@ -1276,6 +1308,98 @@ body.light .queue li {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+/* ===== Device Card - Компактная компоновка (Вариант 4) ===== */
+.device-controls-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+  align-items: start;
+}
+
+/* Компактное превью */
+.preview-compact {
+  aspect-ratio: 16 / 9 !important;
+  max-height: 120px !important;
+  width: 100%;
+}
+
+.preview-expanded {
+  display: none;
+  aspect-ratio: 16 / 9;
+  max-height: 380px;
+}
+
+/* При разворачивании превью занимает обе колонки */
+.preview-container[style*="grid-column: 1 / -1"] {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+/* Кнопка переключения превью */
+.previewToggleBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  min-width: auto;
+  font-size: var(--font-size-sm);
+}
+
+/* Компактная панель загрузки */
+.uploadBox .dropZone {
+  min-height: 60px;
+  padding: var(--space-md);
+  font-size: var(--font-size-sm);
+}
+
+.uploadBox .queue {
+  display: none;
+  margin-top: var(--space-sm);
+}
+
+.uploadBox .queueToggleBtn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  min-width: auto;
+  font-size: var(--font-size-sm);
+}
+
+/* Адаптивность: на мобильных одна колонка */
+@media (max-width: 768px) {
+  .device-controls-row {
+    grid-template-columns: 1fr;
+    gap: var(--space-sm);
+  }
+  
+  .preview-container {
+    grid-column: 1 !important;
+  }
+  
+  .preview-expanded {
+    max-height: 280px;
+  }
+}
+
+/* На очень маленьких экранах - еще более компактно */
+@media (max-width: 640px) {
+  .device-controls-row {
+    gap: var(--space-sm);
+  }
+  
+  .preview-compact {
+    aspect-ratio: 16 / 9 !important;
+    max-height: 100px !important;
+  }
+  
+  .uploadBox .dropZone {
+    min-height: 50px;
+    padding: var(--space-sm);
+    font-size: var(--font-size-xs);
+  }
 }
 
 /* ===== Speaker Specific - Стандартизировано ===== */

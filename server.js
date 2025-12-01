@@ -607,26 +607,94 @@ app.get('/api/admin/database/check-files', requireAuth, requireAdmin, async (req
   }
 });
 
-// POST /api/admin/database/cleanup-missing-files - Удалить записи о несуществующих файлах
+// POST /api/admin/database/cleanup-missing-files - Удалить записи о несуществующих файлах из БД и файлы с диска, которых нет в БД
 app.post('/api/admin/database/cleanup-missing-files', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { deviceId } = req.body || {};
-    const { cleanupMissingFiles } = await import('./src/database/files-metadata.js');
+    const { cleanupMissingFiles, getAllFilePaths } = await import('./src/database/files-metadata.js');
     
-    logger.info('[Admin] Starting database cleanup', { deviceId: deviceId || 'all' });
+    logger.info('[Admin] Starting cleanup (DB and disk)', { deviceId: deviceId || 'all' });
     
-    // Выполняем очистку (dryRun: false - реальное удаление)
-    const result = await cleanupMissingFiles({ deviceId: deviceId || null, dryRun: false });
+    // 1. Удаляем записи из БД для файлов, которых нет на диске
+    const dbResult = await cleanupMissingFiles({ deviceId: deviceId || null, dryRun: false });
     
     logger.info('[Admin] Database cleanup completed', {
-      checked: result.checked,
-      missing: result.missing,
-      deleted: result.deleted,
-      errors: result.errors
+      checked: dbResult.checked,
+      missing: dbResult.missing,
+      deleted: dbResult.deleted,
+      errors: dbResult.errors
+    });
+    
+    // 2. Удаляем файлы с диска, которых нет в БД
+    const dataRoot = getDataRoot();
+    const contentDir = path.join(dataRoot, 'content');
+    const dbFilePaths = new Set();
+    
+    // Получаем все пути из БД
+    const allDbPaths = getAllFilePaths();
+    allDbPaths.forEach(filePath => {
+      if (filePath) {
+        dbFilePaths.add(path.resolve(filePath));
+      }
+    });
+    
+    // Рекурсивно сканируем файлы на диске
+    const diskFiles = [];
+    function scanDirectory(dirPath) {
+      if (!fs.existsSync(dirPath)) return;
+      
+      try {
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dirPath, entry.name);
+          
+          // Пропускаем скрытые файлы и системные файлы
+          if (entry.name.startsWith('.') || entry.name.includes('optimizing')) {
+            continue;
+          }
+          
+          if (entry.isDirectory()) {
+            scanDirectory(fullPath);
+          } else if (entry.isFile()) {
+            diskFiles.push(fullPath);
+          }
+        }
+      } catch (error) {
+        logger.warn('[Admin] Failed to scan directory', { dirPath, error: error.message });
+      }
+    }
+    
+    scanDirectory(contentDir);
+    
+    // Находим файлы на диске, которых нет в БД
+    const filesToDeleteFromDisk = diskFiles.filter(diskFile => {
+      const normalized = path.resolve(diskFile);
+      return !dbFilePaths.has(normalized);
+    });
+    
+    let deletedFromDisk = 0;
+    const diskErrors = [];
+    
+    // Удаляем файлы с диска
+    for (const filePath of filesToDeleteFromDisk) {
+      try {
+        fs.unlinkSync(filePath);
+        deletedFromDisk++;
+        logger.info('[Admin] Deleted file from disk (not in DB)', { filePath });
+      } catch (error) {
+        diskErrors.push({ filePath, error: error.message });
+        logger.error('[Admin] Failed to delete file from disk', { filePath, error: error.message });
+      }
+    }
+    
+    logger.info('[Admin] Disk cleanup completed', {
+      checked: filesToDeleteFromDisk.length,
+      deleted: deletedFromDisk,
+      errors: diskErrors.length
     });
     
     // Обновляем список файлов для устройств после очистки
-    if (result.deleted > 0) {
+    if (dbResult.deleted > 0 || deletedFromDisk > 0) {
       const deviceIds = deviceId ? [deviceId] : Object.keys(devices);
       deviceIds.forEach((id) => {
         if (devices[id]) {
@@ -638,14 +706,18 @@ app.post('/api/admin/database/cleanup-missing-files', requireAuth, requireAdmin,
     }
     
     res.json({
-      checked: result.checked,
-      missing: result.missing,
-      deleted: result.deleted,
-      errors: result.errors
+      checked: dbResult.checked,
+      missingOnDisk: dbResult.missing,
+      deletedFromDB: dbResult.deleted,
+      missingInDB: filesToDeleteFromDisk.length,
+      deletedFromDisk: deletedFromDisk,
+      errors: dbResult.errors + diskErrors.length,
+      dbErrors: dbResult.errors,
+      diskErrors: diskErrors.length
     });
   } catch (error) {
-    logger.error('[Admin] Failed to cleanup missing files:', error);
-    res.status(500).json({ error: error.message || 'Не удалось очистить базу данных' });
+    logger.error('[Admin] Failed to cleanup files:', error);
+    res.status(500).json({ error: error.message || 'Не удалось очистить файлы' });
   }
 });
 

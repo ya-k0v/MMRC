@@ -192,8 +192,8 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
   
   // 2. Сканируем папку устройства для PDF/PPTX/image папок
   const deviceFolder = path.join(DEVICES, device.folder);
-  const filesInFolders = new Set(); // Файлы которые находятся внутри папок
   const folders = [];
+  const folderPaths = []; // Полные пути к папкам устройства
   
   if (fs.existsSync(deviceFolder)) {
     const folderEntries = fs.readdirSync(deviceFolder);
@@ -207,15 +207,7 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
         if (stat.isDirectory()) {
           // Это папка - добавляем её
           folders.push(entry);
-          
-          // КРИТИЧНО: Сканируем файлы внутри папки
-          // Чтобы исключить их из списка БД (избежать дубликатов)
-          try {
-            const filesInThisFolder = fs.readdirSync(entryPath);
-            filesInThisFolder.forEach(f => filesInFolders.add(f));
-          } catch (e) {
-            // Игнорируем ошибки чтения папки
-          }
+          folderPaths.push(entryPath); // Сохраняем полный путь к папке
         }
       } catch (e) {
         // Игнорируем ошибки доступа к файлам
@@ -223,9 +215,34 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
     }
   }
   
-  // 3. Фильтруем файлы из БД: исключаем те что находятся в папках устройства
-  // Используем existingMetadata (только существующие файлы) вместо filesMetadata
-  const filteredMetadata = existingMetadata.filter(f => !filesInFolders.has(f.safe_name));
+  // 3. Фильтруем файлы из БД: исключаем только те, что физически находятся внутри папок
+  // КРИТИЧНО: Проверяем физический путь файла, а не только имя!
+  // Файл должен скрываться только если он физически находится внутри папки
+  // Это позволяет иметь файлы с одинаковыми именами в папке и в корне устройства
+  const filteredMetadata = existingMetadata.filter(f => {
+    if (!f.file_path) return true; // Если нет пути - показываем (на всякий случай)
+    
+    // Нормализуем путь файла из БД (абсолютный путь)
+    const filePath = path.normalize(f.file_path);
+    
+    // Проверяем, находится ли файл внутри какой-либо папки устройства
+    for (const folderPath of folderPaths) {
+      const normalizedFolderPath = path.normalize(folderPath);
+      
+      // Проверяем, что file_path начинается с folderPath + разделитель
+      // Это означает, что файл физически находится внутри этой папки
+      if (filePath.startsWith(normalizedFolderPath + path.sep) || 
+          filePath.startsWith(normalizedFolderPath + '/')) {
+        // Файл физически находится внутри этой папки - скрываем его
+        return false;
+      }
+    }
+    
+    // Файл не находится ни в одной папке - показываем его
+    // Даже если файл с таким же именем есть в папке, этот файл будет показан,
+    // так как он физически находится в другом месте (в корне устройства)
+    return true;
+  });
   
   const nameMap = fileNamesMap[deviceId] || {};
   let files = filteredMetadata.map(f => f.safe_name);
@@ -257,16 +274,20 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
     const safeName = f.safe_name;
     const displayName = f.original_name || nameMap[safeName] || safeName;
     
-    // КРИТИЧНО: Логируем для отладки
+    // КРИТИЧНО: Пропускаем стримы без stream_url - они невалидны и не могут быть воспроизведены
     if (!f.stream_url) {
-      logger.warn('[updateDeviceFilesFromDB] ⚠️ Stream metadata missing stream_url', {
+      logger.warn('[updateDeviceFilesFromDB] ⚠️ Stream metadata missing stream_url, skipping', {
         deviceId,
         safeName,
         hasStreamUrl: !!f.stream_url,
         streamUrl: f.stream_url,
         content_type: f.content_type,
-        stream_protocol: f.stream_protocol
+        stream_protocol: f.stream_protocol,
+        originalName: displayName
       });
+      // КРИТИЧНО: Не добавляем стрим без URL в список файлов
+      // Это предотвращает ошибки при попытке воспроизведения
+      return;
     }
     
     if (!files.includes(safeName)) {
@@ -278,8 +299,15 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
     // FFmpeg будет запущен только когда стрим действительно запрашивается для воспроизведения
     // Это экономит ресурсы, так как не все стримы используются одновременно
     // Формируем URL заранее, но FFmpeg запустится только при первом запросе на воспроизведение
-    const safeDevice = deviceId.replace(/[^a-zA-Z0-9\-_.]/g, '_').substring(0, 200);
-    const safeFile = safeName.replace(/[^a-zA-Z0-9\-_.]/g, '_').substring(0, 200);
+    // КРИТИЧНО: Используем ту же логику sanitization, что и в stream-manager.js
+    // для гарантии консистентности путей
+    function sanitizePathFragment(value = '') {
+      return String(value)
+        .replace(/[^a-zA-Z0-9\-_.]/g, '_')
+        .substring(0, 200);
+    }
+    const safeDevice = sanitizePathFragment(deviceId);
+    const safeFile = sanitizePathFragment(safeName);
     const proxyUrl = `/streams/${encodeURIComponent(safeDevice)}/${encodeURIComponent(safeFile)}/index.m3u8`;
     const restreamStatus = getStreamRestreamStatus(deviceId, safeName);
     metadataList.push({

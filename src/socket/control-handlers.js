@@ -181,6 +181,22 @@ export function setupControlHandlers(socket, deps) {
       // КРИТИЧНО: Объявляем hasExtension один раз в начале блока, чтобы она была доступна везде
       const hasExtension = file.includes('.');
       
+      // КРИТИЧНО: Если текущий контент - стрим, останавливаем FFmpeg перед запуском нового контента
+      // Это нужно делать всегда при переключении, даже если новый контент тоже стрим
+      if (d.current && d.current.type === 'streaming' && d.current.file) {
+        const currentSafeName = d.current.file;
+        // КРИТИЧНО: Останавливаем только если это другой файл или другой тип контента
+        if (currentSafeName !== file || requestedType !== 'streaming') {
+          removeStreamJob(device_id, currentSafeName, 'switch_content');
+          logger.info('[Control] 🛑 Stopped FFmpeg stream on content switch', { 
+            deviceId: device_id, 
+            currentFile: currentSafeName,
+            newFile: file,
+            reason: currentSafeName !== file ? 'different_file' : 'different_type'
+          });
+        }
+      }
+      
       // КРИТИЧНО: Если текущий контент - видео, и запускается другой тип контента,
       // нужно сначала остановить видео, чтобы звук не продолжал играть
       const wasVideo = d.current && (d.current.type === 'video' || d.current.type === 'streaming') && d.current.state === 'playing';
@@ -198,13 +214,6 @@ export function setupControlHandlers(socket, deps) {
           currentFile: d.current?.file,
           newFile: file 
         });
-        
-        // КРИТИЧНО: Останавливаем FFmpeg для стримов при переключении на не-видео
-        if (d.current?.type === 'streaming' && d.current?.file) {
-          const safeName = d.current.file;
-          removeStreamJob(device_id, safeName, 'switch_to_non_video');
-          logger.info('[Control] 🛑 Stopped FFmpeg stream on switch to non-video', { deviceId: device_id, file: safeName });
-        }
         
         io.to(`device:${device_id}`).emit('player/stop', { reason: 'switch_content' });
         // Даем время на остановку видео перед запуском нового контента

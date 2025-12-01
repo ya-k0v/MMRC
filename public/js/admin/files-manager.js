@@ -179,9 +179,9 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
               </div>
             </div>
             <div class="file-item-actions">
-              <button class="secondary previewFileBtn" data-safe="${encodeURIComponent(safeName)}" data-original="${encodeURIComponent(originalName)}" data-stream-protocol="${streamProtocol || ''}" data-content-type="${contentType || ''}" title="Предпросмотр" ${!canPlay ? 'disabled' : ''}>Превью</button>
-              ${isEligible ? `<button class="secondary makeDefaultBtn" data-safe="${encodeURIComponent(safeName)}" data-original="${encodeURIComponent(originalName)}" title="Сделать заглушкой" ${!canPlay ? 'disabled' : ''}>Заглушка</button>` : ``}
-              <button class="danger delFileBtn" data-safe="${encodeURIComponent(safeName)}" data-original="${encodeURIComponent(originalName)}" title="Удалить">Удалить</button>
+              <button class="meta-lg previewFileBtn" data-safe="${encodeURIComponent(safeName)}" data-original="${encodeURIComponent(originalName)}" data-stream-protocol="${streamProtocol || ''}" data-content-type="${contentType || ''}" title="Предпросмотр" ${!canPlay ? 'disabled' : ''}>Превью</button>
+              ${isEligible ? `<button class="meta-lg makeDefaultBtn" data-safe="${encodeURIComponent(safeName)}" data-original="${encodeURIComponent(originalName)}" title="Сделать заглушкой" ${!canPlay ? 'disabled' : ''}>Заглушка</button>` : ``}
+              <button class="danger meta-lg delFileBtn" data-safe="${encodeURIComponent(safeName)}" data-original="${encodeURIComponent(originalName)}" title="Удалить">Удалить</button>
             </div>
           </li>
         `;

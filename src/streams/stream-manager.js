@@ -3,6 +3,8 @@ import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import EventEmitter from 'events';
+import https from 'https';
+import http from 'http';
 import logger from '../utils/logger.js';
 import { getStreamsOutputDir } from '../config/settings-manager.js';
 
@@ -31,7 +33,7 @@ const DEFAULT_OPTIONS = {
   cleanupInterval: Number(process.env.STREAM_CLEANUP_INTERVAL || 300000), // 5 минут
   maxFolderSizeMB: Number(process.env.STREAM_MAX_FOLDER_SIZE_MB || 500),
   playlistMaxAge: Number(process.env.STREAM_PLAYLIST_MAX_AGE || 30000), // 30 секунд
-  sourceCheckEnabled: process.env.STREAM_SOURCE_CHECK_ENABLED !== 'false',
+  sourceCheckEnabled: process.env.STREAM_SOURCE_CHECK_ENABLED !== 'false', // По умолчанию включено
   sourceCheckTimeout: Number(process.env.STREAM_SOURCE_CHECK_TIMEOUT || 5000),
   maxJobs: Number(process.env.STREAM_MAX_JOBS || 100), // Максимальное количество одновременных стримов
   hungProcessTimeout: Number(process.env.STREAM_HUNG_PROCESS_TIMEOUT || 60000), // 60 секунд без активности = зависший процесс
@@ -58,6 +60,10 @@ class StreamManager extends EventEmitter {
     this.lastAccessTime = new Map(); // Отслеживание последнего доступа к стриму
     // КРИТИЧНО: Map для отслеживания pending операций по URL (предотвращение race conditions)
     this.urlToJobMapPending = new Map(); // Map<streamUrl, Promise<Job>>
+    // КРИТИЧНО: Кэш результатов определения кодеков для оптимизации
+    this.codecCache = new Map(); // Map<streamUrl, {codecs: {videoCodec, audioCodec}, timestamp: number}>
+    this.codecCacheMaxSize = 100; // Максимум 100 записей в кэше
+    this.codecCacheTTL = 10 * 60 * 1000; // TTL: 10 минут
     // КРИТИЧНО: idleTimeout для автоматической остановки неиспользуемых стримов
     // Стрим работает, пока его смотрят (плеер запрашивает сегменты)
     // Если стрим не используется (нет запросов сегментов) - останавливается через 3 минуты
@@ -219,6 +225,23 @@ class StreamManager extends EventEmitter {
    * @returns {Promise<{videoCodec: string, audioCodec: string}>}
    */
   async _detectStreamCodecs(streamUrl, streamProtocol = null) {
+    // КРИТИЧНО: Проверяем кэш перед вызовом ffprobe
+    const cached = this.codecCache.get(streamUrl);
+    if (cached) {
+      const age = Date.now() - cached.timestamp;
+      if (age < this.codecCacheTTL) {
+        logger.debug('[StreamManager] Using cached codec detection result', {
+          streamUrl,
+          age: Math.round(age / 1000),
+          ...cached.codecs
+        });
+        return cached.codecs;
+      } else {
+        // Кэш устарел - удаляем
+        this.codecCache.delete(streamUrl);
+      }
+    }
+    
     // КРИТИЧНО: Для DASH стримов (.mpd) требуется больше времени на инициализацию
     // FFprobe должен прочитать манифест и выбрать представление для анализа
     const isDash = streamProtocol === 'dash' || streamUrl.toLowerCase().includes('.mpd');
@@ -256,6 +279,9 @@ class StreamManager extends EventEmitter {
         audioCodec: audioStream?.codec_name || 'unknown'
       };
       
+      // КРИТИЧНО: Сохраняем результат в кэш
+      this._updateCodecCache(streamUrl, result);
+      
       logger.info('[StreamManager] Codecs detected successfully', {
         streamUrl,
         ...result
@@ -274,6 +300,39 @@ class StreamManager extends EventEmitter {
       // Это не блокирует запуск FFmpeg - он просто будет перекодировать
       return { videoCodec: 'unknown', audioCodec: 'unknown' };
     }
+  }
+
+  /**
+   * Обновляет кэш результатов определения кодеков
+   * @param {string} streamUrl - URL стрима
+   * @param {Object} codecs - Результат определения кодеков
+   */
+  _updateCodecCache(streamUrl, codecs) {
+    // Очищаем устаревшие записи, если кэш переполнен
+    if (this.codecCache.size >= this.codecCacheMaxSize) {
+      const now = Date.now();
+      for (const [url, entry] of this.codecCache.entries()) {
+        if (now - entry.timestamp > this.codecCacheTTL) {
+          this.codecCache.delete(url);
+        }
+      }
+      
+      // Если все еще переполнен - удаляем самые старые записи
+      if (this.codecCache.size >= this.codecCacheMaxSize) {
+        const entries = Array.from(this.codecCache.entries())
+          .sort((a, b) => a[1].timestamp - b[1].timestamp);
+        const toDelete = Math.floor(this.codecCacheMaxSize * 0.2); // Удаляем 20% самых старых
+        for (let i = 0; i < toDelete; i++) {
+          this.codecCache.delete(entries[i][0]);
+        }
+      }
+    }
+    
+    // Сохраняем новую запись
+    this.codecCache.set(streamUrl, {
+      codecs,
+      timestamp: Date.now()
+    });
   }
 
   /**
@@ -669,8 +728,9 @@ class StreamManager extends EventEmitter {
       if (job.status === 'starting') {
         job.status = 'running';
         job.lastPlaylistUpdate = Date.now();
-        // КРИТИЧНО: При успешном запуске сбрасываем счетчики
+        // КРИТИЧНО: При успешном запуске сбрасываем счетчики и очищаем stderr буфер
         job.consecutiveFailures = 0;
+        stderrBuffer = ''; // Очищаем буфер при успешном запуске для предотвращения утечек памяти
         if (job.circuitBreakerState !== 'closed') {
           const previousState = job.circuitBreakerState;
           job.circuitBreakerState = 'closed';
@@ -991,9 +1051,46 @@ class StreamManager extends EventEmitter {
       return false;
     }
     
+    const pid = process.pid;
+    if (!pid) {
+      return false;
+    }
+    
+    // КРИТИЧНО: На Linux используем /proc/${pid}/stat для более надежной проверки
+    // Это более точно, чем kill(0), так как проверяет реальное существование процесса
+    const platform = process.platform;
+    if (platform === 'linux') {
+      try {
+        const procPath = `/proc/${pid}/stat`;
+        // На Linux проверяем /proc/${pid}/stat
+        if (fs.existsSync(procPath)) {
+          // Процесс существует - проверяем, что он не zombie
+          try {
+            const statContent = fs.readFileSync(procPath, 'utf-8');
+            const state = statContent.split(' ')[2]; // Третье поле - состояние процесса
+            // 'Z' означает zombie процесс (завершен, но не удален)
+            if (state === 'Z') {
+              logger.debug('[StreamManager] Process is zombie', { pid });
+              return false;
+            }
+            return true;
+          } catch (readErr) {
+            // Ошибка чтения - процесс может быть завершен
+            logger.debug('[StreamManager] Error reading process stat', { pid, error: readErr.message });
+            return false;
+          }
+        } else {
+          // Файл не существует - процесс завершен
+          return false;
+        }
+      } catch (err) {
+        // Ошибка при проверке /proc - fallback на kill(0)
+        logger.debug('[StreamManager] Error checking /proc, using fallback', { pid, error: err.message });
+      }
+    }
+    
+    // Fallback: проверяем существование процесса через kill(0) - не отправляет сигнал
     try {
-      // Проверяем существование процесса через kill(0) - не отправляет сигнал
-      // На Linux также можно проверить /proc/${pid}/stat, но это менее переносимо
       process.kill(0);
       return true;
     } catch (err) {
@@ -1003,6 +1100,12 @@ class StreamManager extends EventEmitter {
         return false;
       }
       // Другие ошибки (например, EPERM) считаем как процесс существует
+      // Но логируем для отладки
+      logger.debug('[StreamManager] kill(0) returned error, assuming process alive', {
+        pid,
+        errorCode: err.code,
+        errorMessage: err.message
+      });
       return true;
     }
   }
@@ -1274,34 +1377,48 @@ class StreamManager extends EventEmitter {
             
             fs.symlinkSync(existingPaths.playlistPath, newPaths.playlistPath);
             
-            // КРИТИЧНО: Валидируем созданный симлинк
-            try {
-              const stats = fs.lstatSync(newPaths.playlistPath);
-              if (!stats.isSymbolicLink()) {
-                logger.warn('[StreamManager] Created file is not a symlink', {
-                  deviceId: entry.device_id,
-                  safeName: entry.safe_name,
-                  symlinkPath: newPaths.playlistPath
-                });
-              } else {
-                const realPath = fs.readlinkSync(newPaths.playlistPath);
-                if (!fs.existsSync(realPath)) {
-                  logger.error('[StreamManager] Symlink target does not exist', {
-                    deviceId: entry.device_id,
-                    safeName: entry.safe_name,
-                    symlinkPath: newPaths.playlistPath,
-                    targetPath: existingPaths.playlistPath,
-                    realPath
-                  });
-                }
-              }
-            } catch (validateErr) {
-              logger.warn('[StreamManager] Error validating created symlink', {
+            // КРИТИЧНО: Валидируем созданный симлинк сразу после создания
+            const symlinkValid = this._validateSymlink(newPaths.playlistPath, existingPaths.playlistPath, entry.device_id, entry.safe_name);
+            
+            if (!symlinkValid) {
+              // Пытаемся пересоздать симлинк один раз
+              logger.warn('[StreamManager] Symlink validation failed, attempting to recreate', {
                 deviceId: entry.device_id,
                 safeName: entry.safe_name,
-                symlinkPath: newPaths.playlistPath,
-                error: validateErr.message
+                symlinkPath: newPaths.playlistPath
               });
+              
+              try {
+                // Удаляем невалидный симлинк
+                if (fs.existsSync(newPaths.playlistPath)) {
+                  const stats = fs.lstatSync(newPaths.playlistPath);
+                  if (stats.isSymbolicLink() || stats.isFile()) {
+                    fs.unlinkSync(newPaths.playlistPath);
+                  }
+                }
+                
+                // Пересоздаем симлинк
+                if (fs.existsSync(existingPaths.playlistPath)) {
+                  fs.symlinkSync(existingPaths.playlistPath, newPaths.playlistPath);
+                  
+                  // Повторная валидация
+                  const retryValid = this._validateSymlink(newPaths.playlistPath, existingPaths.playlistPath, entry.device_id, entry.safe_name);
+                  if (!retryValid) {
+                    logger.error('[StreamManager] Symlink validation failed after retry', {
+                      deviceId: entry.device_id,
+                      safeName: entry.safe_name,
+                      symlinkPath: newPaths.playlistPath,
+                      targetPath: existingPaths.playlistPath
+                    });
+                  }
+                }
+              } catch (retryErr) {
+                logger.error('[StreamManager] Failed to recreate symlink after validation error', {
+                  deviceId: entry.device_id,
+                  safeName: entry.safe_name,
+                  error: retryErr.message
+                });
+              }
             }
             
             logger.info('[StreamManager] Created symlink for shared stream', {
@@ -1395,8 +1512,21 @@ class StreamManager extends EventEmitter {
     // КРИТИЧНО: Создаем Promise для pending операции и сохраняем его
     // Это предотвратит параллельный запуск нескольких процессов для одного URL
     const spawnPromise = (async () => {
+      const startTime = Date.now();
+      const maxPendingTimeout = 120000; // 2 минуты максимум для pending операции
+      
       try {
-        const job = await this._spawnJob(entry);
+        // КРИТИЧНО: Добавляем таймаут для pending операции
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => {
+            reject(new Error(`Pending operation timeout after ${maxPendingTimeout}ms`));
+          }, maxPendingTimeout);
+        });
+        
+        const job = await Promise.race([
+          this._spawnJob(entry),
+          timeoutPromise
+        ]);
         
         if (!job) {
           logger.error('[StreamManager] _spawnJob returned null, FFmpeg not started', {
@@ -1434,27 +1564,57 @@ class StreamManager extends EventEmitter {
           jobKey: job.key,
           jobStatus: job.status,
           hasProcess: !!job.process,
-          processPid: job.process?.pid
+          processPid: job.process?.pid,
+          duration: Date.now() - startTime
         });
         
         return job;
       } catch (err) {
+        const duration = Date.now() - startTime;
         logger.error('[StreamManager] Error in spawn promise', {
           deviceId: entry.device_id,
           safeName: entry.safe_name,
           streamUrl: entry.stream_url,
           error: err.message,
-          stack: err.stack
+          stack: err.stack,
+          duration,
+          isTimeout: err.message.includes('timeout')
         });
+        
+        // КРИТИЧНО: При ошибке все равно очищаем pending операцию
+        // Это предотвращает блокировку последующих запросов
+        this.urlToJobMapPending.delete(entry.stream_url);
+        
         throw err;
       } finally {
-        // КРИТИЧНО: Очищаем pending операцию после завершения
-        this.urlToJobMapPending.delete(entry.stream_url);
+        // КРИТИЧНО: Очищаем pending операцию после завершения (даже при успехе)
+        // Дополнительная гарантия очистки
+        const pendingStillExists = this.urlToJobMapPending.has(entry.stream_url);
+        if (pendingStillExists) {
+          this.urlToJobMapPending.delete(entry.stream_url);
+          logger.debug('[StreamManager] Cleaned up pending operation in finally block', {
+            streamUrl: entry.stream_url,
+            duration: Date.now() - startTime
+          });
+        }
       }
     })();
     
     // Сохраняем Promise в pending перед запуском
     this.urlToJobMapPending.set(entry.stream_url, spawnPromise);
+    
+    // КРИТИЧНО: Обрабатываем отклонение Promise, чтобы не было необработанных ошибок
+    spawnPromise.catch(err => {
+      // Ошибка уже обработана в try-catch внутри Promise
+      // Но убеждаемся, что pending операция очищена
+      if (this.urlToJobMapPending.has(entry.stream_url)) {
+        logger.warn('[StreamManager] Pending operation still exists after error, cleaning up', {
+          streamUrl: entry.stream_url,
+          error: err.message
+        });
+        this.urlToJobMapPending.delete(entry.stream_url);
+      }
+    });
     
     // Ждем завершения операции
     const job = await spawnPromise;
@@ -1482,16 +1642,34 @@ class StreamManager extends EventEmitter {
         // Это shared job - удаляем только симлинк и запись из urlToJobMap
         const urlEntry = this.urlToJobMap.get(job.sourceUrl);
         if (urlEntry) {
+          // КРИТИЧНО: Сохраняем размер ДО удаления для правильной проверки
+          const devicesCountBefore = urlEntry.devices.size;
           urlEntry.devices.delete(key);
+          const remainingDevices = urlEntry.devices.size;
+          
           logger.info('[StreamManager] Removed device from shared stream', {
             deviceId,
             safeName,
             streamUrl: job.sourceUrl,
-            remainingDevices: urlEntry.devices.size
+            devicesCountBefore,
+            remainingDevices
+          });
+          
+          // КРИТИЧНО: Удаляем все связанные записи из lastAccessTime
+          // Проверяем все устройства, использующие этот URL
+          const devicesToClean = [];
+          for (const deviceKey of urlEntry.devices) {
+            if (deviceKey === key) {
+              // Это текущее устройство - удаляем
+              devicesToClean.push(deviceKey);
+            }
+          }
+          devicesToClean.forEach(deviceKey => {
+            this.lastAccessTime.delete(deviceKey);
           });
           
           // Если это последнее устройство, использующее этот URL, останавливаем FFmpeg
-          if (urlEntry.devices.size === 0) {
+          if (remainingDevices === 0) {
             const sharedJob = this.jobs.get(job.sharedFrom);
             if (sharedJob) {
               logger.info('[StreamManager] Last device removed, stopping shared FFmpeg process', {
@@ -1515,8 +1693,13 @@ class StreamManager extends EventEmitter {
                       }
                     }
                     
+                    // КРИТИЧНО: Удаляем все записи из Maps
                     this.jobs.delete(job.sharedFrom);
                     this.lastAccessTime.delete(job.sharedFrom);
+                    // КРИТИЧНО: Удаляем из urlToJobMap после остановки процесса
+                    if (this.urlToJobMap.has(job.sourceUrl)) {
+                      this.urlToJobMap.delete(job.sourceUrl);
+                    }
                     this._cleanupFolder(sharedFolderPath);
                     this.emit('stream:stopped', { deviceId: sharedJob.deviceId, safeName: sharedJob.safeName, reason });
                     logger.info('[StreamManager] Shared FFmpeg stopped and files cleaned', { 
@@ -1541,22 +1724,52 @@ class StreamManager extends EventEmitter {
                   logger.error('[StreamManager] Error stopping shared FFmpeg', { error: err.message });
                   this.jobs.delete(job.sharedFrom);
                   this.lastAccessTime.delete(job.sharedFrom);
+                  // КРИТИЧНО: Удаляем из urlToJobMap даже при ошибке
+                  if (this.urlToJobMap.has(job.sourceUrl)) {
+                    this.urlToJobMap.delete(job.sourceUrl);
+                  }
                   this._cleanupFolder(sharedFolderPath);
                 }
               } else {
+                // КРИТИЧНО: Если процесса нет, все равно очищаем все записи
                 this.jobs.delete(job.sharedFrom);
                 this.lastAccessTime.delete(job.sharedFrom);
+                if (this.urlToJobMap.has(job.sourceUrl)) {
+                  this.urlToJobMap.delete(job.sourceUrl);
+                }
                 this._cleanupFolder(sharedFolderPath);
               }
+            } else {
+              // КРИТИЧНО: Если shared job не найден, все равно удаляем из urlToJobMap
+              logger.warn('[StreamManager] Shared job not found, cleaning up urlToJobMap', {
+                streamUrl: job.sourceUrl,
+                sharedFrom: job.sharedFrom
+              });
+              this.urlToJobMap.delete(job.sourceUrl);
             }
-            this.urlToJobMap.delete(job.sourceUrl);
           }
+        } else {
+          // КРИТИЧНО: Если urlEntry не найден, логируем предупреждение
+          logger.warn('[StreamManager] urlEntry not found for shared job', {
+            deviceId,
+            safeName,
+            streamUrl: job.sourceUrl
+          });
         }
         
         // Удаляем виртуальный job и очищаем симлинк
         this.jobs.delete(key);
         this.lastAccessTime.delete(key);
         this._cleanupFolder(paths.folderPath);
+        
+        // КРИТИЧНО: Валидация - проверяем, что все записи удалены
+        if (this.jobs.has(key)) {
+          logger.error('[StreamManager] Job still exists after cleanup', { deviceId, safeName, key });
+        }
+        if (this.lastAccessTime.has(key)) {
+          logger.error('[StreamManager] lastAccessTime still exists after cleanup', { deviceId, safeName, key });
+        }
+        
         return;
       }
       
@@ -2002,6 +2215,46 @@ class StreamManager extends EventEmitter {
         return null;
       }
       
+      // КРИТИЧНО: Проверяем доступность источника перед запуском FFmpeg
+      // Это предотвращает запуск FFmpeg для недоступных источников
+      // ВАЖНО: Проверка неблокирующая - если она не удалась, все равно пытаемся запустить FFmpeg
+      // (источник может быть медленным или требовать времени на инициализацию)
+      if (this.options.sourceCheckEnabled) {
+        logger.info('[StreamManager] Checking source availability before starting', {
+          deviceId,
+          safeName,
+          streamUrl: streamMetadata.stream_url
+        });
+        
+        try {
+          const sourceAvailable = await this._checkSourceAvailable(streamMetadata.stream_url);
+          if (!sourceAvailable) {
+            logger.warn('[StreamManager] Source check failed, but will attempt to start FFmpeg anyway', {
+              deviceId,
+              safeName,
+              streamUrl: streamMetadata.stream_url,
+              reason: 'Source may be slow or require initialization time'
+            });
+            // НЕ блокируем запуск - FFmpeg может справиться с медленными источниками
+            // Просто логируем предупреждение
+          } else {
+            logger.info('[StreamManager] Source is available, proceeding with stream start', {
+              deviceId,
+              safeName,
+              streamUrl: streamMetadata.stream_url
+            });
+          }
+        } catch (checkErr) {
+          logger.warn('[StreamManager] Source check error, but will attempt to start FFmpeg anyway', {
+            deviceId,
+            safeName,
+            streamUrl: streamMetadata.stream_url,
+            error: checkErr.message
+          });
+          // НЕ блокируем запуск при ошибке проверки
+        }
+      }
+      
       logger.info('[StreamManager] Lazy starting stream', {
         deviceId,
         safeName,
@@ -2267,21 +2520,328 @@ class StreamManager extends EventEmitter {
    */
   async _checkSourceAvailable(streamUrl) {
     try {
-      // Простая проверка через ffprobe с таймаутом
-      const { stdout } = await execAsync(
-        `ffprobe -v error -show_entries format=duration -of json "${streamUrl}"`,
-        { 
-          timeout: this.options.sourceCheckTimeout,
-          maxBuffer: 1024 * 1024 
-        }
-      );
+      // КРИТИЧНО: Для HTTP/HTTPS стримов используем быструю проверку через HEAD запрос
+      // Для RTSP/RTMP используем ffprobe
+      const urlLower = streamUrl.toLowerCase();
+      const isHttp = urlLower.startsWith('http://') || urlLower.startsWith('https://');
       
-      // Если ffprobe успешно выполнился - источник доступен
-      return true;
+      if (isHttp) {
+        // Быстрая проверка через HTTP HEAD запрос
+        return await this._checkHttpSource(streamUrl);
+      } else {
+        // Для RTSP/RTMP используем ffprobe
+        return await this._checkStreamSource(streamUrl);
+      }
     } catch (error) {
       logger.debug('[StreamManager] Source check failed', {
         streamUrl,
         error: error.message
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Проверяет доступность HTTP/HTTPS источника через HEAD запрос (с fallback на GET)
+   * @param {string} streamUrl - URL источника
+   * @returns {Promise<boolean>}
+   */
+  async _checkHttpSource(streamUrl) {
+    // КРИТИЧНО: Добавляем общий таймаут для всей проверки источника
+    // Это предотвращает зависание, если оба запроса (HEAD и GET) зависают
+    const overallTimeout = this.options.sourceCheckTimeout * 2; // Удваиваем таймаут для двух попыток
+    
+    return Promise.race([
+      (async () => {
+        try {
+          // Сначала пробуем HEAD запрос (быстрее)
+          const headResult = await this._checkHttpSourceWithMethod(streamUrl, 'HEAD');
+          if (headResult) {
+            return true;
+          }
+          
+          // Если HEAD не сработал (405 Method Not Allowed или другой код), пробуем GET
+          // Некоторые стримы не поддерживают HEAD
+          logger.debug('[StreamManager] HEAD request failed, trying GET', { streamUrl });
+          return await this._checkHttpSourceWithMethod(streamUrl, 'GET');
+        } catch (err) {
+          logger.debug('[StreamManager] HTTP source check error', {
+            streamUrl,
+            error: err.message
+          });
+          return false;
+        }
+      })(),
+      new Promise((resolve) => {
+        setTimeout(() => {
+          logger.debug('[StreamManager] HTTP source check overall timeout', {
+            streamUrl,
+            timeout: overallTimeout
+          });
+          resolve(false);
+        }, overallTimeout);
+      })
+    ]);
+  }
+
+  /**
+   * Проверяет доступность HTTP/HTTPS источника через указанный метод
+   * @param {string} streamUrl - URL источника
+   * @param {string} method - HTTP метод (HEAD или GET)
+   * @returns {Promise<boolean>}
+   */
+  async _checkHttpSourceWithMethod(streamUrl, method) {
+    return new Promise((resolve) => {
+      let resolved = false; // Флаг для предотвращения двойного resolve
+      
+      const safeResolve = (value) => {
+        if (!resolved) {
+          resolved = true;
+          resolve(value);
+        }
+      };
+      
+      try {
+        // КРИТИЧНО: Валидация URL перед парсингом
+        if (!streamUrl || typeof streamUrl !== 'string' || streamUrl.trim().length === 0) {
+          logger.debug('[StreamManager] Invalid stream URL', { streamUrl, method });
+          return safeResolve(false);
+        }
+        
+        let urlObj;
+        try {
+          urlObj = new URL(streamUrl);
+        } catch (urlErr) {
+          logger.debug('[StreamManager] URL parsing error', {
+            streamUrl,
+            method,
+            error: urlErr.message
+          });
+          return safeResolve(false);
+        }
+        
+        const client = urlObj.protocol === 'https:' ? https : http;
+        
+        const req = client.request({
+          method,
+          hostname: urlObj.hostname,
+          port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+          path: urlObj.pathname + urlObj.search,
+          timeout: this.options.sourceCheckTimeout,
+          headers: {
+            'User-Agent': 'VideoControl/StreamChecker',
+            'Range': 'bytes=0-1' // Для GET запрашиваем только первые 2 байта
+          }
+        }, (res) => {
+          // Проверяем статус код (2xx и 3xx считаем успешными)
+          // 405 Method Not Allowed тоже считаем успешным (сервер работает, просто не поддерживает метод)
+          const isAvailable = (res.statusCode >= 200 && res.statusCode < 400) || res.statusCode === 405;
+          logger.debug('[StreamManager] HTTP source check result', {
+            streamUrl,
+            method,
+            statusCode: res.statusCode,
+            isAvailable
+          });
+          
+          // Для GET метода нужно прочитать ответ, чтобы закрыть соединение
+          if (method === 'GET') {
+            // КРИТИЧНО: Добавляем таймаут для чтения ответа GET
+            const getResponseTimeout = setTimeout(() => {
+              logger.debug('[StreamManager] GET response timeout, closing connection', {
+                streamUrl,
+                method
+              });
+              res.destroy();
+              req.destroy();
+              safeResolve(false);
+            }, this.options.sourceCheckTimeout);
+            
+            res.on('data', () => {}); // Игнорируем данные
+            res.on('end', () => {
+              clearTimeout(getResponseTimeout);
+              safeResolve(isAvailable);
+            });
+            res.on('error', (resErr) => {
+              clearTimeout(getResponseTimeout);
+              logger.debug('[StreamManager] Response stream error', {
+                streamUrl,
+                method,
+                error: resErr.message
+              });
+              safeResolve(false);
+            });
+          } else {
+            safeResolve(isAvailable);
+          }
+          
+          // КРИТИЧНО: Не вызываем req.destroy() здесь, так как для GET нужно дождаться 'end'
+          if (method !== 'GET') {
+            req.destroy();
+          }
+        });
+        
+        req.on('error', (err) => {
+          logger.debug('[StreamManager] HTTP source check error', {
+            streamUrl,
+            method,
+            error: err.message,
+            errorCode: err.code
+          });
+          safeResolve(false);
+        });
+        
+        req.on('timeout', () => {
+          logger.debug('[StreamManager] HTTP source check timeout', {
+            streamUrl,
+            method,
+            timeout: this.options.sourceCheckTimeout
+          });
+          req.destroy();
+          safeResolve(false);
+        });
+        
+        // КРИТИЧНО: Обработка закрытия соединения
+        req.on('close', () => {
+          if (method === 'GET' && !resolved) {
+            // Если соединение закрылось до получения ответа для GET
+            logger.debug('[StreamManager] Connection closed before response', {
+              streamUrl,
+              method
+            });
+            safeResolve(false);
+          }
+        });
+        
+        req.end();
+      } catch (err) {
+        logger.error('[StreamManager] HTTP source check exception', {
+          streamUrl,
+          method,
+          error: err.message,
+          stack: err.stack
+        });
+        safeResolve(false);
+      }
+    });
+  }
+
+  /**
+   * Проверяет доступность RTSP/RTMP источника через ffprobe
+   * @param {string} streamUrl - URL источника
+   * @returns {Promise<boolean>}
+   */
+  async _checkStreamSource(streamUrl) {
+    try {
+      // Используем более быструю проверку с меньшим таймаутом для RTSP/RTMP
+      const timeout = Math.min(this.options.sourceCheckTimeout, 3000); // Максимум 3 секунды
+      logger.debug('[StreamManager] Checking RTSP/RTMP source with ffprobe', {
+        streamUrl,
+        timeout
+      });
+      
+      const { stdout } = await execAsync(
+        `ffprobe -v error -show_entries format=duration -of json "${streamUrl}"`,
+        { 
+          timeout,
+          maxBuffer: 1024 * 1024 
+        }
+      );
+      
+      logger.debug('[StreamManager] RTSP/RTMP source check successful', {
+        streamUrl
+      });
+      
+      // Если ffprobe успешно выполнился - источник доступен
+      return true;
+    } catch (error) {
+      logger.debug('[StreamManager] RTSP/RTMP source check failed', {
+        streamUrl,
+        error: error.message,
+        errorCode: error.code
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Валидирует симлинк на плейлист
+   * @param {string} symlinkPath - Путь к симлинку
+   * @param {string} targetPath - Ожидаемый путь к целевому файлу
+   * @param {string} deviceId - ID устройства (для логирования)
+   * @param {string} safeName - Безопасное имя стрима (для логирования)
+   * @returns {boolean}
+   */
+  _validateSymlink(symlinkPath, targetPath, deviceId, safeName) {
+    try {
+      // Проверяем существование симлинка
+      if (!fs.existsSync(symlinkPath)) {
+        logger.warn('[StreamManager] Symlink does not exist', {
+          deviceId,
+          safeName,
+          symlinkPath
+        });
+        return false;
+      }
+      
+      // Проверяем, что это действительно симлинк
+      const stats = fs.lstatSync(symlinkPath);
+      if (!stats.isSymbolicLink()) {
+        logger.warn('[StreamManager] Created file is not a symlink', {
+          deviceId,
+          safeName,
+          symlinkPath
+        });
+        return false;
+      }
+      
+      // Проверяем, что целевой файл существует
+      const realPath = fs.readlinkSync(symlinkPath);
+      if (!fs.existsSync(realPath)) {
+        logger.error('[StreamManager] Symlink target does not exist', {
+          deviceId,
+          safeName,
+          symlinkPath,
+          targetPath,
+          realPath
+        });
+        return false;
+      }
+      
+      // Проверяем, что реальный путь совпадает с ожидаемым
+      const resolvedPath = path.resolve(realPath);
+      const expectedPath = path.resolve(targetPath);
+      if (resolvedPath !== expectedPath) {
+        logger.warn('[StreamManager] Symlink target path mismatch', {
+          deviceId,
+          safeName,
+          symlinkPath,
+          expectedPath,
+          actualPath: resolvedPath
+        });
+        // Это не критично, если файл существует
+      }
+      
+      // Проверяем права доступа (читаемость)
+      try {
+        fs.accessSync(realPath, fs.constants.R_OK);
+      } catch (accessErr) {
+        logger.error('[StreamManager] Symlink target is not readable', {
+          deviceId,
+          safeName,
+          symlinkPath,
+          targetPath: realPath,
+          error: accessErr.message
+        });
+        return false;
+      }
+      
+      return true;
+    } catch (err) {
+      logger.warn('[StreamManager] Error validating symlink', {
+        deviceId,
+        safeName,
+        symlinkPath,
+        error: err.message
       });
       return false;
     }
@@ -2319,22 +2879,39 @@ class StreamManager extends EventEmitter {
         return false;
       }
       
-      // Проверка первого сегмента
+      // КРИТИЧНО: Проверяем минимум 3 сегмента для стабильного воспроизведения
       const lines = content.split('\n');
-      let firstSegment = null;
+      const segments = [];
       
       for (const line of lines) {
         const trimmed = line.trim();
-        // Ищем строку с именем сегмента (не начинается с #)
-        if (trimmed && !trimmed.startsWith('#')) {
-          firstSegment = trimmed;
-          break;
+        // Ищем строки с именами сегментов (не начинаются с # и заканчиваются на .ts)
+        if (trimmed && !trimmed.startsWith('#') && trimmed.endsWith('.ts')) {
+          segments.push(trimmed);
         }
       }
       
-      if (firstSegment) {
-        const segmentPath = path.join(folderPath, firstSegment);
+      // Требуем минимум 3 сегмента для валидного плейлиста
+      if (segments.length < 3) {
+        logger.debug('[StreamManager] Playlist has insufficient segments', {
+          playlistPath,
+          segmentCount: segments.length,
+          required: 3
+        });
+        return false;
+      }
+      
+      // Проверяем, что все сегменты из плейлиста существуют на диске
+      // Проверяем первые 3 сегмента (достаточно для валидации)
+      const segmentsToCheck = segments.slice(0, Math.min(3, segments.length));
+      for (const segment of segmentsToCheck) {
+        const segmentPath = path.join(folderPath, segment);
         if (!fs.existsSync(segmentPath)) {
+          logger.debug('[StreamManager] Playlist segment missing', {
+            playlistPath,
+            segment,
+            segmentPath
+          });
           return false;
         }
       }
@@ -2399,18 +2976,68 @@ class StreamManager extends EventEmitter {
 
   /**
    * Очищает старые сегменты для всех активных стримов
+   * КРИТИЧНО: Оптимизировано с приоритизацией и ограничением времени выполнения
    */
   _cleanupSegments() {
     const now = Date.now();
     const maxAge = (this.options.segmentDuration * this.options.playlistSize * 2) * 1000; // В миллисекундах
     const maxSizeBytes = this.options.maxFolderSizeMB * 1024 * 1024;
+    const maxCleanupTime = 30000; // Максимум 30 секунд на очистку
+    const cleanupStartTime = Date.now();
     
     let cleanedCount = 0;
     let totalFreed = 0;
     
+    // КРИТИЧНО: Собираем все стримы с информацией о размере папки для приоритизации
+    const streamsToClean = [];
     for (const [key, job] of this.jobs.entries()) {
       if (job.isShared) continue; // Пропускаем shared jobs
       if (!job.paths || !job.paths.folderPath) continue;
+      
+      try {
+        const folderPath = job.paths.folderPath;
+        if (!fs.existsSync(folderPath)) continue;
+        
+        // Вычисляем размер папки
+        let folderSize = 0;
+        try {
+          const files = fs.readdirSync(folderPath);
+          for (const file of files) {
+            try {
+              const filePath = path.join(folderPath, file);
+              const stats = fs.statSync(filePath);
+              folderSize += stats.size;
+            } catch (err) {
+              // Игнорируем ошибки отдельных файлов
+            }
+          }
+        } catch (err) {
+          // Игнорируем ошибки чтения директории
+        }
+        
+        streamsToClean.push({
+          key,
+          job,
+          folderSize
+        });
+      } catch (err) {
+        // Игнорируем ошибки при сборе информации
+      }
+    }
+    
+    // КРИТИЧНО: Сортируем по размеру папки (самые большие первые) для приоритизации
+    streamsToClean.sort((a, b) => b.folderSize - a.folderSize);
+    
+    // Очищаем стримы с приоритизацией
+    for (const { key, job } of streamsToClean) {
+      // Проверяем, не превысили ли лимит времени
+      if (Date.now() - cleanupStartTime > maxCleanupTime) {
+        logger.debug('[StreamManager] Cleanup time limit reached, stopping', {
+          processed: cleanedCount,
+          remaining: streamsToClean.length - cleanedCount
+        });
+        break;
+      }
       
       try {
         const folderPath = job.paths.folderPath;
@@ -2426,10 +3053,21 @@ class StreamManager extends EventEmitter {
                                 !job.process.killed &&
                                 this._checkProcessAlive(job.process);
         
+        // КРИТИЧНО: Проверяем время последней записи FFmpeg (heartbeat)
+        // Если FFmpeg недавно писал сегменты, не удаляем сегменты, созданные после последней записи
+        const lastSegmentWrite = job.lastSegmentWrite || job.startedAt;
+        const timeSinceLastWrite = now - lastSegmentWrite;
+        const isRecentlyActive = isProcessActive && timeSinceLastWrite < (this.options.segmentDuration * 2 * 1000);
+        
         // Если процесс активен, добавляем запас времени для безопасности
         const safeAgeThreshold = isProcessActive 
           ? Math.max(maxAge, (this.options.segmentDuration * this.options.playlistSize * 3) * 1000)
           : maxAge;
+        
+        // КРИТИЧНО: Минимальный возраст для удаления - не удаляем сегменты, созданные после последней записи
+        const minAgeForDeletion = isRecentlyActive 
+          ? Math.max(safeAgeThreshold, timeSinceLastWrite + (this.options.segmentDuration * 1000))
+          : safeAgeThreshold;
         
         const files = fs.readdirSync(folderPath);
         let folderSize = 0;
@@ -2451,7 +3089,17 @@ class StreamManager extends EventEmitter {
               }
               
               const fileAge = now - stats.mtimeMs;
-              if (fileAge > safeAgeThreshold) {
+              
+              // КРИТИЧНО: Не удаляем сегменты, созданные после последней записи FFmpeg
+              // Это предотвращает удаление активных сегментов, даже если они не в плейлисте
+              const fileCreatedAfterLastWrite = stats.mtimeMs > lastSegmentWrite;
+              if (fileCreatedAfterLastWrite && isRecentlyActive) {
+                // Сегмент создан после последней записи FFmpeg - не удаляем
+                continue;
+              }
+              
+              // КРИТИЧНО: Используем minAgeForDeletion вместо safeAgeThreshold
+              if (fileAge > minAgeForDeletion) {
                 fs.unlinkSync(filePath);
                 deletedCount++;
                 totalFreed += stats.size;
@@ -2489,9 +3137,10 @@ class StreamManager extends EventEmitter {
             .filter(f => f !== null)
             .sort((a, b) => a.mtime - b.mtime);
           
-          // Удаляем половину самых старых файлов (которые не в плейлисте)
+          // КРИТИЧНО: Удаляем максимум 50% самых старых файлов (которые не в плейлисте)
           const toDelete = Math.floor(tsFiles.length / 2);
-          for (let i = 0; i < toDelete; i++) {
+          const maxToDelete = Math.min(toDelete, Math.floor(tsFiles.length * 0.5)); // Максимум 50%
+          for (let i = 0; i < maxToDelete; i++) {
             try {
               const stats = fs.statSync(tsFiles[i].path);
               fs.unlinkSync(tsFiles[i].path);
@@ -2520,9 +3169,13 @@ class StreamManager extends EventEmitter {
     }
     
     if (cleanedCount > 0 || totalFreed > 0) {
+      const cleanupDuration = Date.now() - cleanupStartTime;
       logger.info('[StreamManager] Segment cleanup completed', {
         streamsCleaned: cleanedCount,
-        totalFreedMB: Math.round(totalFreed / 1024 / 1024)
+        totalFreedMB: Math.round(totalFreed / 1024 / 1024),
+        durationMs: cleanupDuration,
+        streamsProcessed: cleanedCount,
+        streamsTotal: streamsToClean.length
       });
     }
   }
@@ -2616,6 +3269,7 @@ class StreamManager extends EventEmitter {
     this.urlToJobMap.clear();
     this.lastAccessTime.clear();
     this.urlToJobMapPending.clear(); // Очищаем pending операции
+    this.codecCache.clear(); // Очищаем кэш кодеков
     
     logger.info('[StreamManager] Stopped');
   }
@@ -2662,4 +3316,5 @@ export function getStreamPlaybackUrl(deviceId, safeName) {
 export function getStreamRestreamStatus(deviceId, safeName) {
   return managerInstance?.getStatus(deviceId, safeName) || null;
 }
+
 
