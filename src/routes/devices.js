@@ -12,7 +12,8 @@ import { deleteDevice as deleteDeviceFromDB, deleteDeviceFileNames } from '../da
 import { createLimiter, deleteLimiter } from '../middleware/rate-limit.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import logger, { logDevice } from '../utils/logger.js';
-import { deleteDeviceFilesMetadata } from '../database/files-metadata.js';
+import { deleteDeviceFilesMetadata, getDeviceFilesMetadata } from '../database/files-metadata.js';
+import { removeStreamJob } from '../streams/stream-manager.js';
 
 const router = express.Router();
 
@@ -41,6 +42,7 @@ export function createDevicesRouter(deps) {
       folder: d.folder, 
       files: d.files, 
       fileNames: d.fileNames || d.files,
+      fileMetadata: d.fileMetadata || [],
       current: d.current,
       deviceType: d.deviceType || 'browser',
       capabilities: d.capabilities || { 
@@ -147,6 +149,16 @@ export function createDevicesRouter(deps) {
     
     logDevice('info', `Deleting device`, { deviceId: id, folder: d.folder });
     
+    // Останавливаем рестримы устройства
+    try {
+      const deviceMeta = getDeviceFilesMetadata(id);
+      deviceMeta
+        .filter(meta => meta.content_type === 'streaming')
+        .forEach(meta => removeStreamJob(id, meta.safe_name, 'device_deleted'));
+    } catch (err) {
+      logger.warn('[Devices] Failed to stop streams before delete', { deviceId: id, error: err.message });
+    }
+
     // 1. Удаляем из БД
     deleteDeviceFromDB(id);
     logDevice('info', `Device deleted from DB`, { deviceId: id });

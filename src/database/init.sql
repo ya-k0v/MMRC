@@ -97,6 +97,9 @@ CREATE TABLE IF NOT EXISTS files_metadata (
   
   -- Заглушки (placeholders)
   is_placeholder BOOLEAN DEFAULT 0,
+  content_type TEXT DEFAULT 'file', -- file | folder | streaming
+  stream_url TEXT,
+  stream_protocol TEXT DEFAULT 'auto',
   
   -- Timestamps
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

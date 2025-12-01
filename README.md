@@ -2,7 +2,7 @@
 
 **Система управления медиаконтентом для цифровых дисплеев**
 
-![Version](https://img.shields.io/badge/version-2.8.0-blue)
+![Version](https://img.shields.io/badge/version-3.0.0-blue)
 ![Node](https://img.shields.io/badge/node-20.x-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
@@ -27,7 +27,7 @@ cd VideoControl
 npm install
 
 # 3. Создаем конфигурацию
-mkdir -p config public/content logs
+mkdir -p config data/content data/streams data/converted data/logs data/temp
 
 # 4. Запускаем
 node server.js
@@ -37,7 +37,7 @@ node server.js
 - Сервер: `http://localhost:3000`
 - Админ: `admin / admin123`
 
-### Что нового (2.8.0)
+### Что нового (3.0.0)
 
 - 🧭 **Hero-модуль** — отдельный фронтенд в `public/hero/` (`index.html`, `admin.html`, `js/`) с доступом по `/hero/index.html` и `/hero/admin.html`, общей базой `config/hero/heroes.db` и медиагалереей.
 - 🗃️ **Автоматические миграции heroes.db** — база переносится в `config/hero/heroes.db`, создаётся/синхронизируется на старте, доступен API `/api/hero/export-database`.
@@ -60,9 +60,9 @@ AUTO_CONFIRM=1 sudo bash scripts/install-server.sh
 ```
 
 Доступные режимы хранения:
-- `local` — данные остаются в `public/content`
-- `external` — симлинк на внешний каталог `CONTENT_DIR`
-- `external_fstab` — внешний диск монтируется в `CONTENT_DIR` через `/etc/fstab`, далее симлинк
+- `local` — все данные в `data/*` (content, streams, converted, logs, temp)
+- `external` — все данные в `DATA_ROOT/*` (по умолчанию `/mnt/videocontrol-data/*`)
+- `external_fstab` — внешний диск монтируется в `DATA_ROOT` через `/etc/fstab`
 
 > После установки путь к хранилищу можно менять через админ‑панель: `⚙️ Настройки → Хранилище контента`.  
 > Все загрузки/воспроизведение идут через backend, поэтому Nginx alias для `/content/` не используется.
@@ -180,12 +180,16 @@ videocontrol/
 │   ├── js/                      # Frontend (модульный)
 │   │   ├── admin/               # 13 модулей админ панели
 │   │   └── speaker/             # Спикер панель
-│   ├── content/                 # Медиафайлы (shared storage)
 │   └── sw.js                    # Service Worker
 ├── clients/android-mediaplayer/ # Android приложение
 ├── config/
 │   └── main.db                  # SQLite база
-├── logs/                        # Winston логи
+├── data/                        # Все данные приложения
+│   ├── content/                 # Медиафайлы устройств
+│   ├── streams/                 # HLS рестрим выход
+│   ├── converted/               # Кэш конвертированных PDF/PPTX
+│   ├── logs/                    # Winston логи
+│   └── temp/                    # Временные файлы
 └── scripts/
     └── quick-setup-android.sh   # Быстрая установка Android
 ```
@@ -270,10 +274,10 @@ sudo journalctl -u videocontrol -f
 ### Файлы не загружаются
 ```bash
 # Проверить место на диске
-df -h /vid/videocontrol/public/content
+df -h /vid/videocontrol/data/content
 
 # Проверить права
-ls -la public/content/
+ls -la data/content/
 ```
 
 ---
@@ -288,8 +292,8 @@ sudo journalctl -u videocontrol -f
 adb logcat | grep -iE "VCMedia|VideoControl"
 
 # Winston логи
-tail -f logs/error.log
-tail -f logs/combined.log
+tail -f data/logs/error-*.log
+tail -f data/logs/combined-*.log
 ```
 
 ---

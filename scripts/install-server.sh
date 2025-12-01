@@ -78,11 +78,13 @@ fi
 # Create necessary directories
 echo ""
 echo "Creating directories..."
-mkdir -p public/content
+mkdir -p data/content
+mkdir -p data/streams
+mkdir -p data/converted
+mkdir -p data/logs
+mkdir -p data/temp
 mkdir -p config
 mkdir -p config/hero
-mkdir -p .converted
-mkdir -p logs
 
 # Initialize database
 echo ""
@@ -183,9 +185,11 @@ echo "  🚨 ОБЯЗАТЕЛЬНО смените после первого в�
 echo ""
 echo "📁 Project structure created:"
 echo "  ✅ config/ - configuration files + main.db"
-echo "  ✅ public/content/ - device content (up to 5GB per file)"
-echo "  ✅ .converted/ - converted PDF/PPTX cache"
-echo "  ✅ logs/ - Winston structured logs (will be created)"
+echo "  ✅ data/content/ - device content (up to 5GB per file)"
+echo "  ✅ data/streams/ - HLS restream output"
+echo "  ✅ data/converted/ - converted PDF/PPTX cache"
+echo "  ✅ data/logs/ - Winston structured logs"
+echo "  ✅ data/temp/ - temporary files"
 echo ""
 echo "🚀 Start server:"
 echo "  Development: npm start"
@@ -205,8 +209,8 @@ echo "  ✅ Audit logging to database"
 echo ""
 echo "📊 Monitoring:"
 echo "  Status:  sudo systemctl status videocontrol"
-echo "  Logs:    tail -f logs/combined-*.log"
-echo "  Errors:  tail -f logs/error-*.log"
+echo "  Logs:    tail -f data/logs/combined-*.log"
+echo "  Errors:  tail -f data/logs/error-*.log"
 echo "  Audit:   sqlite3 config/main.db 'SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 10;'"
 echo "  Journal: sudo journalctl -u videocontrol -f"
 echo ""

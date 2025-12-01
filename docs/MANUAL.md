@@ -29,8 +29,8 @@ sudo systemctl start videocontrol
 sudo systemctl daemon-reload   # после изменения unit
 
 # Логи приложения
-tail -f logs/combined-*.log
-tail -f logs/error-*.log
+tail -f data/logs/combined-*.log
+tail -f data/logs/error-*.log
 ```
 
 ### Обновление и диагностика
@@ -130,24 +130,26 @@ node -e "import('bcrypt').then(b=>b.hash('NEW_STRONG_PASSWORD',10).then(console.
 
 ---
 
-## Блок D — Хранилище контента
-По умолчанию: `public/content`. Режимы: `local`, `external`, `external_fstab`.
+## Блок D — Хранилище данных
+По умолчанию: `data/*` (локально) или `/mnt/videocontrol-data/*` (если DATA_ROOT задан). Режимы: `local`, `external`, `external_fstab`.
 ```bash
 # Проверка места и прав
-df -h public/content
-ls -al public/content
+df -h data/content
+ls -al data/content
 
-# Перенос данных
-rsync -aH --delete public/content/ /mnt/vc-content/
+# Перенос данных (если мигрируете со старой структуры)
+rsync -aH --delete public/content/ data/content/ 2>/dev/null || true
+rsync -aH --delete .converted/ data/converted/ 2>/dev/null || true
+rsync -aH logs/ data/logs/ 2>/dev/null || true
 
-# /etc/fstab пример
-echo '/dev/sdb1 /mnt/vc-content ext4 defaults,noatime 0 2' | sudo tee -a /etc/fstab
-sudo mkdir -p /mnt/vc-content
+# Внешний диск через /etc/fstab
+echo '/dev/sdb1 /mnt/videocontrol-data ext4 defaults,noatime 0 2' | sudo tee -a /etc/fstab
+sudo mkdir -p /mnt/videocontrol-data
 sudo mount -a
 
-# Кэш трейлеров (по умолчанию: .converted/trailers/)
-ls -lh .converted/trailers/
-find .converted/trailers -type f -mtime +7 -print -delete
+# Кэш трейлеров (по умолчанию: data/converted/trailers/)
+ls -lh data/converted/trailers/
+find data/converted/trailers -type f -mtime +7 -print -delete
 ```
 
 ---
@@ -168,10 +170,13 @@ mv config/main.db config/main.db.bak
 mv config/main-restored.db config/main.db
 ```
 
-### Контент
+### Данные
 ```bash
-rsync -aH --delete public/content/ /backup/vc-content/
-rsync -aH --delete /backup/vc-content/ public/content/
+# Бэкап всех данных
+rsync -aH --delete data/ /backup/videocontrol-data/
+
+# Восстановление
+rsync -aH --delete /backup/videocontrol-data/ data/
 ```
 
 ---

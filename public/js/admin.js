@@ -294,7 +294,10 @@ function renderLayout() {
     <div id="filesPane" class="card" style="min-height:0; display:flex; flex-direction:column">
       <div class="header" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-sm)">
         <div class="title" id="filesPaneTitle" style="margin:0; font-size:var(--font-size-base)">Файлы</div>
-        <div class="meta" id="filesPaneMeta" style="margin:0; white-space:nowrap">Выберите устройство слева</div>
+        <div style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap">
+          <button class="secondary" id="addStreamBtn" style="display:none;">+ Стрим</button>
+          <div class="meta" id="filesPaneMeta" style="margin:0; white-space:nowrap">Выберите устройство слева</div>
+        </div>
       </div>
       <div style="display:flex; flex-direction:column; gap:var(--space-md); flex:1 1 auto; min-height:0">
       <div id="filesPanel" style="flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden"></div>
@@ -304,6 +307,53 @@ function renderLayout() {
   `;
 
   renderTVList();
+  setupAddStreamButton();
+}
+
+function setupAddStreamButton() {
+  const btn = document.getElementById('addStreamBtn');
+  if (!btn) return;
+  if (!user || user.role !== 'admin') {
+    btn.style.display = 'none';
+    return;
+  }
+  btn.style.display = 'inline-flex';
+  btn.onclick = () => promptAddStream();
+}
+
+async function promptAddStream() {
+  if (!currentDeviceId) {
+    alert('Сначала выберите устройство');
+    return;
+  }
+  const name = prompt('Название стрима');
+  if (!name) return;
+  const url = prompt('URL стрима (http/https)');
+  if (!url) return;
+  const suggested = guessStreamProtocolFromUrl(url);
+  const protoInput = prompt('Тип потока (hls/dash/mpegts, пусто = авто)', suggested || 'auto');
+  const protocol = (protoInput || '').trim().toLowerCase() || 'auto';
+  try {
+    const res = await adminFetch(`/api/devices/${encodeURIComponent(currentDeviceId)}/streams`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name.trim(), url: url.trim(), protocol })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Не удалось создать стрим');
+    }
+    await renderFilesPane(currentDeviceId);
+  } catch (error) {
+    alert(error.message || 'Ошибка создания стрима');
+  }
+}
+
+function guessStreamProtocolFromUrl(url = '') {
+  const lower = url.toLowerCase();
+  if (lower.includes('.m3u8') || lower.includes('format=m3u8')) return 'hls';
+  if (lower.includes('.mpd') || lower.includes('format=mpd') || lower.includes('dash')) return 'dash';
+  return 'mpegts';
 }
 
 // ------ Заполнение select ------
@@ -374,6 +424,10 @@ async function renderFilesPane(deviceId) {
   const updatedDevice = devicesCache.find(d => d.device_id === deviceId);
   const updatedFilesCount = updatedDevice ? (updatedDevice.files?.length || 0) : filesCount;
   if (meta) meta.textContent = `${updatedFilesCount} файл${updatedFilesCount === 1 ? '' : updatedFilesCount > 1 && updatedFilesCount < 5 ? 'а' : 'ов'}`;
+  const streamBtn = document.getElementById('addStreamBtn');
+  if (streamBtn) {
+    streamBtn.disabled = !deviceId;
+  }
 }
 
 

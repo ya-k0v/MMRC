@@ -1,0 +1,2002 @@
+import { spawn, exec } from 'child_process';
+import { promisify } from 'util';
+import fs from 'fs';
+import path from 'path';
+import EventEmitter from 'events';
+import logger from '../utils/logger.js';
+import { getStreamsOutputDir } from '../config/settings-manager.js';
+
+const execAsync = promisify(exec);
+
+const STREAM_KEY_SEPARATOR = '::';
+
+// КРИТИЧНО: outputRoot теперь вычисляется динамически из настроек БД
+// Используем функцию getStreamsOutputDir() вместо константы
+const DEFAULT_OPTIONS = {
+  outputRoot: getStreamsOutputDir(), // Вычисляется из contentRoot в настройках
+  publicBasePath: '/streams',
+  ffmpegPath: process.env.FFMPEG_PATH || 'ffmpeg',
+  segmentDuration: Number(process.env.RESTREAM_SEGMENT_DURATION || 3), // 3 секунды для более частого обновления
+  playlistSize: Number(process.env.RESTREAM_PLAYLIST_SIZE || 10), // Увеличено до 10 для лучшей буферизации
+  restartDelayMs: Number(process.env.RESTREAM_RESTART_DELAY_MS || 5000),
+  // Критичные настройки для стабильности
+  restartMaxAttempts: Number(process.env.STREAM_RESTART_MAX_ATTEMPTS || 5),
+  restartInitialDelay: Number(process.env.STREAM_RESTART_INITIAL_DELAY || 5000),
+  restartMaxDelay: Number(process.env.STREAM_RESTART_MAX_DELAY || 60000),
+  circuitBreakerThreshold: Number(process.env.STREAM_CIRCUIT_BREAKER_THRESHOLD || 5),
+  circuitBreakerTimeout: Number(process.env.STREAM_CIRCUIT_BREAKER_TIMEOUT || 300000),
+  cleanupInterval: Number(process.env.STREAM_CLEANUP_INTERVAL || 300000), // 5 минут
+  maxFolderSizeMB: Number(process.env.STREAM_MAX_FOLDER_SIZE_MB || 500),
+  playlistMaxAge: Number(process.env.STREAM_PLAYLIST_MAX_AGE || 30000), // 30 секунд
+  sourceCheckEnabled: process.env.STREAM_SOURCE_CHECK_ENABLED !== 'false',
+  sourceCheckTimeout: Number(process.env.STREAM_SOURCE_CHECK_TIMEOUT || 5000),
+};
+
+function sanitizePathFragment(value = '') {
+  return String(value)
+    .replace(/[^a-zA-Z0-9\-_.]/g, '_')
+    .substring(0, 200);
+}
+
+function ensureDir(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
+class StreamManager extends EventEmitter {
+  constructor(options = {}) {
+    super();
+    this.options = { ...DEFAULT_OPTIONS, ...options };
+    this.jobs = new Map(); // Map<deviceId::safeName, job>
+    this.urlToJobMap = new Map(); // Map<streamUrl, {jobKey, devices: Set<deviceId::safeName>}>
+    this.lastAccessTime = new Map(); // Отслеживание последнего доступа к стриму
+    // КРИТИЧНО: idleTimeout для автоматической остановки неиспользуемых стримов
+    // Стрим работает, пока его смотрят (плеер запрашивает сегменты)
+    // Если стрим не используется (нет запросов сегментов) - останавливается через 3 минуты
+    // HLS плееры запрашивают плейлист каждые 3-5 секунд, поэтому 3 минуты достаточно
+    this.idleTimeout = Number(process.env.STREAM_IDLE_TIMEOUT_MS || 180000); // 180 секунд (3 минуты) по умолчанию
+    
+    // Интервалы для очистки при shutdown
+    this.idleCleanupInterval = null;
+    this.segmentCleanupInterval = null;
+    this.circuitBreakerCheckInterval = null;
+    
+    // КРИТИЧНО: outputRoot теперь вычисляется динамически из настроек БД
+    // Обновляем его при инициализации, чтобы использовать актуальный путь
+    this.options.outputRoot = getStreamsOutputDir();
+    ensureDir(this.options.outputRoot);
+    logger.info('[StreamManager] Initialized', {
+      outputRoot: this.options.outputRoot,
+      publicBasePath: this.options.publicBasePath,
+      ffmpegPath: this.options.ffmpegPath,
+      idleTimeout: this.idleTimeout
+    });
+    
+    // Запускаем периодическую проверку неиспользуемых стримов
+    this._startIdleCleanup();
+    
+    // Запускаем периодическую очистку сегментов
+    this._startSegmentCleanup();
+    
+    // Запускаем периодическую проверку circuit breaker
+    this._startCircuitBreakerCheck();
+  }
+  
+  /**
+   * Запускает периодическую проверку неиспользуемых стримов
+   * Стрим работает, пока его смотрят (плеер запрашивает сегменты)
+   * Если стрим не используется (нет запросов) - останавливается через idleTimeout
+   */
+  _startIdleCleanup() {
+    this.idleCleanupInterval = setInterval(() => {
+      const now = Date.now();
+      for (const [key, job] of this.jobs.entries()) {
+        // КРИТИЧНО: Пропускаем shared jobs - они обрабатываются через основной job
+        if (job.isShared) {
+          continue;
+        }
+        
+        const lastAccess = this.lastAccessTime.get(key);
+        if (!lastAccess) {
+          // Если нет записи о доступе - это новый стрим, пропускаем
+          continue;
+        }
+        
+        const idleTime = now - lastAccess;
+        if (idleTime > this.idleTimeout) {
+          // КРИТИЧНО: Проверяем, используется ли URL другими устройствами
+          const urlEntry = this.urlToJobMap.get(job.sourceUrl);
+          if (urlEntry && urlEntry.devices.size > 1) {
+            // URL используется другими устройствами - проверяем их активность
+            let hasActiveDevice = false;
+            for (const deviceKey of urlEntry.devices) {
+              const deviceLastAccess = this.lastAccessTime.get(deviceKey);
+              if (deviceLastAccess && (now - deviceLastAccess) <= this.idleTimeout) {
+                hasActiveDevice = true;
+                break;
+              }
+            }
+            if (hasActiveDevice) {
+              // Есть активное устройство - не останавливаем
+              continue;
+            }
+          }
+          
+          logger.info('[StreamManager] 🕐 Stopping idle stream (no activity)', {
+            deviceId: job.deviceId,
+            safeName: job.safeName,
+            idleTimeMs: idleTime,
+            idleTimeSeconds: Math.round(idleTime / 1000),
+            idleTimeoutMs: this.idleTimeout,
+            idleTimeoutSeconds: Math.round(this.idleTimeout / 1000)
+          });
+          this.stopStream(job.deviceId, job.safeName, 'idle_timeout');
+        }
+      }
+    }, 10000); // Проверяем каждые 10 секунд для быстрой реакции
+  }
+
+  _jobKey(deviceId, safeName) {
+    return `${deviceId}${STREAM_KEY_SEPARATOR}${safeName}`;
+  }
+
+  _getPaths(deviceId, safeName) {
+    const safeDevice = sanitizePathFragment(deviceId);
+    const safeFile = sanitizePathFragment(safeName);
+    const folderPath = path.join(this.options.outputRoot, safeDevice, safeFile);
+    const playlistPath = path.join(folderPath, 'index.m3u8');
+    const segmentPattern = path.join(folderPath, 'segment_%05d.ts');
+    const publicUrl = `${this.options.publicBasePath}/${encodeURIComponent(safeDevice)}/${encodeURIComponent(safeFile)}/index.m3u8`;
+    return { folderPath, playlistPath, segmentPattern, publicUrl };
+  }
+
+  /**
+   * Определяет кодеки исходного потока через ffprobe
+   * @param {string} streamUrl - URL исходного потока
+   * @returns {Promise<{videoCodec: string, audioCodec: string}>}
+   */
+  async _detectStreamCodecs(streamUrl, streamProtocol = null) {
+    // КРИТИЧНО: Для DASH стримов (.mpd) требуется больше времени на инициализацию
+    // FFprobe должен прочитать манифест и выбрать представление для анализа
+    const isDash = streamProtocol === 'dash' || streamUrl.toLowerCase().includes('.mpd');
+    const timeout = isDash ? 15000 : 5000; // 15 секунд для DASH, 5 для остальных
+    
+    try {
+      logger.info('[StreamManager] Detecting stream codecs', {
+        streamUrl,
+        streamProtocol,
+        isDash,
+        timeout
+      });
+      
+      // Для DASH стримов используем специальные параметры ffprobe
+      let ffprobeCmd = `ffprobe -v error -show_streams -of json`;
+      if (isDash) {
+        // Для DASH добавляем параметры для работы с адаптивными потоками
+        ffprobeCmd += ` -select_streams v:0,a:0`; // Выбираем первое видео и аудио представление
+      }
+      ffprobeCmd += ` "${streamUrl}"`;
+      
+      const { stdout } = await execAsync(
+        ffprobeCmd,
+        { timeout, maxBuffer: 1024 * 1024 * 2 } // Увеличиваем буфер для DASH
+      );
+      
+      const data = JSON.parse(stdout);
+      const streams = data.streams || [];
+      
+      const videoStream = streams.find(s => s.codec_type === 'video');
+      const audioStream = streams.find(s => s.codec_type === 'audio');
+      
+      const result = {
+        videoCodec: videoStream?.codec_name || 'unknown',
+        audioCodec: audioStream?.codec_name || 'unknown'
+      };
+      
+      logger.info('[StreamManager] Codecs detected successfully', {
+        streamUrl,
+        ...result
+      });
+      
+      return result;
+    } catch (error) {
+      logger.warn('[StreamManager] Failed to detect codecs, will transcode', {
+        streamUrl,
+        streamProtocol,
+        isDash,
+        error: error.message,
+        errorCode: error.code
+      });
+      // В случае ошибки возвращаем unknown, что приведет к перекодированию
+      // Это не блокирует запуск FFmpeg - он просто будет перекодировать
+      return { videoCodec: 'unknown', audioCodec: 'unknown' };
+    }
+  }
+
+  /**
+   * Определяет, нужно ли перекодировать кодек для совместимости с браузерами
+   * @param {string} codec - Название кодека
+   * @param {'video'|'audio'} type - Тип потока
+   * @returns {boolean}
+   */
+  _needsTranscoding(codec, type) {
+    if (type === 'video') {
+      // Браузеры поддерживают только H.264 в HLS
+      const supportedVideoCodecs = ['h264', 'libx264', 'avc'];
+      return !supportedVideoCodecs.includes(codec?.toLowerCase());
+    } else if (type === 'audio') {
+      // Браузеры поддерживают AAC в HLS
+      const supportedAudioCodecs = ['aac', 'mp4a'];
+      return !supportedAudioCodecs.includes(codec?.toLowerCase());
+    }
+    return true; // По умолчанию перекодируем
+  }
+
+  _cleanupFolder(folderPath) {
+    try {
+      if (fs.existsSync(folderPath)) {
+        // КРИТИЧНО: Сначала удаляем все .ts сегменты вручную, чтобы освободить их
+        // Это важно, так как они могут быть заблокированы FFmpeg процессом
+        try {
+          const files = fs.readdirSync(folderPath);
+          for (const file of files) {
+            if (file.endsWith('.ts') || file.endsWith('.m3u8')) {
+              const filePath = path.join(folderPath, file);
+              try {
+                fs.unlinkSync(filePath);
+                logger.debug('[StreamManager] Удален файл', { filePath, file });
+              } catch (e) {
+                logger.warn('[StreamManager] Не удалось удалить файл', { filePath, error: e.message });
+              }
+            }
+          }
+        } catch (e) {
+          logger.warn('[StreamManager] Ошибка при удалении отдельных файлов', { error: e.message });
+        }
+        
+        // КРИТИЧНО: Проверяем, является ли плейлист симлинком
+        const playlistPath = path.join(folderPath, 'index.m3u8');
+        if (fs.existsSync(playlistPath)) {
+          try {
+            const stats = fs.lstatSync(playlistPath);
+            if (stats.isSymbolicLink()) {
+              // Это симлинк - удаляем только симлинк, не целевой файл
+              fs.unlinkSync(playlistPath);
+              logger.debug('[StreamManager] Removed symlink', { playlistPath });
+            } else {
+              // Обычный файл - удаляем
+              fs.unlinkSync(playlistPath);
+              logger.debug('[StreamManager] Removed m3u8 file', { playlistPath });
+            }
+          } catch (e) {
+            logger.warn('[StreamManager] Ошибка при удалении m3u8', { playlistPath, error: e.message });
+          }
+        }
+        
+        // КРИТИЧНО: Удаляем все файлы и папку рекурсивно
+        // Для симлинков это безопасно - удалится только симлинк, не целевой файл
+        fs.rmSync(folderPath, { recursive: true, force: true });
+        logger.info('[StreamManager] Cleaned up stream folder', { folderPath });
+      }
+    } catch (err) {
+      logger.warn('[StreamManager] Failed to cleanup folder', { folderPath, error: err.message, stack: err.stack });
+      // Пробуем удалить файлы по одному, если рекурсивное удаление не сработало
+      try {
+        if (fs.existsSync(folderPath)) {
+          const files = fs.readdirSync(folderPath);
+          for (const file of files) {
+            const filePath = path.join(folderPath, file);
+            try {
+              // Проверяем, является ли файл симлинком
+              const stats = fs.lstatSync(filePath);
+              if (stats.isSymbolicLink()) {
+                fs.unlinkSync(filePath); // Удаляем только симлинк
+              } else {
+                fs.unlinkSync(filePath); // Удаляем обычный файл
+              }
+              logger.debug('[StreamManager] Удален файл (fallback)', { filePath });
+            } catch (e) {
+              logger.warn('[StreamManager] Failed to delete file', { filePath, error: e.message });
+            }
+          }
+          // Пробуем удалить папку
+          try {
+            fs.rmdirSync(folderPath);
+          } catch (e) {
+            // Игнорируем ошибку, если папка не пуста
+            logger.debug('[StreamManager] Не удалось удалить папку (возможно не пуста)', { folderPath });
+          }
+        }
+      } catch (e) {
+        logger.error('[StreamManager] Failed to cleanup folder (fallback)', { folderPath, error: e.message });
+      }
+    }
+  }
+
+  async _spawnJob(meta) {
+    const { device_id, safe_name, stream_url, stream_protocol } = meta;
+    
+    logger.info('[StreamManager] _spawnJob called', {
+      deviceId: device_id,
+      safeName: safe_name,
+      streamUrl: stream_url,
+      streamProtocol: stream_protocol
+    });
+    
+    if (!stream_url) {
+      logger.error('[StreamManager] Missing stream_url, skip restream', { device_id, safe_name });
+      return null;
+    }
+
+    const key = this._jobKey(device_id, safe_name);
+    const paths = this._getPaths(device_id, safe_name);
+    
+    logger.info('[StreamManager] Preparing stream folder', {
+      deviceId: device_id,
+      safeName: safe_name,
+      folderPath: paths.folderPath,
+      playlistPath: paths.playlistPath,
+      outputRoot: this.options.outputRoot
+    });
+    
+    // КРИТИЧНО: Удаляем старые файлы перед запуском нового стрима
+    // Это предотвращает воспроизведение старых сегментов
+    logger.info('[StreamManager] Очистка старой директории стрима', {
+      deviceId: device_id,
+      safeName: safe_name,
+      folderPath: paths.folderPath,
+      existsBefore: fs.existsSync(paths.folderPath)
+    });
+    this._cleanupFolder(paths.folderPath);
+    
+    // КРИТИЧНО: Дополнительная проверка - убеждаемся что все файлы удалены
+    // Ждем немного, чтобы файловая система успела обработать удаление
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    // Проверяем, что папка действительно пуста или не существует
+    let retryCount = 0;
+    const maxRetries = 5;
+    while (fs.existsSync(paths.folderPath) && retryCount < maxRetries) {
+      const remainingFiles = fs.readdirSync(paths.folderPath);
+      if (remainingFiles.length === 0) {
+        // Папка пуста, можно удалить
+        try {
+          fs.rmdirSync(paths.folderPath);
+          logger.debug('[StreamManager] Удалена пустая папка', { folderPath: paths.folderPath });
+        } catch (e) {
+          // Игнорируем ошибку, если папка не пуста или заблокирована
+          logger.debug('[StreamManager] Не удалось удалить папку', { folderPath: paths.folderPath, error: e.message });
+        }
+        break;
+      }
+      
+      logger.warn('[StreamManager] Обнаружены оставшиеся файлы после очистки, удаляем вручную', {
+        deviceId: device_id,
+        safeName: safe_name,
+        folderPath: paths.folderPath,
+        files: remainingFiles,
+        retry: retryCount + 1
+      });
+      
+      // Удаляем оставшиеся файлы вручную
+      for (const file of remainingFiles) {
+        try {
+          const filePath = path.join(paths.folderPath, file);
+          fs.unlinkSync(filePath);
+          logger.debug('[StreamManager] Удален оставшийся файл', { filePath, file });
+        } catch (e) {
+          logger.warn('[StreamManager] Не удалось удалить файл', { file, filePath: path.join(paths.folderPath, file), error: e.message });
+        }
+      }
+      
+      retryCount++;
+      if (retryCount < maxRetries) {
+        // Ждем перед следующей попыткой
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+    
+    // Финальная проверка
+    if (fs.existsSync(paths.folderPath)) {
+      const finalFiles = fs.readdirSync(paths.folderPath);
+      if (finalFiles.length > 0) {
+        logger.error('[StreamManager] КРИТИЧНО: Не удалось удалить все файлы перед запуском FFmpeg', {
+          deviceId: device_id,
+          safeName: safe_name,
+          folderPath: paths.folderPath,
+          remainingFiles: finalFiles
+        });
+      }
+    }
+    
+    // КРИТИЧНО: Создаем папку для стрима
+    try {
+      ensureDir(paths.folderPath);
+      logger.info('[StreamManager] Stream folder created/verified', {
+        deviceId: device_id,
+        safeName: safe_name,
+        folderPath: paths.folderPath,
+        exists: fs.existsSync(paths.folderPath),
+        isEmpty: fs.existsSync(paths.folderPath) ? fs.readdirSync(paths.folderPath).length === 0 : true
+      });
+    } catch (err) {
+      logger.error('[StreamManager] Failed to create stream folder', {
+        deviceId: device_id,
+        safeName: safe_name,
+        folderPath: paths.folderPath,
+        error: err.message,
+        errorCode: err.code
+      });
+      throw err; // Не продолжаем, если не можем создать папку
+    }
+
+    // КРИТИЧНО: Для DASH стримов определение кодеков может быть проблематичным
+    // FFprobe может не успеть прочитать манифест или выбрать представление
+    // Поэтому для DASH всегда перекодируем, чтобы гарантировать запуск FFmpeg
+    const isDash = stream_protocol === 'dash' || stream_url.toLowerCase().includes('.mpd');
+    
+    let videoCodec = 'unknown';
+    let audioCodec = 'unknown';
+    let needsVideoTranscode = true; // По умолчанию перекодируем
+    let needsAudioTranscode = true;
+    
+    // Для DASH стримов пропускаем определение кодеков и всегда перекодируем
+    // Это гарантирует, что FFmpeg запустится и обработает стрим
+    if (!isDash) {
+      try {
+        const codecs = await this._detectStreamCodecs(stream_url, stream_protocol);
+        videoCodec = codecs.videoCodec;
+        audioCodec = codecs.audioCodec;
+        needsVideoTranscode = this._needsTranscoding(videoCodec, 'video');
+        needsAudioTranscode = this._needsTranscoding(audioCodec, 'audio');
+      } catch (err) {
+        logger.warn('[StreamManager] Codec detection failed, will transcode', {
+          deviceId: device_id,
+          safeName: safe_name,
+          error: err.message
+        });
+        // Продолжаем с перекодированием
+      }
+    } else {
+      logger.info('[StreamManager] DASH stream detected, skipping codec detection, will transcode', {
+        deviceId: device_id,
+        safeName: safe_name,
+        streamUrl: stream_url
+      });
+    }
+
+    logger.info('[StreamManager] Stream codecs detected', {
+      deviceId: device_id,
+      safeName: safe_name,
+      videoCodec,
+      audioCodec,
+      needsVideoTranscode,
+      needsAudioTranscode
+    });
+
+    // КРИТИЧНО: НЕ используем 'append_list' - это заставляет FFmpeg продолжать с существующего плейлиста
+    // Вместо этого используем только 'delete_segments' для автоматической очистки старых сегментов
+    // Это гарантирует, что FFmpeg создаст новый плейлист с нуля при каждом запуске
+    const hlsFlags = [
+      'delete_segments',  // Удаляем старые сегменты автоматически
+      'program_date_time', // Добавляем дату/время для каждого сегмента
+      'independent_segments', // Сегменты независимы (для лучшей совместимости)
+      'omit_endlist'     // КРИТИЧНО: Не добавляем #EXT-X-ENDLIST для live стримов
+    ];
+
+    const args = [
+      '-hide_banner',
+      '-loglevel', 'warning',
+      '-fflags', '+genpts',
+      '-reconnect', '1',
+      '-reconnect_streamed', '1',
+      '-reconnect_delay_max', '2'
+    ];
+    
+    // КРИТИЧНО: Для DASH стримов добавляем специальные параметры
+    if (isDash) {
+      // Для DASH стримов FFmpeg должен правильно обработать манифест
+      // ВАЖНО: -http_persistent удален из FFmpeg, используем только поддерживаемые опции
+      args.push(
+        '-multiple_requests', '1',       // Разрешаем множественные запросы для адаптивного битрейта
+        '-user_agent', 'FFmpeg/VideoControl', // Указываем User-Agent
+        '-seekable', '0'                 // Отключаем seek для live стримов
+      );
+      logger.info('[StreamManager] Using DASH-specific input parameters', { 
+        deviceId: device_id, 
+        safeName: safe_name,
+        streamUrl: stream_url
+      });
+    }
+    
+    args.push('-i', stream_url);
+
+    // Видео: копируем если H.264, иначе перекодируем
+    if (needsVideoTranscode) {
+      args.push(
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-tune', 'zerolatency',
+        '-crf', '23',
+        '-g', '50',
+        '-sc_threshold', '0'
+      );
+      logger.info('[StreamManager] Video will be transcoded to H.264', { deviceId: device_id, safeName: safe_name, fromCodec: videoCodec });
+    } else {
+      args.push('-c:v', 'copy');
+      logger.info('[StreamManager] Video will be copied (already H.264)', { deviceId: device_id, safeName: safe_name });
+    }
+
+    // Аудио: копируем если AAC, иначе перекодируем
+    if (needsAudioTranscode) {
+      args.push(
+        '-c:a', 'aac',
+        '-b:a', '128k'
+      );
+      logger.info('[StreamManager] Audio will be transcoded to AAC', { deviceId: device_id, safeName: safe_name, fromCodec: audioCodec });
+    } else {
+      args.push('-c:a', 'copy');
+      logger.info('[StreamManager] Audio will be copied (already AAC)', { deviceId: device_id, safeName: safe_name });
+    }
+
+    args.push(
+      '-f', 'hls',
+      '-hls_time', String(this.options.segmentDuration),
+      '-hls_list_size', String(this.options.playlistSize),
+      '-hls_flags', hlsFlags.join('+'),
+      '-hls_segment_filename', paths.segmentPattern,
+      '-hls_playlist_type', 'event', // КРИТИЧНО: Указываем тип плейлиста как EVENT для live стримов
+      '-hls_allow_cache', '0', // КРИТИЧНО: Отключаем кеширование для live стримов
+      '-hls_start_number_source', 'epoch', // КРИТИЧНО: Используем epoch для уникальной нумерации при каждом запуске
+      '-hls_segment_type', 'mpegts', // Явно указываем тип сегментов
+      '-hls_base_url', '', // Пустой base URL для относительных путей
+      paths.playlistPath
+    );
+
+    // КРИТИЧНО: Логируем полную команду FFmpeg для отладки
+    logger.info('[StreamManager] Starting FFmpeg with args', {
+      deviceId: device_id,
+      safeName: safe_name,
+      streamUrl: stream_url,
+      isDash,
+      ffmpegPath: this.options.ffmpegPath,
+      args: args.join(' ')
+    });
+    
+    const child = spawn(this.options.ffmpegPath, args, {
+      stdio: ['ignore', 'ignore', 'pipe']
+    });
+    
+    // КРИТИЧНО: Собираем stderr для логирования ошибок FFmpeg
+    let stderrBuffer = '';
+    
+    const job = {
+      key,
+      deviceId: device_id,
+      safeName: safe_name,
+      process: child,
+      sourceUrl: stream_url,
+      protocol: stream_protocol || 'auto',
+      paths,
+      status: 'starting',
+      restarts: 0,
+      stopping: false,
+      lastError: null,
+      lastErrorType: null, // Тип последней ошибки (network, codec, source_ended, unknown)
+      startedAt: Date.now(),
+      lastPlaylistUpdate: null, // Время последнего обновления плейлиста
+      circuitBreakerOpen: false, // Circuit breaker открыт
+      circuitBreakerOpenTime: null, // Время открытия circuit breaker
+      consecutiveFailures: 0 // Количество последовательных неудач
+    };
+
+    // КРИТИЧНО: Обрабатываем stderr для отслеживания статуса и сбора ошибок
+    child.stderr.on('data', (data) => {
+      const chunk = data.toString();
+      stderrBuffer += chunk;
+      
+      // Обновляем статус при первом выводе (FFmpeg начал работу)
+      if (job.status === 'starting') {
+        job.status = 'running';
+        job.lastPlaylistUpdate = Date.now();
+        // КРИТИЧНО: При успешном запуске сбрасываем счетчики
+        job.consecutiveFailures = 0;
+        if (job.circuitBreakerOpen) {
+          job.circuitBreakerOpen = false;
+          job.circuitBreakerOpenTime = null;
+          logger.info('[StreamManager] Circuit breaker closed after successful start', {
+            deviceId: job.deviceId,
+            safeName: job.safeName
+          });
+        }
+        this.emit('stream:running', { deviceId: job.deviceId, safeName: job.safeName });
+        logger.info('[StreamManager] FFmpeg started successfully', {
+          deviceId: device_id,
+          safeName: safe_name,
+          isDash
+        });
+      }
+      
+      // КРИТИЧНО: Обновляем время последнего обновления плейлиста при создании сегментов
+      // Ищем паттерны создания сегментов в stderr
+      if (chunk.includes('Opening') && chunk.includes('.ts')) {
+        job.lastPlaylistUpdate = Date.now();
+      }
+      
+      // Также обновляем при записи сегментов
+      if (chunk.includes('segment_') && chunk.includes('.ts')) {
+        job.lastPlaylistUpdate = Date.now();
+      }
+      
+      // Логируем первые сообщения для отладки
+      if (stderrBuffer.length < 5000) {
+        logger.debug('[StreamManager] FFmpeg stderr', {
+          deviceId: device_id,
+          safeName: safe_name,
+          chunk: chunk.substring(0, 200)
+        });
+      }
+    });
+
+    child.on('error', (err) => {
+      job.lastError = err.message;
+      logger.error('[StreamManager] ffmpeg spawn error', {
+        deviceId: device_id,
+        safeName: safe_name,
+        streamUrl: stream_url,
+        isDash,
+        error: err.message,
+        errorCode: err.code,
+        stderr: stderrBuffer.substring(0, 1000)
+      });
+    });
+
+    child.on('exit', (code, signal) => {
+      const wasStopping = job.stopping;
+      job.process = null;
+      job.status = 'stopped';
+      
+      // КРИТИЧНО: Удаляем из urlToJobMap при завершении процесса
+      const urlEntry = this.urlToJobMap.get(job.sourceUrl);
+      if (urlEntry) {
+        // Удаляем все устройства, использующие этот URL, и очищаем их файлы
+        urlEntry.devices.forEach(deviceKey => {
+          const deviceJob = this.jobs.get(deviceKey);
+          if (deviceJob) {
+            // Очищаем файлы устройства (симлинки или прямые файлы)
+            this._cleanupFolder(deviceJob.paths.folderPath);
+          }
+          this.jobs.delete(deviceKey);
+          this.lastAccessTime.delete(deviceKey);
+        });
+        this.urlToJobMap.delete(job.sourceUrl);
+      }
+      
+      if (wasStopping) {
+        // КРИТИЧНО: Удаляем job и очищаем файлы при остановке
+        this.jobs.delete(key);
+        this.lastAccessTime.delete(key);
+        this._cleanupFolder(job.paths.folderPath);
+        this.emit('stream:stopped', { deviceId: job.deviceId, safeName: job.safeName, code, signal });
+        logger.info('[StreamManager] FFmpeg process exited, files cleaned', { 
+          deviceId: job.deviceId, 
+          safeName: job.safeName, 
+          code, 
+          signal 
+        });
+        return;
+      }
+
+      // КРИТИЧНО: Классифицируем ошибку для умных перезапусков
+      const errorType = this._classifyError(code, signal, stderrBuffer);
+      job.lastError = `ffmpeg exited (code=${code}, signal=${signal})`;
+      job.lastErrorType = errorType;
+      job.consecutiveFailures += 1;
+      
+      logger.warn('[StreamManager] ffmpeg exited unexpectedly', {
+        deviceId: job.deviceId,
+        safeName: job.safeName,
+        streamUrl: job.sourceUrl,
+        code,
+        signal,
+        errorType,
+        consecutiveFailures: job.consecutiveFailures,
+        stderr: stderrBuffer.substring(0, 2000) // Последние 2000 символов stderr
+      });
+
+      // КРИТИЧНО: Проверяем, нужно ли перезапускать
+      if (!this._shouldRestart(job)) {
+        logger.warn('[StreamManager] Stream restart blocked', {
+          deviceId: job.deviceId,
+          safeName: job.safeName,
+          reason: job.circuitBreakerOpen ? 'circuit_breaker' : 'max_attempts_reached',
+          restarts: job.restarts,
+          consecutiveFailures: job.consecutiveFailures
+        });
+        this.jobs.delete(key);
+        this.lastAccessTime.delete(key);
+        this._cleanupFolder(job.paths.folderPath);
+        this.emit('stream:restart:limit_reached', { 
+          deviceId: job.deviceId, 
+          safeName: job.safeName,
+          reason: job.circuitBreakerOpen ? 'circuit_breaker' : 'max_attempts'
+        });
+        return;
+      }
+
+      // КРИТИЧНО: Вычисляем задержку на основе типа ошибки и количества попыток
+      const delay = this._getRestartDelay(errorType, job.restarts);
+      
+      logger.info('[StreamManager] Scheduling restart', {
+        deviceId: job.deviceId,
+        safeName: job.safeName,
+        attempt: job.restarts + 1,
+        delay,
+        errorType
+      });
+
+      setTimeout(async () => {
+        if (!this.jobs.has(key)) {
+          return;
+        }
+        const current = this.jobs.get(key);
+        if (!current || current.process) {
+          return;
+        }
+        
+        // КРИТИЧНО: Проверяем доступность источника перед перезапуском
+        if (this.options.sourceCheckEnabled && !await this._checkSourceAvailable(current.sourceUrl)) {
+          logger.error('[StreamManager] Source unavailable, stopping stream', {
+            deviceId: current.deviceId,
+            safeName: current.safeName,
+            streamUrl: current.sourceUrl
+          });
+          this.jobs.delete(key);
+          this.lastAccessTime.delete(key);
+          this._cleanupFolder(current.paths.folderPath);
+          this.emit('stream:source_unavailable', { 
+            deviceId: current.deviceId, 
+            safeName: current.safeName 
+          });
+          return;
+        }
+        
+        current.restarts += 1;
+        current.status = 'restarting';
+        this.emit('stream:restarting', { deviceId: current.deviceId, safeName: current.safeName, attempt: current.restarts });
+        await this._restartJob(current);
+      }, delay);
+    });
+
+    this.jobs.set(key, job);
+    // КРИТИЧНО: Устанавливаем время последнего доступа при запуске стрима
+    // Это предотвращает немедленную остановку стрима как idle
+    this.lastAccessTime.set(key, Date.now());
+    logger.info('[StreamManager] ffmpeg started', { deviceId: device_id, safeName: safe_name, pid: child.pid });
+    return job;
+  }
+
+  async _restartJob(job) {
+    if (!job) return;
+    const meta = {
+      device_id: job.deviceId,
+      safe_name: job.safeName,
+      stream_url: job.sourceUrl,
+      stream_protocol: job.protocol
+    };
+    
+    // КРИТИЧНО: Очищаем папку перед перезапуском
+    this._cleanupFolder(job.paths.folderPath);
+    
+    // Запускаем новый процесс
+    const newJob = await this._spawnJob(meta);
+    
+    // КРИТИЧНО: При успешном запуске сбрасываем счетчик последовательных неудач
+    if (newJob && newJob.status === 'running') {
+      // Сбрасываем счетчики при успешном запуске
+      const existingJob = this.jobs.get(job.key);
+      if (existingJob) {
+        existingJob.consecutiveFailures = 0;
+        existingJob.circuitBreakerOpen = false;
+        existingJob.circuitBreakerOpenTime = null;
+      }
+    }
+  }
+
+  syncAll(entries = []) {
+    const desiredKeys = new Set(entries.map(entry => this._jobKey(entry.device_id, entry.safe_name)));
+
+    // Stop jobs that no longer exist
+    for (const [key, job] of this.jobs.entries()) {
+      if (!desiredKeys.has(key)) {
+        this.stopStream(job.deviceId, job.safeName, 'sync_remove');
+      }
+    }
+
+    // Start or update existing
+    entries.forEach(entry => {
+      this.upsertStream(entry).catch(err => {
+        logger.error('[StreamManager] Failed to upsert stream', { entry, error: err.message });
+      });
+    });
+  }
+
+  async upsertStream(entry) {
+    const key = this._jobKey(entry.device_id, entry.safe_name);
+    const existing = this.jobs.get(key);
+    
+    logger.info('[StreamManager] upsertStream called', {
+      deviceId: entry.device_id,
+      safeName: entry.safe_name,
+      streamUrl: entry.stream_url,
+      streamProtocol: entry.stream_protocol,
+      hasExisting: !!existing,
+      existingStatus: existing?.status,
+      isShared: existing?.isShared
+    });
+    
+    // КРИТИЧНО: СНАЧАЛА проверяем дедупликацию по URL (до проверки существующего job)
+    // Если для этого URL уже запущен FFmpeg процесс, используем его без перезапуска
+    const urlEntry = this.urlToJobMap.get(entry.stream_url);
+    if (urlEntry) {
+      const existingJobKey = urlEntry.jobKey;
+      const existingJob = this.jobs.get(existingJobKey);
+      
+      if (existingJob && existingJob.process && !existingJob.process.killed && existingJob.status !== 'stopped') {
+        // FFmpeg уже запущен для этого URL - используем его
+        
+        // Если это тот же deviceId+safeName - просто возвращаем существующий job
+        if (existingJobKey === key) {
+          logger.info('[StreamManager] Stream already running for this device, reusing', {
+            deviceId: entry.device_id,
+            safeName: entry.safe_name,
+            streamUrl: entry.stream_url,
+            jobKey: key
+          });
+          this.lastAccessTime.set(key, Date.now());
+          return existingJob;
+        }
+        
+        // Для другого устройства - создаем симлинк
+        logger.info('[StreamManager] Reusing existing FFmpeg process for URL (deduplication)', {
+          deviceId: entry.device_id,
+          safeName: entry.safe_name,
+          streamUrl: entry.stream_url,
+          existingJobKey,
+          existingDeviceId: existingJob.deviceId,
+          existingSafeName: existingJob.safeName
+        });
+        
+        // Если для этого deviceId+safeName уже есть job - останавливаем его (он не используется)
+        if (existing && !existing.isShared) {
+          logger.info('[StreamManager] Stopping unused job for device (will use shared stream)', {
+            deviceId: entry.device_id,
+            safeName: entry.safe_name,
+            oldJobKey: key
+          });
+          this.stopStream(entry.device_id, entry.safe_name, 'switching_to_shared');
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+        
+        // КРИТИЧНО: Добавляем это устройство в список использующих этот URL
+        // Также проверяем, что основное устройство (которое запустило FFmpeg) тоже в списке
+        urlEntry.devices.add(key);
+        if (!urlEntry.devices.has(existingJobKey)) {
+          // Основное устройство еще не в списке - добавляем его
+          urlEntry.devices.add(existingJobKey);
+          logger.debug('[StreamManager] Added primary device to urlToJobMap.devices', {
+            primaryJobKey: existingJobKey,
+            primaryDeviceId: existingJob.deviceId,
+            primarySafeName: existingJob.safeName
+          });
+        }
+        
+        // Создаем симлинк для нового устройства на существующий плейлист
+        const newPaths = this._getPaths(entry.device_id, entry.safe_name);
+        const existingPaths = existingJob.paths;
+        
+        // Удаляем старые файлы, если есть
+        this._cleanupFolder(newPaths.folderPath);
+        ensureDir(newPaths.folderPath);
+        
+        // Создаем симлинк на плейлист
+        try {
+          if (fs.existsSync(existingPaths.playlistPath)) {
+            fs.symlinkSync(existingPaths.playlistPath, newPaths.playlistPath);
+            logger.info('[StreamManager] Created symlink for shared stream', {
+              deviceId: entry.device_id,
+              safeName: entry.safe_name,
+              symlinkPath: newPaths.playlistPath,
+              targetPath: existingPaths.playlistPath
+            });
+          }
+        } catch (err) {
+          logger.warn('[StreamManager] Failed to create symlink, will use direct path', {
+            deviceId: entry.device_id,
+            safeName: entry.safe_name,
+            error: err.message
+          });
+        }
+        
+        // Создаем виртуальный job для отслеживания
+        const virtualJob = {
+          ...existingJob,
+          deviceId: entry.device_id,
+          safeName: entry.safe_name,
+          key,
+          paths: newPaths,
+          isShared: true, // Флаг, что это shared job
+          sharedFrom: existingJobKey
+        };
+        
+        this.jobs.set(key, virtualJob);
+        // КРИТИЧНО: Устанавливаем время последнего доступа при создании shared job
+        // Это предотвращает немедленную остановку стрима как idle
+        this.lastAccessTime.set(key, Date.now());
+        
+        return virtualJob;
+      } else {
+        // Процесс остановлен, удаляем из urlToJobMap и запускаем новый
+        this.urlToJobMap.delete(entry.stream_url);
+      }
+    }
+    
+    // КРИТИЧНО: Если дедупликация не сработала, проверяем существующий job для deviceId+safeName
+    if (existing) {
+      // Source URL change -> restart
+      if (existing.sourceUrl !== entry.stream_url) {
+        logger.info('[StreamManager] Source URL changed, restarting', {
+          deviceId: entry.device_id,
+          safeName: entry.safe_name,
+          oldUrl: existing.sourceUrl,
+          newUrl: entry.stream_url
+        });
+        this.stopStream(entry.device_id, entry.safe_name, 'source_changed');
+        // Продолжаем дальше, чтобы запустить новый FFmpeg процесс
+      } else {
+        // URL тот же и FFmpeg уже запущен - просто возвращаем существующий job
+        // НЕ перезапускаем FFmpeg, так как это тот же стрим
+        if (existing.process && !existing.process.killed && existing.status !== 'stopped') {
+          logger.info('[StreamManager] Stream already running with same URL, reusing', {
+            deviceId: entry.device_id,
+            safeName: entry.safe_name,
+            streamUrl: entry.stream_url,
+            jobKey: key
+          });
+          this.lastAccessTime.set(key, Date.now());
+          return existing;
+        } else {
+          // Процесс остановлен, но job существует - запускаем заново
+          logger.info('[StreamManager] Job exists but process stopped, restarting', {
+            deviceId: entry.device_id,
+            safeName: entry.safe_name,
+            streamUrl: entry.stream_url
+          });
+        }
+      }
+    }
+    
+    // Запускаем новый FFmpeg процесс для этого URL
+    logger.info('[StreamManager] Starting new FFmpeg process', {
+      deviceId: entry.device_id,
+      safeName: entry.safe_name,
+      streamUrl: entry.stream_url,
+      streamProtocol: entry.stream_protocol
+    });
+    
+    const job = await this._spawnJob(entry);
+    
+    if (!job) {
+      logger.error('[StreamManager] _spawnJob returned null, FFmpeg not started', {
+        deviceId: entry.device_id,
+        safeName: entry.safe_name,
+        streamUrl: entry.stream_url
+      });
+      return null;
+    }
+    
+    // Регистрируем в urlToJobMap
+    if (job) {
+      if (!this.urlToJobMap.has(entry.stream_url)) {
+        this.urlToJobMap.set(entry.stream_url, {
+          jobKey: key,
+          devices: new Set([key])
+        });
+        logger.info('[StreamManager] Registered new URL in urlToJobMap', {
+          streamUrl: entry.stream_url,
+          jobKey: key
+        });
+      } else {
+        // Если почему-то уже есть (не должно быть), добавляем устройство
+        this.urlToJobMap.get(entry.stream_url).devices.add(key);
+        logger.warn('[StreamManager] URL already in urlToJobMap, added device', {
+          streamUrl: entry.stream_url,
+          jobKey: key
+        });
+      }
+    }
+    
+    logger.info('[StreamManager] upsertStream completed successfully', {
+      deviceId: entry.device_id,
+      safeName: entry.safe_name,
+      jobKey: job.key,
+      jobStatus: job.status,
+      hasProcess: !!job.process,
+      processPid: job.process?.pid
+    });
+    
+    return job;
+  }
+
+  stopStream(deviceId, safeName, reason = 'manual') {
+    try {
+      const key = this._jobKey(deviceId, safeName);
+      const job = this.jobs.get(key);
+      const paths = job ? job.paths : this._getPaths(deviceId, safeName);
+      
+      if (!job) {
+        // КРИТИЧНО: Даже если job не найден, очищаем старые файлы
+        this._cleanupFolder(paths.folderPath);
+        // Удаляем время доступа
+        this.lastAccessTime.delete(key);
+        logger.info('[StreamManager] Cleaned up old stream files (no job found)', { deviceId, safeName, reason });
+        return;
+      }
+      
+      // КРИТИЧНО: Проверяем, является ли это shared job (дедупликация по URL)
+      if (job.isShared && job.sharedFrom) {
+        // Это shared job - удаляем только симлинк и запись из urlToJobMap
+        const urlEntry = this.urlToJobMap.get(job.sourceUrl);
+        if (urlEntry) {
+          urlEntry.devices.delete(key);
+          logger.info('[StreamManager] Removed device from shared stream', {
+            deviceId,
+            safeName,
+            streamUrl: job.sourceUrl,
+            remainingDevices: urlEntry.devices.size
+          });
+          
+          // Если это последнее устройство, использующее этот URL, останавливаем FFmpeg
+          if (urlEntry.devices.size === 0) {
+            const sharedJob = this.jobs.get(job.sharedFrom);
+            if (sharedJob) {
+              logger.info('[StreamManager] Last device removed, stopping shared FFmpeg process', {
+                streamUrl: job.sourceUrl,
+                sharedJobKey: job.sharedFrom
+              });
+              // Останавливаем основной FFmpeg процесс
+              // Используем прямой вызов stopStream, но с проверкой, чтобы не проверять дедупликацию
+              sharedJob.stopping = true;
+              const sharedFolderPath = sharedJob.paths.folderPath;
+              
+              if (sharedJob.process) {
+                try {
+                  const cleanupOnExit = () => {
+                    this.jobs.delete(job.sharedFrom);
+                    this.lastAccessTime.delete(job.sharedFrom);
+                    this._cleanupFolder(sharedFolderPath);
+                    this.emit('stream:stopped', { deviceId: sharedJob.deviceId, safeName: sharedJob.safeName, reason });
+                    logger.info('[StreamManager] Shared FFmpeg stopped and files cleaned', { 
+                      deviceId: sharedJob.deviceId, 
+                      safeName: sharedJob.safeName, 
+                      reason
+                    });
+                  };
+                  
+                  sharedJob.process.removeAllListeners('exit');
+                  sharedJob.process.once('exit', cleanupOnExit);
+                  sharedJob.process.kill('SIGTERM');
+                  
+                  setTimeout(() => {
+                    if (sharedJob.process && !sharedJob.process.killed) {
+                      sharedJob.process.kill('SIGKILL');
+                    }
+                  }, 5000);
+                } catch (err) {
+                  logger.error('[StreamManager] Error stopping shared FFmpeg', { error: err.message });
+                  this.jobs.delete(job.sharedFrom);
+                  this.lastAccessTime.delete(job.sharedFrom);
+                  this._cleanupFolder(sharedFolderPath);
+                }
+              } else {
+                this.jobs.delete(job.sharedFrom);
+                this.lastAccessTime.delete(job.sharedFrom);
+                this._cleanupFolder(sharedFolderPath);
+              }
+            }
+            this.urlToJobMap.delete(job.sourceUrl);
+          }
+        }
+        
+        // Удаляем виртуальный job и очищаем симлинк
+        this.jobs.delete(key);
+        this.lastAccessTime.delete(key);
+        this._cleanupFolder(paths.folderPath);
+        return;
+      }
+      
+      // КРИТИЧНО: Для обычного job проверяем, используется ли URL другими устройствами
+      const urlEntryForStop = this.urlToJobMap.get(job.sourceUrl);
+      if (urlEntryForStop) {
+        // КРИТИЧНО: Проверяем размер ДО удаления, чтобы правильно определить, остались ли другие устройства
+        const hasOtherDevices = urlEntryForStop.devices.size > 1;
+        
+        // Удаляем это устройство из списка
+        urlEntryForStop.devices.delete(key);
+        
+        if (hasOtherDevices) {
+          // URL используется другими устройствами - только удаляем это устройство, НЕ останавливаем FFmpeg
+          logger.info('[StreamManager] Removed device from shared stream (other devices still using)', {
+            deviceId,
+            safeName,
+            streamUrl: job.sourceUrl,
+            remainingDevices: urlEntryForStop.devices.size,
+            remainingDeviceKeys: Array.from(urlEntryForStop.devices)
+          });
+          
+          // Удаляем job и очищаем файлы (но не останавливаем FFmpeg)
+          this.jobs.delete(key);
+          this.lastAccessTime.delete(key);
+          this._cleanupFolder(paths.folderPath);
+          return;
+        }
+        
+        // Если это последнее устройство, удаляем запись из urlToJobMap
+        if (urlEntryForStop.devices.size === 0) {
+          this.urlToJobMap.delete(job.sourceUrl);
+          logger.info('[StreamManager] Last device removed from URL, will stop FFmpeg', {
+            deviceId,
+            safeName,
+            streamUrl: job.sourceUrl
+          });
+        }
+      }
+      
+      // КРИТИЧНО: Помечаем job как останавливаемый
+      job.stopping = true;
+      
+      // КРИТИЧНО: Сохраняем путь для очистки после завершения процесса
+      const folderPathToClean = job.paths.folderPath;
+      
+      if (job.process) {
+        try {
+          // КРИТИЧНО: Устанавливаем обработчик завершения процесса для очистки файлов
+          const cleanupOnExit = () => {
+            // Удаляем job из списка
+            this.jobs.delete(key);
+            this.lastAccessTime.delete(key);
+            
+            // КРИТИЧНО: Удаляем все файлы стрима после завершения процесса
+            this._cleanupFolder(folderPathToClean);
+            
+            this.emit('stream:stopped', { deviceId, safeName, reason });
+            logger.info('[StreamManager] FFmpeg stopped and all files cleaned', { 
+              deviceId, 
+              safeName, 
+              reason,
+              folderPath: folderPathToClean
+            });
+          };
+          
+          // Удаляем старые обработчики и устанавливаем новый
+          job.process.removeAllListeners('exit');
+          job.process.once('exit', cleanupOnExit);
+          
+          // Даем процессу время на корректное завершение
+          job.process.kill('SIGTERM');
+          
+          // Если через 5 секунд процесс не завершился - убиваем принудительно
+          setTimeout(() => {
+            try {
+              if (job.process && !job.process.killed) {
+                logger.warn('[StreamManager] Force killing FFmpeg process', { deviceId, safeName, pid: job.process.pid });
+                job.process.kill('SIGKILL');
+                // После SIGKILL процесс должен завершиться быстро, очистка произойдет в обработчике exit
+              }
+            } catch (err) {
+              logger.error('[StreamManager] Error force killing FFmpeg', { deviceId, safeName, error: err.message });
+              // Если не удалось убить процесс, все равно очищаем файлы
+              cleanupOnExit();
+            }
+          }, 5000);
+        } catch (err) {
+          logger.error('[StreamManager] Error stopping FFmpeg process', { deviceId, safeName, error: err.message });
+          // В случае ошибки все равно очищаем
+          this.jobs.delete(key);
+          this.lastAccessTime.delete(key);
+          this._cleanupFolder(folderPathToClean);
+        }
+      } else {
+        // Если процесса нет, сразу очищаем
+        this.jobs.delete(key);
+        this.lastAccessTime.delete(key);
+        this._cleanupFolder(folderPathToClean);
+        this.emit('stream:stopped', { deviceId, safeName, reason });
+        logger.info('[StreamManager] Stream stopped (no process), files cleaned', { deviceId, safeName, reason });
+      }
+    } catch (err) {
+      logger.error('[StreamManager] Error in stopStream', { deviceId, safeName, reason, error: err.message, stack: err.stack });
+      // Не пробрасываем ошибку дальше, чтобы не падал сервер
+    }
+  }
+
+  /**
+   * Обновляет время последнего доступа к стриму
+   * Вызывается при каждом запросе сегментов HLS для отслеживания активности
+   */
+  updateLastAccess(deviceId, safeName) {
+    const key = this._jobKey(deviceId, safeName);
+    const job = this.jobs.get(key);
+    if (job) {
+      this.lastAccessTime.set(key, Date.now());
+      
+      // КРИТИЧНО: Для shared jobs обновляем время доступа для всех устройств, использующих этот URL
+      // Это предотвращает остановку FFmpeg, если хотя бы одно устройство активно использует стрим
+      if (job.isShared && job.sharedFrom) {
+        const urlEntry = this.urlToJobMap.get(job.sourceUrl);
+        if (urlEntry) {
+          // Обновляем время доступа для всех устройств, использующих этот URL
+          urlEntry.devices.forEach(deviceKey => {
+            this.lastAccessTime.set(deviceKey, Date.now());
+          });
+        }
+      } else {
+        // Для обычных jobs обновляем время доступа для всех устройств, использующих тот же URL
+        const urlEntry = this.urlToJobMap.get(job.sourceUrl);
+        if (urlEntry && urlEntry.devices.size > 1) {
+          urlEntry.devices.forEach(deviceKey => {
+            this.lastAccessTime.set(deviceKey, Date.now());
+          });
+        }
+      }
+    }
+  }
+
+  getPlaybackUrl(deviceId, safeName) {
+    const key = this._jobKey(deviceId, safeName);
+    const job = this.jobs.get(key);
+    
+    // КРИТИЧНО: Обновляем время последнего доступа при запросе URL
+    // Это позволяет отслеживать активность стрима (плеер запрашивает URL)
+    if (job) {
+      this.lastAccessTime.set(key, Date.now());
+      
+      // Для shared jobs обновляем время доступа для всех устройств
+      if (job.isShared && job.sharedFrom) {
+        const urlEntry = this.urlToJobMap.get(job.sourceUrl);
+        if (urlEntry) {
+          urlEntry.devices.forEach(deviceKey => {
+            this.lastAccessTime.set(deviceKey, Date.now());
+          });
+        }
+      }
+    }
+    
+    // КРИТИЧНО: Для shared jobs проверяем основной процесс
+    let actualJob = job;
+    if (job && job.isShared && job.sharedFrom) {
+      actualJob = this.jobs.get(job.sharedFrom);
+    }
+    
+    // КРИТИЧНО: Возвращаем URL только если FFmpeg процесс активен
+    // Не возвращаем URL для старых файлов, если процесс не запущен
+    if (actualJob && actualJob.process && !actualJob.process.killed && actualJob.status !== 'stopped') {
+      // Для shared jobs проверяем симлинк, для обычных - прямой путь
+      const playlistPath = job?.isShared ? job.paths.playlistPath : actualJob.paths.playlistPath;
+      
+      if (fs.existsSync(playlistPath)) {
+        // КРИТИЧНО: Проверяем время модификации плейлиста (детектирование зависаний)
+        try {
+          const stats = fs.statSync(playlistPath);
+          const playlistAge = Date.now() - stats.mtimeMs;
+          const maxPlaylistAge = this.options.playlistMaxAge; // 30 секунд по умолчанию
+          
+          // КРИТИЧНО: Если плейлист не обновлялся - процесс завис
+          if (playlistAge > maxPlaylistAge) {
+            logger.warn('[StreamManager] Playlist not updated, process may be hung', {
+              deviceId: deviceId,
+              safeName: safeName,
+              playlistAge,
+              maxPlaylistAge,
+              lastPlaylistUpdate: actualJob.lastPlaylistUpdate
+            });
+            
+            // Принудительно завершаем зависший процесс
+            if (actualJob.process && !actualJob.process.killed) {
+              logger.warn('[StreamManager] Force killing hung FFmpeg process', {
+                deviceId: actualJob.deviceId,
+                safeName: actualJob.safeName,
+                pid: actualJob.process.pid
+              });
+              try {
+                actualJob.process.kill('SIGKILL');
+              } catch (err) {
+                logger.error('[StreamManager] Error killing hung process', {
+                  deviceId: actualJob.deviceId,
+                  safeName: actualJob.safeName,
+                  error: err.message
+                });
+              }
+            }
+            
+            return null; // Плейлист слишком старый, не возвращаем URL
+          }
+          
+          // Обновляем время последнего обновления плейлиста
+          actualJob.lastPlaylistUpdate = stats.mtimeMs;
+        } catch (err) {
+          logger.warn('[StreamManager] Failed to check playlist age', {
+            deviceId: deviceId,
+            safeName: safeName,
+            error: err.message
+          });
+        }
+        
+        // КРИТИЧНО: Валидация плейлиста перед возвратом URL
+        const folderPath = job?.isShared ? job.paths.folderPath : actualJob.paths.folderPath;
+        if (!this._checkPlaylistValid(playlistPath, folderPath)) {
+          logger.warn('[StreamManager] Playlist validation failed', {
+            deviceId: deviceId,
+            safeName: safeName,
+            playlistPath
+          });
+          return null; // Плейлист невалиден, не возвращаем URL
+        }
+        
+        // Для shared jobs используем путь нового устройства, для обычных - путь основного job
+        return job?.isShared ? job.paths.publicUrl : actualJob.paths.publicUrl;
+      }
+    }
+    
+    // Если процесс не запущен - не возвращаем URL даже если файлы существуют
+    // Это предотвращает воспроизведение старых сегментов
+    return null;
+  }
+
+  /**
+   * Запускает FFmpeg для стрима, если он еще не запущен (lazy loading)
+   * @param {string} deviceId - ID устройства
+   * @param {string} safeName - Безопасное имя стрима
+   * @param {Object} streamMetadata - Метаданные стрима из БД
+   * @returns {Promise<string|null>} URL для воспроизведения или null
+   */
+  async ensureStreamRunning(deviceId, safeName, streamMetadata) {
+    const key = this._jobKey(deviceId, safeName);
+    const existing = this.jobs.get(key);
+    
+    logger.info('[StreamManager] ensureStreamRunning called', {
+      deviceId,
+      safeName,
+      hasExisting: !!existing,
+      existingStatus: existing?.status,
+      hasMetadata: !!streamMetadata,
+      metadataStreamUrl: streamMetadata?.stream_url,
+      metadataProtocol: streamMetadata?.stream_protocol,
+      metadataContentType: streamMetadata?.content_type
+    });
+    
+    // Если уже запущен - очищаем старые сегменты и возвращаем URL
+    if (existing && existing.status !== 'stopped') {
+      logger.info('[StreamManager] Stream already running, cleaning old segments', { deviceId, safeName });
+      
+      // КРИТИЧНО: Очищаем старые .ts сегменты, но оставляем m3u8 и текущие сегменты
+      // Это предотвращает воспроизведение старых сегментов при перезапуске плеера
+      const paths = this._getPaths(deviceId, safeName);
+      if (fs.existsSync(paths.folderPath)) {
+        try {
+          const files = fs.readdirSync(paths.folderPath);
+          const now = Date.now();
+          for (const file of files) {
+            // Удаляем только старые .ts сегменты (старше 30 секунд)
+            if (file.endsWith('.ts')) {
+              const filePath = path.join(paths.folderPath, file);
+              try {
+                const stats = fs.statSync(filePath);
+                const fileAge = now - stats.mtimeMs;
+                // Удаляем сегменты старше 30 секунд
+                if (fileAge > 30000) {
+                  fs.unlinkSync(filePath);
+                  logger.debug('[StreamManager] Удален старый сегмент', { filePath, age: fileAge });
+                }
+              } catch (e) {
+                logger.debug('[StreamManager] Не удалось проверить/удалить сегмент', { filePath, error: e.message });
+              }
+            }
+          }
+        } catch (e) {
+          logger.warn('[StreamManager] Ошибка при очистке старых сегментов', { folderPath: paths.folderPath, error: e.message });
+        }
+      }
+      
+      return this.getPlaybackUrl(deviceId, safeName);
+    }
+    
+    // Если не запущен - запускаем
+    if (!existing && streamMetadata) {
+      if (!streamMetadata.stream_url) {
+        logger.error('[StreamManager] Missing stream_url in metadata, cannot start', {
+          deviceId,
+          safeName,
+          metadata: streamMetadata
+        });
+        return null;
+      }
+      
+      logger.info('[StreamManager] Lazy starting stream', {
+        deviceId,
+        safeName,
+        streamUrl: streamMetadata.stream_url,
+        streamProtocol: streamMetadata.stream_protocol
+      });
+      
+      const entry = {
+        device_id: deviceId,
+        safe_name: safeName,
+        stream_url: streamMetadata.stream_url,
+        stream_protocol: streamMetadata.stream_protocol
+      };
+      
+      try {
+        const job = await this.upsertStream(entry);
+        if (!job) {
+          logger.error('[StreamManager] upsertStream returned null, FFmpeg not started', {
+            deviceId,
+            safeName,
+            entry
+          });
+          return null;
+        }
+        logger.info('[StreamManager] upsertStream completed', {
+          deviceId,
+          safeName,
+          jobKey: job.key,
+          jobStatus: job.status,
+          hasProcess: !!job.process
+        });
+      } catch (err) {
+        logger.error('[StreamManager] upsertStream failed', {
+          deviceId,
+          safeName,
+          error: err.message,
+          stack: err.stack
+        });
+        return null;
+      }
+      
+      // КРИТИЧНО: Ждем, пока FFmpeg создаст плейлист
+      // Проверяем наличие плейлиста с таймаутом
+      // Для DASH стримов может потребоваться больше времени на инициализацию
+      const paths = this._getPaths(deviceId, safeName);
+      const isDash = streamMetadata.stream_protocol === 'dash' || (streamMetadata.stream_url?.toLowerCase().includes('.mpd'));
+      const maxWaitTime = isDash ? 15000 : 10000; // 15 секунд для DASH, 10 для остальных
+      const checkInterval = 200; // Проверяем каждые 200мс
+      const startTime = Date.now();
+      
+      while (Date.now() - startTime < maxWaitTime) {
+        const job = this.jobs.get(key);
+        
+        // Проверяем, что процесс запущен и не остановлен
+        if (job && job.process && !job.process.killed && job.status !== 'stopped') {
+          // Проверяем, что плейлист создан
+          if (fs.existsSync(paths.playlistPath)) {
+            // Проверяем, что плейлист не пустой (минимум несколько байт)
+            try {
+              const stats = fs.statSync(paths.playlistPath);
+              if (stats.size > 0) {
+                logger.info('[StreamManager] Playlist created, ready for playback', {
+                  deviceId,
+                  safeName,
+                  waitTime: Date.now() - startTime,
+                  playlistSize: stats.size
+                });
+                return this.getPlaybackUrl(deviceId, safeName);
+              }
+            } catch (err) {
+              // Игнорируем ошибки проверки размера
+            }
+          }
+        } else if (job && job.status === 'stopped') {
+          // Процесс остановился - выходим
+          logger.warn('[StreamManager] FFmpeg process stopped before playlist was created', {
+            deviceId,
+            safeName,
+            lastError: job.lastError
+          });
+          return null;
+        }
+        
+        // Ждем перед следующей проверкой
+        await new Promise(resolve => setTimeout(resolve, checkInterval));
+      }
+      
+      // Таймаут - плейлист не создан
+      logger.warn('[StreamManager] Timeout waiting for playlist creation', {
+        deviceId,
+        safeName,
+        waitTime: Date.now() - startTime
+      });
+      
+      // Проверяем последний раз - может быть плейлист создался
+      return this.getPlaybackUrl(deviceId, safeName);
+    }
+    
+    return this.getPlaybackUrl(deviceId, safeName);
+  }
+
+  getStatus(deviceId, safeName) {
+    const key = this._jobKey(deviceId, safeName);
+    const job = this.jobs.get(key);
+    if (!job) {
+      const paths = this._getPaths(deviceId, safeName);
+      const exists = fs.existsSync(paths.playlistPath);
+      return exists
+        ? { status: 'idle', playbackUrl: paths.publicUrl }
+        : null;
+    }
+    return {
+      status: job.status,
+      playbackUrl: this.getPlaybackUrl(deviceId, safeName),
+      restarts: job.restarts,
+      lastError: job.lastError,
+      lastErrorType: job.lastErrorType,
+      startedAt: job.startedAt,
+      circuitBreakerOpen: job.circuitBreakerOpen,
+      consecutiveFailures: job.consecutiveFailures
+    };
+  }
+
+  /**
+   * Классифицирует ошибку для умных перезапусков
+   * @param {number} code - Exit code
+   * @param {string} signal - Signal
+   * @param {string} stderr - Stderr output
+   * @returns {string} Тип ошибки: 'network', 'codec', 'source_ended', 'unknown'
+   */
+  _classifyError(code, signal, stderr) {
+    const stderrLower = stderr.toLowerCase();
+    
+    // Network errors
+    if (
+      stderrLower.includes('connection refused') ||
+      stderrLower.includes('connection timed out') ||
+      stderrLower.includes('network is unreachable') ||
+      stderrLower.includes('name or service not known') ||
+      stderrLower.includes('http error') ||
+      stderrLower.includes('404') ||
+      stderrLower.includes('403') ||
+      stderrLower.includes('401') ||
+      code === 1 && (stderrLower.includes('server returned') || stderrLower.includes('http'))
+    ) {
+      return 'network';
+    }
+    
+    // Codec errors
+    if (
+      stderrLower.includes('unsupported codec') ||
+      stderrLower.includes('codec not found') ||
+      stderrLower.includes('encoding error') ||
+      stderrLower.includes('decoding error') ||
+      stderrLower.includes('invalid data found')
+    ) {
+      return 'codec';
+    }
+    
+    // Source ended
+    if (
+      stderrLower.includes('end of file') ||
+      stderrLower.includes('stream ended') ||
+      stderrLower.includes('connection closed') ||
+      code === 0 && signal === null // Нормальное завершение без сигнала
+    ) {
+      return 'source_ended';
+    }
+    
+    return 'unknown';
+  }
+
+  /**
+   * Проверяет, нужно ли перезапускать стрим
+   * @param {Object} job - Job объект
+   * @returns {boolean}
+   */
+  _shouldRestart(job) {
+    // Проверка circuit breaker
+    if (job.circuitBreakerOpen) {
+      return false;
+    }
+    
+    // Проверка лимита перезапусков
+    if (job.restarts >= this.options.restartMaxAttempts) {
+      // Открываем circuit breaker
+      job.circuitBreakerOpen = true;
+      job.circuitBreakerOpenTime = Date.now();
+      logger.warn('[StreamManager] Circuit breaker opened', {
+        deviceId: job.deviceId,
+        safeName: job.safeName,
+        restarts: job.restarts
+      });
+      return false;
+    }
+    
+    // Проверка последовательных неудач для circuit breaker
+    if (job.consecutiveFailures >= this.options.circuitBreakerThreshold) {
+      job.circuitBreakerOpen = true;
+      job.circuitBreakerOpenTime = Date.now();
+      logger.warn('[StreamManager] Circuit breaker opened (consecutive failures)', {
+        deviceId: job.deviceId,
+        safeName: job.safeName,
+        consecutiveFailures: job.consecutiveFailures
+      });
+      return false;
+    }
+    
+    // Если ошибка source_ended - не перезапускать
+    if (job.lastErrorType === 'source_ended') {
+      logger.info('[StreamManager] Source ended, not restarting', {
+        deviceId: job.deviceId,
+        safeName: job.safeName
+      });
+      return false;
+    }
+    
+    return true;
+  }
+
+  /**
+   * Вычисляет задержку перезапуска на основе типа ошибки и попытки
+   * @param {string} errorType - Тип ошибки
+   * @param {number} attempt - Номер попытки (0-based)
+   * @returns {number} Задержка в миллисекундах
+   */
+  _getRestartDelay(errorType, attempt) {
+    let baseDelay;
+    
+    switch (errorType) {
+      case 'network':
+        baseDelay = 10000; // 10 секунд для сетевых ошибок
+        break;
+      case 'codec':
+        baseDelay = 5000; // 5 секунд для ошибок кодека
+        break;
+      default:
+        baseDelay = this.options.restartInitialDelay; // 5 секунд по умолчанию
+    }
+    
+    // Экспоненциальная задержка: baseDelay * 2^attempt
+    const delay = Math.min(baseDelay * Math.pow(2, attempt), this.options.restartMaxDelay);
+    
+    return delay;
+  }
+
+  /**
+   * Проверяет доступность источника стрима
+   * @param {string} streamUrl - URL источника
+   * @returns {Promise<boolean>}
+   */
+  async _checkSourceAvailable(streamUrl) {
+    try {
+      // Простая проверка через ffprobe с таймаутом
+      const { stdout } = await execAsync(
+        `ffprobe -v error -show_entries format=duration -of json "${streamUrl}"`,
+        { 
+          timeout: this.options.sourceCheckTimeout,
+          maxBuffer: 1024 * 1024 
+        }
+      );
+      
+      // Если ffprobe успешно выполнился - источник доступен
+      return true;
+    } catch (error) {
+      logger.debug('[StreamManager] Source check failed', {
+        streamUrl,
+        error: error.message
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Валидирует HLS плейлист
+   * @param {string} playlistPath - Путь к плейлисту
+   * @param {string} folderPath - Путь к папке с сегментами
+   * @returns {boolean}
+   */
+  _checkPlaylistValid(playlistPath, folderPath) {
+    try {
+      // Проверка существования файла
+      if (!fs.existsSync(playlistPath)) {
+        return false;
+      }
+      
+      // Проверка размера
+      const stats = fs.statSync(playlistPath);
+      if (stats.size === 0) {
+        return false;
+      }
+      
+      // Читаем содержимое плейлиста
+      const content = fs.readFileSync(playlistPath, 'utf-8');
+      
+      // Проверка наличия #EXTM3U
+      if (!content.includes('#EXTM3U')) {
+        return false;
+      }
+      
+      // Проверка наличия #EXTINF
+      if (!content.includes('#EXTINF')) {
+        return false;
+      }
+      
+      // Проверка первого сегмента
+      const lines = content.split('\n');
+      let firstSegment = null;
+      
+      for (const line of lines) {
+        const trimmed = line.trim();
+        // Ищем строку с именем сегмента (не начинается с #)
+        if (trimmed && !trimmed.startsWith('#')) {
+          firstSegment = trimmed;
+          break;
+        }
+      }
+      
+      if (firstSegment) {
+        const segmentPath = path.join(folderPath, firstSegment);
+        if (!fs.existsSync(segmentPath)) {
+          return false;
+        }
+      }
+      
+      return true;
+    } catch (error) {
+      logger.warn('[StreamManager] Playlist validation error', {
+        playlistPath,
+        error: error.message
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Запускает периодическую очистку сегментов
+   */
+  _startSegmentCleanup() {
+    this.segmentCleanupInterval = setInterval(() => {
+      this._cleanupSegments();
+    }, this.options.cleanupInterval);
+    
+    logger.info('[StreamManager] Segment cleanup started', {
+      interval: this.options.cleanupInterval
+    });
+  }
+
+  /**
+   * Очищает старые сегменты для всех активных стримов
+   */
+  _cleanupSegments() {
+    const now = Date.now();
+    const maxAge = (this.options.segmentDuration * this.options.playlistSize * 2) * 1000; // В миллисекундах
+    const maxSizeBytes = this.options.maxFolderSizeMB * 1024 * 1024;
+    
+    let cleanedCount = 0;
+    let totalFreed = 0;
+    
+    for (const [key, job] of this.jobs.entries()) {
+      if (job.isShared) continue; // Пропускаем shared jobs
+      if (!job.paths || !job.paths.folderPath) continue;
+      
+      try {
+        const folderPath = job.paths.folderPath;
+        if (!fs.existsSync(folderPath)) continue;
+        
+        const files = fs.readdirSync(folderPath);
+        let folderSize = 0;
+        let deletedCount = 0;
+        
+        for (const file of files) {
+          const filePath = path.join(folderPath, file);
+          
+          try {
+            const stats = fs.statSync(filePath);
+            folderSize += stats.size;
+            
+            // Удаляем старые .ts файлы
+            if (file.endsWith('.ts')) {
+              const fileAge = now - stats.mtimeMs;
+              if (fileAge > maxAge) {
+                fs.unlinkSync(filePath);
+                deletedCount++;
+                totalFreed += stats.size;
+              }
+            }
+          } catch (err) {
+            // Игнорируем ошибки отдельных файлов
+          }
+        }
+        
+        // Если папка слишком большая - принудительно удаляем старые файлы
+        if (folderSize > maxSizeBytes) {
+          logger.warn('[StreamManager] Folder too large, forcing cleanup', {
+            deviceId: job.deviceId,
+            safeName: job.safeName,
+            folderSizeMB: Math.round(folderSize / 1024 / 1024),
+            maxSizeMB: this.options.maxFolderSizeMB
+          });
+          
+          // Сортируем файлы по времени модификации и удаляем самые старые
+          const tsFiles = files
+            .filter(f => f.endsWith('.ts'))
+            .map(f => ({
+              name: f,
+              path: path.join(folderPath, f),
+              mtime: fs.statSync(path.join(folderPath, f)).mtimeMs
+            }))
+            .sort((a, b) => a.mtime - b.mtime);
+          
+          // Удаляем половину самых старых файлов
+          const toDelete = Math.floor(tsFiles.length / 2);
+          for (let i = 0; i < toDelete; i++) {
+            try {
+              const stats = fs.statSync(tsFiles[i].path);
+              fs.unlinkSync(tsFiles[i].path);
+              deletedCount++;
+              totalFreed += stats.size;
+            } catch (err) {
+              // Игнорируем ошибки
+            }
+          }
+        }
+        
+        if (deletedCount > 0) {
+          cleanedCount++;
+        }
+      } catch (error) {
+        logger.warn('[StreamManager] Error during segment cleanup', {
+          deviceId: job.deviceId,
+          safeName: job.safeName,
+          error: error.message
+        });
+      }
+    }
+    
+    if (cleanedCount > 0 || totalFreed > 0) {
+      logger.info('[StreamManager] Segment cleanup completed', {
+        streamsCleaned: cleanedCount,
+        totalFreedMB: Math.round(totalFreed / 1024 / 1024)
+      });
+    }
+  }
+
+  /**
+   * Запускает периодическую проверку circuit breaker
+   */
+  _startCircuitBreakerCheck() {
+    this.circuitBreakerCheckInterval = setInterval(() => {
+      this._checkCircuitBreakers();
+    }, 5 * 60 * 1000); // Каждые 5 минут
+    
+    logger.info('[StreamManager] Circuit breaker check started');
+  }
+
+  /**
+   * Проверяет circuit breakers и пытается восстановить стримы
+   */
+  _checkCircuitBreakers() {
+    const now = Date.now();
+    
+    for (const [key, job] of this.jobs.entries()) {
+      if (!job.circuitBreakerOpen) continue;
+      if (!job.circuitBreakerOpenTime) continue;
+      
+      // Проверяем, прошло ли достаточно времени для попытки восстановления
+      const timeSinceOpen = now - job.circuitBreakerOpenTime;
+      if (timeSinceOpen >= this.options.circuitBreakerTimeout) {
+        logger.info('[StreamManager] Attempting circuit breaker recovery', {
+          deviceId: job.deviceId,
+          safeName: job.safeName,
+          timeSinceOpen
+        });
+        
+        // Сбрасываем счетчики и пытаемся восстановить
+        job.circuitBreakerOpen = false;
+        job.circuitBreakerOpenTime = null;
+        job.consecutiveFailures = 0;
+        job.restarts = 0;
+        
+        // Пытаемся перезапустить стрим
+        this._restartJob(job).catch(err => {
+          logger.error('[StreamManager] Circuit breaker recovery failed', {
+            deviceId: job.deviceId,
+            safeName: job.safeName,
+            error: err.message
+          });
+          // При неудаче снова открываем circuit breaker
+          job.circuitBreakerOpen = true;
+          job.circuitBreakerOpenTime = Date.now();
+        });
+      }
+    }
+  }
+
+  /**
+   * Останавливает StreamManager и очищает все ресурсы
+   */
+  stop() {
+    logger.info('[StreamManager] Stopping and cleaning up...');
+    
+    // Останавливаем все активные стримы
+    for (const [key, job] of this.jobs.entries()) {
+      try {
+        this.stopStream(job.deviceId, job.safeName, 'shutdown');
+      } catch (error) {
+        logger.error('[StreamManager] Error stopping stream during shutdown', {
+          deviceId: job.deviceId,
+          safeName: job.safeName,
+          error: error.message
+        });
+      }
+    }
+    
+    // Очищаем интервалы
+    if (this.idleCleanupInterval) {
+      clearInterval(this.idleCleanupInterval);
+      this.idleCleanupInterval = null;
+    }
+    
+    if (this.segmentCleanupInterval) {
+      clearInterval(this.segmentCleanupInterval);
+      this.segmentCleanupInterval = null;
+    }
+    
+    if (this.circuitBreakerCheckInterval) {
+      clearInterval(this.circuitBreakerCheckInterval);
+      this.circuitBreakerCheckInterval = null;
+    }
+    
+    logger.info('[StreamManager] Stopped');
+  }
+}
+
+let managerInstance = null;
+
+export function initStreamManager(options = {}) {
+  managerInstance = new StreamManager(options);
+  return managerInstance;
+}
+
+export function getStreamManager() {
+  return managerInstance;
+}
+
+export function syncStreamJobs(entries = []) {
+  managerInstance?.syncAll(entries);
+}
+
+export function upsertStreamJob(entry) {
+  managerInstance?.upsertStream(entry);
+}
+
+export function removeStreamJob(deviceId, safeName, reason) {
+  try {
+    managerInstance?.stopStream(deviceId, safeName, reason);
+  } catch (err) {
+    logger.error('[StreamManager] Error in removeStreamJob', { 
+      deviceId, 
+      safeName, 
+      reason, 
+      error: err.message,
+      stack: err.stack 
+    });
+    // Не пробрасываем ошибку дальше, чтобы не падал сервер
+  }
+}
+
+export function getStreamPlaybackUrl(deviceId, safeName) {
+  return managerInstance?.getPlaybackUrl(deviceId, safeName) || null;
+}
+
+export function getStreamRestreamStatus(deviceId, safeName) {
+  return managerInstance?.getStatus(deviceId, safeName) || null;
+}
+

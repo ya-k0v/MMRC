@@ -6,13 +6,10 @@
 import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { getLogsDir } from '../config/settings-manager.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Директория для логов
-const LOG_DIR = path.join(__dirname, '../../logs');
+// Директория для логов (вычисляется динамически из настроек БД)
+const LOG_DIR = getLogsDir();
 
 // Форматирование логов
 const logFormat = winston.format.combine(

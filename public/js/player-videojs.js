@@ -17,6 +17,7 @@ const preview = url.searchParams.get('preview') === '1';
 const forceMuted = url.searchParams.get('muted') === '1';
 const forceSound = (url.searchParams.get('sound') === '1') || (url.searchParams.get('autoplay') === '1');
 const previewFile = url.searchParams.get('file');
+const previewStreamProtocol = url.searchParams.get('protocol');
 
 const idle = document.getElementById('idle');
 const v = document.getElementById('v');
@@ -42,6 +43,9 @@ let savedVideoPosition = 0; // Сохраненная позиция видео 
 let progressInterval = null; // Периодическая отправка прогресса (fallback)
 let lastProgressEmitTs = 0; // Время последней отправки прогресса (для троттлинга)
 let emitProgressStop = null; // Функция для отправки сигнала об остановке прогресса (будет установлена при инициализации Video.js)
+let mpegtsPlayer = null;
+let hlsPlayer = null;
+let dashPlayer = null; // DASH плеер через dashjs
 
 // Функция для остановки отправки прогресса
 function stopProgressInterval() {
@@ -352,6 +356,21 @@ if (!device_id || !device_id.trim()) {
           vjsPlayer.on('ended', () => {
             console.log('[Player] 🎬 Video.js ended event');
             
+            // КРИТИЧНО: Для live стримов (streaming) игнорируем ended событие
+            // Live стримы не должны заканчиваться
+            if (currentFileState.type === 'streaming') {
+              console.log('[Player] ⚠️ Ignoring ended event for live stream, attempting to resume');
+              // Пытаемся возобновить воспроизведение
+              setTimeout(() => {
+                if (vjsPlayer.paused()) {
+                  vjsPlayer.play().catch(err => {
+                    console.debug('[Player] Auto-resume after ended failed', err);
+                  });
+                }
+              }, 100);
+              return;
+            }
+            
             // КРИТИЧНО: Android WebView может генерировать 'ended' при паузе (баг)
             // Проверяем, что видео ДЕЙСТВИТЕЛЬНО закончилось
             const currentTime = vjsPlayer.currentTime();
@@ -619,6 +638,24 @@ if (!device_id || !device_id.trim()) {
                 console.log('[Player] 🖼️ Preview изображение:', previewFile);
                 img.src = content(previewFile);
                 show(img);
+              } else if (previewType === 'streaming') {
+                console.log('[Player] 📡 Preview стрима:', previewFile);
+                fetch(`/api/devices/${encodeURIComponent(device_id)}/streams/${encodeURIComponent(previewFile)}`)
+                  .then(res => res.ok ? res.json() : Promise.reject(new Error('stream not found')))
+                  .then(data => {
+                    // КРИТИЧНО: Используем streamProxyUrl (проксированный HLS) если доступен, иначе оригинальный streamUrl
+                    const playbackUrl = data?.streamProxyUrl || data?.proxyUrl || data?.streamUrl;
+                    if (playbackUrl) {
+                      const proto = data?.protocol || previewStreamProtocol;
+                      console.log('[Player] 📡 Используем URL для превью:', { playbackUrl, proto, hasProxy: !!data?.streamProxyUrl });
+                      handleStreamingPlayback(playbackUrl, previewFile, proto);
+                    } else {
+                      console.warn('[Player] ⚠️ Предпросмотр стрима: отсутствует streamUrl');
+                    }
+                  })
+                  .catch(err => {
+                    console.warn('[Player] ⚠️ Не удалось загрузить данные стрима', err);
+                  });
               } else if (['mp4','webm','ogg','mkv','mov','avi'].includes(ext) || previewType === 'video') {
                 // Видео preview
                 console.log('[Player] 🎬 Preview видео:', previewFile);
@@ -691,6 +728,9 @@ if (!device_id || !device_id.trim()) {
     if (emitProgressStop) {
       emitProgressStop();
     }
+    destroyMpegtsPlayer('clear_buffers');
+    destroyHlsPlayer('clear_buffers');
+    destroyDashPlayer('clear_buffers');
     
     // КРИТИЧНО: Сначала скрываем videoContainer, чтобы Video.js не пытался загрузить видео в скрытый элемент
     if (videoContainer) {
@@ -782,6 +822,386 @@ if (!device_id || !device_id.trim()) {
   function content(file){ 
     // НОВОЕ: Используем API resolver для поддержки shared storage (дедупликация)
     return `/api/files/resolve/${encodeURIComponent(device_id)}/${encodeURIComponent(file)}`; 
+  }
+
+  const STREAM_PROTOCOLS = new Set(['hls', 'dash', 'mpegts']);
+
+  function detectStreamProtocolFromUrl(url = '') {
+    const lower = (url || '').toLowerCase();
+    if (lower.includes('.m3u8') || lower.includes('format=m3u8')) {
+      return 'hls';
+    }
+    if (lower.endsWith('.mpd') || lower.includes('format=mpd') || lower.includes('dash-live')) {
+      return 'dash';
+    }
+    return 'mpegts';
+  }
+
+  function normalizeStreamProtocol(protocol, url) {
+    const normalized = (protocol || '').toString().trim().toLowerCase();
+    if (STREAM_PROTOCOLS.has(normalized)) {
+      return normalized;
+    }
+    return detectStreamProtocolFromUrl(url);
+  }
+
+  // КРИТИЧНО: Добавляет cache-busting параметр к URL для предотвращения кэширования старых m3u8 плейлистов
+  function addCacheBustParam(url) {
+    if (!url) return url;
+    try {
+      const urlObj = new URL(url, window.location.origin);
+      // Добавляем timestamp для предотвращения кэширования
+      urlObj.searchParams.set('_t', Date.now().toString());
+      return urlObj.toString();
+    } catch (e) {
+      // Если URL относительный или невалидный, добавляем параметр вручную
+      const separator = url.includes('?') ? '&' : '?';
+      return `${url}${separator}_t=${Date.now()}`;
+    }
+  }
+
+  function detectStreamMime(protocol, url = '') {
+    if (protocol === 'dash') {
+      return 'application/dash+xml';
+    }
+    if (protocol === 'hls') {
+      return 'application/x-mpegURL';
+    }
+    // fallback for auto detection
+    const lower = (url || '').toLowerCase();
+    if (lower.includes('.m3u8') || lower.includes('format=m3u8')) {
+      return 'application/x-mpegURL';
+    }
+    if (lower.endsWith('.mpd') || lower.includes('format=mpd')) {
+      return 'application/dash+xml';
+    }
+    return 'video/mp2t';
+  }
+
+  function destroyMpegtsPlayer(reason = 'unknown') {
+    if (mpegtsPlayer) {
+      try {
+        console.log('[Player] 📴 Отключаем MPEG-TS поток', reason);
+        if (typeof mpegtsPlayer.destroy === 'function') {
+          mpegtsPlayer.destroy();
+        }
+      } catch (err) {
+        console.warn('[Player] ⚠️ Ошибка остановки MPEG-TS', err);
+      }
+      mpegtsPlayer = null;
+    }
+  }
+
+  function destroyHlsPlayer(reason = 'unknown') {
+    if (hlsPlayer) {
+      try {
+        console.log('[Player] 📴 Отключаем HLS.js', reason);
+        if (typeof hlsPlayer.destroy === 'function') {
+          hlsPlayer.destroy();
+        }
+      } catch (err) {
+        console.warn('[Player] ⚠️ Ошибка остановки HLS.js', err);
+      }
+      hlsPlayer = null;
+    }
+  }
+
+  function destroyDashPlayer(reason = 'unknown') {
+    if (dashPlayer) {
+      try {
+        console.log('[Player] 📴 Отключаем DASH плеер', reason);
+        // Правильный порядок остановки dashjs
+        if (typeof dashPlayer.reset === 'function') {
+          dashPlayer.reset();
+        }
+        if (typeof dashPlayer.detachView === 'function') {
+          dashPlayer.detachView();
+        }
+        if (typeof dashPlayer.destroy === 'function') {
+          dashPlayer.destroy();
+        }
+      } catch (err) {
+        console.warn('[Player] ⚠️ Ошибка остановки DASH плеера', err);
+      }
+      dashPlayer = null;
+    }
+  }
+
+  function playViaVideoJs(streamUrl, protocolHint) {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          // КРИТИЧНО: Добавляем cache-busting для HLS, чтобы избежать кэширования старых m3u8
+          const finalUrl = (protocolHint === 'hls' || streamUrl?.includes('.m3u8')) 
+            ? addCacheBustParam(streamUrl) 
+            : streamUrl;
+          const mimeType = detectStreamMime(protocolHint, streamUrl);
+          vjsPlayer.src({ src: finalUrl, type: mimeType });
+          vjsPlayer.play().then(() => {
+            show(videoContainer, true);
+            console.log('[Player] ▶️ Стрим запущен через Video.js', { streamUrl, mimeType });
+            // КРИТИЧНО: Отправляем player/progress для обновления информации на панели спикера
+            if (device_id && currentFileState?.file && currentFileState?.type === 'streaming') {
+              socket.emit('player/progress', {
+                device_id,
+                type: 'streaming',
+                file: currentFileState.file,
+                currentTime: 0,
+                duration: 0
+              });
+            }
+          }).catch(err => {
+            console.error('[Player] ❌ Ошибка запуска стрима через Video.js', err);
+          });
+        }, 50);
+      });
+    });
+  }
+
+  function handleStreamingPlayback(streamUrl, file, streamProtocol = null) {
+    if (!streamUrl || !vjsPlayer) {
+      console.warn('[Player] ⚠️ Нет stream_url для воспроизведения стрима', { file });
+      return;
+    }
+
+    const resolvedProtocol = normalizeStreamProtocol(streamProtocol, streamUrl);
+    console.log('[Player] 🌐 Streaming playback', { 
+      file, 
+      streamUrl, 
+      streamProtocol,  // Исходный протокол из сервера
+      resolvedProtocol,  // Нормализованный протокол
+      hasHls: !!window.Hls,
+      hlsSupported: window.Hls ? window.Hls.isSupported() : false
+    });
+
+    clearAllBuffers();
+    currentFileState = { type: 'streaming', file, page: 1 };
+    currentVideoFile = file;
+    savedVideoPosition = 0;
+    destroyMpegtsPlayer('switch_to_streaming');
+    destroyHlsPlayer('switch_to_streaming');
+
+    try {
+      vjsPlayer.pause();
+      vjsPlayer.currentTime(0);
+    } catch {}
+
+    vjsPlayer.loop(false);
+    applyVolumeToPlayer('play_stream');
+    hideVideoJsControls();
+
+    videoContainer.style.display = 'block';
+    videoContainer.classList.remove('visible', 'preloading');
+
+    const tech = vjsPlayer.tech(true);
+    const mediaEl = tech && typeof tech.el === 'function' ? tech.el() : document.getElementById('v_html5_api') || v;
+    if (mediaEl) {
+      mediaEl.crossOrigin = 'anonymous';
+    }
+
+    if (resolvedProtocol === 'hls' && window.Hls && window.Hls.isSupported()) {
+      try {
+        if (!mediaEl) {
+          console.error('[Player] ❌ Не удалось получить video элемент для HLS');
+        } else {
+          // КРИТИЧНО: Добавляем cache-busting параметр к URL для предотвращения кэширования старого m3u8
+          // Это решает проблему, когда плеер воспроизводит старые сегменты после перезапуска стрима
+          const cacheBustUrl = addCacheBustParam(streamUrl);
+          console.log('[Player] 🔄 HLS URL с cache-busting', { original: streamUrl, cacheBust: cacheBustUrl });
+          
+          hlsPlayer = new window.Hls({
+            liveSyncDurationCount: 3,
+            enableWorker: true,
+            lowLatencyMode: true,
+            backBufferLength: 30,
+            // КРИТИЧНО: Настройки для live стримов
+            maxBufferLength: 30,        // Максимальная длина буфера (секунды)
+            maxMaxBufferLength: 60,     // Максимальная максимальная длина буфера
+            maxBufferSize: 60 * 1000 * 1000, // Максимальный размер буфера (60MB)
+            maxBufferHole: 0.5,         // Максимальная дыра в буфере (секунды)
+            highBufferWatchdogPeriod: 2, // Период проверки буфера
+            nudgeOffset: 0.1,           // Смещение для синхронизации
+            nudgeMaxRetry: 3,           // Максимальное количество попыток синхронизации
+            maxFragLoadingTimeOut: 20000, // Таймаут загрузки фрагмента (20 секунд)
+            fragLoadingTimeOut: 20000,   // Таймаут загрузки фрагмента
+            manifestLoadingTimeOut: 10000, // Таймаут загрузки манифеста (10 секунд)
+            // КРИТИЧНО: Отключаем автоматическую паузу при достижении конца
+            autoStartLoad: true,
+            startPosition: -1,          // Начинаем с последнего доступного сегмента (live)
+            liveDurationInfinity: true,  // Live стрим без конечной длительности
+            // КРИТИЧНО: Отключаем кэширование манифеста и сегментов
+            xhrSetup: (xhr, url) => {
+              // Добавляем cache-busting к каждому запросу манифеста
+              if (url.includes('.m3u8')) {
+                const separator = url.includes('?') ? '&' : '?';
+                const bustedUrl = `${url}${separator}_t=${Date.now()}`;
+                console.log('[Player] 🔄 HLS манифест запрос с cache-busting', { original: url, busted: bustedUrl });
+                xhr.open('GET', bustedUrl, true);
+                return;
+              }
+              xhr.open('GET', url, true);
+            }
+          });
+          hlsPlayer.loadSource(cacheBustUrl);
+          hlsPlayer.attachMedia(mediaEl);
+          hlsPlayer.on(window.Hls.Events.MANIFEST_PARSED, () => {
+            mediaEl.play().then(() => {
+              show(videoContainer, true);
+              console.log('[Player] ▶️ HLS поток запущен');
+              // КРИТИЧНО: Отправляем player/progress для обновления информации на панели спикера
+              if (device_id && file) {
+                socket.emit('player/progress', {
+                  device_id,
+                  type: 'streaming',
+                  file: file,
+                  currentTime: 0,
+                  duration: 0
+                });
+              }
+            }).catch(err => {
+              console.error('[Player] ❌ Ошибка запуска HLS', err);
+            });
+          });
+          
+          // КРИТИЧНО: Для live стримов отслеживаем загрузку новых сегментов
+          hlsPlayer.on(window.Hls.Events.FRAG_LOADED, () => {
+            // Если плеер на паузе в конце буфера, возобновляем воспроизведение
+            if (mediaEl.paused && mediaEl.readyState >= 3) {
+              const buffered = mediaEl.buffered;
+              const currentTime = mediaEl.currentTime;
+              const bufferedEnd = buffered.length > 0 ? buffered.end(buffered.length - 1) : 0;
+              
+              // Если мы близко к концу буфера (в пределах 1 секунды), возобновляем
+              if (bufferedEnd > 0 && (bufferedEnd - currentTime) < 1) {
+                mediaEl.play().catch(err => {
+                  console.debug('[Player] Auto-resume failed', err);
+                });
+              }
+            }
+          });
+          hlsPlayer.on(window.Hls.Events.ERROR, (_, data) => {
+            if (data?.fatal) {
+              console.error('[Player] ❌ HLS fatal error', data);
+              destroyHlsPlayer('fatal_error');
+              playViaVideoJs(streamUrl, 'hls');
+            }
+          });
+          return;
+        }
+      } catch (err) {
+        console.error('[Player] ❌ Ошибка HLS.js', err);
+        destroyHlsPlayer('exception');
+        playViaVideoJs(streamUrl, 'hls');
+        return;
+      }
+    } else {
+      destroyHlsPlayer('protocol_change');
+    }
+
+    if (resolvedProtocol === 'mpegts' && window.mpegts && window.mpegts.isSupported()) {
+      try {
+        const mediaTarget = mediaEl;
+        if (!mediaTarget) {
+          console.error('[Player] ❌ Не удалось получить video элемент для MPEG-TS');
+        } else {
+          mpegtsPlayer = window.mpegts.createPlayer({
+            type: 'mpegts',
+            isLive: true,
+            url: streamUrl
+          }, {
+            enableStashBuffer: false,
+            stashInitialSize: 128
+          });
+          if (typeof mpegtsPlayer.attachMediaElement === 'function') {
+            mpegtsPlayer.attachMediaElement(mediaTarget);
+          } else if (typeof mpegtsPlayer.attachMedia === 'function') {
+            mpegtsPlayer.attachMedia(mediaTarget);
+          }
+          mpegtsPlayer.load();
+          mpegtsPlayer.play();
+          show(videoContainer, true);
+          console.log('[Player] ▶️ MPEG-TS поток запущен');
+          // КРИТИЧНО: Отправляем player/progress для обновления информации на панели спикера
+          if (device_id && file) {
+            socket.emit('player/progress', {
+              device_id,
+              type: 'streaming',
+              file: file,
+              currentTime: 0,
+              duration: 0
+            });
+          }
+          return;
+        }
+      } catch (err) {
+        console.error('[Player] ❌ Ошибка запуска MPEG-TS', err);
+        destroyMpegtsPlayer('exception');
+      }
+    } else {
+      destroyMpegtsPlayer('protocol_change');
+    }
+
+    // КРИТИЧНО: DASH обрабатываем через dashjs напрямую (без videojs-contrib-dash из-за проблем совместимости)
+    if (resolvedProtocol === 'dash' && window.dashjs && window.dashjs.MediaPlayer) {
+      try {
+        destroyDashPlayer('switch_to_dash');
+        const mediaTarget = mediaEl;
+        if (!mediaTarget) {
+          console.error('[Player] ❌ Не удалось получить video элемент для DASH');
+        } else {
+          // Используем dashjs напрямую, без Video.js плагина
+          // Правильный API для dashjs 4.x
+          dashPlayer = window.dashjs.MediaPlayer().create();
+          if (dashPlayer) {
+            dashPlayer.initialize();
+            dashPlayer.attachView(mediaTarget);
+            dashPlayer.attachSource(streamUrl);
+            
+            // Обработка событий
+            dashPlayer.on(window.dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
+              mediaTarget.play().then(() => {
+                show(videoContainer, true);
+                console.log('[Player] ▶️ DASH поток запущен через dashjs');
+                // КРИТИЧНО: Отправляем player/progress для обновления информации на панели спикера
+                if (device_id && file) {
+                  socket.emit('player/progress', {
+                    device_id,
+                    type: 'streaming',
+                    file: file,
+                    currentTime: 0,
+                    duration: 0
+                  });
+                }
+              }).catch(err => {
+                console.error('[Player] ❌ Ошибка запуска DASH', err);
+              });
+            });
+            
+            dashPlayer.on(window.dashjs.MediaPlayer.events.ERROR, (event) => {
+              console.error('[Player] ❌ DASH error', event);
+              destroyDashPlayer('dash_error');
+              // Fallback: пробуем через Video.js VHS
+              playViaVideoJs(streamUrl, 'dash');
+            });
+            
+            return;
+          }
+        }
+      } catch (err) {
+        console.error('[Player] ❌ Ошибка запуска DASH', err);
+        destroyDashPlayer('exception');
+        // Fallback: пробуем через Video.js VHS
+        playViaVideoJs(streamUrl, 'dash');
+        return;
+      }
+    } else if (resolvedProtocol === 'dash') {
+      // Fallback: если dashjs недоступен, пробуем через Video.js VHS
+      console.warn('[Player] ⚠️ dashjs недоступен, используем Video.js VHS fallback');
+      playViaVideoJs(streamUrl, 'dash');
+      return;
+    }
+
+    playViaVideoJs(streamUrl, resolvedProtocol);
   }
 
   function videoPreviewSource(file, options = {}) {
@@ -1519,8 +1939,8 @@ if (!device_id || !device_id.trim()) {
 }
 
   // WebSocket обработчики
-  socket.on('player/play', ({ type, file, page }) => {
-    console.log('[Player] 📡 player/play:', { type, file, page });
+  socket.on('player/play', ({ type, file, page, stream_url, stream_protocol }) => {
+    console.log('[Player] 📡 player/play:', { type, file, page, stream_url });
     
     // КРИТИЧНО: СРАЗУ скрываем ВСЕ элементы кроме того, который будет показан
     // Это гарантирует что при нажатии Play виден только новый контент
@@ -1570,6 +1990,14 @@ if (!device_id || !device_id.trim()) {
       
       // НЕ сбрасываем флаг здесь - он сбросится после загрузки контента в соответствующих блоках
     }
+    
+    if (type === 'streaming') {
+      handleStreamingPlayback(stream_url, file, stream_protocol);
+      return;
+    }
+    destroyMpegtsPlayer('player_play_non_stream');
+    destroyHlsPlayer('player_play_non_stream');
+    destroyDashPlayer('player_play_non_stream');
     
     if (type === 'video') {
       // КРИТИЧНО: Полностью очищаем все буферы изображений при переключении на видео
@@ -1684,14 +2112,11 @@ if (!device_id || !device_id.trim()) {
                   vjsPlayer.load(); // КРИТИЧНО: Явно вызываем load() после установки src
                 }
                 
-                // Ждем готовности метаданных, затем показываем мгновенно
-                vjsPlayer.one('loadedmetadata', () => {
-                  const duration = vjsPlayer.duration();
-                  const buffered = vjsPlayer.buffered();
-                  const bufferedInfo = buffered.length > 0 
-                    ? `${buffered.end(buffered.length - 1).toFixed(2)}s` 
-                    : '0s';
-                  console.log(`[Player] 📊 Метаданные загружены: duration=${duration > 0 ? duration.toFixed(2) : '?'}s, buffered=${bufferedInfo}`);
+                // КРИТИЧНО: Функция для запуска воспроизведения (чтобы не дублировать код)
+                let playbackStarted = false;
+                const startPlayback = () => {
+                  if (playbackStarted) return; // Предотвращаем двойной запуск
+                  playbackStarted = true;
                   
                   // Сбрасываем флаг переключения - контент загрузился
                   isSwitchingFromPlaceholder = false;
@@ -1712,7 +2137,7 @@ if (!device_id || !device_id.trim()) {
                       if (bufferedAfter.length > 0) {
                         const bufferedEnd = bufferedAfter.end(bufferedAfter.length - 1);
                         const percent = durationAfter > 0 ? Math.round((bufferedEnd / durationAfter) * 100) : 0;
-                        console.log(`[Player] 📊 Буфер после запуска: ${percent}% (${bufferedEnd.toFixed(2)}s / ${durationAfter.toFixed(2)}s)`);
+                        console.log(`[Player] 📊 Буфер после запуска: ${percent}% (${bufferedEnd.toFixed(2)}s / ${durationAfter > 0 ? durationAfter.toFixed(2) : '?'}s)`);
                       } else {
                         console.warn(`[Player] ⚠️ Буфер пуст после запуска, duration=${durationAfter > 0 ? durationAfter.toFixed(2) : '?'}s`);
                       }
@@ -1721,6 +2146,34 @@ if (!device_id || !device_id.trim()) {
                     console.error('[Player] ❌ Ошибка воспроизведения:', err);
                     hideVideoJsControls();
                   });
+                };
+                
+                // Ждем готовности метаданных
+                vjsPlayer.one('loadedmetadata', () => {
+                  const duration = vjsPlayer.duration();
+                  const buffered = vjsPlayer.buffered();
+                  const bufferedInfo = buffered.length > 0 
+                    ? `${buffered.end(buffered.length - 1).toFixed(2)}s` 
+                    : '0s';
+                  console.log(`[Player] 📊 Метаданные загружены: duration=${duration > 0 ? duration.toFixed(2) : '?'}s, buffered=${bufferedInfo}`);
+                  
+                  // КРИТИЧНО: Если duration известна (> 0), запускаем сразу
+                  // Если duration неизвестна (0 или NaN), ждем canplay
+                  if (duration > 0 && Number.isFinite(duration)) {
+                    console.log('[Player] ⚡ Duration известна, запускаем сразу');
+                    startPlayback();
+                  } else {
+                    console.log('[Player] ⏳ Duration неизвестна, ждем canplay для начала воспроизведения');
+                    // Для файлов без duration ждем canplay (достаточно данных для воспроизведения)
+                    vjsPlayer.one('canplay', () => {
+                      const bufferedOnCanplay = vjsPlayer.buffered();
+                      const bufferedInfoCanplay = bufferedOnCanplay.length > 0 
+                        ? `${bufferedOnCanplay.end(bufferedOnCanplay.length - 1).toFixed(2)}s` 
+                        : '0s';
+                      console.log(`[Player] ⚡ canplay - достаточно данных для воспроизведения (buffered=${bufferedInfoCanplay})`);
+                      startPlayback();
+                    });
+                  }
                 });
                 
                 // КРИТИЧНО: Обработка ошибок загрузки
@@ -1998,6 +2451,9 @@ if (!device_id || !device_id.trim()) {
 
   socket.on('player/stop', (payload) => {
     console.log('[Player] ⏹️ player/stop', payload);
+    destroyMpegtsPlayer('player_stop');
+    destroyHlsPlayer('player_stop');
+    destroyDashPlayer('player_stop');
     
     // КРИТИЧНО: Заглушка НЕ реагирует на stop (кроме placeholder_refresh, как в Android)
     const reason = payload?.reason || '';

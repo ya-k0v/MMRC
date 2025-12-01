@@ -70,7 +70,10 @@ export function saveFileMetadata({
   mimeType = null,
   videoParams = {},
   audioParams = {},
-  fileMtime
+  fileMtime,
+  contentType = 'file',
+  streamUrl = null,
+  streamProtocol = 'auto'
 }) {
   try {
     const db = getDatabase();
@@ -79,8 +82,9 @@ export function saveFileMetadata({
       INSERT OR REPLACE INTO files_metadata (
         device_id, safe_name, original_name, file_path, file_size, md5_hash, partial_md5, mime_type,
         video_width, video_height, video_duration, video_codec, video_profile, video_bitrate,
-        audio_codec, audio_bitrate, audio_channels, file_mtime
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        audio_codec, audio_bitrate, audio_channels, file_mtime, content_type, stream_url,
+        stream_protocol
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     stmt.run(
@@ -101,7 +105,10 @@ export function saveFileMetadata({
       audioParams.codec || null,
       audioParams.bitrate || null,
       audioParams.channels || null,
-      fileMtime
+      fileMtime,
+      contentType,
+      streamUrl,
+      streamProtocol
     );
     
     logFile('debug', 'File metadata saved', { deviceId, safeName, md5Hash });
@@ -153,6 +160,20 @@ export function getDeviceFilesMetadata(deviceId) {
     return stmt.all(deviceId);
   } catch (error) {
     logger.error('Failed to get device files metadata', { error: error.message, deviceId });
+    return [];
+  }
+}
+
+export function getAllStreamingMetadata() {
+  try {
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      SELECT * FROM files_metadata
+      WHERE content_type = 'streaming'
+    `);
+    return stmt.all();
+  } catch (error) {
+    logger.error('Failed to get streaming metadata', { error: error.message });
     return [];
   }
 }
@@ -448,6 +469,41 @@ export function migrateFilePaths(oldRoot, newRoot) {
   }
 }
 
+export function createStreamingEntry({ deviceId, safeName, originalName, streamUrl, protocol = 'auto' }) {
+  if (!deviceId || !safeName || !streamUrl) {
+    throw new Error('Invalid streaming params');
+  }
+  const md5Hash = crypto.createHash('md5').update(`${deviceId}:${streamUrl}`).digest('hex');
+  const normalizedProtocol = protocol || 'auto';
+  let mimeType = 'video/mp2t';
+  if (normalizedProtocol === 'dash') {
+    mimeType = 'application/dash+xml';
+  } else if (normalizedProtocol === 'hls') {
+    mimeType = 'application/x-mpegURL';
+  }
+  
+  saveFileMetadata({
+    deviceId,
+    safeName,
+    originalName: originalName || safeName,
+    filePath: streamUrl,
+    fileSize: 0,
+    md5Hash,
+    partialMd5: null,
+    mimeType,
+    videoParams: {},
+    audioParams: {},
+    fileMtime: Date.now(),
+    contentType: 'streaming',
+    streamUrl,
+    streamProtocol: normalizedProtocol
+  });
+}
+
+export function deleteStreamingEntry(deviceId, safeName) {
+  deleteFileMetadata(deviceId, safeName);
+}
+
 /**
  * Получить уникальные пути из базы данных для проверки миграции
  * @returns {Array<string>} - Массив уникальных путей
@@ -465,6 +521,143 @@ export function getAllFilePaths() {
   } catch (error) {
     logger.error('Failed to get all file paths', { error: error.message, stack: error.stack });
     return [];
+  }
+}
+
+/**
+ * Проверка контента в базе данных и фактически на диске
+ * Удаляет записи из БД, если файлы не существуют на диске
+ * @param {Object} options - Опции проверки
+ * @param {string} options.deviceId - Проверить только для конкретного устройства (опционально)
+ * @param {boolean} options.dryRun - Если true, только логирует, не удаляет (по умолчанию false)
+ * @returns {Promise<Object>} - Статистика проверки: { checked, missing, deleted, errors }
+ */
+export async function cleanupMissingFiles({ deviceId = null, dryRun = false } = {}) {
+  try {
+    const db = getDatabase();
+    
+    // Получаем все записи из БД (или для конкретного устройства)
+    let query = `
+      SELECT device_id, safe_name, file_path, content_type, original_name
+      FROM files_metadata
+      WHERE content_type != 'streaming'
+    `;
+    const params = [];
+    
+    if (deviceId) {
+      query += ` AND device_id = ?`;
+      params.push(deviceId);
+    }
+    
+    const stmt = db.prepare(query);
+    const allRecords = stmt.all(...params);
+    
+    logger.info('[Cleanup] Starting file existence check', {
+      deviceId: deviceId || 'all',
+      totalRecords: allRecords.length,
+      dryRun
+    });
+    
+    let checked = 0;
+    let missing = 0;
+    let deleted = 0;
+    const errors = [];
+    const missingFiles = [];
+    
+    // Проверяем каждый файл
+    for (const record of allRecords) {
+      checked++;
+      
+      try {
+        // Пропускаем записи без file_path
+        if (!record.file_path) {
+          logger.warn('[Cleanup] Record missing file_path', {
+            deviceId: record.device_id,
+            safeName: record.safe_name
+          });
+          continue;
+        }
+        
+        // Проверяем существование файла на диске
+        const exists = fs.existsSync(record.file_path);
+        
+        if (!exists) {
+          missing++;
+          missingFiles.push({
+            deviceId: record.device_id,
+            safeName: record.safe_name,
+            originalName: record.original_name,
+            filePath: record.file_path,
+            contentType: record.content_type
+          });
+          
+          logger.warn('[Cleanup] File not found on disk', {
+            deviceId: record.device_id,
+            safeName: record.safe_name,
+            originalName: record.original_name,
+            filePath: record.file_path,
+            contentType: record.content_type
+          });
+          
+          // Удаляем запись из БД, если не dryRun
+          if (!dryRun) {
+            try {
+              deleteFileMetadata(record.device_id, record.safe_name);
+              deleted++;
+              
+              logger.info('[Cleanup] Deleted metadata for missing file', {
+                deviceId: record.device_id,
+                safeName: record.safe_name,
+                filePath: record.file_path
+              });
+            } catch (deleteError) {
+              errors.push({
+                deviceId: record.device_id,
+                safeName: record.safe_name,
+                error: deleteError.message
+              });
+              logger.error('[Cleanup] Failed to delete metadata', {
+                deviceId: record.device_id,
+                safeName: record.safe_name,
+                error: deleteError.message
+              });
+            }
+          }
+        }
+      } catch (checkError) {
+        errors.push({
+          deviceId: record.device_id,
+          safeName: record.safe_name,
+          error: checkError.message
+        });
+        logger.error('[Cleanup] Error checking file', {
+          deviceId: record.device_id,
+          safeName: record.safe_name,
+          filePath: record.file_path,
+          error: checkError.message
+        });
+      }
+    }
+    
+    const result = {
+      checked,
+      missing,
+      deleted: dryRun ? 0 : deleted,
+      errors: errors.length,
+      missingFiles: dryRun ? missingFiles : [],
+      dryRun
+    };
+    
+    logger.info('[Cleanup] File existence check completed', result);
+    
+    return result;
+  } catch (error) {
+    logger.error('[Cleanup] Failed to cleanup missing files', {
+      error: error.message,
+      stack: error.stack,
+      deviceId
+    });
+    throw error;
   }
 }
 

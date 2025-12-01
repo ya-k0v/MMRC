@@ -5,6 +5,19 @@
 
 import { getFolderImagesCount } from '../converters/folder-converter.js';
 import logger from '../utils/logger.js';
+import { getFileMetadata } from '../database/files-metadata.js';
+import { removeStreamJob } from '../streams/stream-manager.js';
+
+const STREAM_PROTOCOLS = new Set(['hls', 'dash', 'mpegts']);
+
+function sanitizeStreamProtocol(value, fallback = null) {
+  if (!value) return fallback;
+  const normalized = value.toString().trim().toLowerCase();
+  if (STREAM_PROTOCOLS.has(normalized)) {
+    return normalized;
+  }
+  return fallback;
+}
 
 const DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS = 10;
 const serverPlaylistLoops = new Map();
@@ -145,7 +158,7 @@ export function setupControlHandlers(socket, deps) {
   };
   
   // control/play - Запустить воспроизведение
-  socket.on('control/play', ({ device_id, file, page }) => {
+  socket.on('control/play', async ({ device_id, file, page, type: requestedType, streamProtocol }) => {
     const d = devices[device_id];
     if (!d) return;
 
@@ -165,12 +178,16 @@ export function setupControlHandlers(socket, deps) {
     }
     
     if (file) {
+      // КРИТИЧНО: Объявляем hasExtension один раз в начале блока, чтобы она была доступна везде
+      const hasExtension = file.includes('.');
+      
       // КРИТИЧНО: Если текущий контент - видео, и запускается другой тип контента,
       // нужно сначала остановить видео, чтобы звук не продолжал играть
-      const wasVideo = d.current && d.current.type === 'video' && d.current.state === 'playing';
+      const wasVideo = d.current && (d.current.type === 'video' || d.current.type === 'streaming') && d.current.state === 'playing';
       const willBeNonVideo = (() => {
-        const hasExtension = file.includes('.');
         const ext = hasExtension ? file.split('.').pop().toLowerCase() : '';
+        const isStreaming = requestedType === 'streaming' || (d.streams && d.streams[file]);
+        if (isStreaming) return false;
         return !hasExtension || ext === 'pdf' || ext === 'pptx' || 
                ['png','jpg','jpeg','gif','webp'].includes(ext) || ext === 'zip';
       })();
@@ -181,16 +198,65 @@ export function setupControlHandlers(socket, deps) {
           currentFile: d.current?.file,
           newFile: file 
         });
+        
+        // КРИТИЧНО: Останавливаем FFmpeg для стримов при переключении на не-видео
+        if (d.current?.type === 'streaming' && d.current?.file) {
+          const safeName = d.current.file;
+          removeStreamJob(device_id, safeName, 'switch_to_non_video');
+          logger.info('[Control] 🛑 Stopped FFmpeg stream on switch to non-video', { deviceId: device_id, file: safeName });
+        }
+        
         io.to(`device:${device_id}`).emit('player/stop', { reason: 'switch_content' });
         // Даем время на остановку видео перед запуском нового контента
-        setTimeout(() => {
+        setTimeout(async () => {
           // Проверяем, что устройство все еще существует и команда актуальна
           const deviceStillExists = devices[device_id];
           if (!deviceStillExists) return;
           
-          // Определяем тип нового контента
-          const hasExtension = file.includes('.');
+          // КРИТИЧНО: Пересчитываем playbackStreamUrl и effectiveStreamProtocol внутри setTimeout
+          // так как они могут быть не определены в этой области видимости
           const ext = hasExtension ? file.split('.').pop().toLowerCase() : '';
+          const streamEntry = deviceStillExists.streams ? deviceStillExists.streams[file] : undefined;
+          const requestedStreamProtocol = sanitizeStreamProtocol(streamProtocol);
+          let localPlaybackStreamUrl = streamEntry ? (streamEntry.proxyUrl || streamEntry.url) : null;
+          let localEffectiveStreamProtocol = null;
+          
+          // Если это стрим - проверяем протокол и запускаем FFmpeg только если нужно
+          if (streamEntry) {
+            const streamProtocol = streamEntry.protocol || requestedStreamProtocol || 'mpegts';
+            
+            // КРИТИЧНО: Все внешние стримы (DASH, HLS, MPEG-TS) могут иметь проблемы с CORS
+            // Поэтому для всех стримов используем FFmpeg рестрим в HLS формат
+            const { getStreamManager } = await import('../streams/stream-manager.js');
+            const streamManager = getStreamManager();
+            if (streamManager) {
+              const existingUrl = streamManager.getPlaybackUrl(device_id, file);
+              if (!existingUrl) {
+                const metadata = getFileMetadata(device_id, file);
+                if (metadata && metadata.content_type === 'streaming') {
+                  try {
+                    localPlaybackStreamUrl = await streamManager.ensureStreamRunning(device_id, file, metadata);
+                  } catch (err) {
+                    logger.error('[Control] ❌ Failed to start stream in setTimeout', { deviceId: device_id, file, error: err.message });
+                    localPlaybackStreamUrl = streamEntry.proxyUrl || streamEntry.url;
+                  }
+                }
+              } else {
+                localPlaybackStreamUrl = existingUrl;
+              }
+            }
+            localEffectiveStreamProtocol = streamEntry?.proxyUrl ? 'hls' : (streamEntry?.protocol || requestedStreamProtocol || 'mpegts');
+            logger.info('[Control] 🔍 localEffectiveStreamProtocol determined (setTimeout)', {
+              deviceId: device_id,
+              file,
+              streamEntryProxyUrl: streamEntry?.proxyUrl,
+              streamEntryProtocol: streamEntry?.protocol,
+              requestedStreamProtocol,
+              localEffectiveStreamProtocol
+            });
+          }
+          
+          // Определяем тип нового контента
           let type = 'video';
           if (!hasExtension) {
             type = 'folder';
@@ -202,41 +268,342 @@ export function setupControlHandlers(socket, deps) {
             type = 'image';
           } else if (ext === 'zip') {
             type = 'folder';
+          } else if (streamEntry) {
+            type = 'streaming';
           }
           
           const pageNum = page || 1;
-          d.current = { 
+          deviceStillExists.current = { 
             type, 
             file, 
             state: 'playing', 
-            page: (type === 'pdf' || type === 'pptx' || type === 'folder') ? pageNum : undefined 
+            page: (type === 'pdf' || type === 'pptx' || type === 'folder') ? pageNum : undefined
           };
+          if (type === 'streaming') {
+            deviceStillExists.current.streamUrl = localPlaybackStreamUrl;
+            deviceStillExists.current.streamProtocol = localEffectiveStreamProtocol || 'hls'; // По умолчанию HLS для рестрима
+            logger.info('[Control] ✅ Set streamProtocol in device.current (setTimeout)', {
+              deviceId: device_id,
+              file,
+              streamProtocol: deviceStillExists.current.streamProtocol,
+              streamUrl: localPlaybackStreamUrl
+            });
+          }
           
-          io.to(`device:${device_id}`).emit('player/play', d.current);
+          // Логируем перед отправкой (для первого случая - переключение типа контента)
+          if (type === 'streaming') {
+            logger.info('[Control] 📡 [1] Sending player/play for stream (type switch)', {
+              deviceId: device_id,
+              file,
+              stream_url: localPlaybackStreamUrl,
+              stream_protocol: localEffectiveStreamProtocol,
+              hasStreamUrl: !!localPlaybackStreamUrl
+            });
+          }
+          
+          io.to(`device:${device_id}`).emit('player/play', {
+            ...deviceStillExists.current,
+            stream_url: type === 'streaming' ? localPlaybackStreamUrl : undefined,
+            stream_protocol: type === 'streaming' ? localEffectiveStreamProtocol : undefined
+          });
           emitDeviceVolumeState(device_id, 'control_play');
           io.emit('preview/refresh', { device_id });
         }, 150);
         return; // Выходим, запуск нового контента произойдет в setTimeout
       }
       
-      // Проверяем есть ли расширение у файла
-      const hasExtension = file.includes('.');
+      // Проверяем есть ли расширение у файла (hasExtension уже объявлена выше)
       const ext = hasExtension ? file.split('.').pop().toLowerCase() : '';
+      const streamEntry = d.streams ? d.streams[file] : undefined;
+      const requestedStreamProtocol = sanitizeStreamProtocol(streamProtocol);
+      
+      logger.info('[Control] 🔍 Stream entry lookup', {
+        deviceId: device_id,
+        file,
+        hasStreams: !!d.streams,
+        streamKeys: d.streams ? Object.keys(d.streams) : [],
+        streamEntryFound: !!streamEntry,
+        streamEntryUrl: streamEntry?.url,
+        streamEntryProtocol: streamEntry?.protocol
+      });
+      
+      // КРИТИЧНО: Lazy loading - запускаем FFmpeg только когда стрим действительно воспроизводится
+      let playbackStreamUrl = streamEntry ? (streamEntry.proxyUrl || streamEntry.url) : null;
+      
+      // Если стрим найден - проверяем протокол и запускаем FFmpeg только если нужно
+      if (streamEntry) {
+        const streamProtocol = streamEntry.protocol || requestedStreamProtocol || 'mpegts';
+        
+        // Для HLS, MPEG-TS и DASH используем FFmpeg рестрим в HLS формат
+        const { getStreamManager } = await import('../streams/stream-manager.js');
+        const streamManager = getStreamManager();
+        if (streamManager) {
+          // Проверяем, есть ли уже запущенный процесс или существующие файлы
+          const existingUrl = streamManager.getPlaybackUrl(device_id, file);
+          logger.info('[Control] 🔍 Checking stream status', {
+            deviceId: device_id,
+            file,
+            protocol: streamProtocol,
+            hasExistingUrl: !!existingUrl,
+            existingUrl,
+            streamEntryProxyUrl: streamEntry.proxyUrl
+          });
+          
+          if (!existingUrl) {
+            // FFmpeg не запущен - запускаем его (lazy loading)
+            const metadata = getFileMetadata(device_id, file);
+            logger.info('[Control] 🔍 Checking metadata for stream', {
+              deviceId: device_id,
+              file,
+              hasMetadata: !!metadata,
+              contentType: metadata?.content_type,
+              streamUrl: metadata?.stream_url,
+              streamProtocol: metadata?.stream_protocol
+            });
+            
+            if (metadata && metadata.content_type === 'streaming') {
+              try {
+                logger.info('[Control] 🚀 Calling ensureStreamRunning', {
+                  deviceId: device_id,
+                  file,
+                  streamUrl: metadata.stream_url,
+                  streamProtocol: metadata.stream_protocol
+                });
+                playbackStreamUrl = await streamManager.ensureStreamRunning(device_id, file, metadata);
+                
+                // КРИТИЧНО: Если ensureStreamRunning вернул null, используем fallback
+                if (!playbackStreamUrl) {
+                  logger.warn('[Control] ⚠️ ensureStreamRunning returned null, using fallback', {
+                    deviceId: device_id,
+                    file,
+                    streamEntryProxyUrl: streamEntry.proxyUrl,
+                    streamEntryUrl: streamEntry.url
+                  });
+                  playbackStreamUrl = streamEntry.proxyUrl || streamEntry.url;
+                } else {
+                  logger.info('[Control] ✅ Lazy started stream for playback', { 
+                    deviceId: device_id, 
+                    file,
+                    protocol: streamProtocol,
+                    playbackUrl: playbackStreamUrl 
+                  });
+                  
+                  // КРИТИЧНО: Обновляем streamEntry.proxyUrl после запуска FFmpeg
+                  if (streamEntry) {
+                    streamEntry.proxyUrl = playbackStreamUrl;
+                  }
+                }
+              } catch (err) {
+                logger.error('[Control] ❌ Failed to start stream', { 
+                  deviceId: device_id, 
+                  file,
+                  error: err.message,
+                  stack: err.stack
+                });
+                // Fallback: используем предварительно сформированный URL
+                playbackStreamUrl = streamEntry.proxyUrl || streamEntry.url;
+              }
+            } else {
+              logger.warn('[Control] ⚠️ Stream metadata not found or wrong type', {
+                deviceId: device_id,
+                file,
+                hasMetadata: !!metadata,
+                contentType: metadata?.content_type
+              });
+              // Используем предварительно сформированный URL
+              playbackStreamUrl = streamEntry.proxyUrl || streamEntry.url;
+            }
+          } else {
+            // FFmpeg уже запущен - используем существующий URL
+            playbackStreamUrl = existingUrl;
+            logger.debug('[Control] Stream already running', { deviceId: device_id, file, playbackUrl: existingUrl });
+          }
+        } else {
+          logger.warn('[Control] ⚠️ StreamManager not available', { deviceId: device_id, file });
+          // Fallback: используем предварительно сформированный URL
+          playbackStreamUrl = streamEntry.proxyUrl || streamEntry.url;
+        }
+      }
+      
+      // Логируем для отладки стримов
+      if (streamEntry) {
+        logger.info('[Control] Stream entry found', {
+          deviceId: device_id,
+          file,
+          hasProxyUrl: !!streamEntry.proxyUrl,
+          proxyUrl: streamEntry.proxyUrl,
+          originalUrl: streamEntry.url,
+          playbackStreamUrl
+        });
+      }
       
       // Определяем тип контента
-      let type = 'video'; // По умолчанию
+      let type = requestedType || 'video'; // По умолчанию
       
-      if (!hasExtension) {
-        // Нет расширения = это папка с изображениями
-        type = 'folder';
-      } else if (ext === 'pdf') {
-        type = 'pdf';
-      } else if (ext === 'pptx') {
-        type = 'pptx';
-      } else if (['png','jpg','jpeg','gif','webp'].includes(ext)) {
-        type = 'image';
-      } else if (ext === 'zip') {
-        type = 'folder'; // ZIP = папка с изображениями
+      // КРИТИЧНО: Проверяем БД, если streamEntry не найден, но файл может быть стримом
+      if (!streamEntry && !requestedType) {
+        const metadata = getFileMetadata(device_id, file);
+        if (metadata && metadata.content_type === 'streaming') {
+          logger.info('[Control] 🔍 Stream found in DB (before type determination)', {
+            deviceId: device_id,
+            file,
+            streamUrl: metadata.stream_url,
+            streamProtocol: metadata.stream_protocol
+          });
+          type = 'streaming';
+        }
+      }
+      
+      if (streamEntry) {
+        type = 'streaming';
+      } else if (!requestedType && type !== 'streaming') {
+        if (!hasExtension) {
+          // Нет расширения = это папка с изображениями
+          type = 'folder';
+        } else if (ext === 'pdf') {
+          type = 'pdf';
+        } else if (ext === 'pptx') {
+          type = 'pptx';
+        } else if (['png','jpg','jpeg','gif','webp'].includes(ext)) {
+          type = 'image';
+        } else if (ext === 'zip') {
+          type = 'folder'; // ZIP = папка с изображениями
+        }
+      }
+      
+      logger.info('[Control] 📋 Content type determined', {
+        deviceId: device_id,
+        file,
+        type,
+        hasStreamEntry: !!streamEntry,
+        requestedType
+      });
+      
+      // КРИТИЧНО: Если тип streaming, но streamEntry не найден - проверяем БД
+      // Это может произойти после перезапуска сервера, когда d.streams еще не обновлен
+      if (type === 'streaming' && !streamEntry) {
+        logger.warn('[Control] ⚠️ Streaming entry not found in d.streams, checking DB', { 
+          deviceId: device_id, 
+          file,
+          hasStreams: !!d.streams,
+          streamKeys: d.streams ? Object.keys(d.streams) : []
+        });
+        
+        // Проверяем БД - может быть стрим есть, но d.streams не обновлен
+        const metadata = getFileMetadata(device_id, file);
+        logger.info('[Control] 🔍 DB metadata check', {
+          deviceId: device_id,
+          file,
+          hasMetadata: !!metadata,
+          contentType: metadata?.content_type,
+          streamUrl: metadata?.stream_url,
+          streamProtocol: metadata?.stream_protocol
+        });
+        
+        if (metadata && metadata.content_type === 'streaming') {
+          logger.info('[Control] ✅ Stream found in DB, will start FFmpeg', { 
+            deviceId: device_id, 
+            file,
+            streamUrl: metadata.stream_url,
+            streamProtocol: metadata.stream_protocol
+          });
+          // Создаем временный streamEntry из метаданных БД
+          const tempStreamEntry = {
+            name: metadata.original_name || file,
+            url: metadata.stream_url,
+            proxyUrl: null, // Будет установлен после запуска FFmpeg
+            protocol: (() => {
+              // Простая нормализация протокола (копия логики из files.js)
+              const protocol = metadata.stream_protocol?.toLowerCase() || '';
+              const url = metadata.stream_url?.toLowerCase() || '';
+              if (protocol === 'hls' || url.includes('.m3u8')) return 'hls';
+              if (protocol === 'dash' || url.includes('.mpd')) return 'dash';
+              if (protocol === 'mpegts' || protocol === 'mpeg-ts' || url.includes('.ts') || url.startsWith('udp://')) return 'mpegts';
+              return protocol || 'mpegts';
+            })()
+          };
+          
+          // КРИТИЧНО: Все внешние стримы (DASH, HLS, MPEG-TS) могут иметь проблемы с CORS
+          // Поэтому для всех стримов используем FFmpeg рестрим в HLS формат
+          const { getStreamManager } = await import('../streams/stream-manager.js');
+          const streamManager = getStreamManager();
+          if (streamManager) {
+            try {
+              playbackStreamUrl = await streamManager.ensureStreamRunning(device_id, file, metadata);
+              
+              // КРИТИЧНО: Если ensureStreamRunning вернул null, используем fallback
+              if (!playbackStreamUrl) {
+                logger.warn('[Control] ⚠️ ensureStreamRunning returned null from DB, using fallback', {
+                  deviceId: device_id,
+                  file,
+                  streamUrl: metadata.stream_url
+                });
+                playbackStreamUrl = metadata.stream_url;
+                tempStreamEntry.proxyUrl = null;
+              } else {
+                tempStreamEntry.proxyUrl = playbackStreamUrl;
+                logger.info('[Control] ✅ FFmpeg started from DB metadata', { 
+                  deviceId: device_id, 
+                  file,
+                  protocol: tempStreamEntry.protocol,
+                  playbackUrl: playbackStreamUrl 
+                });
+              }
+            } catch (err) {
+              logger.error('[Control] ❌ Failed to start stream from DB', { 
+                deviceId: device_id, 
+                file,
+                error: err.message 
+              });
+              // Fallback: используем оригинальный URL
+              playbackStreamUrl = metadata.stream_url;
+              tempStreamEntry.proxyUrl = null;
+            }
+          } else {
+            logger.error('[Control] ❌ StreamManager not available', { deviceId: device_id, file });
+            // Fallback: используем оригинальный URL
+            playbackStreamUrl = metadata.stream_url;
+            tempStreamEntry.proxyUrl = null;
+          }
+          
+          // Используем временный streamEntry
+          streamEntry = tempStreamEntry;
+          playbackStreamUrl = streamEntry.proxyUrl || streamEntry.url;
+        } else {
+          logger.error('[Control] ❌ Stream not found in DB either', { deviceId: device_id, file });
+          return; // Стрим не найден ни в d.streams, ни в БД
+        }
+      }
+      
+      // КРИТИЧНО: Определяем эффективный протокол для воспроизведения
+      // Если используется proxyUrl (HLS рестрим через FFmpeg), протокол всегда 'hls'
+      // Если proxyUrl НЕТ, определяем по protocol / requestedStreamProtocol / URL
+      let baseProtocol = streamEntry?.protocol || requestedStreamProtocol || 'mpegts';
+      
+      if (!streamEntry?.proxyUrl && typeof playbackStreamUrl === 'string') {
+        const lowerUrl = playbackStreamUrl.toLowerCase();
+        if (lowerUrl.includes('.mpd')) {
+          baseProtocol = 'dash';
+        } else if (lowerUrl.includes('.m3u8')) {
+          baseProtocol = 'hls';
+        }
+      }
+      
+      const effectiveStreamProtocol = type === 'streaming'
+        ? (streamEntry?.proxyUrl ? 'hls' : baseProtocol)
+        : null;
+      
+      // Логируем для отладки DASH стримов
+      if (type === 'streaming' && streamEntry) {
+        logger.info('[Control] 🔍 Protocol determination', {
+          deviceId: device_id,
+          file,
+          streamEntryProtocol: streamEntry.protocol,
+          streamEntryProxyUrl: streamEntry.proxyUrl,
+          requestedStreamProtocol,
+          effectiveStreamProtocol,
+          playbackStreamUrl
+        });
       }
       
       // КРИТИЧНО: Если переключаемся между разными типами контента, останавливаем предыдущий
@@ -251,6 +618,14 @@ export function setupControlHandlers(socket, deps) {
           currentFile: d.current?.file,
           newFile: file 
         });
+        
+        // КРИТИЧНО: Останавливаем FFmpeg для стримов при переключении типа
+        if (currentType === 'streaming' && d.current?.file) {
+          const safeName = d.current.file;
+          removeStreamJob(device_id, safeName, 'type_switch');
+          logger.info('[Control] 🛑 Stopped FFmpeg stream on type switch', { deviceId: device_id, file: safeName });
+        }
+        
         io.to(`device:${device_id}`).emit('player/stop', { reason: 'switch_content' });
         // Даем время на остановку предыдущего контента
         setTimeout(() => {
@@ -270,6 +645,16 @@ export function setupControlHandlers(socket, deps) {
             state: 'playing', 
             page: (type === 'pdf' || type === 'pptx' || type === 'folder') ? pageNum : undefined 
           };
+          if (type === 'streaming') {
+            d.current.streamUrl = playbackStreamUrl;
+            d.current.streamProtocol = effectiveStreamProtocol || 'hls'; // По умолчанию HLS для рестрима
+            logger.info('[Control] ✅ Set streamProtocol in device.current (setTimeout type switch)', {
+              deviceId: device_id,
+              file,
+              streamProtocol: d.current.streamProtocol,
+              streamUrl: playbackStreamUrl
+            });
+          }
           
           // Восстанавливаем флаги плейлиста, если плейлист был активен
           if (wasPlaylistActive && type === 'folder') {
@@ -278,7 +663,22 @@ export function setupControlHandlers(socket, deps) {
             d.current.playlistInterval = savedPlaylistInterval;
           }
           
-          io.to(`device:${device_id}`).emit('player/play', d.current);
+          // Логируем перед отправкой (для второго случая - переключение типа контента в setTimeout)
+          if (type === 'streaming') {
+            logger.info('[Control] 📡 [2] Sending player/play for stream (type switch setTimeout)', {
+              deviceId: device_id,
+              file,
+              stream_url: playbackStreamUrl,
+              stream_protocol: effectiveStreamProtocol,
+              hasStreamUrl: !!playbackStreamUrl
+            });
+          }
+          
+          io.to(`device:${device_id}`).emit('player/play', {
+            ...d.current,
+            stream_url: type === 'streaming' ? playbackStreamUrl : undefined,
+            stream_protocol: type === 'streaming' ? effectiveStreamProtocol : undefined
+          });
           emitDeviceVolumeState(device_id, 'control_play');
           io.emit('preview/refresh', { device_id });
         }, 100);
@@ -300,6 +700,16 @@ export function setupControlHandlers(socket, deps) {
         state: 'playing', 
         page: (type === 'pdf' || type === 'pptx' || type === 'folder') ? pageNum : undefined 
       };
+      if (type === 'streaming') {
+        d.current.streamUrl = playbackStreamUrl;
+        d.current.streamProtocol = effectiveStreamProtocol || 'hls'; // По умолчанию HLS для рестрима
+        logger.info('[Control] ✅ Set streamProtocol in device.current', {
+          deviceId: device_id,
+          file,
+          streamProtocol: d.current.streamProtocol,
+          streamUrl: playbackStreamUrl
+        });
+      }
       
       // Восстанавливаем флаги плейлиста, если плейлист был активен для того же файла
       if (wasPlaylistActive && type === 'folder' && file === savedPlaylistFile) {
@@ -309,7 +719,44 @@ export function setupControlHandlers(socket, deps) {
         logger.info(`[Control] Плейлист сохранен при control/play для того же файла`, { deviceId: device_id, file });
       }
       
-      io.to(`device:${device_id}`).emit('player/play', d.current);
+      // КРИТИЧНО: Логируем что отправляется в плеер
+      if (type === 'streaming') {
+        logger.info('[Control] 📡 Sending player/play for stream', {
+          deviceId: device_id,
+          file,
+          type,
+          stream_url: playbackStreamUrl,
+          stream_protocol: effectiveStreamProtocol,
+          hasStreamUrl: !!playbackStreamUrl,
+          playbackStreamUrlIsNull: playbackStreamUrl === null
+        });
+        
+        // Проверяем, что playbackStreamUrl установлен
+        if (!playbackStreamUrl) {
+          logger.error('[Control] ❌ playbackStreamUrl is null for streaming! Using fallback URL.', {
+            deviceId: device_id,
+            file,
+            streamEntry: !!streamEntry,
+            streamEntryProxyUrl: streamEntry?.proxyUrl,
+            streamEntryUrl: streamEntry?.url
+          });
+          // Используем fallback URL из streamEntry
+          playbackStreamUrl = streamEntry?.proxyUrl || streamEntry?.url;
+          if (!playbackStreamUrl) {
+            logger.error('[Control] ❌ No fallback URL available! Cannot play stream.', {
+              deviceId: device_id,
+              file
+            });
+            return; // Не отправляем событие если нет URL вообще
+          }
+        }
+      }
+      
+      io.to(`device:${device_id}`).emit('player/play', {
+        ...d.current,
+        stream_url: type === 'streaming' ? playbackStreamUrl : undefined,
+        stream_protocol: type === 'streaming' ? effectiveStreamProtocol : undefined
+      });
       emitDeviceVolumeState(device_id, 'control_play');
     } else {
       // КРИТИЧНО: Если файл не указан - это RESUME после паузы
@@ -366,6 +813,13 @@ export function setupControlHandlers(socket, deps) {
   socket.on('control/stop', ({ device_id }) => {
     const d = devices[device_id];
     if (!d) return;
+    
+    // КРИТИЧНО: Останавливаем FFmpeg для стримов
+    if (d.current && d.current.type === 'streaming' && d.current.file) {
+      const safeName = d.current.file;
+      removeStreamJob(device_id, safeName, 'manual_stop');
+      logger.info('[Control] 🛑 Stopped FFmpeg stream on manual stop', { deviceId: device_id, file: safeName });
+    }
     
     // Останавливаем плейлист если был активен
     if (d.current && d.current.playlistActive) {

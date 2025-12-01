@@ -4,23 +4,29 @@
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
-import { CONVERTED_CACHE } from '../config/constants.js';
+import { getConvertedCache } from '../config/settings-manager.js';
 
-const TRAILERS_DIR = path.join(CONVERTED_CACHE, 'trailers');
+// TRAILERS_DIR вычисляется динамически из настроек БД
+function getTrailersDir() {
+  return path.join(getConvertedCache(), 'trailers');
+}
+
 const inProgress = new Set(); // md5 в процессе генерации
 
 function ensureDirs() {
-  if (!fs.existsSync(CONVERTED_CACHE)) {
-    fs.mkdirSync(CONVERTED_CACHE, { recursive: true });
+  const convertedCache = getConvertedCache();
+  const trailersDir = getTrailersDir();
+  if (!fs.existsSync(convertedCache)) {
+    fs.mkdirSync(convertedCache, { recursive: true });
   }
-  if (!fs.existsSync(TRAILERS_DIR)) {
-    fs.mkdirSync(TRAILERS_DIR, { recursive: true });
+  if (!fs.existsSync(trailersDir)) {
+    fs.mkdirSync(trailersDir, { recursive: true });
   }
 }
 
 export function getTrailerPath(md5Hash) {
   ensureDirs();
-  return path.join(TRAILERS_DIR, `${md5Hash}.mp4`);
+  return path.join(getTrailersDir(), `${md5Hash}.mp4`);
 }
 
 /**

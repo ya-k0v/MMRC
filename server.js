@@ -5,7 +5,7 @@ import path from 'path';
 
 // Импорты из модулей
 import { 
-  ROOT, PUBLIC, DEVICES, CONVERTED_CACHE, MAX_FILE_SIZE, ALLOWED_EXT, PORT, HOST 
+  ROOT, PUBLIC, DEVICES, MAX_FILE_SIZE, ALLOWED_EXT, PORT, HOST, useExternalDataDiskFlag
 } from './src/config/constants.js';
 import { createSocketServer } from './src/config/socket-config.js';
 import { initDatabase, closeDatabase, getDatabase, getAllDeviceVolumeStates, saveDeviceVolumeState } from './src/database/database.js';
@@ -15,12 +15,14 @@ import {
   loadFileNamesFromDB, 
   saveFileNamesToDB
 } from './src/storage/devices-storage-sqlite.js';
+import { cleanupMissingFiles } from './src/database/files-metadata.js';
 import { getFileStatus } from './src/video/file-status.js';
 import { checkVideoParameters } from './src/video/ffmpeg-wrapper.js';
 import { autoOptimizeVideo } from './src/video/optimizer.js';
 import { 
   findFileFolder, getPageSlideCount, autoConvertFile 
 } from './src/converters/document-converter.js';
+import { initStreamManager, syncStreamJobs } from './src/streams/stream-manager.js';
 import { createDevicesRouter } from './src/routes/devices.js';
 import { createPlaceholderRouter } from './src/routes/placeholder.js';
 import { createFilesRouter, updateDeviceFilesFromDB } from './src/routes/files.js';
@@ -41,16 +43,38 @@ import { setupSocketHandlers } from './src/socket/index.js';
 import logger, { httpLoggerMiddleware } from './src/utils/logger.js';
 import { cleanupResolutionCache, getResolutionCacheSize } from './src/video/resolution-cache.js';
 import { circuitBreakers } from './src/utils/circuit-breaker.js';
-import { getSettings, updateContentRootPath } from './src/config/settings-manager.js';
+import { getSettings, updateContentRootPath, getDataRoot, getDevicesPath, getStreamsOutputDir, getConvertedCache, getLogsDir, getTempDir } from './src/config/settings-manager.js';
 import { getMetrics } from './src/utils/metrics.js';
 
 const app = express();
 const server = http.createServer(app);
 const io = createSocketServer(server);
 
-// Создаем папки если не существуют
-if (!fs.existsSync(CONVERTED_CACHE)) fs.mkdirSync(CONVERTED_CACHE, { recursive: true });
-if (!fs.existsSync(DEVICES)) fs.mkdirSync(DEVICES, { recursive: true });
+// КРИТИЧНО: Создаем папки данных используя пути из настроек БД
+// Все пути теперь вычисляются динамически из contentRoot в config/app-settings.json
+// contentRoot - это корневая директория данных (например: /mnt/videocontrol-data/)
+// Поддиректории создаются автоматически: content/, streams/, converted/, logs/, temp/
+const dataRoot = getDataRoot();
+const devicesDir = getDevicesPath();
+const streamsDir = getStreamsOutputDir();
+const convertedDir = getConvertedCache();
+const logsDir = getLogsDir();
+const tempDir = getTempDir();
+
+if (!fs.existsSync(dataRoot)) fs.mkdirSync(dataRoot, { recursive: true });
+if (!fs.existsSync(devicesDir)) fs.mkdirSync(devicesDir, { recursive: true });
+if (!fs.existsSync(streamsDir)) fs.mkdirSync(streamsDir, { recursive: true });
+if (!fs.existsSync(convertedDir)) fs.mkdirSync(convertedDir, { recursive: true });
+if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+
+// Логируем используемые директории данных
+logger.info(`[Config] 📁 Data root (contentRoot): ${dataRoot}`);
+logger.info(`[Config] 📁 Devices (content): ${devicesDir}`);
+logger.info(`[Config] 📁 Streams: ${streamsDir}`);
+logger.info(`[Config] 📁 Converted: ${convertedDir}`);
+logger.info(`[Config] 📁 Logs: ${logsDir}`);
+logger.info(`[Config] 📁 Temp: ${tempDir}`);
 
 // ========================================
 // EXPRESS MIDDLEWARE
@@ -89,45 +113,97 @@ const deviceVolumeState = {};
 devices = loadDevicesFromDB();
 fileNamesMap = loadFileNamesFromDB();
 
-// НОВОЕ: Гибридная загрузка - файлы из БД + сканирование папок (PPTX/изображения)
-const { getDeviceFilesMetadata } = await import('./src/database/files-metadata.js');
-
+// КРИТИЧНО: Используем updateDeviceFilesFromDB для правильной загрузки файлов и стримов
+// Эта функция правильно обрабатывает стримы из БД и создает device.streams
 for (const deviceId in devices) {
-  // 1. Загружаем файлы из БД (обычные файлы)
-  const filesMetadata = getDeviceFilesMetadata(deviceId);
-  const nameMap = fileNamesMap[deviceId] || {};
-  let files = filesMetadata.map(f => f.safe_name);
-  let fileNames = filesMetadata.map(f => f.original_name || nameMap[f.safe_name] || f.safe_name);
-  
-  // 2. Сканируем папку устройства для PDF/PPTX/image папок (они не в БД)
-  const deviceFolder = path.join(DEVICES, devices[deviceId].folder);
-  if (fs.existsSync(deviceFolder)) {
-    const folderEntries = fs.readdirSync(deviceFolder);
-    for (const entry of folderEntries) {
-      const entryPath = path.join(deviceFolder, entry);
-      const stat = fs.statSync(entryPath);
-      
-      if (stat.isDirectory()) {
-        // Это папка - добавляем (PPTX/PDF или изображения)
-        files.push(entry);
-        fileNames.push(nameMap[entry] || entry);
-      }
-    }
-  }
-  
-  devices[deviceId].files = files;
-  devices[deviceId].fileNames = fileNames;
+  updateDeviceFilesFromDB(deviceId, devices, fileNamesMap);
   
   logger.info('Device files loaded (DB + folders)', { 
     deviceId, 
-    dbFiles: filesMetadata.length,
-    folders: files.length - filesMetadata.length,
-    total: files.length
+    totalFiles: devices[deviceId].files?.length || 0,
+    totalStreams: Object.keys(devices[deviceId].streams || {}).length
   });
+  
+  // КРИТИЧНО: Валидация состояния устройства - проверяем, существует ли файл из current
+  const device = devices[deviceId];
+  if (device.current && device.current.file && device.current.type !== 'idle') {
+    const deviceFiles = device.files || [];
+    const deviceStreams = device.streams || {};
+    const currentFile = device.current.file;
+    const playlistFile = device.current.playlistFile;
+    
+    // Проверяем основной файл (включая стримы и папки)
+    let fileExists = deviceFiles.includes(currentFile);
+    
+    // Для стримов также проверяем streams объект
+    if (!fileExists && device.current.type === 'streaming') {
+      fileExists = !!deviceStreams[currentFile];
+    }
+    
+    // Для папок может быть .zip расширение
+    if (!fileExists) {
+      const withoutZip = currentFile.replace(/\.zip$/i, '');
+      fileExists = deviceFiles.includes(withoutZip);
+    }
+    
+    // Проверяем файл плейлиста, если есть
+    const playlistFileExists = !playlistFile || 
+                              deviceFiles.includes(playlistFile) ||
+                              deviceFiles.includes(playlistFile.replace(/\.zip$/i, ''));
+    
+    if (!fileExists || !playlistFileExists) {
+      logger.warn(`[Server] Файл из состояния устройства не найден, сбрасываем состояние`, {
+        deviceId,
+        currentFile,
+        playlistFile,
+        currentType: device.current.type,
+        fileExists,
+        playlistFileExists,
+        availableFiles: deviceFiles.slice(0, 5), // Первые 5 файлов для отладки
+        availableStreams: Object.keys(deviceStreams).slice(0, 5)
+      });
+      
+      // Сбрасываем состояние на idle
+      device.current = { type: 'idle', file: null, state: 'idle' };
+    }
+  }
 }
 
 // Сохраняем обновленное состояние в БД
 saveDevicesToDB(devices);
+
+// КРИТИЧНО: Автоматическая очистка несуществующих файлов из БД при старте
+// Проверяем только если установлена переменная окружения AUTO_CLEANUP_MISSING_FILES=true
+if (process.env.AUTO_CLEANUP_MISSING_FILES === 'true') {
+  logger.info('[Server] Auto-cleanup enabled, checking for missing files...');
+  cleanupMissingFiles({ deviceId: null, dryRun: false })
+    .then(result => {
+      logger.info('[Server] Auto-cleanup completed', {
+        checked: result.checked,
+        missing: result.missing,
+        deleted: result.deleted,
+        errors: result.errors
+      });
+    })
+    .catch(error => {
+      logger.error('[Server] Auto-cleanup failed', {
+        error: error.message,
+        stack: error.stack
+      });
+    });
+} else {
+  logger.info('[Server] Auto-cleanup disabled (set AUTO_CLEANUP_MISSING_FILES=true to enable)');
+}
+
+const streamManager = initStreamManager({
+  outputRoot: getStreamsOutputDir(), // Используем функцию из settings-manager
+  publicBasePath: '/streams'
+});
+// КРИТИЧНО: НЕ запускаем FFmpeg для всех стримов при старте
+// FFmpeg будет запускаться только когда стрим действительно используется (lazy loading)
+// Это экономит ресурсы сервера, так как не все стримы используются одновременно
+// const streamingEntries = getAllStreamingMetadata();
+// syncStreamJobs(streamingEntries);
 
 // Загружаем состояние громкости устройств
 const persistedVolumeState = getAllDeviceVolumeStates();
@@ -316,7 +392,8 @@ const filesRouter = createFilesRouter({
   autoConvertFileWrapper,
   autoOptimizeVideoWrapper,
   checkVideoParameters,
-  getFileStatus
+  getFileStatus,
+  requireAdmin
 });
 
 const videoInfoRouter = createVideoInfoRouter({
@@ -618,10 +695,16 @@ async function gracefulShutdown(signal) {
     clearInterval(cleanupInterval);
     logger.info('✅ Cleanup intervals stopped');
     
-    // 4. Закрываем базу данных
+    // 4. Останавливаем StreamManager
+    if (streamManager && typeof streamManager.stop === 'function') {
+      streamManager.stop();
+      logger.info('✅ StreamManager stopped');
+    }
+    
+    // 5. Закрываем базу данных
     closeDatabase();
     
-    // 5. Ждем завершения активных запросов (макс 10 сек)
+    // 6. Ждем завершения активных запросов (макс 10 сек)
     await new Promise(resolve => setTimeout(resolve, 2000));
     
     logger.info('✅ Graceful shutdown completed');

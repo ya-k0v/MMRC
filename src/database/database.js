@@ -58,6 +58,8 @@ export function initDatabase(initialDbPath) {
     db.exec(initSQL);
     logger.info('[DB] Database schema initialized');
     
+    ensureFilesMetadataStreamingColumns();
+    
     // Миграция: Добавляем роль hero_admin в существующие базы
     try {
       // Проверяем, есть ли таблица users
@@ -296,6 +298,27 @@ export function initDatabase(initialDbPath) {
   } catch (e) {
     logger.error('[DB] Failed to initialize database:', e);
     throw e;
+  }
+}
+
+function ensureFilesMetadataStreamingColumns() {
+  try {
+    const columns = db.prepare('PRAGMA table_info(files_metadata)').all();
+    const names = new Set(columns.map(col => col.name));
+    if (!names.has('content_type')) {
+      db.exec(`ALTER TABLE files_metadata ADD COLUMN content_type TEXT DEFAULT 'file'`);
+      logger.info('[DB] Added content_type column to files_metadata');
+    }
+    if (!names.has('stream_url')) {
+      db.exec(`ALTER TABLE files_metadata ADD COLUMN stream_url TEXT`);
+      logger.info('[DB] Added stream_url column to files_metadata');
+    }
+    if (!names.has('stream_protocol')) {
+      db.exec(`ALTER TABLE files_metadata ADD COLUMN stream_protocol TEXT DEFAULT 'auto'`);
+      logger.info('[DB] Added stream_protocol column to files_metadata');
+    }
+  } catch (err) {
+    logger.warn('[DB] Failed to ensure streaming columns (non-critical)', { error: err.message });
   }
 }
 

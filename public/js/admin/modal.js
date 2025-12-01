@@ -471,18 +471,22 @@ async function loadSettingsContent(adminFetch) {
   }
   
   const currentContentRoot = settingsData?.runtime?.contentRoot || settingsData?.contentRoot || '';
+  // По умолчанию используется локальная папка проекта (data/ внутри проекта)
+  // Админ может изменить на любой абсолютный путь через настройки
+  // defaults.contentRoot всегда содержит значение по умолчанию, вычисляемое сервером
   const defaultContentRoot = settingsData?.defaults?.contentRoot || '';
   
+  
   container.innerHTML = `
-    <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm); display:flex; flex-direction:column; gap:var(--space-sm);">
-      <div style="font-weight:600;">Хранилище контента</div>
-      <div class="meta" style="color:var(--text-secondary); line-height:1.4;">
-        Укажите абсолютный путь до папки, где лежат папки устройств. Папка должна быть доступна для записи пользователю, от которого запущен сервис.
-      </div>
-      <input id="contentRootInput" class="input" spellcheck="false" />
-      <div class="meta" style="font-size:0.85rem; color:var(--text-secondary);">
-        По умолчанию: <code style="font-family:monospace;">${defaultContentRoot}</code>
-      </div>
+  <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm); display:flex; flex-direction:column; gap:var(--space-sm);">
+    <div style="font-weight:600;">Хранилище контента</div>
+    <div class="meta" style="color:var(--text-secondary); line-height:1.4;">
+      Укажите абсолютный путь до корневой директории данных. Поддиректории (content/, streams/, converted/, logs/, temp/) создаются автоматически. Папка должна быть доступна для записи пользователю, от которого запущен сервис.
+    </div>
+    <input id="contentRootInput" class="input" spellcheck="false" />
+    ${defaultContentRoot ? `<div class="meta" style="font-size:0.85rem; color:var(--text-secondary);">
+      По умолчанию: <code style="font-family:monospace;">${defaultContentRoot}</code>
+    </div>` : ''}
       <div id="contentRootStatus" class="meta" style="min-height:1.2em;"></div>
       <button id="contentRootSaveBtn" class="primary" style="align-self:flex-start;">Сохранить путь</button>
     </div>

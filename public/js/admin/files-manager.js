@@ -1,14 +1,7 @@
 // files-manager.js - ПОЛНЫЙ код управления файлами из admin.js
 import { adminFetch } from './auth.js';
 import { getCheckIcon, getCrossIcon, getClockIcon } from '../shared/svg-icons.js';
-
-const formatDuration = (value) => {
-  const seconds = Number(value);
-  if (!Number.isFinite(seconds) || seconds <= 0) return null;
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-};
+import { formatTime } from '../shared/formatters.js';
 
 export async function loadFilesWithStatus(deviceId) {
   const res = await adminFetch(`/api/devices/${deviceId}/files-with-status`);
@@ -24,7 +17,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
   const allFiles = filesData.map(item => {
     if (typeof item === 'string') {
       // Старый формат (для обратной совместимости)
-      return { safeName: item, originalName: item, status: 'ready', progress: 100, canPlay: true, resolution: null, isPlaceholder: false, durationSeconds: null, folderImageCount: null };
+      return { safeName: item, originalName: item, status: 'ready', progress: 100, canPlay: true, resolution: null, isPlaceholder: false, durationSeconds: null, folderImageCount: null, contentType: null, streamUrl: null, streamProxyUrl: null };
     }
     return { 
       safeName: item.safeName || item.name || '',
@@ -36,7 +29,11 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       resolution: item.resolution || null,
       isPlaceholder: !!item.isPlaceholder,  // НОВОЕ: Флаг заглушки
       durationSeconds: typeof item.durationSeconds === 'number' ? item.durationSeconds : null,
-      folderImageCount: typeof item.folderImageCount === 'number' ? item.folderImageCount : null
+      folderImageCount: typeof item.folderImageCount === 'number' ? item.folderImageCount : null,
+      contentType: item.contentType || null,
+      streamUrl: item.streamUrl || null,
+      streamProxyUrl: item.streamProxyUrl || null,
+      streamProtocol: item.streamProtocol || null
     };
   }).filter(f => f.safeName); // Фильтруем пустые имена
   
@@ -70,9 +67,10 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
   
   panelEl.innerHTML = `
     <ul class="list" style="display:grid; gap:var(--space-sm)">
-      ${files.map(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount }) => {
+      ${files.map(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, streamProtocol }) => {
         // placeholders allowed only for image/video (no pdf/pptx/folders)
-        const isEligible = /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp)$/i.test(safeName);
+        const isStreaming = contentType === 'streaming';
+        const isEligible = !isStreaming && /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp)$/i.test(safeName);
         
         // КРИТИЧНО: Два расширения для разных целей!
         // 1. displayExt из originalName - для отображения лейбла (PDF, PPTX, VID)
@@ -88,7 +86,8 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         
         // Определяем метку типа файла из displayExt (что видит пользователь)
         let typeLabel = 'VID'; // По умолчанию
-        if (displayExt === 'pdf') typeLabel = 'PDF';
+        if (isStreaming) typeLabel = 'STREAM';
+        else if (displayExt === 'pdf') typeLabel = 'PDF';
         else if (displayExt === 'pptx') typeLabel = 'PPTX';
         else if (['png','jpg','jpeg','gif','webp'].includes(displayExt)) typeLabel = 'IMG';
         else if (displayExt === 'zip' || !hasDisplayExt) {
@@ -97,7 +96,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         }
         
         // НОВОЕ: Определяем статус для видео из safeExt (фактический файл)
-        const isVideo = ['mp4','webm','ogg','mkv','mov','avi'].includes(safeExt);
+        const isVideo = !isStreaming && ['mp4','webm','ogg','mkv','mov','avi'].includes(safeExt);
         const fileStatus = status || 'ready';
         const isProcessing = fileStatus === 'processing' || fileStatus === 'checking';
         const hasError = fileStatus === 'error';
@@ -145,9 +144,11 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         if (typeLabel === 'FOLDER' && folderImageCount !== null) {
           metaBadges.push(`${folderImageCount} фото`);
         }
-        if (isVideo && durationSeconds) {
-          const formatted = formatDuration(durationSeconds);
-          if (formatted) metaBadges.push(formatted);
+        if (isVideo && durationSeconds && typeof durationSeconds === 'number' && durationSeconds > 0) {
+          metaBadges.push(formatTime(durationSeconds));
+        }
+        if (isStreaming && streamProtocol) {
+          metaBadges.unshift(streamProtocol.toUpperCase());
         }
         const typeBadge = `${typeLabel}${metaBadges.length ? ` · ${metaBadges.join(' · ')}` : ''}`;
         
@@ -156,6 +157,8 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
               draggable="${canPlay ? 'true' : 'false'}" 
               data-device-id="${deviceId}"
               data-file-name="${encodeURIComponent(safeName)}"
+              data-content-type="${contentType || ''}"
+              data-stream-protocol="${streamProtocol || ''}"
               style="border:var(--border); background:${isPlaceholder ? 'rgba(59, 130, 246, 0.1)' : 'var(--panel-2)'}; ${isPlaceholder ? 'border-left: 3px solid rgba(59, 130, 246, 0.6);' : ''} ${isProcessing ? 'opacity:0.7;' : ''} ${canPlay ? 'cursor:move;' : ''}">
             <div class="file-item-header">
               <div style="flex:1; display:flex; align-items:stretch; gap:var(--space-xs); min-width:0;">
@@ -176,7 +179,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
               </div>
             </div>
             <div class="file-item-actions">
-              <button class="secondary previewFileBtn" data-safe="${encodeURIComponent(safeName)}" data-original="${encodeURIComponent(originalName)}" title="Предпросмотр" ${!canPlay ? 'disabled' : ''}>Превью</button>
+              <button class="secondary previewFileBtn" data-safe="${encodeURIComponent(safeName)}" data-original="${encodeURIComponent(originalName)}" data-stream-protocol="${streamProtocol || ''}" data-content-type="${contentType || ''}" title="Предпросмотр" ${!canPlay ? 'disabled' : ''}>Превью</button>
               ${isEligible ? `<button class="secondary makeDefaultBtn" data-safe="${encodeURIComponent(safeName)}" data-original="${encodeURIComponent(originalName)}" title="Сделать заглушкой" ${!canPlay ? 'disabled' : ''}>Заглушка</button>` : ``}
               <button class="danger delFileBtn" data-safe="${encodeURIComponent(safeName)}" data-original="${encodeURIComponent(originalName)}" title="Удалить">Удалить</button>
             </div>
@@ -217,6 +220,14 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       const previewContainer = document.querySelector('#detailPane .previewHolder');
       
       if (!previewContainer) return;
+      const contentType = btn.closest('.file-item')?.getAttribute('data-content-type') || null;
+      
+      if (contentType === 'streaming') {
+        const protocol = btn.getAttribute('data-stream-protocol') || '';
+        const protocolParam = protocol ? `&protocol=${encodeURIComponent(protocol)}` : '';
+        previewContainer.innerHTML = `<iframe src="/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&type=streaming&file=${encodeURIComponent(safeName)}${protocolParam}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
+        return;
+      }
       
       // Определяем тип файла
       const hasExtension = safeName.includes('.');

@@ -50,7 +50,11 @@ export const globalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: false,
-  skip: isLocalIP // ⚡ Не ограничиваем локальную сеть
+  skip: isLocalIP, // ⚡ Не ограничиваем локальную сеть
+  // КРИТИЧНО: Отключаем проверку trust proxy, так как мы используем кастомный skip
+  validate: {
+    trustProxy: false
+  }
 });
 
 /**
@@ -62,7 +66,10 @@ export const uploadLimiter = rateLimit({
   max: 50, // 50 upload за 15 минут
   message: { error: 'Too many uploads, please try again later' },
   skipSuccessfulRequests: true,
-  skip: isLocalIP // ⚡ Не ограничиваем локальную сеть
+  skip: isLocalIP, // ⚡ Не ограничиваем локальную сеть
+  validate: {
+    trustProxy: false
+  }
 });
 
 /**
@@ -75,7 +82,10 @@ export const authLimiter = rateLimit({
   message: { error: 'Too many login attempts, please try again later' },
   skipSuccessfulRequests: true, // Успешные логины не считаем
   skipFailedRequests: false,
-  skip: isLocalIP // ⚡ Не ограничиваем локальную сеть
+  skip: isLocalIP, // ⚡ Не ограничиваем локальную сеть
+  validate: {
+    trustProxy: false
+  }
 });
 
 /**
@@ -99,7 +109,10 @@ export const deleteLimiter = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 минут
   max: 20, // Максимум 20 удалений за 5 минут
   message: { error: 'Too many delete operations' },
-  skip: isLocalIP // ⚡ Не ограничиваем локальную сеть
+  skip: isLocalIP, // ⚡ Не ограничиваем локальную сеть
+  validate: {
+    trustProxy: false
+  }
 });
 
 /**
@@ -110,6 +123,9 @@ export const createLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30, // 30 созданий за 15 минут
   message: { error: 'Too many create operations' },
-  skip: isLocalIP // ⚡ Не ограничиваем локальную сеть
+  skip: isLocalIP, // ⚡ Не ограничиваем локальную сеть
+  validate: {
+    trustProxy: false
+  }
 });
 

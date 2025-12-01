@@ -14,7 +14,7 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${BLUE}============================================${NC}"
-echo -e "${BLUE}  VideoControl v2.8.0 - Quick Install${NC}"
+echo -e "${BLUE}  VideoControl v3.0.0 - Quick Install${NC}"
 echo -e "${BLUE}============================================${NC}"
 echo ""
 
@@ -55,13 +55,14 @@ else
     fi
 fi
 
-# Настройки хранения контента (можно переопределить переменными окружения)
-# STORAGE_MODE: local | external | external_fstab
-#   local           - хранить в $INSTALL_DIR/public/content (как было)
-#   external        - внешний каталог + симлинк $INSTALL_DIR/public/content -> $CONTENT_DIR
-#   external_fstab  - внешний диск монтируется в $CONTENT_DIR через /etc/fstab + симлинк
+# Настройки хранения данных (можно переопределить переменными окружения)
+# DATA_ROOT - корневая папка для всех данных (по умолчанию: /mnt/videocontrol-data)
+#   Если DATA_ROOT существует - все данные там (data/content, data/streams, data/converted, data/logs, data/temp)
+#   Если нет - все данные в $INSTALL_DIR/data/*
+# STORAGE_MODE: local | external | external_fstab (для обратной совместимости, используйте DATA_ROOT)
 STORAGE_MODE="${STORAGE_MODE:-}"
-CONTENT_DIR="${CONTENT_DIR:-/mnt/vc-content}"
+DATA_ROOT="${DATA_ROOT:-/mnt/videocontrol-data}"
+CONTENT_DIR="${CONTENT_DIR:-/mnt/vc-content}"  # Legacy, используйте DATA_ROOT
 CONTENT_SOURCE="${CONTENT_SOURCE:-}"        # Например: /dev/sdb1 или UUID=xxxx-xxxx
 CONTENT_FSTAB_OPTS="${CONTENT_FSTAB_OPTS:-ext4 defaults,noatime 0 2}"
 
@@ -72,10 +73,10 @@ if [ -z "$STORAGE_MODE" ]; then
         echo "AUTO_CONFIRM=1 → STORAGE_MODE не задан, используем local"
     else
         echo ""
-        echo "Select content storage mode:"
-        echo "  [1] Local (inside project at public/content)"
-        echo "  [2] External directory via symlink (CONTENT_DIR=$CONTENT_DIR)"
-        echo "  [3] External device via /etc/fstab -> $CONTENT_DIR + symlink"
+        echo "Select data storage mode:"
+        echo "  [1] Local (inside project at data/*)"
+        echo "  [2] External directory (DATA_ROOT=$DATA_ROOT)"
+        echo "  [3] External device via /etc/fstab -> $DATA_ROOT"
         read -p "Choose [1-3]: " -n 1 -r
         echo ""
         case "$REPLY" in
@@ -174,45 +175,76 @@ echo -e "${BLUE}[4/7] Creating project structure...${NC}"
 
 mkdir -p config
 mkdir -p config/hero
-mkdir -p logs
-mkdir -p .converted
-mkdir -p temp/nginx_upload
 mkdir -p "$INSTALL_DIR/public"
 
-# Настройка хранения контента согласно выбранному режиму
+# Настройка хранения данных согласно выбранному режиму
 case "$STORAGE_MODE" in
     local)
-        mkdir -p "$INSTALL_DIR/public/content"
+        # Локальное хранение в $INSTALL_DIR/data/*
+        mkdir -p "$INSTALL_DIR/data/content"
+        mkdir -p "$INSTALL_DIR/data/streams"
+        mkdir -p "$INSTALL_DIR/data/converted"
+        mkdir -p "$INSTALL_DIR/data/logs"
+        mkdir -p "$INSTALL_DIR/data/temp"
         ;;
     external)
-        mkdir -p "$CONTENT_DIR"
-        # Перенос существующего контента, если есть
+        # Внешний каталог для всех данных
+        mkdir -p "$DATA_ROOT/content"
+        mkdir -p "$DATA_ROOT/streams"
+        mkdir -p "$DATA_ROOT/converted"
+        mkdir -p "$DATA_ROOT/logs"
+        mkdir -p "$DATA_ROOT/temp"
+        # Миграция существующих данных, если есть
         if [ -d "$INSTALL_DIR/public/content" ] && [ ! -L "$INSTALL_DIR/public/content" ]; then
-            rsync -aH --delete "$INSTALL_DIR/public/content/" "$CONTENT_DIR/" 2>/dev/null || true
-            rm -rf "$INSTALL_DIR/public/content"
+            echo "  Migrating content from $INSTALL_DIR/public/content to $DATA_ROOT/content..."
+            rsync -aH --delete "$INSTALL_DIR/public/content/" "$DATA_ROOT/content/" 2>/dev/null || true
         fi
-        ln -sfn "$CONTENT_DIR" "$INSTALL_DIR/public/content"
+        if [ -d "$INSTALL_DIR/.converted" ] && [ ! -L "$INSTALL_DIR/.converted" ]; then
+            echo "  Migrating converted cache from $INSTALL_DIR/.converted to $DATA_ROOT/converted..."
+            rsync -aH --delete "$INSTALL_DIR/.converted/" "$DATA_ROOT/converted/" 2>/dev/null || true
+        fi
+        if [ -d "$INSTALL_DIR/logs" ] && [ ! -L "$INSTALL_DIR/logs" ]; then
+            echo "  Migrating logs from $INSTALL_DIR/logs to $DATA_ROOT/logs..."
+            rsync -aH "$INSTALL_DIR/logs/" "$DATA_ROOT/logs/" 2>/dev/null || true
+        fi
         ;;
     external_fstab)
-        mkdir -p "$CONTENT_DIR"
+        # Внешний диск через /etc/fstab
+        mkdir -p "$DATA_ROOT"
         if [ -n "$CONTENT_SOURCE" ]; then
             # Добавим запись в /etc/fstab, если её ещё нет
-            if ! grep -qE "^[^#]*[[:space:]]+$CONTENT_DIR[[:space:]]" /etc/fstab; then
-                echo "$CONTENT_SOURCE $CONTENT_DIR $CONTENT_FSTAB_OPTS" >> /etc/fstab
-                echo "  Added to /etc/fstab: $CONTENT_SOURCE -> $CONTENT_DIR ($CONTENT_FSTAB_OPTS)"
+            if ! grep -qE "^[^#]*[[:space:]]+$DATA_ROOT[[:space:]]" /etc/fstab; then
+                echo "$CONTENT_SOURCE $DATA_ROOT $CONTENT_FSTAB_OPTS" >> /etc/fstab
+                echo "  Added to /etc/fstab: $CONTENT_SOURCE -> $DATA_ROOT ($CONTENT_FSTAB_OPTS)"
             fi
             mount -a || true
         fi
-        # Перенос существующего контента, если есть
+        mkdir -p "$DATA_ROOT/content"
+        mkdir -p "$DATA_ROOT/streams"
+        mkdir -p "$DATA_ROOT/converted"
+        mkdir -p "$DATA_ROOT/logs"
+        mkdir -p "$DATA_ROOT/temp"
+        # Миграция существующих данных, если есть
         if [ -d "$INSTALL_DIR/public/content" ] && [ ! -L "$INSTALL_DIR/public/content" ]; then
-            rsync -aH --delete "$INSTALL_DIR/public/content/" "$CONTENT_DIR/" 2>/dev/null || true
-            rm -rf "$INSTALL_DIR/public/content"
+            echo "  Migrating content from $INSTALL_DIR/public/content to $DATA_ROOT/content..."
+            rsync -aH --delete "$INSTALL_DIR/public/content/" "$DATA_ROOT/content/" 2>/dev/null || true
         fi
-        ln -sfn "$CONTENT_DIR" "$INSTALL_DIR/public/content"
+        if [ -d "$INSTALL_DIR/.converted" ] && [ ! -L "$INSTALL_DIR/.converted" ]; then
+            echo "  Migrating converted cache from $INSTALL_DIR/.converted to $DATA_ROOT/converted..."
+            rsync -aH --delete "$INSTALL_DIR/.converted/" "$DATA_ROOT/converted/" 2>/dev/null || true
+        fi
+        if [ -d "$INSTALL_DIR/logs" ] && [ ! -L "$INSTALL_DIR/logs" ]; then
+            echo "  Migrating logs from $INSTALL_DIR/logs to $DATA_ROOT/logs..."
+            rsync -aH "$INSTALL_DIR/logs/" "$DATA_ROOT/logs/" 2>/dev/null || true
+        fi
         ;;
     *)
-        # Защита по умолчанию
-        mkdir -p "$INSTALL_DIR/public/content"
+        # Защита по умолчанию - локальное хранение
+        mkdir -p "$INSTALL_DIR/data/content"
+        mkdir -p "$INSTALL_DIR/data/streams"
+        mkdir -p "$INSTALL_DIR/data/converted"
+        mkdir -p "$INSTALL_DIR/data/logs"
+        mkdir -p "$INSTALL_DIR/data/temp"
         ;;
 esac
 
@@ -377,7 +409,7 @@ StandardError=journal
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=$INSTALL_DIR/public/content $INSTALL_DIR/config $INSTALL_DIR/logs $INSTALL_DIR/temp $INSTALL_DIR/.converted /home/$CURRENT_USER/.cache /home/$CURRENT_USER/.config $CONTENT_DIR
+ReadWritePaths=$DATA_ROOT/* $INSTALL_DIR/data/* $INSTALL_DIR/config
 
 # Environment
 Environment=NODE_ENV=production
@@ -408,19 +440,28 @@ echo -e "${GREEN}============================================${NC}"
 echo -e "${GREEN}  ✅ Installation Complete!${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo ""
-echo "🎉 VideoControl v2.8.0 successfully installed!"
+echo "🎉 VideoControl v3.0.0 successfully installed!"
 echo ""
 echo "📂 Installation directory: $INSTALL_DIR"
 echo "📊 Database: config/main.db (SQLite)"
 echo "🌐 Server: http://$(hostname -I | awk '{print $1}')"
 echo ""
-echo "📦 Content storage:"
+echo "📦 Data storage:"
 echo "  Mode: $STORAGE_MODE"
 if [ "$STORAGE_MODE" = "local" ]; then
-echo "  Path: $INSTALL_DIR/public/content"
+echo "  Path: $INSTALL_DIR/data/*"
+echo "    - content/ - device files"
+echo "    - streams/ - HLS restream output"
+echo "    - converted/ - PDF/PPTX cache"
+echo "    - logs/ - application logs"
+echo "    - temp/ - temporary files"
 else
-echo "  Target: $CONTENT_DIR"
-echo "  Symlink: $INSTALL_DIR/public/content -> $CONTENT_DIR"
+echo "  Target: $DATA_ROOT/*"
+echo "    - content/ - device files"
+echo "    - streams/ - HLS restream output"
+echo "    - converted/ - PDF/PPTX cache"
+echo "    - logs/ - application logs"
+echo "    - temp/ - temporary files"
 fi
 echo ""
 echo "🔐 Default Admin Credentials:"
@@ -439,7 +480,7 @@ echo "  ✅ Two-level security (Network + JWT)"
 echo "  ✅ Rate limiting (disabled for local network)"
 echo "  ✅ Path traversal protection"
 echo "  ✅ Audit logging to database"
-echo "  ✅ Winston structured logs (logs/)"
+echo "  ✅ Winston structured logs (data/logs/)"
 echo ""
 echo "📋 Quick Start:"
 echo "  1. Login: http://$(hostname -I | awk '{print $1}')/ (admin/admin123)"
@@ -451,8 +492,8 @@ echo ""
 echo "🔧 Useful commands:"
 echo "  Status:  sudo systemctl status videocontrol"
 echo "  Restart: sudo systemctl restart videocontrol"
-echo "  Logs:    tail -f $INSTALL_DIR/logs/combined-*.log"
-echo "  Errors:  tail -f $INSTALL_DIR/logs/error-*.log"
+echo "  Logs:    tail -f $INSTALL_DIR/data/logs/combined-*.log"
+echo "  Errors:  tail -f $INSTALL_DIR/data/logs/error-*.log"
 echo "  Audit:   sqlite3 $INSTALL_DIR/config/main.db 'SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 10;'"
 echo "  Stop:    sudo systemctl stop videocontrol"
 echo ""

@@ -64,19 +64,19 @@ node server.js
 - ✅ см. `package.json` для полного списка
 
 ### Настройка системы
-- ✅ Создаёт структуру `/vid/videocontrol` (config, logs, .converted, temp)
+- ✅ Создаёт структуру `/vid/videocontrol` (config, data/*)
 - ✅ Генерирует `.env` c JWT secret (access 12h, refresh 30d)
 - ✅ Инициализирует `config/main.db` (admin/admin123) и `config/video-optimization.json`
-- ✅ Добавляет пользователя в `vcgroup`, готовит `~/.cache` для LibreOffice
+- ✅ Добавляет пользователя в `vcgroup`
 - ✅ Запускает `scripts/optimize-network.sh` (TCP буферы 16 MB)
 - ✅ Разворачивает `nginx/videocontrol-secure.conf` и включает Nginx
 - ✅ Создаёт и активирует `videocontrol.service` (systemd)
-- ✅ Настраивает права и симлинки для контента
+- ✅ Настраивает права для данных
 
-### Режимы хранения контента
-- `local` — файлы живут в `public/content`
-- `external` — контент лежит в `CONTENT_DIR`, а `public/content` = symlink
-- `external_fstab` — внешний диск монтируется в `CONTENT_DIR` через `/etc/fstab`, далее symlink
+### Режимы хранения данных
+- `local` — все данные в `data/*` (content, streams, converted, logs, temp)
+- `external` — все данные в `DATA_ROOT/*` (по умолчанию `/mnt/videocontrol-data/*`)
+- `external_fstab` — внешний диск монтируется в `DATA_ROOT` через `/etc/fstab`
 
 > Параметры можно менять после установки через админ‑панель → "Настройки → Хранилище контента".
 
@@ -88,8 +88,13 @@ node server.js
 - 🎤 Speaker Panel: `http://YOUR_SERVER_IP/speaker.html`
 - 🎮 Player: `http://YOUR_SERVER_IP/player-videojs.html?device_id=DEVICE_ID`
 - 👤 По умолчанию: `admin / admin123` (обязательно сменить)
-- 📂 Контент: `/vid/videocontrol/public/content` или ваш `CONTENT_DIR`
-- 📋 Логи: `/vid/videocontrol/logs/combined-*.log`, `/vid/videocontrol/logs/error-*.log`
+- 📂 Данные: `/vid/videocontrol/data/*` или `/mnt/videocontrol-data/*` (если DATA_ROOT задан)
+  - `data/content/` — контент устройств
+  - `data/streams/` — HLS рестрим
+  - `data/converted/` — кеш конвертированных PDF/PPTX
+  - `data/logs/` — логи приложения
+  - `data/temp/` — временные файлы
+- 📋 Логи: `/vid/videocontrol/data/logs/combined-*.log`, `/vid/videocontrol/data/logs/error-*.log`
 
 ---
 
@@ -109,8 +114,8 @@ sudo systemctl start videocontrol
 # Логи приложения
 sudo journalctl -u videocontrol -f
 
-tail -f /vid/videocontrol/logs/combined-*.log
-tail -f /vid/videocontrol/logs/error-*.log
+tail -f /vid/videocontrol/data/logs/combined-*.log
+tail -f /vid/videocontrol/data/logs/error-*.log
 
 # Nginx
 sudo tail -f /var/log/nginx/videocontrol_error.log
@@ -128,15 +133,18 @@ sudo tail -f /var/log/nginx/videocontrol_access.log
 ├── config/
 │   ├── main.db                          # SQLite база (users, devices, files)
 │   └── video-optimization.json          # Настройки оптимизации видео
+├── data/                                # Все данные приложения
+│   ├── content/                          # Контент устройств (до 5GB на файл)
+│   ├── streams/                          # HLS рестрим выход
+│   ├── converted/                        # Кэш конвертированных PDF/PPTX
+│   ├── logs/                             # Логи приложения
+│   │   ├── combined-YYYY-MM-DD.log      # Все логи
+│   │   └── error-YYYY-MM-DD.log         # Ошибки
+│   └── temp/                             # Временные файлы
 ├── public/
-│   ├── content/                         # Контент устройств (до 5GB на файл)
 │   ├── admin.html, speaker.html         # Интерфейсы
 │   ├── hero/ (index.html, admin.html, js/) # Hero-модуль
 │   └── player-videojs.html              # Плеер
-├── logs/
-│   ├── combined-YYYY-MM-DD.log          # Все логи
-│   └── error-YYYY-MM-DD.log             # Ошибки
-├── .converted/                          # Кэш конвертированных PDF/PPTX
 ├── temp/
 │   └── nginx_upload/                    # Временные файлы загрузки
 ├── server.js                            # Главный файл сервера

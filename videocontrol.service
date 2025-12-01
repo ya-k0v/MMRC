@@ -17,7 +17,7 @@ StandardError=journal
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/vid/videocontrol/public/content /vid/videocontrol/config /vid/videocontrol/logs /vid/videocontrol/temp /vid/videocontrol/.converted /home/YOUR_USERNAME/.cache /home/YOUR_USERNAME/.config
+ReadWritePaths=/mnt/videocontrol-data/* /vid/videocontrol/data/* /vid/videocontrol/config
 
 # Environment
 Environment=NODE_ENV=production

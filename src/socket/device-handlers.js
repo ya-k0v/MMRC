@@ -160,9 +160,32 @@ export function setupDeviceHandlers(socket, deps) {
       if (currentState && currentState.file && currentState.type !== 'idle') {
         // Проверяем, существует ли файл в списке файлов устройства
         const deviceFiles = devices[device_id].files || [];
-        if (!deviceFiles.includes(currentState.file)) {
+        const deviceStreams = devices[device_id].streams || {};
+        const currentFile = currentState.file;
+        
+        // Проверяем основной файл (включая стримы и папки)
+        let fileExists = deviceFiles.includes(currentFile);
+        
+        // Для стримов также проверяем streams объект
+        if (!fileExists && currentState.type === 'streaming') {
+          fileExists = !!deviceStreams[currentFile];
+        }
+        
+        // Для папок может быть .zip расширение
+        if (!fileExists) {
+          const withoutZip = currentFile.replace(/\.zip$/i, '');
+          fileExists = deviceFiles.includes(withoutZip);
+        }
+        
+        if (!fileExists) {
           // Файл не существует - сбрасываем состояние на idle
-          logger.warn(`[Device] Файл ${currentState.file} не найден для устройства ${device_id}, сбрасываем состояние`);
+          logger.warn(`[Device] Файл ${currentFile} не найден для устройства ${device_id}, сбрасываем состояние`, {
+            deviceId: device_id,
+            currentFile,
+            currentType: currentState.type,
+            availableFiles: deviceFiles.slice(0, 5),
+            availableStreams: Object.keys(deviceStreams).slice(0, 5)
+          });
           devices[device_id].current = { type: 'idle', file: null, state: 'idle' };
           socket.emit('player/state', devices[device_id].current);
           return;
@@ -199,9 +222,32 @@ export function setupDeviceHandlers(socket, deps) {
       if (currentState && currentState.file && currentState.type !== 'idle') {
         // Проверяем, существует ли файл в списке файлов устройства
         const deviceFiles = devices[device_id].files || [];
-        if (!deviceFiles.includes(currentState.file)) {
+        const deviceStreams = devices[device_id].streams || {};
+        const currentFile = currentState.file;
+        
+        // Проверяем основной файл (включая стримы и папки)
+        let fileExists = deviceFiles.includes(currentFile);
+        
+        // Для стримов также проверяем streams объект
+        if (!fileExists && currentState.type === 'streaming') {
+          fileExists = !!deviceStreams[currentFile];
+        }
+        
+        // Для папок может быть .zip расширение
+        if (!fileExists) {
+          const withoutZip = currentFile.replace(/\.zip$/i, '');
+          fileExists = deviceFiles.includes(withoutZip);
+        }
+        
+        if (!fileExists) {
           // Файл не существует - сбрасываем состояние на idle
-          logger.warn(`[Device] Файл ${currentState.file} не найден для устройства ${device_id}, сбрасываем состояние`);
+          logger.warn(`[Device] Файл ${currentFile} не найден для устройства ${device_id}, сбрасываем состояние`, {
+            deviceId: device_id,
+            currentFile,
+            currentType: currentState.type,
+            availableFiles: deviceFiles.slice(0, 5),
+            availableStreams: Object.keys(deviceStreams).slice(0, 5)
+          });
           devices[device_id].current = { type: 'idle', file: null, state: 'idle' };
         }
       }

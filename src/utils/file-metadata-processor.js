@@ -9,7 +9,7 @@ import { calculateMD5, saveFileMetadata, findDuplicateFile, getFileMetadata } fr
 import { checkVideoParameters } from '../video/ffmpeg-wrapper.js';
 import logger, { logFile } from '../utils/logger.js';
 import { ensureTrailerForFile } from '../video/trailer-generator.js';
-import { CONVERTED_CACHE } from '../config/constants.js';
+import { getConvertedCache } from '../config/settings-manager.js';
 
 /**
  * Обработать загруженный файл: вычислить MD5, получить метаданные, сохранить в БД

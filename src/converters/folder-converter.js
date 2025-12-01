@@ -7,7 +7,8 @@ import fs from 'fs';
 import path from 'path';
 import { exec as execCallback } from 'child_process';
 import util from 'util';
-import { DEVICES, CONVERTED_CACHE } from '../config/constants.js';
+import { DEVICES } from '../config/constants.js';
+import { getConvertedCache } from '../config/settings-manager.js';
 import { makeSafeFolderName } from '../utils/transliterate.js';
 import logger from '../utils/logger.js';
 

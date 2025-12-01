@@ -17,7 +17,49 @@ import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import logger, { logFile, logSecurity } from '../utils/logger.js';
 import { getCachedResolution, clearResolutionCache } from '../video/resolution-cache.js';
 import { processUploadedFilesAsync } from '../utils/file-metadata-processor.js';
-import { getFileMetadata, deleteFileMetadata, getDeviceFilesMetadata, saveFileMetadata, countFileReferences, updateFileOriginalName } from '../database/files-metadata.js';
+import { getFileMetadata, deleteFileMetadata, getDeviceFilesMetadata, saveFileMetadata, countFileReferences, updateFileOriginalName, createStreamingEntry, cleanupMissingFiles } from '../database/files-metadata.js';
+import { getStreamPlaybackUrl, getStreamRestreamStatus, upsertStreamJob, removeStreamJob } from '../streams/stream-manager.js';
+
+const STREAM_PROTOCOLS = new Set(['auto', 'hls', 'dash', 'mpegts']);
+
+function detectStreamProtocolFromUrl(url = '') {
+  const lower = (url || '').toLowerCase();
+  if (!lower) return 'mpegts';
+  if (lower.includes('.m3u8') || lower.includes('format=m3u8')) {
+    return 'hls';
+  }
+  if (lower.includes('.mpd') || lower.includes('format=mpd') || lower.includes('dash-live') || lower.includes('dash/')) {
+    return 'dash';
+  }
+  return 'mpegts';
+}
+
+function detectStreamProtocolFromMime(mimeType = '') {
+  const lower = (mimeType || '').toLowerCase();
+  if (!lower) return null;
+  if (lower.includes('dash')) {
+    return 'dash';
+  }
+  if (lower.includes('mpegurl') || lower.includes('hls')) {
+    return 'hls';
+  }
+  if (lower.includes('mp2t') || lower.includes('mpegts')) {
+    return 'mpegts';
+  }
+  return null;
+}
+
+function normalizeStreamProtocol(protocol, url, mimeType) {
+  const normalized = (protocol || '').toString().trim().toLowerCase();
+  if (normalized && STREAM_PROTOCOLS.has(normalized) && normalized !== 'auto') {
+    return normalized;
+  }
+  const byMime = detectStreamProtocolFromMime(mimeType);
+  if (byMime) {
+    return byMime;
+  }
+  return detectStreamProtocolFromUrl(url);
+}
 
 const router = express.Router();
 
@@ -100,10 +142,27 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
   
   // 1. Получаем файлы из БД (обычные файлы)
   const filesMetadata = getDeviceFilesMetadata(deviceId);
+  const streamingMetadata = filesMetadata.filter(f => (f.content_type === 'streaming' || (!f.file_path && f.stream_url)));
+  const physicalMetadata = filesMetadata.filter(f => f.content_type !== 'streaming' && (!f.stream_url || f.file_path));
+  
+  // КРИТИЧНО: Логируем для отладки стримов
+  if (streamingMetadata.length > 0) {
+    logger.info('[updateDeviceFilesFromDB] Streaming metadata found', {
+      deviceId,
+      count: streamingMetadata.length,
+      streams: streamingMetadata.map(f => ({
+        safeName: f.safe_name,
+        streamUrl: f.stream_url,
+        streamProtocol: f.stream_protocol,
+        hasStreamUrl: !!f.stream_url,
+        contentType: f.content_type
+      }))
+    });
+  }
   
   // КРИТИЧНО: Проверяем существование файлов по путям из БД
   // После миграции путей файлы должны существовать по новым путям
-  const existingMetadata = filesMetadata.filter(f => {
+  const existingMetadata = physicalMetadata.filter(f => {
     if (!f.file_path) {
       logger.warn(`[updateDeviceFilesFromDB] File metadata missing file_path`, { deviceId, safeName: f.safe_name });
       return false;
@@ -171,6 +230,84 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
   const nameMap = fileNamesMap[deviceId] || {};
   let files = filteredMetadata.map(f => f.safe_name);
   let fileNames = filteredMetadata.map(f => f.original_name || nameMap[f.safe_name] || f.safe_name);
+
+  const metadataList = filteredMetadata.map(f => {
+    const proxyUrl = f.content_type === 'streaming'
+      ? getStreamPlaybackUrl(deviceId, f.safe_name)
+      : null;
+    const restreamStatus = f.content_type === 'streaming'
+      ? getStreamRestreamStatus(deviceId, f.safe_name)
+      : null;
+    return {
+      safeName: f.safe_name,
+      originalName: f.original_name || nameMap[f.safe_name] || f.safe_name,
+      folderImageCount: null,
+      contentType: f.content_type || null,
+      streamUrl: f.stream_url || null,
+      streamProxyUrl: proxyUrl,
+      restreamStatus,
+      streamProtocol: f.content_type === 'streaming'
+        ? normalizeStreamProtocol(f.stream_protocol, f.stream_url, f.mime_type)
+        : null
+    };
+  });
+
+  const streams = {};
+  streamingMetadata.forEach(f => {
+    const safeName = f.safe_name;
+    const displayName = f.original_name || nameMap[safeName] || safeName;
+    
+    // КРИТИЧНО: Логируем для отладки
+    if (!f.stream_url) {
+      logger.warn('[updateDeviceFilesFromDB] ⚠️ Stream metadata missing stream_url', {
+        deviceId,
+        safeName,
+        hasStreamUrl: !!f.stream_url,
+        streamUrl: f.stream_url,
+        content_type: f.content_type,
+        stream_protocol: f.stream_protocol
+      });
+    }
+    
+    if (!files.includes(safeName)) {
+      files.push(safeName);
+      fileNames.push(displayName);
+    }
+    const protocol = normalizeStreamProtocol(f.stream_protocol, f.stream_url, f.mime_type);
+    // КРИТИЧНО: Lazy loading - НЕ запускаем FFmpeg здесь
+    // FFmpeg будет запущен только когда стрим действительно запрашивается для воспроизведения
+    // Это экономит ресурсы, так как не все стримы используются одновременно
+    // Формируем URL заранее, но FFmpeg запустится только при первом запросе на воспроизведение
+    const safeDevice = deviceId.replace(/[^a-zA-Z0-9\-_.]/g, '_').substring(0, 200);
+    const safeFile = safeName.replace(/[^a-zA-Z0-9\-_.]/g, '_').substring(0, 200);
+    const proxyUrl = `/streams/${encodeURIComponent(safeDevice)}/${encodeURIComponent(safeFile)}/index.m3u8`;
+    const restreamStatus = getStreamRestreamStatus(deviceId, safeName);
+    metadataList.push({
+      safeName,
+      originalName: displayName,
+      folderImageCount: null,
+      contentType: 'streaming',
+      streamUrl: f.stream_url,
+      streamProxyUrl: proxyUrl,
+      restreamStatus,
+      streamProtocol: protocol
+    });
+    streams[safeName] = {
+      name: displayName,
+      url: f.stream_url,  // КРИТИЧНО: Используем stream_url из БД
+      proxyUrl,  // КРИТИЧНО: Всегда устанавливаем proxyUrl, даже если FFmpeg еще не создал файлы
+      status: restreamStatus?.status || null,
+      protocol
+    };
+    
+    logger.debug('[updateDeviceFilesFromDB] Stream loaded', {
+      deviceId,
+      safeName,
+      streamUrl: f.stream_url,
+      protocol,
+      hasStreamUrl: !!f.stream_url
+    });
+  });
   
   // 4. Добавляем папки
   folders.forEach(folder => {
@@ -180,6 +317,8 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
   
   device.files = files;
   device.fileNames = fileNames;
+  device.fileMetadata = metadataList;
+  device.streams = streams;
   
   logger.info(`[updateDeviceFilesFromDB] ${deviceId}: БД=${filteredMetadata.length} (существует=${existingMetadata.length}, отсутствует=${missingCount}), Папки=${folders.length}, Всего=${files.length}`);
   if (folders.length > 0) {
@@ -189,7 +328,7 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
     logger.info(`[updateDeviceFilesFromDB] Скрыто ${existingMetadata.length - filteredMetadata.length} файлов (в папках)`);
   }
   if (missingCount > 0) {
-    logger.warn(`[updateDeviceFilesFromDB] Отсутствующие файлы из БД (возможно миграция путей выполнена, но файлы не перемещены): ${filesMetadata.filter(f => !existingMetadata.includes(f)).map(f => f.safe_name).join(', ')}`);
+    logger.warn(`[updateDeviceFilesFromDB] Отсутствующие файлы из БД (возможно миграция путей выполнена, но файлы не перемещены): ${physicalMetadata.filter(f => !existingMetadata.includes(f)).map(f => f.safe_name).join(', ')}`);
   }
 }
 
@@ -198,6 +337,8 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
  * @param {Object} deps - Зависимости
  * @returns {express.Router} Настроенный роутер
  */
+const jsonParser = express.json({ limit: '256kb' });
+
 export function createFilesRouter(deps) {
   const { 
     devices, 
@@ -208,8 +349,122 @@ export function createFilesRouter(deps) {
     autoConvertFileWrapper,
     autoOptimizeVideoWrapper,
     checkVideoParameters,
-    getFileStatus
+    getFileStatus,
+    requireAdmin = (_req, _res, next) => next()
   } = deps;
+  // POST /api/devices/:id/streams - Добавление стрима (только админ)
+  router.post('/:id/streams', requireAdmin, jsonParser, async (req, res) => {
+    const id = sanitizeDeviceId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid device id' });
+    const device = devices[id];
+    if (!device) return res.status(404).json({ error: 'device not found' });
+
+    const { name, url, protocol } = req.body || {};
+    if (!name || !url) {
+      return res.status(400).json({ error: 'name and url required' });
+    }
+    let parsedUrl = null;
+    try {
+      parsedUrl = new URL(url);
+      if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+        return res.status(400).json({ error: 'only http/https streams supported' });
+      }
+    } catch {
+      return res.status(400).json({ error: 'invalid url' });
+    }
+
+    const baseSafe = makeSafeFolderName(name) || `stream_${Date.now()}`;
+    let safeName = baseSafe;
+    let suffix = 1;
+    while ((device.files || []).includes(safeName)) {
+      safeName = `${baseSafe}_${suffix++}`;
+    }
+
+    const normalizedProtocol = normalizeStreamProtocol(protocol, parsedUrl.toString());
+
+    try {
+      createStreamingEntry({
+        deviceId: id,
+        safeName,
+        originalName: name,
+        streamUrl: parsedUrl.toString(),
+        protocol: normalizedProtocol
+      });
+      const newMetadata = getFileMetadata(id, safeName);
+      if (newMetadata) {
+        upsertStreamJob(newMetadata);
+      }
+      if (!fileNamesMap[id]) fileNamesMap[id] = {};
+      fileNamesMap[id][safeName] = name;
+      saveFileNamesMap(fileNamesMap);
+
+      updateDeviceFilesFromDB(id, devices, fileNamesMap);
+      io.emit('devices/updated');
+
+      await auditLog({
+        userId: req.user?.id || null,
+        action: AuditAction.FILE_UPLOAD,
+        resource: `device:${id}`,
+        details: {
+          deviceId: id,
+          filesCount: 1,
+          files: [safeName],
+          uploadedBy: req.user?.username || 'anonymous',
+          type: 'streaming'
+        },
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent'),
+        status: 'success'
+      });
+
+      res.status(201).json({
+        ok: true,
+        safeName,
+        originalName: name,
+        streamUrl: parsedUrl.toString(),
+        protocol: normalizedProtocol
+      });
+    } catch (error) {
+      logger.error('[streams] Failed to create stream', { error: error.message, deviceId: id });
+      res.status(500).json({ error: 'failed to create stream' });
+    }
+  });
+
+  // GET /api/devices/:id/streams/:safeName - Получить данные стрима (для плееров)
+  router.get('/:id/streams/:safeName', async (req, res) => {
+    const id = sanitizeDeviceId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid device id' });
+    const safeName = req.params.safeName;
+    if (!safeName) return res.status(400).json({ error: 'invalid stream name' });
+
+    const metadata = getFileMetadata(id, safeName);
+    if (!metadata || metadata.content_type !== 'streaming') {
+      return res.status(404).json({ error: 'stream not found' });
+    }
+
+    // КРИТИЧНО: Lazy loading - запускаем FFmpeg только когда стрим запрашивается для воспроизведения
+    // Это экономит ресурсы, так как не все стримы используются одновременно
+    const { getStreamManager } = await import('../streams/stream-manager.js');
+    const streamManager = getStreamManager();
+    let streamProxyUrl = null;
+    
+    if (streamManager) {
+      // Запускаем FFmpeg, если еще не запущен (lazy loading)
+      streamProxyUrl = await streamManager.ensureStreamRunning(id, safeName, metadata);
+    } else {
+      // Fallback: используем старый метод
+      streamProxyUrl = getStreamPlaybackUrl(id, safeName);
+    }
+
+    res.json({
+      safeName: metadata.safe_name,
+      originalName: metadata.original_name,
+      streamUrl: metadata.stream_url,
+      streamProxyUrl: streamProxyUrl,
+      protocol: normalizeStreamProtocol(metadata.stream_protocol, metadata.stream_url, metadata.mime_type)
+    });
+  });
+
   
   // POST /api/devices/:id/upload - Загрузка файлов
   router.post('/:id/upload', uploadLimiter, async (req, res, next) => {
@@ -639,6 +894,70 @@ export function createFilesRouter(deps) {
         return res.status(404).json({ error: 'source file not found in database' });
     }
     
+      if (sourceMetadata.content_type === 'streaming') {
+        let targetSafeNameStreaming = fileName;
+        const existingStream = getFileMetadata(targetId, targetSafeNameStreaming);
+        if (existingStream) {
+          const ext = path.extname(fileName);
+          const nameBase = path.basename(fileName, ext);
+          const suffix = '_' + crypto.randomBytes(3).toString('hex');
+          targetSafeNameStreaming = `${nameBase}${suffix}${ext}`;
+        }
+
+        const streamUrl = sourceMetadata.stream_url || sourceMetadata.file_path;
+        if (!streamUrl) {
+          return res.status(400).json({ error: 'invalid stream metadata' });
+        }
+
+        const targetOriginalNameStreaming = sourceMetadata.original_name || fileNamesMap[sourceId]?.[fileName] || fileName;
+        const sourceProtocol = normalizeStreamProtocol(sourceMetadata.stream_protocol, streamUrl, sourceMetadata.mime_type);
+
+        createStreamingEntry({
+          deviceId: targetId,
+          safeName: targetSafeNameStreaming,
+          originalName: targetOriginalNameStreaming,
+          streamUrl,
+          protocol: sourceProtocol
+        });
+
+        if (!fileNamesMap[targetId]) fileNamesMap[targetId] = {};
+        fileNamesMap[targetId][targetSafeNameStreaming] = targetOriginalNameStreaming;
+        saveFileNamesMap(fileNamesMap);
+        const newMeta = getFileMetadata(targetId, targetSafeNameStreaming);
+        if (newMeta) {
+          upsertStreamJob(newMeta);
+        }
+
+        if (move) {
+          deleteFileMetadata(sourceId, fileName);
+          removeStreamJob(sourceId, fileName, 'moved');
+          if (fileNamesMap[sourceId] && fileNamesMap[sourceId][fileName]) {
+            delete fileNamesMap[sourceId][fileName];
+            if (Object.keys(fileNamesMap[sourceId]).length === 0) {
+              delete fileNamesMap[sourceId];
+            }
+            saveFileNamesMap(fileNamesMap);
+          }
+        }
+
+        updateDeviceFilesFromDB(targetId, devices, fileNamesMap);
+        if (move) {
+          updateDeviceFilesFromDB(sourceId, devices, fileNamesMap);
+        }
+        io.emit('devices/updated');
+
+        return res.json({
+          ok: true,
+          action: move ? 'moved' : 'copied',
+          file: fileName,
+          from: sourceId,
+          to: targetId,
+          instant: true,
+          type: 'streaming',
+          streamProtocol: sourceProtocol
+        });
+      }
+
       logFile('info', '📋 Copying file metadata', {
         sourceDevice: sourceId,
         targetDevice: targetId,
@@ -950,6 +1269,68 @@ export function createFilesRouter(deps) {
       return res.status(400).json({ error: 'invalid file path' });
     }
     
+    const existingMetadata = getFileMetadata(id, name);
+    if (existingMetadata && existingMetadata.content_type === 'streaming') {
+      // КРИТИЧНО: Останавливаем FFmpeg перед удалением из БД
+      try {
+        removeStreamJob(id, name, 'deleted');
+      } catch (err) {
+        // Логируем ошибку, но продолжаем удаление
+        logger.warn('[DELETE file] Failed to stop stream job', { 
+          deviceId: id, 
+          fileName: name, 
+          error: err.message 
+        });
+      }
+      
+      // Удаляем из БД
+      try {
+        deleteFileMetadata(id, name);
+      } catch (err) {
+        logger.error('[DELETE file] Failed to delete stream metadata', { 
+          deviceId: id, 
+          fileName: name, 
+          error: err.message 
+        });
+        return res.status(500).json({ error: 'failed to delete stream metadata' });
+      }
+      
+      // Обновляем fileNamesMap
+      if (fileNamesMap[id]?.[name]) {
+        delete fileNamesMap[id][name];
+        saveFileNamesMap(fileNamesMap);
+      }
+      
+      // Обновляем список файлов устройства
+      try {
+        updateDeviceFilesFromDB(id, devices, fileNamesMap);
+      } catch (err) {
+        logger.error('[DELETE file] Failed to update device files', { 
+          deviceId: id, 
+          fileName: name, 
+          error: err.message 
+        });
+      }
+      
+      io.emit('devices/updated');
+      await auditLog({
+        userId: req.user?.id || null,
+        action: AuditAction.FILE_DELETE,
+        resource: `device:${id}`,
+        details: { 
+          deviceId: id, 
+          fileName: name, 
+          isFolder: false,
+          deletedBy: req.user?.username || 'anonymous',
+          type: 'streaming'
+        },
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent'),
+        status: 'success'
+      });
+      return res.json({ ok: true });
+    }
+
     const folderName = name.replace(/\.(pdf|pptx)$/i, '');
     const possibleFolder = path.join(deviceFolder, folderName);
     
@@ -986,7 +1367,7 @@ export function createFilesRouter(deps) {
       // НОВОЕ: Обычный файл - умное удаление с подсчетом ссылок
       
       // 1. Получаем метаданные из БД
-      const metadata = getFileMetadata(id, name);
+      const metadata = existingMetadata || getFileMetadata(id, name);
       
       if (!metadata) {
         logFile('warn', 'File not found in DB', { deviceId: id, fileName: name });
@@ -1099,10 +1480,25 @@ export function createFilesRouter(deps) {
     const fileNames = d.fileNames || files;
     const deviceFolderPath = path.join(DEVICES, d.folder || id);
     
-    const response = files.map((safeName, index) => ({
-      safeName,
-      originalName: fileNames[index] || safeName
-    }));
+    const metadataMap = Array.isArray(d.fileMetadata)
+      ? d.fileMetadata.reduce((acc, meta) => {
+          if (meta && meta.safeName) {
+            acc.set(meta.safeName, meta);
+          }
+          return acc;
+        }, new Map())
+      : new Map();
+    
+    const response = files.map((safeName, index) => {
+      const meta = metadataMap.get(safeName);
+      return {
+        safeName,
+        originalName: fileNames[index] || safeName,
+        contentType: meta?.contentType || null,
+        streamUrl: meta?.streamUrl || null,
+        streamProxyUrl: meta?.streamProxyUrl || getStreamPlaybackUrl(id, safeName)
+      };
+    });
     
     res.json(response);
   });
@@ -1134,15 +1530,21 @@ export function createFilesRouter(deps) {
       let isPlaceholder = false;
       let durationSeconds = null;
       let folderImageCount = null;
+      let contentType = 'file';
+      let streamUrl = null;
+      let streamProtocol = null;
       
       // Получаем метаданные из БД (разрешение + флаг заглушки + originalName)
       const ext = path.extname(safeName).toLowerCase();
       const metadata = getFileMetadata(id, safeName);
       
-      // КРИТИЧНО: originalName берем из metadata (если есть), иначе из fileNames в памяти
+      // КРИТИЧНО: originalName берем с правильным приоритетом: metadata.original_name → fileNamesMap → fileNames → safeName
+      const nameMap = fileNamesMap[id] || {};
       let originalName;
       if (metadata && metadata.original_name) {
         originalName = metadata.original_name;
+      } else if (nameMap[safeName]) {
+        originalName = nameMap[safeName];
       } else {
         originalName = fileNames[i] || safeName;
       }
@@ -1150,6 +1552,31 @@ export function createFilesRouter(deps) {
       if (metadata) {
         // Флаг заглушки
         isPlaceholder = !!metadata.is_placeholder;
+        if (metadata.content_type === 'streaming') {
+          contentType = 'streaming';
+          streamUrl = metadata.stream_url || null;
+          streamProtocol = normalizeStreamProtocol(metadata.stream_protocol, metadata.stream_url, metadata.mime_type);
+          const streamProxyUrl = metadata.streamProxyUrl || getStreamPlaybackUrl(id, safeName);
+          const restreamStatus = metadata.restreamStatus || getStreamRestreamStatus(id, safeName);
+          filesData.push({
+            safeName,
+            originalName,
+            status: 'ready',
+            progress: 100,
+            canPlay: true,
+            error: null,
+            resolution: null,
+            isPlaceholder: false,
+            durationSeconds: null,
+            folderImageCount: null,
+            contentType: 'streaming',
+            streamUrl,
+            streamProxyUrl,
+            restreamStatus,
+            streamProtocol
+          });
+          continue;
+        }
         
         if (metadata.video_duration) {
           durationSeconds = Math.round(metadata.video_duration);
@@ -1199,6 +1626,13 @@ export function createFilesRouter(deps) {
         }
       }
       
+      const streamProxyUrl = contentType === 'streaming'
+        ? (metadata?.streamProxyUrl || getStreamPlaybackUrl(id, safeName))
+        : null;
+      const restreamStatus = contentType === 'streaming'
+        ? (metadata?.restreamStatus || getStreamRestreamStatus(id, safeName))
+        : null;
+
       filesData.push({
         safeName,
         originalName,
@@ -1209,11 +1643,74 @@ export function createFilesRouter(deps) {
         resolution,
         isPlaceholder,  // НОВОЕ: Флаг заглушки
         durationSeconds,
-        folderImageCount
+        folderImageCount,
+        contentType,
+        streamUrl,
+        streamProxyUrl,
+        restreamStatus,
+        streamProtocol
       });
     }
     
     res.json(filesData);
+  });
+  
+  // POST /api/devices/:id/cleanup-missing-files - Очистка несуществующих файлов из БД
+  // POST /api/devices/cleanup-missing-files - Очистка для всех устройств
+  router.post('/:id?/cleanup-missing-files', requireAdmin, express.json(), async (req, res) => {
+    try {
+      const deviceId = req.params.id ? sanitizeDeviceId(req.params.id) : null;
+      const { dryRun = false } = req.body || {};
+      
+      if (deviceId && !devices[deviceId]) {
+        return res.status(404).json({ error: 'device not found' });
+      }
+      
+      logger.info('[Cleanup] Starting cleanup missing files', {
+        deviceId: deviceId || 'all',
+        dryRun,
+        requestedBy: req.user?.username || 'unknown'
+      });
+      
+      const result = await cleanupMissingFiles({
+        deviceId,
+        dryRun: Boolean(dryRun)
+      });
+      
+      auditLog({
+        userId: req.user?.id,
+        action: AuditAction.FILE_DELETE,
+        resource: `cleanup-missing-files`,
+        details: JSON.stringify({
+          deviceId: deviceId || 'all',
+          checked: result.checked,
+          missing: result.missing,
+          deleted: result.deleted,
+          errors: result.errors,
+          dryRun
+        }),
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent')
+      });
+      
+      res.json({
+        success: true,
+        ...result,
+        message: dryRun 
+          ? `Found ${result.missing} missing files (dry run, no deletions)` 
+          : `Cleaned up ${result.deleted} missing files`
+      });
+    } catch (error) {
+      logger.error('[Cleanup] Failed to cleanup missing files', {
+        error: error.message,
+        stack: error.stack,
+        deviceId: req.params.id
+      });
+      res.status(500).json({ 
+        error: 'Failed to cleanup missing files',
+        message: error.message 
+      });
+    }
   });
   
   return router;

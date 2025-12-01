@@ -2,14 +2,13 @@
 node_modules/
 
 # Logs & runtime artifacts
-logs/
+data/
 *.log
 npm-debug.log*
 *.pid
 *.seed
-.converted/
-temp/
 backups/
+logs/
 
 # SQLite databases (local only)
 config/main.db
@@ -35,6 +34,7 @@ config/file-names-map.json
 config/file-names-map.json.backup
 
 # Content storage (keeps .gitkeep)
+# Note: data/ is already ignored above, but we keep this for legacy public/content if it exists
 public/content/*
 !public/content/.gitkeep
 
@@ -43,6 +43,8 @@ public/content/*
 .env.local
 .test
 *.backup
+*.backup.*
+.converted
 
 # Temporary files
 *.tmp

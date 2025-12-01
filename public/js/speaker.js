@@ -2,6 +2,7 @@ import { initThemeToggle } from './theme.js';
 import { sortDevices, debounce, loadNodeNames, getPageSize } from './utils.js';
 import { ensureAuth, speakerFetch, logout } from './speaker/auth.js';
 import { getCrossIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon } from './shared/svg-icons.js';
+import { formatTime } from './shared/formatters.js';
 
 const SPEAKER_CACHE_SESSION_FLAG = 'vc-speaker-cache-cleared-v1';
 
@@ -78,13 +79,7 @@ const STATIC_CONTENT_TYPES = new Set(['pdf', 'pptx', 'folder']);
 const FOLDER_INTERVAL_OPTIONS = [5, 10, 15, 20];
 const DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS = 10;
 let previewLoadToken = 0;
-const formatDuration = (value) => {
-  const seconds = Number(value);
-  if (!Number.isFinite(seconds) || seconds <= 0) return null;
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${String(mins).padStart(2, '0')}:${String(secs).toString().padStart(2, '0')}`;
-};
+// formatDuration удалена - используем унифицированную функцию formatTime
 
 function clampVolumePercent(value) {
   if (typeof value !== 'number' || Number.isNaN(value)) {
@@ -331,7 +326,9 @@ let filePage = 0;
 let nodeNames = {}; // { device_id: name }
 let allFiles = []; // Список всех файлов для текущего устройства (для отображения названий в прогресс-баре)
 // Прогресс воспроизведения по устройству
-const playbackProgressByDevice = new Map(); // device_id -> { file, currentTime, duration }
+// device_id -> { file, currentTime, duration, durationKnownFromStart }
+// durationKnownFromStart: true если duration был известен с самого начала (для работы перемотки)
+const playbackProgressByDevice = new Map();
 const playerStateByDevice = new Map(); // device_id -> { type, file, page }
 const fileMetaCache = new Map(); // device_id -> Map(fileName|safeKey -> { displayName, folderImageCount })
 const staticMetaRequests = new Map(); // `${deviceId}:${file}` -> Promise
@@ -1032,6 +1029,20 @@ function updateDevicesCount() {
   }
 }
 
+function showStreamingPreview(deviceId, safeName, streamProtocol = '') {
+  if (!deviceId || !safeName) return;
+  previewManuallyClosed = false;
+  const protocolParam = streamProtocol ? `&protocol=${encodeURIComponent(streamProtocol)}` : '';
+  const src = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&type=streaming&file=${encodeURIComponent(safeName)}${protocolParam}&t=${Date.now()}`;
+  const frame = filePreview.querySelector('iframe');
+  if (frame) {
+    frame.src = src;
+  } else {
+    filePreview.innerHTML = `<iframe src="${src}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
+  }
+  setTimeout(() => updatePreviewControlButtons(), 10);
+}
+
 async function loadDevices() {
   try {
     const res = await speakerFetch('/api/devices');
@@ -1289,14 +1300,18 @@ async function loadFiles() {
       .filter(item => !(typeof item === 'object' && item.isPlaceholder))
       .map(item => {
         if (typeof item === 'string') {
-          return { safeName: item, originalName: item, resolution: null, durationSeconds: null, folderImageCount: null };
+          return { safeName: item, originalName: item, resolution: null, durationSeconds: null, folderImageCount: null, contentType: null, streamUrl: null, streamProxyUrl: null, streamProtocol: null };
         }
         return { 
           safeName: item.name || item.safeName || item.originalName, 
           originalName: item.originalName || item.name || item.safeName,
           resolution: item.resolution || null,
           durationSeconds: typeof item.durationSeconds === 'number' ? item.durationSeconds : null,
-          folderImageCount: typeof item.folderImageCount === 'number' ? item.folderImageCount : null
+          folderImageCount: typeof item.folderImageCount === 'number' ? item.folderImageCount : null,
+          contentType: item.contentType || null,
+          streamUrl: item.streamUrl || null,
+          streamProxyUrl: item.streamProxyUrl || null,
+          streamProtocol: item.streamProtocol || null
         };
       });
 
@@ -1331,7 +1346,7 @@ async function loadFiles() {
   const end = Math.min(start + pageSize, allFiles.length);
   const files = allFiles.slice(start, end);
 
-  fileList.innerHTML = files.map(({ safeName, originalName, resolution, durationSeconds, folderImageCount }) => {
+  fileList.innerHTML = files.map(({ safeName, originalName, resolution, durationSeconds, folderImageCount, contentType, streamProtocol }) => {
     // Определяем расширение файла
     const hasExtension = safeName.includes('.');
     const ext = hasExtension ? safeName.split('.').pop().toLowerCase() : '';
@@ -1340,7 +1355,10 @@ async function loadFiles() {
     let type = 'VID'; // По умолчанию
     let typeLabel = 'Видео'; // Русское название
     
-    if (ext === 'pdf') {
+    if (contentType === 'streaming') {
+      type = 'STREAM';
+      typeLabel = streamProtocol ? `Стрим (${streamProtocol.toUpperCase()})` : 'Стрим';
+    } else if (ext === 'pdf') {
       type = 'PDF';
       typeLabel = 'PDF';
     } else if (ext === 'pptx') {
@@ -1382,9 +1400,10 @@ async function loadFiles() {
       metaBadges.push(`${folderImageCount} фото`);
     }
     if (type === 'VID' && typeof durationSeconds === 'number' && durationSeconds > 0) {
-      const mins = Math.floor(durationSeconds / 60);
-      const secs = Math.floor(durationSeconds % 60);
-      metaBadges.push(`${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`);
+      metaBadges.push(formatTime(durationSeconds));
+    }
+    if (type === 'STREAM') {
+      metaBadges.push(streamProtocol ? streamProtocol.toUpperCase() : 'онлайн');
     }
     const typeBadgeLabel = metaBadges.length ? `${typeLabel} · ${metaBadges.join(' · ')}` : typeLabel;
     
@@ -1392,6 +1411,8 @@ async function loadFiles() {
       <li class="file-item ${active ? 'active' : ''}" 
           data-safe="${encodeURIComponent(safeName)}" 
           data-original="${encodeURIComponent(originalName)}"
+          data-content-type="${contentType || ''}"
+          data-stream-protocol="${streamProtocol || ''}"
           style="
             display:grid; 
             grid-template-columns:3fr 1fr; 
@@ -1452,6 +1473,7 @@ async function loadFiles() {
         <div class="playBtn" 
              data-safe="${encodeURIComponent(safeName)}" 
              data-original="${encodeURIComponent(originalName)}"
+             data-stream-protocol="${streamProtocol || ''}"
              style="
                background:var(--brand);
                color:white;
@@ -1509,11 +1531,18 @@ async function loadFiles() {
       if (e.target.closest('.playBtn')) return;
       
       const safeName = decodeURIComponent(item.getAttribute('data-safe'));
+      const contentType = item.getAttribute('data-content-type') || null;
+      const streamProtocol = item.getAttribute('data-stream-protocol') || '';
       const originalName = decodeURIComponent(item.getAttribute('data-original'));
       
       setCurrentFileSelection(safeName, item);
       previewManuallyClosed = false;
       
+      if (contentType === 'streaming') {
+        showStreamingPreview(currentDevice, safeName, streamProtocol);
+        return;
+      }
+
       // Определяем тип файла
       const hasExtension = safeName.includes('.');
       const ext = hasExtension ? safeName.split('.').pop().toLowerCase() : '';
@@ -1557,8 +1586,11 @@ async function loadFiles() {
       e.stopPropagation(); // Останавливаем всплытие, чтобы не вызвался клик по карточке
       
       const safeName = decodeURIComponent(btn.getAttribute('data-safe'));
+      const containerItem = btn.closest('.file-item');
+      const contentType = containerItem?.getAttribute('data-content-type') || null;
+      const streamProtocol = btn.getAttribute('data-stream-protocol') || containerItem?.getAttribute('data-stream-protocol') || '';
       const originalName = decodeURIComponent(btn.getAttribute('data-original'));
-      setCurrentFileSelection(safeName, btn.closest('.file-item'));
+      setCurrentFileSelection(safeName, containerItem);
       
       // Сбрасываем флаг закрытия при новом воспроизведении
       previewManuallyClosed = false;
@@ -1567,9 +1599,17 @@ async function loadFiles() {
       // Отправляем громкость перед запуском контента
       sendVolumeBeforePlay(currentDevice);
       
-      socket.emit('control/play', { device_id: currentDevice, file: safeName });
-      
       // Определяем тип файла
+      if (contentType === 'streaming') {
+        previewManuallyClosed = false;
+        stopFolderPlaylistIfNeeded('streaming play', { deviceId: currentDevice, file: safeName });
+        sendVolumeBeforePlay(currentDevice);
+        socket.emit('control/play', { device_id: currentDevice, file: safeName, type: 'streaming', streamProtocol: streamProtocol || undefined });
+        return;
+      }
+
+      socket.emit('control/play', { device_id: currentDevice, file: safeName });
+
       const hasExtension = safeName.includes('.');
       const ext = hasExtension ? safeName.split('.').pop().toLowerCase() : '';
       const isStaticContent = !hasExtension || ext === 'pdf' || ext === 'pptx';
@@ -1624,13 +1664,7 @@ function setCurrentFileSelection(filename, itemEl) {
   }
 }
 
-// Форматирование времени в mm:ss
-function formatTime(sec) {
-  const s = Math.max(0, Math.floor(sec || 0));
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  return `${m}:${r.toString().padStart(2, '0')}`;
-}
+// formatTime импортируется из './shared/formatters.js'
 
 function cacheDeviceFileMeta(deviceId, files = [], { merge = false } = {}) {
   if (!deviceId) return;
@@ -1646,7 +1680,11 @@ function cacheDeviceFileMeta(deviceId, files = [], { merge = false } = {}) {
 
     const displayName = (originalName || safeName || '').replace(/\.[^.]+$/, '') || (originalName || safeName || '');
     const folderImageCount = typeof file.folderImageCount === 'number' ? file.folderImageCount : null;
-    const meta = { displayName, folderImageCount };
+    const contentType = file.contentType || null;
+    const streamUrl = file.streamUrl || null;
+    const streamProxyUrl = file.streamProxyUrl || null;
+    const streamProtocol = file.streamProtocol || null;
+    const meta = { displayName, folderImageCount, contentType, streamUrl, streamProxyUrl, streamProtocol };
 
     const keys = new Set();
     [safeName, originalName].forEach(name => {
@@ -1716,6 +1754,10 @@ function resolveFileDisplayData(deviceId, fileName) {
   let displayName = (fileName || '').replace(/\.[^.]+$/, '') || (fileName || '');
   let folderImageCount = fileInfo?.folderImageCount ?? null;
   let cachedMeta = null;
+  let contentType = fileInfo?.contentType || null;
+  let streamUrl = fileInfo?.streamUrl || null;
+  let streamProxyUrl = fileInfo?.streamProxyUrl || null;
+  let streamProtocol = fileInfo?.streamProtocol || null;
 
   if (fileInfo && fileInfo.originalName) {
     displayName = fileInfo.originalName.replace(/\.[^.]+$/, '') || fileInfo.originalName;
@@ -1723,18 +1765,39 @@ function resolveFileDisplayData(deviceId, fileName) {
     cachedMeta = resolveCachedFileMeta(deviceId, fileName);
     if (cachedMeta?.displayName) {
       displayName = cachedMeta.displayName;
+    } else {
+      // Дополнительный fallback: проверяем device.fileMetadata
+      const metaFromDevice = device?.fileMetadata?.find(m => m.safeName === fileName);
+      if (metaFromDevice?.originalName) {
+        displayName = metaFromDevice.originalName.replace(/\.[^.]+$/, '') || metaFromDevice.originalName;
+      }
     }
   }
 
   if (folderImageCount == null && cachedMeta?.folderImageCount != null) {
     folderImageCount = cachedMeta.folderImageCount;
   }
+  if (!contentType && cachedMeta?.contentType) {
+    contentType = cachedMeta.contentType;
+  }
+  if (!streamUrl && cachedMeta?.streamUrl) {
+    streamUrl = cachedMeta.streamUrl;
+  }
+  if (!streamProxyUrl && cachedMeta?.streamProxyUrl) {
+    streamProxyUrl = cachedMeta.streamProxyUrl;
+  }
+  if (!streamProtocol && cachedMeta?.streamProtocol) {
+    streamProtocol = cachedMeta.streamProtocol;
+  }
 
-  return { displayName, fileInfo, folderImageCount };
+  return { displayName, fileInfo, folderImageCount, contentType, streamUrl, streamProxyUrl, streamProtocol };
 }
 
 function formatStaticPlaybackLabel(type, page, totalCount, isPlaylist) {
   const descriptor = type === 'folder' ? 'Кадр' : type === 'pptx' ? 'Слайд' : 'Страница';
+  if (type === 'streaming') {
+    return 'Стрим (онлайн)';
+  }
   let label = `${descriptor} ${page}`;
   if (totalCount && Number(totalCount) > 0) {
     label += ` из ${totalCount}`;
@@ -1749,14 +1812,27 @@ function prefillDeviceFileMeta(device) {
   if (!device || !device.device_id) return;
   const files = device.files || [];
   const fileNames = device.fileNames || files;
-  const fileMetadata = device.fileMetadata || [];
+  const fileMetadataList = Array.isArray(device.fileMetadata) ? device.fileMetadata : [];
   if (!files.length && (!fileNames || !fileNames.length)) return;
 
-  const items = files.map((safeName, idx) => ({
-    safeName,
-    originalName: fileNames[idx] || safeName,
-    folderImageCount: fileMetadata[idx]?.folderImageCount ?? null,
-  }));
+  const metaBySafe = new Map(
+    fileMetadataList
+      .filter(meta => meta && meta.safeName)
+      .map(meta => [meta.safeName, meta])
+  );
+
+  const items = files.map((safeName, idx) => {
+    const meta = metaBySafe.get(safeName);
+    return {
+      safeName,
+      originalName: fileNames[idx] || meta?.originalName || safeName,
+      folderImageCount: meta?.folderImageCount ?? null,
+      contentType: meta?.contentType || null,
+      streamUrl: meta?.streamUrl || null,
+      streamProxyUrl: meta?.streamProxyUrl || null,
+      streamProtocol: meta?.streamProtocol || null
+    };
+  });
 
   cacheDeviceFileMeta(device.device_id, items, { merge: true });
 }
@@ -1814,6 +1890,25 @@ function buildPreviewPlaybackInfo(device) {
     return null;
   }
 
+  if (device.current.type === 'streaming') {
+    const { displayName } = resolveFileDisplayData(device.device_id, device.current.file);
+    const protocolLabel = device.current.streamProtocol ? device.current.streamProtocol.toUpperCase() : 'онлайн';
+    const safeName = escapeHtml(truncateText(displayName, 50)) || 'Стрим';
+    const playbackInfo = {
+      title: safeName,
+      value: `Стрим (${protocolLabel})`,
+      mode: 'streaming',
+      progress: null
+    };
+    console.log('[buildPreviewPlaybackInfo] Streaming info:', {
+      deviceId: device.device_id,
+      file: device.current.file,
+      streamProtocol: device.current.streamProtocol,
+      playbackInfo
+    });
+    return playbackInfo;
+  }
+
   if (STATIC_CONTENT_TYPES.has(device.current.type)) {
     const staticFile = device.current.playlistFile || device.current.file;
     const currentPage = Number(device.current.page) || 1;
@@ -1845,15 +1940,26 @@ function buildPreviewPlaybackInfo(device) {
     return null;
   }
 
+  // КРИТИЧНО: Для видео показываем информацию даже если нет прогресса (для старых клипов без duration)
   const prog = playbackProgressByDevice.get(device.device_id);
-  if (!prog || !prog.file) {
-    return null;
+  
+  // Если нет прогресса или файл не совпадает - все равно показываем информацию о файле
+  if (!prog || !prog.file || prog.file !== device.current.file) {
+    // Показываем информацию о файле без прогресса (для старых клипов без duration)
+    const { displayName, fileInfo } = resolveFileDisplayData(device.device_id, device.current.file);
+    if (fileInfo && fileInfo.isPlaceholder) {
+      return null;
+    }
+    const safeName = escapeHtml(truncateText(displayName, 50)) || '—';
+    return {
+      title: safeName,
+      value: 'Воспроизведение...',
+      mode: 'video',
+      progress: null
+    };
   }
 
-  if (prog.file !== device.current.file) {
-    return null;
-  }
-
+  // Если видео закончилось - не показываем информацию
   if (prog.duration > 0 && prog.currentTime >= prog.duration - 0.5) {
     return null;
   }
@@ -1881,6 +1987,7 @@ function buildPreviewPlaybackInfo(device) {
       duration: prog.duration,
       currentTime: prog.currentTime,
       file: prog.file,
+      durationKnownFromStart: prog.durationKnownFromStart || false
     } : null,
   };
 }
@@ -1900,7 +2007,44 @@ function updatePlaybackInfoUI() {
   const device = devices.find(d => d.device_id === currentDevice);
   const playbackInfo = buildPreviewPlaybackInfo(device);
 
-  if (!device || !device.current || !playbackInfo) {
+  console.log('[updatePlaybackInfoUI] Debug:', {
+    currentDevice,
+    hasDevice: !!device,
+    hasCurrent: !!device?.current,
+    currentType: device?.current?.type,
+    currentFile: device?.current?.file,
+    streamProtocol: device?.current?.streamProtocol,
+    streamUrl: device?.current?.streamUrl,
+    hasPlaybackInfo: !!playbackInfo,
+    playbackInfoMode: playbackInfo?.mode,
+    playbackInfoTitle: playbackInfo?.title,
+    playbackInfoValue: playbackInfo?.value
+  });
+
+  if (!device || !device.current) {
+    infoEl.innerHTML = '';
+    if (progressContainer) progressContainer.style.display = 'none';
+    updatePreviewControlButtons();
+    return;
+  }
+
+  // КРИТИЧНО: Для стримов всегда показываем информацию, даже если buildPreviewPlaybackInfo вернул null
+  if (device.current.type === 'streaming' && !playbackInfo) {
+    const { displayName } = resolveFileDisplayData(device.device_id, device.current.file);
+    const protocolLabel = device.current.streamProtocol ? device.current.streamProtocol.toUpperCase() : 'онлайн';
+    const safeName = escapeHtml(truncateText(displayName, 50)) || 'Стрим';
+    infoEl.innerHTML = `
+      <div class="meta-line">
+        <span class="meta-title">${safeName}</span>
+        <span class="meta-value">Стрим (${protocolLabel})</span>
+      </div>
+    `;
+    if (progressContainer) progressContainer.style.display = 'none';
+    updatePreviewControlButtons();
+    return;
+  }
+
+  if (!playbackInfo) {
     infoEl.innerHTML = '';
     if (progressContainer) progressContainer.style.display = 'none';
     updatePreviewControlButtons();
@@ -1919,7 +2063,8 @@ function updatePlaybackInfoUI() {
       playbackInfo.mode === 'video' &&
       playbackInfo.progress &&
       playbackInfo.progress.duration &&
-      playbackInfo.progress.duration >= 600
+      playbackInfo.progress.duration > 0 &&
+      playbackInfo.progress.durationKnownFromStart === true
     ) {
       if (!isVideoSeeking) {
         progressBar.value = playbackInfo.progress.percent ?? 0;
@@ -1948,7 +2093,17 @@ function refreshTvTilePlaybackInfo(deviceId) {
   const volumeRow = actualTile.querySelector('.tvTile-volumeRow');
   if (!volumeRow) return;
 
-  const playbackInfo = buildPreviewPlaybackInfo(devices.find(d => d.device_id === deviceId));
+  const device = devices.find(d => d.device_id === deviceId);
+  if (!device || !device.current) {
+    const infoEl = volumeRow.querySelector('.tvTile-previewInfo');
+    if (infoEl) {
+      infoEl.classList.add('is-empty');
+      infoEl.innerHTML = '';
+    }
+    return;
+  }
+
+  const playbackInfo = buildPreviewPlaybackInfo(device);
   let infoEl = volumeRow.querySelector('.tvTile-previewInfo');
   const volumeEl = volumeRow.querySelector('.tvTile-volume');
 
@@ -1960,6 +2115,26 @@ function refreshTvTilePlaybackInfo(deviceId) {
     } else {
       volumeRow.appendChild(infoEl);
     }
+  }
+
+  // КРИТИЧНО: Для стримов всегда показываем информацию, даже если buildPreviewPlaybackInfo вернул null
+  if (device.current.type === 'streaming' && !playbackInfo) {
+    const { displayName } = resolveFileDisplayData(device.device_id, device.current.file);
+    const protocolLabel = device.current.streamProtocol ? device.current.streamProtocol.toUpperCase() : 'онлайн';
+    const safeName = escapeHtml(truncateText(displayName, 50)) || 'Стрим';
+    infoEl.classList.remove('is-empty');
+    infoEl.innerHTML = getPlaybackInfoInnerHtml({
+      title: safeName,
+      value: `Стрим (${protocolLabel})`,
+      mode: 'streaming',
+      progress: null
+    });
+    const indicator = actualTile.querySelector('.tvTile-status');
+    if (indicator) {
+      indicator.setAttribute('title', `Стрим (${protocolLabel})`);
+      indicator.setAttribute('aria-label', `Стрим (${protocolLabel})`);
+    }
+    return;
   }
 
   if (!playbackInfo) {
@@ -1983,7 +2158,57 @@ socket.on('player/progress', ({ device_id, type, file, currentTime, duration, pa
   
   // Для видео - сохраняем прогресс воспроизведения
   if (type === 'video' && file) {
-    playbackProgressByDevice.set(device_id, { file, currentTime: Number(currentTime)||0, duration: Number(duration)||0 });
+    const existingProg = playbackProgressByDevice.get(device_id);
+    const numDuration = Number(duration) || 0;
+    const numCurrentTime = Number(currentTime) || 0;
+    
+    // КРИТИЧНО: Определяем, был ли duration известен с самого начала
+    let durationKnownFromStart = false;
+    
+    // Проверяем, тот же ли это файл
+    if (existingProg && existingProg.file === file) {
+      // Это продолжение того же файла - сохраняем флаг
+      durationKnownFromStart = existingProg.durationKnownFromStart || false;
+      
+      // Если duration был 0 и стал > 0 - значит он стал известен позже
+      if (existingProg.duration === 0 && numDuration > 0) {
+        durationKnownFromStart = false;
+      }
+      
+      // Если duration был > 0 с самого начала - устанавливаем флаг
+      if (existingProg.duration > 0 && durationKnownFromStart === false) {
+        // Проверяем, был ли это первый прогресс (currentTime близко к 0)
+        if (numCurrentTime <= 2 && existingProg.currentTime <= 2) {
+          durationKnownFromStart = true;
+        }
+      }
+    } else {
+      // Новый файл или файл изменился - сбрасываем старый прогресс
+      if (existingProg && existingProg.file !== file) {
+        playbackProgressByDevice.delete(device_id);
+      }
+      
+      // Новый файл - проверяем, известен ли duration с самого начала
+      // Если duration > 0 при currentTime близком к 0 - значит известен с начала
+      durationKnownFromStart = (numDuration > 0 && numCurrentTime <= 2);
+    }
+    
+    playbackProgressByDevice.set(device_id, { 
+      file, 
+      currentTime: numCurrentTime, 
+      duration: numDuration,
+      durationKnownFromStart
+    });
+    
+    refreshTvTilePlaybackInfo(device_id);
+    if (device_id === currentDevice) {
+      updatePlaybackInfoUI();
+    }
+    return;
+  }
+  
+  // Для стримов - обновляем UI (стримы не имеют прогресса, но нужно показать информацию)
+  if (type === 'streaming' && file) {
     refreshTvTilePlaybackInfo(device_id);
     if (device_id === currentDevice) {
       updatePlaybackInfoUI();
@@ -2174,8 +2399,9 @@ if (videoProgressBar) {
       position: targetTime 
     });
     
+    // Обновляем локальный прогресс только если файл совпадает
     const prog = playbackProgressByDevice.get(currentDevice);
-    if (prog) {
+    if (prog && prog.file === file) {
       prog.currentTime = targetTime;
       playbackProgressByDevice.set(currentDevice, prog);
       updatePlaybackInfoUI();
@@ -2410,6 +2636,22 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
     devices = newDevices;
     updateDevicesCount();
     renderTVList();
+    
+    // КРИТИЧНО: После renderTVList обновляем UI для всех устройств, которые воспроизводят стримы
+    // Это гарантирует, что информация о стримах отображается на карточках устройств
+    devices.forEach(d => {
+      if (d.current && d.current.type === 'streaming') {
+        refreshTvTilePlaybackInfo(d.device_id);
+        if (d.device_id === currentDevice) {
+          console.log('[onPreviewRefresh] Updating UI for current streaming device after renderTVList', {
+            deviceId: d.device_id,
+            file: d.current.file,
+            streamProtocol: d.current.streamProtocol
+          });
+          updatePlaybackInfoUI();
+        }
+      }
+    });
   } catch (err) {
     console.error('Не удалось обновить устройства:', err);
     return;
@@ -2440,6 +2682,21 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
     file: device.current.file,
     page: Number(device.current.page) || 1,
   });
+
+  // КРИТИЧНО: Обновляем UI для стримов (как для видео)
+  // Это должно происходить сразу после обновления device.current из сервера
+  if (device.current && device.current.type === 'streaming') {
+    console.log('[onPreviewRefresh] Streaming detected, updating UI', {
+      deviceId: device_id,
+      file: device.current.file,
+      streamProtocol: device.current.streamProtocol,
+      streamUrl: device.current.streamUrl
+    });
+    refreshTvTilePlaybackInfo(device_id);
+    if (device_id === currentDevice) {
+      updatePlaybackInfoUI();
+    }
+  }
 
   // Синхронизация плейлиста с состоянием устройства с сервера
   if (device.current && device.current.type === 'folder' && device.current.playlistActive) {
