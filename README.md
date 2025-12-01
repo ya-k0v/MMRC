@@ -84,9 +84,17 @@ sudo systemctl start videocontrol
 
 ## 📚 Документация
 
+### Основная документация
 - `README.md` — обзор, архитектура и возможности
 - `QUICK-START.md` — пошаговая установка и подготовка окружения
 - `docs/MANUAL.md` — эксплуатация, мониторинг, бэкапы и сценарии устранения неполадок
+
+### Панели управления
+- `public/ADMIN_PANEL_README.md` — подробное описание админ-панели
+- `public/SPEAKER_PANEL_README.md` — подробное описание спикер-панели
+- `public/hero/README.md` — подробное описание Hero-модуля (картотека героев)
+
+### Клиенты
 - `clients/android-mediaplayer/README.md` + `QUICK_SETUP.md` — Android/ADB инструкции
 - `clients/mpv/README.md` — MPV‑клиент для Linux‑плееров
 

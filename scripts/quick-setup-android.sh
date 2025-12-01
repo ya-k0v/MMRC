@@ -1,24 +1,76 @@
 #!/bin/bash
-
 # ========================================
-# VideoControl Android Quick Setup
+# VideoControl Android Quick Setup Script
 # ========================================
-# Автоматическая установка и настройка Android устройства
-# 
-# Использование:
+# Автоматическая установка и настройка Android устройства для работы 24/7
+#
+# НАЗНАЧЕНИЕ:
+#   Полная настройка Android устройства для работы с VideoControl:
+#   - Установка APK приложения
+#   - Настройка Server URL и Device ID
+#   - Отключение оптимизации батареи
+#   - Настройка автозапуска при загрузке
+#   - Отключение таймаута экрана
+#   - Настройка для работы 24/7
+#
+# ИСПОЛЬЗОВАНИЕ:
 #   ./quick-setup-android.sh <device_ip:port> <server_url> <device_id>
 #
-# Пример:
+# ПАРАМЕТРЫ:
+#   device_ip:port  - IP адрес и порт устройства (например: 192.168.11.57:5555)
+#   server_url      - URL сервера VideoControl (например: http://192.168.11.1)
+#   device_id       - Уникальный ID устройства (например: ATV001, Living_Room)
+#
+# ПРИМЕРЫ:
+#   # Базовый пример
 #   ./quick-setup-android.sh 192.168.11.57:5555 http://192.168.11.1 ATV001
 #
-# Что делает скрипт:
-#   ✅ Устанавливает APK
-#   ✅ Настраивает Server URL и Device ID
-#   ✅ Отключает оптимизацию батареи
-#   ✅ Настраивает автозапуск при загрузке
-#   ✅ Отключает таймаут экрана
-#   ✅ Добавляет в whitelist
-#   ✅ Запускает приложение
+#   # С портом сервера
+#   ./quick-setup-android.sh 10.0.0.100:5555 http://10.0.0.1:3000 Living_Room
+#
+# ТРЕБОВАНИЯ:
+#   - ADB установлен и доступен в PATH
+#   - Устройство подключено к сети
+#   - ADB debugging включен в настройках устройства
+#   - APK файл (VCMplayer-v*.apk) в корне проекта или на уровень выше
+#
+# ЧТО ДЕЛАЕТ СКРИПТ:
+#   1. Подключение к устройству через ADB
+#   2. Получение информации об устройстве (Android версия, производитель)
+#   3. Удаление старой версии приложения (если есть)
+#   4. Установка APK
+#   5. Настройка Server URL и Device ID через SharedPreferences
+#   6. Отключение оптимизации батареи (Doze whitelist, RUN_IN_BACKGROUND)
+#   7. Настройка экрана (отключение таймаута, Stay Awake, яркость 100%)
+#   8. Проверка разрешений (RECEIVE_BOOT_COMPLETED, WAKE_LOCK, INTERNET)
+#   9. Производитель-специфичные настройки (Xiaomi, Samsung, Huawei)
+#   10. Запуск приложения
+#
+# ПРОИЗВОДИТЕЛЬ-СПЕЦИФИЧНЫЕ НАСТРОЙКИ:
+#   Xiaomi/Mi TV:
+#     - Требуются ручные настройки: Settings → Apps → Autostart: ON
+#   Samsung:
+#     - Требуются ручные настройки: Settings → Apps → Battery → Unrestricted
+#   Huawei/Honor:
+#     - Требуются ручные настройки: Settings → Battery → App launch → Auto-launch: ON
+#   Остальные (Sony/TCL/Philips/Generic):
+#     - Настройки применяются автоматически
+#
+# ПОСЛЕ УСТАНОВКИ:
+#   - Приложение запущено и работает
+#   - Устройство должно появиться в админ-панели
+#   - Для проверки автозапуска: adb -s <device> reboot
+#
+# ПРОВЕРКА:
+#   # Проверка процесса
+#   adb -s <device> shell "ps -A | grep videocontrol"
+#
+#   # Просмотр логов
+#   adb -s <device> logcat | grep -E 'VCMedia|VideoControl'
+#
+#   # Проверка настроек
+#   adb -s <device> shell "run-as com.videocontrol.mediaplayer cat shared_prefs/VCMediaPlayerSettings.xml"
+#
 # ========================================
 
 set -e  # Выход при ошибке

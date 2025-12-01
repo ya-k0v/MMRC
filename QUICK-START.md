@@ -84,10 +84,29 @@ node server.js
 
 ## 🎯 После установки
 
-- 🌐 Admin Panel: `http://YOUR_SERVER_IP/`
-- 🎤 Speaker Panel: `http://YOUR_SERVER_IP/speaker.html`
-- 🎮 Player: `http://YOUR_SERVER_IP/player-videojs.html?device_id=DEVICE_ID`
-- 👤 По умолчанию: `admin / admin123` (обязательно сменить)
+### Веб-интерфейсы
+
+- 🌐 **Admin Panel** (Админ-панель): `http://YOUR_SERVER_IP/` или `http://YOUR_SERVER_IP/admin.html`
+  - Управление устройствами, файлами, пользователями
+  - Загрузка контента, дедупликация, настройки системы
+  - Подробнее: `public/ADMIN_PANEL_README.md`
+
+- 🎤 **Speaker Panel** (Спикер-панель): `http://YOUR_SERVER_IP/speaker.html`
+  - Управление воспроизведением контента в реальном времени
+  - Переключение слайдов PDF/PPTX, управление громкостью
+  - Подробнее: `public/SPEAKER_PANEL_README.md`
+
+- 🎖️ **Hero Panel** (Картотека героев): `http://YOUR_SERVER_IP/hero/index.html`
+  - Публичная панель для поиска и отображения биографий
+  - Админ-панель: `http://YOUR_SERVER_IP/hero/admin.html`
+  - Подробнее: `public/hero/README.md`
+
+- 🎮 **Player** (Тестовый плеер): `http://YOUR_SERVER_IP/player-videojs.html?device_id=DEVICE_ID`
+  - Тестовый веб-плеер для проверки воспроизведения
+
+### Учетные данные
+
+- 👤 **По умолчанию:** `admin / admin123` (⚠️ **ОБЯЗАТЕЛЬНО СМЕНИТЬ** после первого входа!)
 - 📂 Данные: `/vid/videocontrol/data/*` или `/mnt/videocontrol-data/*` (если DATA_ROOT задан)
   - `data/content/` — контент устройств
   - `data/streams/` — HLS рестрим

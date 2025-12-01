@@ -1,8 +1,65 @@
 #!/bin/bash
-# VideoControl - Quick Installation Script (One Command Setup)
+# ========================================
+# VideoControl v3.0.0 - Quick Installation Script
+# ========================================
 # Полная установка системы на чистый Ubuntu/Debian сервер
+#
+# НАЗНАЧЕНИЕ:
+#   Автоматическая установка VideoControl с нуля:
+#   - Установка системных зависимостей (Node.js, FFmpeg, LibreOffice, Nginx)
+#   - Клонирование репозитория
+#   - Настройка хранилища данных (local/external/external_fstab)
+#   - Настройка Nginx (reverse proxy с geo-блокировкой)
+#   - Создание systemd сервиса
+#   - Оптимизация сети (TCP буферы 16MB)
+#
+# ИСПОЛЬЗОВАНИЕ:
+#   # Интерактивная установка
+#   sudo bash scripts/quick-install.sh /vid/videocontrol
+#
+#   # Non-interactive (production)
+#   AUTO_CONFIRM=1 STORAGE_MODE=external DATA_ROOT=/mnt/videocontrol-data \
+#     sudo bash scripts/quick-install.sh /vid/videocontrol
+#
+# ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ:
+#   AUTO_CONFIRM=1          - Отключает все вопросы "y/n" (для автоматической установки)
+#   STORAGE_MODE            - Режим хранения: local | external | external_fstab
+#   DATA_ROOT               - Корневая папка данных (по умолчанию: /mnt/videocontrol-data)
+#   CONTENT_DIR             - Legacy: путь к контенту (используйте DATA_ROOT)
+#   CONTENT_SOURCE          - Устройство/UUID для /etc/fstab (только external_fstab)
+#   CONTENT_FSTAB_OPTS      - Параметры монтирования (по умолчанию: "ext4 defaults,noatime 0 2")
+#
+# РЕЖИМЫ ХРАНЕНИЯ:
+#   local          - Все данные в $INSTALL_DIR/data/* (content, streams, converted, logs, temp)
+#   external       - Все данные в $DATA_ROOT/* (требует существующую папку)
+#   external_fstab - Внешний диск монтируется в $DATA_ROOT через /etc/fstab
+#
+# ЧТО УСТАНАВЛИВАЕТСЯ:
+#   - Node.js 20.x LTS (Nodesource)
+#   - FFmpeg + FFprobe (обработка видео)
+#   - LibreOffice (конвертация PDF/PPTX)
+#   - ImageMagick (рендер изображений)
+#   - SQLite3 (база данных)
+#   - Nginx (reverse proxy)
+#   - build-essential, curl, wget, git, unzip
+#
+# ЧТО СОЗДАЁТСЯ:
+#   - Структура папок: $INSTALL_DIR/{config, data/*, public, src, ...}
+#   - База данных: $INSTALL_DIR/config/main.db (admin/admin123)
+#   - Настройки: $INSTALL_DIR/config/app-settings.json
+#   - Nginx конфиг: /etc/nginx/sites-available/videocontrol
+#   - Systemd сервис: /etc/systemd/system/videocontrol.service
+#   - Сетевые настройки: /etc/sysctl.d/99-videocontrol.conf
+#
+# ПОСЛЕ УСТАНОВКИ:
+#   - Admin Panel: http://YOUR_SERVER_IP/
+#   - Speaker Panel: http://YOUR_SERVER_IP/speaker.html
+#   - Hero Panel: http://YOUR_SERVER_IP/hero/index.html
+#   - По умолчанию: admin / admin123 (ОБЯЗАТЕЛЬНО СМЕНИТЬ!)
+#
+# ========================================
 
-set -e
+set -e  # Выход при ошибке
 
 # AUTO_CONFIRM=1 отключает все интерактивные вопросы
 AUTO_CONFIRM="${AUTO_CONFIRM:-0}"

@@ -1,8 +1,58 @@
 #!/bin/bash
-# Video Control - Server Installation Script
-# Установка сервера на чистую систему (Ubuntu/Debian/CentOS/RHEL)
+# ========================================
+# VideoControl Server Installation Script
+# ========================================
+# Упрощённая установка сервера без Nginx (для dev окружений)
+#
+# НАЗНАЧЕНИЕ:
+#   Установка только серверной части VideoControl без Nginx:
+#   - Установка системных зависимостей (Node.js, FFmpeg, LibreOffice)
+#   - Установка npm пакетов
+#   - Создание структуры папок
+#   - Инициализация базы данных
+#   - Создание systemd сервиса
+#
+# ОТЛИЧИЕ ОТ quick-install.sh:
+#   - НЕ устанавливает Nginx
+#   - НЕ настраивает reverse proxy
+#   - НЕ применяет сетевые оптимизации
+#   - Подходит для dev окружений или когда Nginx уже настроен отдельно
+#
+# ИСПОЛЬЗОВАНИЕ:
+#   # Интерактивная установка
+#   sudo bash scripts/install-server.sh
+#
+#   # Non-interactive
+#   AUTO_CONFIRM=1 sudo bash scripts/install-server.sh
+#
+# ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ:
+#   AUTO_CONFIRM=1  - Отключает все вопросы "y/n"
+#
+# ПОДДЕРЖИВАЕМЫЕ ОС:
+#   - Ubuntu/Debian (apt-get)
+#   - CentOS/RHEL (yum)
+#
+# ЧТО УСТАНАВЛИВАЕТСЯ:
+#   - Node.js 20.x LTS (если не установлен)
+#   - FFmpeg + FFprobe
+#   - LibreOffice
+#   - ImageMagick
+#   - SQLite3
+#   - npm пакеты из package.json
+#
+# ЧТО СОЗДАЁТСЯ:
+#   - Структура папок: config/, data/*, public/, src/
+#   - База данных: config/main.db (admin/admin123)
+#   - Systemd сервис: /etc/systemd/system/videocontrol.service
+#
+# ПОСЛЕ УСТАНОВКИ:
+#   - Сервер доступен на http://localhost:3000
+#   - Для production используйте Nginx как reverse proxy
+#   - По умолчанию: admin / admin123 (ОБЯЗАТЕЛЬНО СМЕНИТЬ!)
+#
+# ========================================
 
-set -e
+set -e  # Выход при ошибке
 
 AUTO_CONFIRM="${AUTO_CONFIRM:-0}"
 
