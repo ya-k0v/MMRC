@@ -104,7 +104,7 @@ cd /vid/videocontrol
    ./gradlew assembleDebug
    
    # APK будет в: app/build/outputs/apk/debug/app-debug.apk
-   # Скопируйте его в корень проекта как VCMplayer-v2.8.0.apk
+   # Скопируйте его в корень проекта как VCMplayer-v3.0.0.apk
    ```
 
 ---
@@ -254,7 +254,7 @@ $ ./scripts/quick-setup-android.sh 192.168.11.57:5555 http://192.168.11.1 ATV001
    📱 Устройство: 192.168.11.57:5555
    🌐 Сервер: http://192.168.11.1
    🆔 Device ID: ATV001
-   📦 APK: VCMplayer-v2.8.0.apk
+   📦 APK: VCMplayer-v3.0.0.apk
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1️⃣ Подключение к устройству

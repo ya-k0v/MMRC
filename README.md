@@ -39,11 +39,14 @@ node server.js
 
 ### Что нового (3.0.0)
 
+- 🔄 **Дедупликация стримов** — один FFmpeg процесс обслуживает все устройства, использующие один и тот же исходный URL стрима. Стрим работает, пока хотя бы одно устройство его использует.
+- 📁 **Динамические пути данных** — все пути данных (content, streams, converted, logs, temp) определяются динамически на основе единой настройки `contentRoot` в админ-панели. Автоматическое создание поддиректорий.
+- 🧹 **Очистка несуществующих файлов** — автоматическая проверка файлов в БД и удаление записей для файлов, которых нет на диске. API endpoint для ручной очистки.
+- ⚡ **Улучшенная логика idle timeout** — стримы останавливаются только если все устройства закрыли стрим и прошло 3 минуты без активности.
 - 🧭 **Hero-модуль** — отдельный фронтенд в `public/hero/` (`index.html`, `admin.html`, `js/`) с доступом по `/hero/index.html` и `/hero/admin.html`, общей базой `config/hero/heroes.db` и медиагалереей.
 - 🗃️ **Автоматические миграции heroes.db** — база переносится в `config/hero/heroes.db`, создаётся/синхронизируется на старте, доступен API `/api/hero/export-database`.
 - ⚡ **Quick-install 2.0** — интерактивный выбор хранилища, автоматический sysctl-тюнинг и готовый systemd unit с geo-блоком в Nginx.
-- 📚 **Обновлённая документация** — переписан `QUICK-START.md`, мануалы и скрипты описывают новые режимы и health/metrics флоу.
-- 📱 **Android APK v2.8.0** — свежая сборка плеера в корне репозитория, автоматическая настройка через `scripts/quick-setup-android.sh`.
+- 📱 **Android APK v3.0.0** — свежая сборка плеера в корне репозитория, автоматическая настройка через `scripts/quick-setup-android.sh`.
 
 ### Быстрая установка (production, с Nginx и systemd)
 
@@ -108,8 +111,8 @@ cd scripts
 **Вручную:**
 
 ```bash
-# 1. Установить актуальный APK (v2.8.0)
-adb install -r VCMplayer-v2.8.0.apk
+# 1. Установить актуальный APK (v3.0.0)
+adb install -r VCMplayer-v3.0.0.apk
 
 # 2. Запустить
 adb shell am start -n com.videocontrol.mediaplayer/.MainActivity
@@ -314,7 +317,7 @@ npm install
 sudo systemctl start videocontrol
 
 # 5. Обновить Android APK
-adb install -r VCMplayer-v2.8.0.apk
+adb install -r VCMplayer-v3.0.0.apk
 ```
 
 ---
@@ -329,4 +332,4 @@ MIT License - свободное использование
 
 **ya-k0v** - [GitHub](https://github.com/ya-k0v/VideoControl)
 
-**Версия:** 2.8.0
+**Версия:** 3.0.0

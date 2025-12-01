@@ -1,4 +1,4 @@
-# 🚀 VideoControl 2.8.0 — Быстрая установка
+# 🚀 VideoControl 3.0.0 — Быстрая установка
 
 ## ⚡ Установка одной командой
 
@@ -257,9 +257,9 @@ sudo chmod 755 /vid/videocontrol/temp/nginx_upload/
 ## 📱 Клиенты
 
 - **Android TV / Media Player**
-  - APK: `VCMplayer-v2.8.0.apk` (и предыдущие версии в корне репозитория)
+  - APK: `VCMplayer-v3.0.0.apk` (и предыдущие версии в корне репозитория)
   - Автонастройка через `scripts/quick-setup-android.sh` (ADB, установка APK, device ID, отключение энергосбережения)
-  - Вручную: `adb install -r VCMplayer-v2.8.0.apk`, затем прописать `Server URL` и `Device ID`
+  - Вручную: `adb install -r VCMplayer-v3.0.0.apk`, затем прописать `Server URL` и `Device ID`
 - **MPV Player (Linux):** `cd clients/mpv && sudo bash quick-install.sh`
 - **Hero дисплеи:** `public/hero/index.html`, `public/hero/admin.html`
 - **Браузер:** `http://SERVER_IP/player-videojs.html?device_id=YOUR_ID`
