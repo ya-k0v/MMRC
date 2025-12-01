@@ -23,6 +23,11 @@ config/heroes.db-shm
 config/heroes.db.backup
 config/heroes.db.backup.*
 config/heroes_backup_*.db
+config/hero/heroes.db
+config/hero/heroes.db-wal
+config/hero/heroes.db-shm
+config/hero/heroes.db.backup
+config/hero/heroes.db.backup.*
 config/biographies.db
 config/biographies.db-shm
 config/biographies.db-wal
@@ -59,6 +64,7 @@ Thumbs.db
 *.tar.gz
 *.zip
 *.apk
+!VCMplayer-v3.0.0.apk
 !VCMplayer-v2.8.0.apk
 VCMplayer-v2.5.4.apk
 VCMplayer-v2.7.0.apk
