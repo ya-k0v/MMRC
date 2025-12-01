@@ -501,14 +501,34 @@ async function loadSettingsContent(adminFetch) {
         </button>
       </div>
     </div>
+    <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm);">
+      <div style="margin-bottom:var(--space-md); font-weight:600;">Очистка базы данных</div>
+      <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
+        <div class="meta" style="color:var(--text-secondary); line-height:1.4;">
+          Проверьте соответствие файлов в базе данных и на диске. Удалите записи о несуществующих файлах.
+        </div>
+        <div id="cleanupStatus" class="meta" style="min-height:1.2em;"></div>
+        <div style="display:flex; gap:var(--space-sm);">
+          <button id="checkFilesBtn" class="secondary" style="flex:1;">
+            🔍 Проверить файлы
+          </button>
+          <button id="cleanupFilesBtn" class="danger" style="flex:1;" disabled>
+            🗑️ Очистить БД
+          </button>
+        </div>
+      </div>
+    </div>
   `;
   
   const inputEl = document.getElementById('contentRootInput');
   const saveBtn = document.getElementById('contentRootSaveBtn');
   const statusEl = document.getElementById('contentRootStatus');
   const exportBtn = document.getElementById('exportDatabaseBtn');
+  const checkFilesBtn = document.getElementById('checkFilesBtn');
+  const cleanupFilesBtn = document.getElementById('cleanupFilesBtn');
+  const cleanupStatusEl = document.getElementById('cleanupStatus');
   
-  if (!inputEl || !saveBtn || !statusEl || !exportBtn) return;
+  if (!inputEl || !saveBtn || !statusEl || !exportBtn || !checkFilesBtn || !cleanupFilesBtn || !cleanupStatusEl) return;
   
   let lastSavedValue = currentContentRoot;
   inputEl.value = currentContentRoot;
@@ -601,5 +621,101 @@ async function loadSettingsContent(adminFetch) {
         exportBtn.textContent = 'Экспорт базы данных';
       }
     };
+
+  // Обработчики для очистки БД
+  let lastCheckResult = null;
+
+  checkFilesBtn.onclick = async () => {
+    checkFilesBtn.disabled = true;
+    checkFilesBtn.textContent = 'Проверка...';
+    cleanupStatusEl.textContent = '';
+    cleanupStatusEl.style.color = 'var(--text-secondary)';
+    cleanupFilesBtn.disabled = true;
+
+    try {
+      const response = await adminFetch('/api/admin/database/check-files');
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Ошибка проверки' }));
+        throw new Error(error.error || 'Ошибка проверки');
+      }
+
+      const result = await response.json();
+      lastCheckResult = result;
+
+      let statusText = `Проверено: ${result.checked} файлов. `;
+      if (result.missingOnDisk > 0) {
+        statusText += `Отсутствует на диске: ${result.missingOnDisk}. `;
+        cleanupFilesBtn.disabled = false;
+      }
+      if (result.missingInDB > 0) {
+        statusText += `Отсутствует в БД: ${result.missingInDB}.`;
+      }
+      
+      if (result.missingOnDisk === 0 && result.missingInDB === 0) {
+        statusText = '✅ Все файлы на месте. Проблем не обнаружено.';
+        cleanupStatusEl.style.color = 'var(--success, #22c55e)';
+      } else if (result.missingOnDisk > 0) {
+        cleanupStatusEl.style.color = 'var(--warning, #f59e0b)';
+      } else {
+        cleanupStatusEl.style.color = 'var(--text-secondary)';
+      }
+
+      cleanupStatusEl.textContent = statusText;
+    } catch (err) {
+      cleanupStatusEl.textContent = `Ошибка: ${err.message}`;
+      cleanupStatusEl.style.color = 'var(--danger)';
+    } finally {
+      checkFilesBtn.disabled = false;
+      checkFilesBtn.textContent = '🔍 Проверить файлы';
+    }
+  };
+
+  cleanupFilesBtn.onclick = async () => {
+    if (!lastCheckResult || lastCheckResult.missingOnDisk === 0) {
+      alert('Сначала выполните проверку файлов');
+      return;
+    }
+
+    if (!confirm(`Удалить ${lastCheckResult.missingOnDisk} записей о несуществующих файлах из базы данных?`)) {
+      return;
+    }
+
+    cleanupFilesBtn.disabled = true;
+    cleanupFilesBtn.textContent = 'Очистка...';
+    cleanupStatusEl.textContent = 'Удаление записей...';
+    cleanupStatusEl.style.color = 'var(--text-secondary)';
+
+    try {
+      const response = await adminFetch('/api/admin/database/cleanup-missing-files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId: null }) // null = все устройства
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Ошибка очистки' }));
+        throw new Error(error.error || 'Ошибка очистки');
+      }
+
+      const result = await response.json();
+      
+      cleanupStatusEl.textContent = `✅ Удалено ${result.deleted} записей из базы данных.`;
+      cleanupStatusEl.style.color = 'var(--success, #22c55e)';
+      cleanupFilesBtn.disabled = true;
+      lastCheckResult = null;
+
+      // Обновляем данные после очистки
+      setTimeout(() => {
+        cleanupStatusEl.textContent = '';
+      }, 5000);
+    } catch (err) {
+      cleanupStatusEl.textContent = `Ошибка: ${err.message}`;
+      cleanupStatusEl.style.color = 'var(--danger)';
+      cleanupFilesBtn.disabled = false;
+    } finally {
+      cleanupFilesBtn.textContent = '🗑️ Очистить БД';
+    }
+  };
 }
 

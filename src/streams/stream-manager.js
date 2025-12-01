@@ -10,6 +10,9 @@ const execAsync = promisify(exec);
 
 const STREAM_KEY_SEPARATOR = '::';
 
+// КРИТИЧНО: Максимальный размер stderr буфера для предотвращения утечек памяти
+const MAX_STDERR_BUFFER_SIZE = 10 * 1024; // 10KB
+
 // КРИТИЧНО: outputRoot теперь вычисляется динамически из настроек БД
 // Используем функцию getStreamsOutputDir() вместо константы
 const DEFAULT_OPTIONS = {
@@ -30,6 +33,8 @@ const DEFAULT_OPTIONS = {
   playlistMaxAge: Number(process.env.STREAM_PLAYLIST_MAX_AGE || 30000), // 30 секунд
   sourceCheckEnabled: process.env.STREAM_SOURCE_CHECK_ENABLED !== 'false',
   sourceCheckTimeout: Number(process.env.STREAM_SOURCE_CHECK_TIMEOUT || 5000),
+  maxJobs: Number(process.env.STREAM_MAX_JOBS || 100), // Максимальное количество одновременных стримов
+  hungProcessTimeout: Number(process.env.STREAM_HUNG_PROCESS_TIMEOUT || 60000), // 60 секунд без активности = зависший процесс
 };
 
 function sanitizePathFragment(value = '') {
@@ -51,6 +56,8 @@ class StreamManager extends EventEmitter {
     this.jobs = new Map(); // Map<deviceId::safeName, job>
     this.urlToJobMap = new Map(); // Map<streamUrl, {jobKey, devices: Set<deviceId::safeName>}>
     this.lastAccessTime = new Map(); // Отслеживание последнего доступа к стриму
+    // КРИТИЧНО: Map для отслеживания pending операций по URL (предотвращение race conditions)
+    this.urlToJobMapPending = new Map(); // Map<streamUrl, Promise<Job>>
     // КРИТИЧНО: idleTimeout для автоматической остановки неиспользуемых стримов
     // Стрим работает, пока его смотрят (плеер запрашивает сегменты)
     // Если стрим не используется (нет запросов сегментов) - останавливается через 3 минуты
@@ -61,6 +68,9 @@ class StreamManager extends EventEmitter {
     this.idleCleanupInterval = null;
     this.segmentCleanupInterval = null;
     this.circuitBreakerCheckInterval = null;
+    
+    // КРИТИЧНО: Флаг остановки для предотвращения повторного запуска
+    this.stopped = false;
     
     // КРИТИЧНО: outputRoot теперь вычисляется динамически из настроек БД
     // Обновляем его при инициализации, чтобы использовать актуальный путь
@@ -91,10 +101,62 @@ class StreamManager extends EventEmitter {
   _startIdleCleanup() {
     this.idleCleanupInterval = setInterval(() => {
       const now = Date.now();
+      
+      // КРИТИЧНО: Очищаем "сиротские" записи в lastAccessTime для несуществующих jobs
+      const orphanedKeys = [];
+      for (const [key] of this.lastAccessTime.entries()) {
+        if (!this.jobs.has(key)) {
+          orphanedKeys.push(key);
+        }
+      }
+      if (orphanedKeys.length > 0) {
+        orphanedKeys.forEach(key => {
+          this.lastAccessTime.delete(key);
+        });
+        logger.debug('[StreamManager] Cleaned up orphaned lastAccessTime entries', {
+          count: orphanedKeys.length
+        });
+      }
+      
       for (const [key, job] of this.jobs.entries()) {
         // КРИТИЧНО: Пропускаем shared jobs - они обрабатываются через основной job
         if (job.isShared) {
           continue;
+        }
+        
+        // КРИТИЧНО: Проверяем зависшие процессы через heartbeat
+        if (job.status === 'running' && job.process && !job.process.killed) {
+          // Проверяем статус процесса через систему
+          const isProcessAlive = this._checkProcessAlive(job.process);
+          if (!isProcessAlive) {
+            logger.warn('[StreamManager] 🔴 FFmpeg process is dead but not detected', {
+              deviceId: job.deviceId,
+              safeName: job.safeName,
+              pid: job.process.pid
+            });
+            // Процесс мертв, но не был обнаружен - перезапускаем
+            this._restartHungProcess(job);
+            continue;
+          }
+          
+          // Проверяем heartbeat для активных процессов
+          if (job.lastSegmentWrite) {
+            const timeSinceLastWrite = now - job.lastSegmentWrite;
+            if (timeSinceLastWrite > this.options.hungProcessTimeout) {
+              logger.warn('[StreamManager] 🔴 Detected hung FFmpeg process (no heartbeat)', {
+                deviceId: job.deviceId,
+                safeName: job.safeName,
+                timeSinceLastWriteMs: timeSinceLastWrite,
+                timeSinceLastWriteSeconds: Math.round(timeSinceLastWrite / 1000),
+                hungProcessTimeoutMs: this.options.hungProcessTimeout,
+                pid: job.process.pid
+              });
+              
+              // Принудительно перезапускаем зависший процесс
+              this._restartHungProcess(job);
+              continue; // Пропускаем дальнейшую обработку для этого job
+            }
+          }
         }
         
         const lastAccess = this.lastAccessTime.get(key);
@@ -586,7 +648,8 @@ class StreamManager extends EventEmitter {
       lastErrorType: null, // Тип последней ошибки (network, codec, source_ended, unknown)
       startedAt: Date.now(),
       lastPlaylistUpdate: null, // Время последнего обновления плейлиста
-      circuitBreakerOpen: false, // Circuit breaker открыт
+      lastSegmentWrite: null, // КРИТИЧНО: Время последней записи сегмента (heartbeat для детекции зависаний)
+      circuitBreakerState: 'closed', // КРИТИЧНО: Состояние circuit breaker: 'closed' | 'open' | 'halfOpen'
       circuitBreakerOpenTime: null, // Время открытия circuit breaker
       consecutiveFailures: 0 // Количество последовательных неудач
     };
@@ -596,18 +659,26 @@ class StreamManager extends EventEmitter {
       const chunk = data.toString();
       stderrBuffer += chunk;
       
+      // КРИТИЧНО: Ограничиваем размер буфера для предотвращения утечек памяти
+      if (stderrBuffer.length > MAX_STDERR_BUFFER_SIZE) {
+        // Оставляем последние 10KB буфера
+        stderrBuffer = stderrBuffer.substring(stderrBuffer.length - MAX_STDERR_BUFFER_SIZE);
+      }
+      
       // Обновляем статус при первом выводе (FFmpeg начал работу)
       if (job.status === 'starting') {
         job.status = 'running';
         job.lastPlaylistUpdate = Date.now();
         // КРИТИЧНО: При успешном запуске сбрасываем счетчики
         job.consecutiveFailures = 0;
-        if (job.circuitBreakerOpen) {
-          job.circuitBreakerOpen = false;
+        if (job.circuitBreakerState !== 'closed') {
+          const previousState = job.circuitBreakerState;
+          job.circuitBreakerState = 'closed';
           job.circuitBreakerOpenTime = null;
           logger.info('[StreamManager] Circuit breaker closed after successful start', {
             deviceId: job.deviceId,
-            safeName: job.safeName
+            safeName: job.safeName,
+            previousState
           });
         }
         this.emit('stream:running', { deviceId: job.deviceId, safeName: job.safeName });
@@ -621,12 +692,22 @@ class StreamManager extends EventEmitter {
       // КРИТИЧНО: Обновляем время последнего обновления плейлиста при создании сегментов
       // Ищем паттерны создания сегментов в stderr
       if (chunk.includes('Opening') && chunk.includes('.ts')) {
-        job.lastPlaylistUpdate = Date.now();
+        const now = Date.now();
+        job.lastPlaylistUpdate = now;
+        job.lastSegmentWrite = now; // КРИТИЧНО: Heartbeat для детекции зависаний
       }
       
       // Также обновляем при записи сегментов
       if (chunk.includes('segment_') && chunk.includes('.ts')) {
-        job.lastPlaylistUpdate = Date.now();
+        const now = Date.now();
+        job.lastPlaylistUpdate = now;
+        job.lastSegmentWrite = now; // КРИТИЧНО: Heartbeat для детекции зависаний
+      }
+      
+      // КРИТИЧНО: Обновляем heartbeat при любых признаках активности FFmpeg
+      // Паттерны активности: frame=, time=, size=
+      if (chunk.match(/\b(frame|time|size)=/i)) {
+        job.lastSegmentWrite = Date.now();
       }
       
       // Логируем первые сообщения для отладки
@@ -654,6 +735,18 @@ class StreamManager extends EventEmitter {
 
     child.on('exit', (code, signal) => {
       const wasStopping = job.stopping;
+      
+      // КРИТИЧНО: Очищаем обработчики событий процесса для предотвращения утечек памяти
+      try {
+        if (child.stderr) {
+          child.stderr.removeAllListeners('data');
+        }
+        child.removeAllListeners('error');
+        // Не удаляем обработчик 'exit' здесь, так как мы внутри него
+      } catch (err) {
+        logger.debug('[StreamManager] Error removing event listeners', { error: err.message });
+      }
+      
       job.process = null;
       job.status = 'stopped';
       
@@ -710,7 +803,8 @@ class StreamManager extends EventEmitter {
         logger.warn('[StreamManager] Stream restart blocked', {
           deviceId: job.deviceId,
           safeName: job.safeName,
-          reason: job.circuitBreakerOpen ? 'circuit_breaker' : 'max_attempts_reached',
+          reason: job.circuitBreakerState === 'open' ? 'circuit_breaker' : 'max_attempts_reached',
+          circuitBreakerState: job.circuitBreakerState,
           restarts: job.restarts,
           consecutiveFailures: job.consecutiveFailures
         });
@@ -720,7 +814,7 @@ class StreamManager extends EventEmitter {
         this.emit('stream:restart:limit_reached', { 
           deviceId: job.deviceId, 
           safeName: job.safeName,
-          reason: job.circuitBreakerOpen ? 'circuit_breaker' : 'max_attempts'
+          reason: job.circuitBreakerState === 'open' ? 'circuit_breaker' : 'max_attempts'
         });
         return;
       }
@@ -777,6 +871,89 @@ class StreamManager extends EventEmitter {
     return job;
   }
 
+  /**
+   * Принудительно перезапускает зависший FFmpeg процесс
+   * @param {Object} job - Job объект зависшего процесса
+   */
+  async _restartHungProcess(job) {
+    if (!job || !job.process) {
+      logger.warn('[StreamManager] Cannot restart hung process: no process', {
+        deviceId: job?.deviceId,
+        safeName: job?.safeName
+      });
+      return;
+    }
+    
+    const pid = job.process.pid;
+    logger.warn('[StreamManager] 🔴 Force killing hung FFmpeg process', {
+      deviceId: job.deviceId,
+      safeName: job.safeName,
+      pid,
+      lastSegmentWrite: job.lastSegmentWrite
+    });
+    
+    try {
+      // КРИТИЧНО: Очищаем обработчики событий перед убийством процесса
+      if (job.process.stderr) {
+        job.process.stderr.removeAllListeners('data');
+      }
+      job.process.removeAllListeners('error');
+      job.process.removeAllListeners('exit');
+      
+      // Помечаем как останавливаемый, чтобы обработчик exit не пытался перезапустить
+      job.stopping = true;
+      
+      // Принудительно убиваем процесс
+      try {
+        job.process.kill('SIGKILL');
+      } catch (killErr) {
+        logger.error('[StreamManager] Error killing hung process', {
+          deviceId: job.deviceId,
+          safeName: job.safeName,
+          pid,
+          error: killErr.message
+        });
+      }
+      
+      // Небольшая задержка перед очисткой
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Очищаем файлы
+      this._cleanupFolder(job.paths.folderPath);
+      
+      // Удаляем job из Maps
+      this.jobs.delete(job.key);
+      this.lastAccessTime.delete(job.key);
+      
+      // КРИТИЧНО: Сбрасываем счетчики перезапусков для зависших процессов
+      // Это не считается ошибкой, поэтому не увеличиваем consecutiveFailures
+      
+      // Перезапускаем процесс
+      logger.info('[StreamManager] Restarting after hung process kill', {
+        deviceId: job.deviceId,
+        safeName: job.safeName
+      });
+      
+      const meta = {
+        device_id: job.deviceId,
+        safe_name: job.safeName,
+        stream_url: job.sourceUrl,
+        stream_protocol: job.protocol
+      };
+      
+      await this._spawnJob(meta);
+      
+    } catch (err) {
+      logger.error('[StreamManager] Error restarting hung process', {
+        deviceId: job.deviceId,
+        safeName: job.safeName,
+        pid,
+        error: err.message,
+        stack: err.stack
+      });
+    }
+  }
+
   async _restartJob(job) {
     if (!job) return;
     const meta = {
@@ -798,10 +975,89 @@ class StreamManager extends EventEmitter {
       const existingJob = this.jobs.get(job.key);
       if (existingJob) {
         existingJob.consecutiveFailures = 0;
-        existingJob.circuitBreakerOpen = false;
+        existingJob.circuitBreakerState = 'closed';
         existingJob.circuitBreakerOpenTime = null;
       }
     }
+  }
+
+  /**
+   * Проверяет, жив ли процесс (не завершился ли)
+   * @param {ChildProcess} process - Процесс для проверки
+   * @returns {boolean} true если процесс жив
+   */
+  _checkProcessAlive(process) {
+    if (!process || process.killed) {
+      return false;
+    }
+    
+    try {
+      // Проверяем существование процесса через kill(0) - не отправляет сигнал
+      // На Linux также можно проверить /proc/${pid}/stat, но это менее переносимо
+      process.kill(0);
+      return true;
+    } catch (err) {
+      // Если процесс не существует, kill(0) выбросит ошибку
+      // ESRCH = No such process
+      if (err.code === 'ESRCH') {
+        return false;
+      }
+      // Другие ошибки (например, EPERM) считаем как процесс существует
+      return true;
+    }
+  }
+
+  /**
+   * Останавливает самые старые idle стримы при превышении лимита
+   * @param {number} count - Количество стримов для остановки
+   */
+  async _cleanupOldestIdleStreams(count) {
+    const now = Date.now();
+    const candidates = [];
+    
+    // Собираем все не-shared стримы с временем последнего доступа
+    for (const [key, job] of this.jobs.entries()) {
+      if (job.isShared) continue;
+      const lastAccess = this.lastAccessTime.get(key);
+      if (!lastAccess) continue;
+      
+      const idleTime = now - lastAccess;
+      candidates.push({
+        key,
+        job,
+        lastAccess,
+        idleTime
+      });
+    }
+    
+    // Сортируем по времени последнего доступа (самые старые первые)
+    candidates.sort((a, b) => a.lastAccess - b.lastAccess);
+    
+    // Останавливаем первые count стримов
+    let stopped = 0;
+    for (let i = 0; i < Math.min(count, candidates.length); i++) {
+      const candidate = candidates[i];
+      logger.info('[StreamManager] Stopping old idle stream to free up capacity', {
+        deviceId: candidate.job.deviceId,
+        safeName: candidate.job.safeName,
+        idleTimeMs: candidate.idleTime,
+        idleTimeSeconds: Math.round(candidate.idleTime / 1000)
+      });
+      
+      this.stopStream(candidate.job.deviceId, candidate.job.safeName, 'max_jobs_limit');
+      stopped++;
+      
+      // Небольшая задержка между остановками
+      if (i < candidates.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+    
+    logger.info('[StreamManager] Cleaned up old idle streams', {
+      stopped,
+      requested: count,
+      totalCandidates: candidates.length
+    });
   }
 
   syncAll(entries = []) {
@@ -824,6 +1080,16 @@ class StreamManager extends EventEmitter {
 
   async upsertStream(entry) {
     const key = this._jobKey(entry.device_id, entry.safe_name);
+    
+    // КРИТИЧНО: Проверяем лимит на количество стримов для предотвращения утечек памяти
+    if (this.jobs.size >= this.options.maxJobs) {
+      logger.warn('[StreamManager] Max jobs limit reached, stopping oldest idle streams', {
+        currentJobs: this.jobs.size,
+        maxJobs: this.options.maxJobs
+      });
+      await this._cleanupOldestIdleStreams(this.jobs.size - this.options.maxJobs + 1);
+    }
+    
     const existing = this.jobs.get(key);
     
     logger.info('[StreamManager] upsertStream called', {
@@ -835,6 +1101,92 @@ class StreamManager extends EventEmitter {
       existingStatus: existing?.status,
       isShared: existing?.isShared
     });
+    
+    // КРИТИЧНО: Проверяем pending операции для этого URL (предотвращение race conditions)
+    const pendingPromise = this.urlToJobMapPending.get(entry.stream_url);
+    if (pendingPromise) {
+      logger.info('[StreamManager] Waiting for pending operation on URL', {
+        deviceId: entry.device_id,
+        safeName: entry.safe_name,
+        streamUrl: entry.stream_url
+      });
+      
+      try {
+        // Ждем завершения pending операции
+        const pendingJob = await pendingPromise;
+        
+        // Если pending операция завершилась успешно, используем её результат
+        if (pendingJob) {
+          // Проверяем, можем ли мы использовать этот job
+          const pendingUrlEntry = this.urlToJobMap.get(entry.stream_url);
+          if (pendingUrlEntry) {
+            const pendingExistingJob = this.jobs.get(pendingUrlEntry.jobKey);
+            if (pendingExistingJob && pendingExistingJob.process && 
+                !pendingExistingJob.process.killed && pendingExistingJob.status !== 'stopped') {
+              
+              // Если это тот же deviceId+safeName - возвращаем job
+              if (pendingUrlEntry.jobKey === key) {
+                this.lastAccessTime.set(key, Date.now());
+                return pendingExistingJob;
+              }
+              
+              // Для другого устройства создаем симлинк (повторяем логику дедупликации)
+              logger.info('[StreamManager] Reusing job from pending operation (deduplication)', {
+                deviceId: entry.device_id,
+                safeName: entry.safe_name,
+                streamUrl: entry.stream_url
+              });
+              
+              // Выполняем дедупликацию (можно вынести в отдельный метод)
+              if (existing && !existing.isShared) {
+                this.stopStream(entry.device_id, entry.safe_name, 'switching_to_shared');
+                await new Promise(resolve => setTimeout(resolve, 200));
+              }
+              
+              pendingUrlEntry.devices.add(key);
+              if (!pendingUrlEntry.devices.has(pendingUrlEntry.jobKey)) {
+                pendingUrlEntry.devices.add(pendingUrlEntry.jobKey);
+              }
+              
+              const newPaths = this._getPaths(entry.device_id, entry.safe_name);
+              const existingPaths = pendingExistingJob.paths;
+              
+              this._cleanupFolder(newPaths.folderPath);
+              ensureDir(newPaths.folderPath);
+              
+              try {
+                if (fs.existsSync(existingPaths.playlistPath)) {
+                  fs.symlinkSync(existingPaths.playlistPath, newPaths.playlistPath);
+                }
+              } catch (err) {
+                logger.warn('[StreamManager] Failed to create symlink from pending', { error: err.message });
+              }
+              
+              const virtualJob = {
+                ...pendingExistingJob,
+                deviceId: entry.device_id,
+                safeName: entry.safe_name,
+                key,
+                paths: newPaths,
+                isShared: true,
+                sharedFrom: pendingUrlEntry.jobKey
+              };
+              
+              this.jobs.set(key, virtualJob);
+              this.lastAccessTime.set(key, Date.now());
+              return virtualJob;
+            }
+          }
+        }
+      } catch (pendingErr) {
+        logger.warn('[StreamManager] Pending operation failed, will start new process', {
+          deviceId: entry.device_id,
+          safeName: entry.safe_name,
+          error: pendingErr.message
+        });
+        // Продолжаем дальше для запуска нового процесса
+      }
+    }
     
     // КРИТИЧНО: СНАЧАЛА проверяем дедупликацию по URL (до проверки существующего job)
     // Если для этого URL уже запущен FFmpeg процесс, используем его без перезапуска
@@ -903,11 +1255,65 @@ class StreamManager extends EventEmitter {
         // Создаем симлинк на плейлист
         try {
           if (fs.existsSync(existingPaths.playlistPath)) {
+            // КРИТИЧНО: Удаляем старый симлинк/файл, если существует
+            if (fs.existsSync(newPaths.playlistPath)) {
+              try {
+                const stats = fs.lstatSync(newPaths.playlistPath);
+                if (stats.isSymbolicLink()) {
+                  fs.unlinkSync(newPaths.playlistPath); // Удаляем старый симлинк
+                } else {
+                  fs.unlinkSync(newPaths.playlistPath); // Удаляем обычный файл
+                }
+              } catch (unlinkErr) {
+                logger.debug('[StreamManager] Error removing old symlink/file before creating new', {
+                  symlinkPath: newPaths.playlistPath,
+                  error: unlinkErr.message
+                });
+              }
+            }
+            
             fs.symlinkSync(existingPaths.playlistPath, newPaths.playlistPath);
+            
+            // КРИТИЧНО: Валидируем созданный симлинк
+            try {
+              const stats = fs.lstatSync(newPaths.playlistPath);
+              if (!stats.isSymbolicLink()) {
+                logger.warn('[StreamManager] Created file is not a symlink', {
+                  deviceId: entry.device_id,
+                  safeName: entry.safe_name,
+                  symlinkPath: newPaths.playlistPath
+                });
+              } else {
+                const realPath = fs.readlinkSync(newPaths.playlistPath);
+                if (!fs.existsSync(realPath)) {
+                  logger.error('[StreamManager] Symlink target does not exist', {
+                    deviceId: entry.device_id,
+                    safeName: entry.safe_name,
+                    symlinkPath: newPaths.playlistPath,
+                    targetPath: existingPaths.playlistPath,
+                    realPath
+                  });
+                }
+              }
+            } catch (validateErr) {
+              logger.warn('[StreamManager] Error validating created symlink', {
+                deviceId: entry.device_id,
+                safeName: entry.safe_name,
+                symlinkPath: newPaths.playlistPath,
+                error: validateErr.message
+              });
+            }
+            
             logger.info('[StreamManager] Created symlink for shared stream', {
               deviceId: entry.device_id,
               safeName: entry.safe_name,
               symlinkPath: newPaths.playlistPath,
+              targetPath: existingPaths.playlistPath
+            });
+          } else {
+            logger.warn('[StreamManager] Target playlist does not exist, cannot create symlink', {
+              deviceId: entry.device_id,
+              safeName: entry.safe_name,
               targetPath: existingPaths.playlistPath
             });
           }
@@ -915,7 +1321,8 @@ class StreamManager extends EventEmitter {
           logger.warn('[StreamManager] Failed to create symlink, will use direct path', {
             deviceId: entry.device_id,
             safeName: entry.safe_name,
-            error: err.message
+            error: err.message,
+            errorCode: err.code
           });
         }
         
@@ -985,46 +1392,72 @@ class StreamManager extends EventEmitter {
       streamProtocol: entry.stream_protocol
     });
     
-    const job = await this._spawnJob(entry);
-    
-    if (!job) {
-      logger.error('[StreamManager] _spawnJob returned null, FFmpeg not started', {
-        deviceId: entry.device_id,
-        safeName: entry.safe_name,
-        streamUrl: entry.stream_url
-      });
-      return null;
-    }
-    
-    // Регистрируем в urlToJobMap
-    if (job) {
-      if (!this.urlToJobMap.has(entry.stream_url)) {
-        this.urlToJobMap.set(entry.stream_url, {
-          jobKey: key,
-          devices: new Set([key])
+    // КРИТИЧНО: Создаем Promise для pending операции и сохраняем его
+    // Это предотвратит параллельный запуск нескольких процессов для одного URL
+    const spawnPromise = (async () => {
+      try {
+        const job = await this._spawnJob(entry);
+        
+        if (!job) {
+          logger.error('[StreamManager] _spawnJob returned null, FFmpeg not started', {
+            deviceId: entry.device_id,
+            safeName: entry.safe_name,
+            streamUrl: entry.stream_url
+          });
+          return null;
+        }
+        
+        // Регистрируем в urlToJobMap
+        if (job) {
+          if (!this.urlToJobMap.has(entry.stream_url)) {
+            this.urlToJobMap.set(entry.stream_url, {
+              jobKey: key,
+              devices: new Set([key])
+            });
+            logger.info('[StreamManager] Registered new URL in urlToJobMap', {
+              streamUrl: entry.stream_url,
+              jobKey: key
+            });
+          } else {
+            // Если почему-то уже есть (не должно быть), добавляем устройство
+            this.urlToJobMap.get(entry.stream_url).devices.add(key);
+            logger.warn('[StreamManager] URL already in urlToJobMap, added device', {
+              streamUrl: entry.stream_url,
+              jobKey: key
+            });
+          }
+        }
+        
+        logger.info('[StreamManager] upsertStream completed successfully', {
+          deviceId: entry.device_id,
+          safeName: entry.safe_name,
+          jobKey: job.key,
+          jobStatus: job.status,
+          hasProcess: !!job.process,
+          processPid: job.process?.pid
         });
-        logger.info('[StreamManager] Registered new URL in urlToJobMap', {
+        
+        return job;
+      } catch (err) {
+        logger.error('[StreamManager] Error in spawn promise', {
+          deviceId: entry.device_id,
+          safeName: entry.safe_name,
           streamUrl: entry.stream_url,
-          jobKey: key
+          error: err.message,
+          stack: err.stack
         });
-      } else {
-        // Если почему-то уже есть (не должно быть), добавляем устройство
-        this.urlToJobMap.get(entry.stream_url).devices.add(key);
-        logger.warn('[StreamManager] URL already in urlToJobMap, added device', {
-          streamUrl: entry.stream_url,
-          jobKey: key
-        });
+        throw err;
+      } finally {
+        // КРИТИЧНО: Очищаем pending операцию после завершения
+        this.urlToJobMapPending.delete(entry.stream_url);
       }
-    }
+    })();
     
-    logger.info('[StreamManager] upsertStream completed successfully', {
-      deviceId: entry.device_id,
-      safeName: entry.safe_name,
-      jobKey: job.key,
-      jobStatus: job.status,
-      hasProcess: !!job.process,
-      processPid: job.process?.pid
-    });
+    // Сохраняем Promise в pending перед запуском
+    this.urlToJobMapPending.set(entry.stream_url, spawnPromise);
+    
+    // Ждем завершения операции
+    const job = await spawnPromise;
     
     return job;
   }
@@ -1073,6 +1506,15 @@ class StreamManager extends EventEmitter {
               if (sharedJob.process) {
                 try {
                   const cleanupOnExit = () => {
+                    // КРИТИЧНО: Очищаем все обработчики событий процесса
+                    if (sharedJob.process) {
+                      sharedJob.process.removeAllListeners('exit');
+                      sharedJob.process.removeAllListeners('error');
+                      if (sharedJob.process.stderr) {
+                        sharedJob.process.stderr.removeAllListeners('data');
+                      }
+                    }
+                    
                     this.jobs.delete(job.sharedFrom);
                     this.lastAccessTime.delete(job.sharedFrom);
                     this._cleanupFolder(sharedFolderPath);
@@ -1084,7 +1526,9 @@ class StreamManager extends EventEmitter {
                     });
                   };
                   
+                  // КРИТИЧНО: Удаляем все старые обработчики перед установкой нового
                   sharedJob.process.removeAllListeners('exit');
+                  sharedJob.process.removeAllListeners('error');
                   sharedJob.process.once('exit', cleanupOnExit);
                   sharedJob.process.kill('SIGTERM');
                   
@@ -1163,6 +1607,15 @@ class StreamManager extends EventEmitter {
         try {
           // КРИТИЧНО: Устанавливаем обработчик завершения процесса для очистки файлов
           const cleanupOnExit = () => {
+            // КРИТИЧНО: Очищаем все обработчики событий процесса для предотвращения утечек памяти
+            if (job.process) {
+              job.process.removeAllListeners('exit');
+              job.process.removeAllListeners('error');
+              if (job.process.stderr) {
+                job.process.stderr.removeAllListeners('data');
+              }
+            }
+            
             // Удаляем job из списка
             this.jobs.delete(key);
             this.lastAccessTime.delete(key);
@@ -1179,8 +1632,9 @@ class StreamManager extends EventEmitter {
             });
           };
           
-          // Удаляем старые обработчики и устанавливаем новый
+          // КРИТИЧНО: Удаляем все старые обработчики и устанавливаем новый
           job.process.removeAllListeners('exit');
+          job.process.removeAllListeners('error');
           job.process.once('exit', cleanupOnExit);
           
           // Даем процессу время на корректное завершение
@@ -1277,6 +1731,131 @@ class StreamManager extends EventEmitter {
     let actualJob = job;
     if (job && job.isShared && job.sharedFrom) {
       actualJob = this.jobs.get(job.sharedFrom);
+      
+      // КРИТИЧНО: Валидируем симлинк для shared jobs
+      if (actualJob) {
+        const symlinkPath = job.paths.playlistPath;
+        const targetPath = actualJob.paths.playlistPath;
+        
+        try {
+          // Проверяем, существует ли симлинк
+          if (!fs.existsSync(symlinkPath)) {
+            logger.warn('[StreamManager] Symlink missing, attempting to recreate', {
+              deviceId,
+              safeName,
+              symlinkPath,
+              targetPath
+            });
+            
+            // Пытаемся пересоздать симлинк
+            try {
+              ensureDir(path.dirname(symlinkPath));
+              if (fs.existsSync(targetPath)) {
+                // Удаляем старый симлинк, если существует как обычный файл
+                if (fs.existsSync(symlinkPath)) {
+                  const stats = fs.lstatSync(symlinkPath);
+                  if (stats.isSymbolicLink()) {
+                    fs.unlinkSync(symlinkPath);
+                  } else {
+                    fs.unlinkSync(symlinkPath);
+                  }
+                }
+                fs.symlinkSync(targetPath, symlinkPath);
+                logger.info('[StreamManager] Symlink recreated successfully', {
+                  deviceId,
+                  safeName,
+                  symlinkPath
+                });
+              } else {
+                logger.warn('[StreamManager] Target playlist missing, cannot recreate symlink', {
+                  deviceId,
+                  safeName,
+                  targetPath
+                });
+                return null;
+              }
+            } catch (symlinkErr) {
+              logger.error('[StreamManager] Failed to recreate symlink', {
+                deviceId,
+                safeName,
+                symlinkPath,
+                targetPath,
+                error: symlinkErr.message
+              });
+              return null;
+            }
+          } else {
+            // Проверяем, является ли файл симлинком и валиден ли он
+            try {
+              const stats = fs.lstatSync(symlinkPath);
+              if (stats.isSymbolicLink()) {
+                // Проверяем, что целевой файл существует
+                const realPath = fs.readlinkSync(symlinkPath);
+                if (!fs.existsSync(realPath)) {
+                  logger.warn('[StreamManager] Symlink target missing, attempting to fix', {
+                    deviceId,
+                    safeName,
+                    symlinkPath,
+                    realPath,
+                    expectedTarget: targetPath
+                  });
+                  
+                  // Пытаемся исправить симлинк
+                  try {
+                    fs.unlinkSync(symlinkPath);
+                    if (fs.existsSync(targetPath)) {
+                      fs.symlinkSync(targetPath, symlinkPath);
+                      logger.info('[StreamManager] Symlink fixed successfully', {
+                        deviceId,
+                        safeName,
+                        symlinkPath
+                      });
+                    } else {
+                      logger.error('[StreamManager] Target playlist missing, cannot fix symlink', {
+                        deviceId,
+                        safeName,
+                        targetPath
+                      });
+                      return null;
+                    }
+                  } catch (fixErr) {
+                    logger.error('[StreamManager] Failed to fix symlink', {
+                      deviceId,
+                      safeName,
+                      symlinkPath,
+                      error: fixErr.message
+                    });
+                    return null;
+                  }
+                }
+              }
+            } catch (checkErr) {
+              logger.warn('[StreamManager] Error checking symlink', {
+                deviceId,
+                safeName,
+                symlinkPath,
+                error: checkErr.message
+              });
+              // Продолжаем, возможно это обычный файл
+            }
+          }
+        } catch (err) {
+          logger.error('[StreamManager] Error validating symlink', {
+            deviceId,
+            safeName,
+            symlinkPath,
+            error: err.message
+          });
+          return null;
+        }
+      } else {
+        logger.warn('[StreamManager] Shared job target not found', {
+          deviceId,
+          safeName,
+          sharedFrom: job.sharedFrom
+        });
+        return null;
+      }
     }
     
     // КРИТИЧНО: Возвращаем URL только если FFmpeg процесс активен
@@ -1541,7 +2120,7 @@ class StreamManager extends EventEmitter {
       lastError: job.lastError,
       lastErrorType: job.lastErrorType,
       startedAt: job.startedAt,
-      circuitBreakerOpen: job.circuitBreakerOpen,
+      circuitBreakerState: job.circuitBreakerState,
       consecutiveFailures: job.consecutiveFailures
     };
   }
@@ -1601,15 +2180,27 @@ class StreamManager extends EventEmitter {
    * @returns {boolean}
    */
   _shouldRestart(job) {
-    // Проверка circuit breaker
-    if (job.circuitBreakerOpen) {
+    // КРИТИЧНО: Проверка circuit breaker с поддержкой half-open состояния
+    if (job.circuitBreakerState === 'open') {
+      // Circuit breaker открыт - не перезапускаем
       return false;
+    }
+    
+    // В half-open состоянии разрешаем 1 попытку перезапуска
+    if (job.circuitBreakerState === 'halfOpen') {
+      // В half-open разрешаем только одну попытку
+      logger.info('[StreamManager] Circuit breaker in half-open state, allowing one retry', {
+        deviceId: job.deviceId,
+        safeName: job.safeName
+      });
+      // Разрешаем перезапуск, но при неудаче снова откроем circuit breaker
+      return true;
     }
     
     // Проверка лимита перезапусков
     if (job.restarts >= this.options.restartMaxAttempts) {
       // Открываем circuit breaker
-      job.circuitBreakerOpen = true;
+      job.circuitBreakerState = 'open';
       job.circuitBreakerOpenTime = Date.now();
       logger.warn('[StreamManager] Circuit breaker opened', {
         deviceId: job.deviceId,
@@ -1621,7 +2212,7 @@ class StreamManager extends EventEmitter {
     
     // Проверка последовательных неудач для circuit breaker
     if (job.consecutiveFailures >= this.options.circuitBreakerThreshold) {
-      job.circuitBreakerOpen = true;
+      job.circuitBreakerState = 'open';
       job.circuitBreakerOpenTime = Date.now();
       logger.warn('[StreamManager] Circuit breaker opened (consecutive failures)', {
         deviceId: job.deviceId,
@@ -1772,6 +2363,41 @@ class StreamManager extends EventEmitter {
   }
 
   /**
+   * Парсит HLS плейлист и возвращает список сегментов
+   * @param {string} playlistPath - Путь к плейлисту
+   * @returns {Set<string>} Множество имен сегментов из плейлиста
+   */
+  _parsePlaylistSegments(playlistPath) {
+    const segments = new Set();
+    
+    try {
+      if (!fs.existsSync(playlistPath)) {
+        return segments;
+      }
+      
+      const content = fs.readFileSync(playlistPath, 'utf-8');
+      const lines = content.split('\n');
+      
+      for (const line of lines) {
+        const trimmed = line.trim();
+        // Ищем строки с именами сегментов (не начинаются с # и заканчиваются на .ts)
+        if (trimmed && !trimmed.startsWith('#') && trimmed.endsWith('.ts')) {
+          // Извлекаем только имя файла (без пути, если есть)
+          const fileName = path.basename(trimmed);
+          segments.add(fileName);
+        }
+      }
+    } catch (error) {
+      logger.debug('[StreamManager] Error parsing playlist for cleanup', {
+        playlistPath,
+        error: error.message
+      });
+    }
+    
+    return segments;
+  }
+
+  /**
    * Очищает старые сегменты для всех активных стримов
    */
   _cleanupSegments() {
@@ -1788,7 +2414,22 @@ class StreamManager extends EventEmitter {
       
       try {
         const folderPath = job.paths.folderPath;
+        const playlistPath = job.paths.playlistPath;
         if (!fs.existsSync(folderPath)) continue;
+        
+        // КРИТИЧНО: Читаем актуальный плейлист перед очисткой
+        const playlistSegments = this._parsePlaylistSegments(playlistPath);
+        
+        // КРИТИЧНО: Проверяем активность FFmpeg перед удалением
+        const isProcessActive = job.status === 'running' && 
+                                job.process && 
+                                !job.process.killed &&
+                                this._checkProcessAlive(job.process);
+        
+        // Если процесс активен, добавляем запас времени для безопасности
+        const safeAgeThreshold = isProcessActive 
+          ? Math.max(maxAge, (this.options.segmentDuration * this.options.playlistSize * 3) * 1000)
+          : maxAge;
         
         const files = fs.readdirSync(folderPath);
         let folderSize = 0;
@@ -1803,8 +2444,14 @@ class StreamManager extends EventEmitter {
             
             // Удаляем старые .ts файлы
             if (file.endsWith('.ts')) {
+              // КРИТИЧНО: НЕ удаляем сегменты, которые упомянуты в плейлисте
+              if (playlistSegments.has(file)) {
+                // Сегмент в плейлисте - не удаляем, даже если старый
+                continue;
+              }
+              
               const fileAge = now - stats.mtimeMs;
-              if (fileAge > maxAge) {
+              if (fileAge > safeAgeThreshold) {
                 fs.unlinkSync(filePath);
                 deletedCount++;
                 totalFreed += stats.size;
@@ -1825,16 +2472,24 @@ class StreamManager extends EventEmitter {
           });
           
           // Сортируем файлы по времени модификации и удаляем самые старые
+          // КРИТИЧНО: Исключаем сегменты из плейлиста
           const tsFiles = files
-            .filter(f => f.endsWith('.ts'))
-            .map(f => ({
-              name: f,
-              path: path.join(folderPath, f),
-              mtime: fs.statSync(path.join(folderPath, f)).mtimeMs
-            }))
+            .filter(f => f.endsWith('.ts') && !playlistSegments.has(f))
+            .map(f => {
+              try {
+                return {
+                  name: f,
+                  path: path.join(folderPath, f),
+                  mtime: fs.statSync(path.join(folderPath, f)).mtimeMs
+                };
+              } catch (err) {
+                return null;
+              }
+            })
+            .filter(f => f !== null)
             .sort((a, b) => a.mtime - b.mtime);
           
-          // Удаляем половину самых старых файлов
+          // Удаляем половину самых старых файлов (которые не в плейлисте)
           const toDelete = Math.floor(tsFiles.length / 2);
           for (let i = 0; i < toDelete; i++) {
             try {
@@ -1843,7 +2498,11 @@ class StreamManager extends EventEmitter {
               deletedCount++;
               totalFreed += stats.size;
             } catch (err) {
-              // Игнорируем ошибки
+              // Игнорируем ошибки (например, файл уже удален)
+              logger.debug('[StreamManager] Error deleting file during forced cleanup', {
+                file: tsFiles[i].path,
+                error: err.message
+              });
             }
           }
         }
@@ -1886,35 +2545,27 @@ class StreamManager extends EventEmitter {
     const now = Date.now();
     
     for (const [key, job] of this.jobs.entries()) {
-      if (!job.circuitBreakerOpen) continue;
+      if (job.circuitBreakerState !== 'open') continue;
       if (!job.circuitBreakerOpenTime) continue;
       
       // Проверяем, прошло ли достаточно времени для попытки восстановления
       const timeSinceOpen = now - job.circuitBreakerOpenTime;
       if (timeSinceOpen >= this.options.circuitBreakerTimeout) {
-        logger.info('[StreamManager] Attempting circuit breaker recovery', {
+        logger.info('[StreamManager] Attempting circuit breaker recovery (transitioning to half-open)', {
           deviceId: job.deviceId,
           safeName: job.safeName,
           timeSinceOpen
         });
         
-        // Сбрасываем счетчики и пытаемся восстановить
-        job.circuitBreakerOpen = false;
-        job.circuitBreakerOpenTime = null;
+        // КРИТИЧНО: Переходим в half-open состояние вместо полного сброса
+        job.circuitBreakerState = 'halfOpen';
+        // Не сбрасываем circuitBreakerOpenTime - он все еще нужен для отслеживания
         job.consecutiveFailures = 0;
         job.restarts = 0;
         
-        // Пытаемся перезапустить стрим
-        this._restartJob(job).catch(err => {
-          logger.error('[StreamManager] Circuit breaker recovery failed', {
-            deviceId: job.deviceId,
-            safeName: job.safeName,
-            error: err.message
-          });
-          // При неудаче снова открываем circuit breaker
-          job.circuitBreakerOpen = true;
-          job.circuitBreakerOpenTime = Date.now();
-        });
+        // В half-open состоянии не перезапускаем автоматически
+        // Перезапуск произойдет при следующей попытке использования стрима
+        // или при следующем вызове upsertStream/ensureStreamRunning
       }
     }
   }
@@ -1923,7 +2574,13 @@ class StreamManager extends EventEmitter {
    * Останавливает StreamManager и очищает все ресурсы
    */
   stop() {
+    if (this.stopped) {
+      logger.warn('[StreamManager] Already stopped, ignoring duplicate stop call');
+      return;
+    }
+    
     logger.info('[StreamManager] Stopping and cleaning up...');
+    this.stopped = true;
     
     // Останавливаем все активные стримы
     for (const [key, job] of this.jobs.entries()) {
@@ -1938,7 +2595,7 @@ class StreamManager extends EventEmitter {
       }
     }
     
-    // Очищаем интервалы
+    // КРИТИЧНО: Очищаем интервалы с проверкой существования
     if (this.idleCleanupInterval) {
       clearInterval(this.idleCleanupInterval);
       this.idleCleanupInterval = null;
@@ -1953,6 +2610,12 @@ class StreamManager extends EventEmitter {
       clearInterval(this.circuitBreakerCheckInterval);
       this.circuitBreakerCheckInterval = null;
     }
+    
+    // КРИТИЧНО: Очищаем Maps для предотвращения утечек памяти
+    this.jobs.clear();
+    this.urlToJobMap.clear();
+    this.lastAccessTime.clear();
+    this.urlToJobMapPending.clear(); // Очищаем pending операции
     
     logger.info('[StreamManager] Stopped');
   }

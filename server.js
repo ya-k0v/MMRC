@@ -537,6 +537,119 @@ app.post('/api/admin/settings/content-root', requireAuth, requireAdmin, async (r
 });
 
 // ========================================
+// DATABASE CLEANUP ENDPOINTS
+// ========================================
+
+// GET /api/admin/database/check-files - Проверить соответствие файлов в БД и на диске
+app.get('/api/admin/database/check-files', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { cleanupMissingFiles, getAllFilePaths } = await import('./src/database/files-metadata.js');
+    
+    // 1. Проверяем файлы из БД на наличие на диске
+    const result = await cleanupMissingFiles({ deviceId: null, dryRun: true });
+    
+    // 2. Находим файлы на диске, которых нет в БД
+    const dataRoot = getDataRoot();
+    const contentDir = path.join(dataRoot, 'content');
+    const dbFilePaths = new Set();
+    
+    // Получаем все пути из БД
+    const allDbPaths = getAllFilePaths();
+    allDbPaths.forEach(filePath => {
+      if (filePath) {
+        dbFilePaths.add(path.resolve(filePath));
+      }
+    });
+    
+    // Рекурсивно сканируем файлы на диске
+    const diskFiles = [];
+    function scanDirectory(dirPath) {
+      if (!fs.existsSync(dirPath)) return;
+      
+      try {
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dirPath, entry.name);
+          
+          // Пропускаем скрытые файлы и системные файлы
+          if (entry.name.startsWith('.') || entry.name.includes('optimizing')) {
+            continue;
+          }
+          
+          if (entry.isDirectory()) {
+            scanDirectory(fullPath);
+          } else if (entry.isFile()) {
+            diskFiles.push(fullPath);
+          }
+        }
+      } catch (error) {
+        logger.warn('[Admin] Failed to scan directory', { dirPath, error: error.message });
+      }
+    }
+    
+    scanDirectory(contentDir);
+    
+    // Находим файлы на диске, которых нет в БД
+    const missingInDB = diskFiles.filter(diskFile => {
+      const normalized = path.resolve(diskFile);
+      return !dbFilePaths.has(normalized);
+    });
+    
+    res.json({
+      checked: result.checked,
+      missingOnDisk: result.missing,
+      missingInDB: missingInDB.length,
+      errors: result.errors
+    });
+  } catch (error) {
+    logger.error('[Admin] Failed to check files:', error);
+    res.status(500).json({ error: error.message || 'Не удалось проверить файлы' });
+  }
+});
+
+// POST /api/admin/database/cleanup-missing-files - Удалить записи о несуществующих файлах
+app.post('/api/admin/database/cleanup-missing-files', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { deviceId } = req.body || {};
+    const { cleanupMissingFiles } = await import('./src/database/files-metadata.js');
+    
+    logger.info('[Admin] Starting database cleanup', { deviceId: deviceId || 'all' });
+    
+    // Выполняем очистку (dryRun: false - реальное удаление)
+    const result = await cleanupMissingFiles({ deviceId: deviceId || null, dryRun: false });
+    
+    logger.info('[Admin] Database cleanup completed', {
+      checked: result.checked,
+      missing: result.missing,
+      deleted: result.deleted,
+      errors: result.errors
+    });
+    
+    // Обновляем список файлов для устройств после очистки
+    if (result.deleted > 0) {
+      const deviceIds = deviceId ? [deviceId] : Object.keys(devices);
+      deviceIds.forEach((id) => {
+        if (devices[id]) {
+          updateDeviceFilesFromDB(id, devices, fileNamesMap);
+        }
+      });
+      saveDevicesToDB(devices);
+      io.emit('devices/updated');
+    }
+    
+    res.json({
+      checked: result.checked,
+      missing: result.missing,
+      deleted: result.deleted,
+      errors: result.errors
+    });
+  } catch (error) {
+    logger.error('[Admin] Failed to cleanup missing files:', error);
+    res.status(500).json({ error: error.message || 'Не удалось очистить базу данных' });
+  }
+});
+
+// ========================================
 // HEALTH CHECK ENDPOINT
 // ========================================
 app.get('/health', (req, res) => {
