@@ -915,7 +915,10 @@ async function syncPreviewWithPlayerState() {
     // Если состояние обновилось и это та же папка - синхронизируем страницу
     const currentPreviewFile = filePreview.querySelector('.thumbnail-preview')?.getAttribute('data-file');
     if (state.file === currentPreviewFile && isStaticContent(state.type)) {
-      highlightCurrentThumbnail(state.page || 1, { deviceId: currentDevice, file: state.file });
+      // КРИТИЧНО: Активируем thumbnail только если есть данные от плеера (state.page)
+      if (state.page) {
+        highlightCurrentThumbnail(state.page, { deviceId: currentDevice, file: state.file });
+      }
       return;
     }
   }
@@ -936,9 +939,20 @@ async function syncPreviewWithPlayerState() {
   const currentPreviewFile = filePreview.querySelector('.thumbnail-preview')?.getAttribute('data-file');
   if (currentPreviewFile !== state.file) {
     await showStaticPreview(currentDevice, state.file, state.type);
+    // КРИТИЧНО: После открытия превью заново получаем актуальный state из playerStateByDevice
+    // так как он мог обновиться пока открывалось превью (например, пришел player/progress)
+    const updatedState = playerStateByDevice.get(currentDevice);
+    if (updatedState && updatedState.file === state.file && updatedState.page) {
+      highlightCurrentThumbnail(updatedState.page, { deviceId: currentDevice, file: updatedState.file });
+      return;
+    }
   }
 
-  highlightCurrentThumbnail(state.page || 1, { deviceId: currentDevice, file: state.file });
+  // КРИТИЧНО: Активируем thumbnail только если есть данные от плеера (state.page)
+  // Не устанавливаем is-active автоматически - ждем данные от плеера через player/progress
+  if (state.page) {
+    highlightCurrentThumbnail(state.page, { deviceId: currentDevice, file: state.file });
+  }
 }
 
 function requestPreviewSync() {
@@ -1936,6 +1950,21 @@ function buildPreviewPlaybackInfo(device) {
     };
   }
 
+  // Для изображений - показываем информацию о воспроизведении
+  if (device.current.type === 'image') {
+    const { displayName, fileInfo } = resolveFileDisplayData(device.device_id, device.current.file);
+    if (fileInfo && fileInfo.isPlaceholder) {
+      return null;
+    }
+    const safeName = escapeHtml(truncateText(displayName, 50)) || '—';
+    return {
+      title: safeName,
+      value: 'Изображение',
+      mode: 'image',
+      progress: null
+    };
+  }
+
   if (device.current.type !== 'video') {
     return null;
   }
@@ -2216,6 +2245,74 @@ socket.on('player/progress', ({ device_id, type, file, currentTime, duration, pa
     return;
   }
   
+  // Для изображений - обновляем состояние устройства и выделение thumbnail (если изображение в папке)
+  if (type === 'image' && file) {
+    playbackProgressByDevice.delete(device_id);
+    const device = devices.find(d => d.device_id === device_id);
+    if (device) {
+      if (!device.current) {
+        device.current = { type: 'image', file, page: 1, state: 'playing' };
+      } else {
+        device.current.type = 'image';
+        device.current.file = file;
+        device.current.page = 1;
+        device.current.state = 'playing';
+      }
+      
+      // Обновляем состояние в playerStateByDevice для синхронизации превью
+      const state = playerStateByDevice.get(device_id) || {};
+      state.type = 'image';
+      state.file = file;
+      state.page = 1;
+      playerStateByDevice.set(device_id, state);
+      
+      // Обновляем выделение текущего изображения на спикер панели
+      if (device_id === currentDevice) {
+        const thumbnails = filePreview.querySelectorAll('.thumbnail-preview');
+        const deviceFile = device.current.file;
+        // Нормализуем имена файлов (убираем .zip если есть)
+        const normalizedDeviceFile = deviceFile.replace(/\.zip$/i, '');
+        
+        // Если есть thumbnails (превью папки открыто), ищем соответствующий thumbnail
+        if (thumbnails.length > 0) {
+          const currentPreviewFile = thumbnails[0].getAttribute('data-file');
+          const normalizedPreviewFile = currentPreviewFile ? currentPreviewFile.replace(/\.zip$/i, '') : null;
+          
+          // Если это превью папки, ищем thumbnail с этим изображением
+          if (normalizedPreviewFile && normalizedPreviewFile !== normalizedDeviceFile) {
+            // Ищем thumbnail, который соответствует этому изображению
+            let foundThumbnail = null;
+            thumbnails.forEach(thumb => {
+              const thumbFile = thumb.getAttribute('data-file');
+              if (thumbFile && thumbFile.replace(/\.zip$/i, '') === normalizedDeviceFile) {
+                foundThumbnail = thumb;
+              }
+            });
+            
+            if (foundThumbnail) {
+              // Нашли thumbnail для этого изображения - активируем его
+              const thumbPage = parseInt(foundThumbnail.getAttribute('data-page'), 10);
+              if (thumbPage) {
+                highlightCurrentThumbnail(thumbPage, { deviceId: device_id, file: normalizedPreviewFile });
+              }
+            }
+          } else if (normalizedPreviewFile === normalizedDeviceFile) {
+            // Превью этого изображения открыто напрямую (как папка с одним изображением)
+            highlightCurrentThumbnail(1, { deviceId: device_id, file: deviceFile });
+          }
+        } else {
+          // Превью не открыто или это iframe - используем синхронизацию
+          requestPreviewSync();
+        }
+      }
+    }
+    refreshTvTilePlaybackInfo(device_id);
+    if (device_id === currentDevice) {
+      updatePlaybackInfoUI();
+    }
+    return;
+  }
+  
   // Для папок/PDF/PPTX - обновляем состояние устройства с информацией о текущей странице
   if ((type === 'folder' || type === 'pdf' || type === 'pptx') && file && typeof page === 'number') {
     const device = devices.find(d => d.device_id === device_id);
@@ -2260,6 +2357,19 @@ socket.on('player/progress', ({ device_id, type, file, currentTime, duration, pa
         } else {
           // Превью не открыто или другой файл - используем синхронизацию
           requestPreviewSync();
+          // КРИТИЧНО: После вызова requestPreviewSync() добавляем небольшую задержку
+          // чтобы убедиться, что превью открылось, и затем устанавливаем is-active на основе данных от плеера
+          setTimeout(() => {
+            const thumbnails = filePreview.querySelectorAll('.thumbnail-preview');
+            if (thumbnails.length > 0) {
+              const previewFile = thumbnails[0].getAttribute('data-file');
+              const normalizedPreviewFileAfter = previewFile ? previewFile.replace(/\.zip$/i, '') : null;
+              if (normalizedPreviewFileAfter === normalizedDeviceFile) {
+                // Превью открылось - устанавливаем is-active на основе данных от плеера
+                highlightCurrentThumbnail(page, { deviceId: device_id, file: deviceFile });
+              }
+            }
+          }, 100);
         }
       }
     }

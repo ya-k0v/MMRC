@@ -6,7 +6,7 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import { DEVICES } from '../config/constants.js';
+import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { getFolderImages, getFolderImagesCount } from '../converters/folder-converter.js';
 import logger from '../utils/logger.js';
@@ -86,8 +86,10 @@ export function createFoldersRouter(deps) {
         return res.status(404).json({ error: 'image not found' });
       }
       
+      // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+      const devicesPath = getDevicesPath();
       const imageName = images[index - 1]; // Convert to 0-based
-      const imagePath = path.join(DEVICES, id, folderName, imageName);
+      const imagePath = path.join(devicesPath, id, folderName, imageName);
       
       if (!fs.existsSync(imagePath)) {
         return res.status(404).json({ error: 'image file not found' });

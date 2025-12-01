@@ -5,7 +5,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { DEVICES } from '../config/constants.js';
+import { getDevicesPath } from '../config/settings-manager.js';
 import { isSystemFile } from './sanitize.js';
 
 /**
@@ -77,7 +77,9 @@ export function updateDeviceFiles(devices, deviceId, fileNamesMap = {}) {
   const device = devices[deviceId];
   if (!device) return;
   
-  const deviceFolder = path.join(DEVICES, device.folder);
+  // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+  const devicesPath = getDevicesPath();
+  const deviceFolder = path.join(devicesPath, device.folder);
   const { files, fileNames } = scanDeviceFiles(deviceId, deviceFolder, fileNamesMap);
   
   device.files = files;

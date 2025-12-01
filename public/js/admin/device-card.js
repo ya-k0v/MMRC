@@ -98,7 +98,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
       <div class="dropZone" style="margin-top:var(--space-sm); min-height:60px; padding:var(--space-md); font-size:var(--font-size-sm);">
         Перетащите файлы/папки сюда или нажмите "${getFileIcon(12)} Файлы" / "${getFolderIcon(12)} Папка"
       </div>
-      <ul class="queue" style="display:none; margin-top:var(--space-sm);"></ul>
+      <ul class="queue" style="display:none; margin-top:var(--space-sm); max-height:200px; overflow-y:auto; list-style:none; padding:0; margin-left:0;"></ul>
     </div>
   `;
 
@@ -358,21 +358,21 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   const queue = card.querySelector('.queue');
   
   if (queueToggleBtn && queue) {
-    let isQueueVisible = false;
+    let isQueueVisible = true; // По умолчанию показываем очередь
     
     // Показываем кнопку только если есть файлы в очереди
     const updateQueueVisibility = () => {
       const hasItems = queue.children.length > 0;
       if (hasItems) {
         queueToggleBtn.style.display = 'flex';
-        // Если очередь была скрыта пользователем, не показываем автоматически
-        if (!isQueueVisible) {
-          queue.style.display = 'none';
+        // Показываем очередь по умолчанию, если она не была скрыта пользователем
+        if (isQueueVisible) {
+          queue.style.display = 'block';
         }
       } else {
         queueToggleBtn.style.display = 'none';
         queue.style.display = 'none';
-        isQueueVisible = false;
+        isQueueVisible = true; // Сбрасываем состояние при очистке
       }
     };
     

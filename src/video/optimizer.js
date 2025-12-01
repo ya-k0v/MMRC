@@ -6,7 +6,8 @@
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
-import { DEVICES, VIDEO_OPTIMIZATION_CONFIG_PATH } from '../config/constants.js';
+import { VIDEO_OPTIMIZATION_CONFIG_PATH } from '../config/constants.js';
+import { getDevicesPath } from '../config/settings-manager.js';
 import { checkVideoParameters } from './ffmpeg-wrapper.js';
 import { setFileStatus, deleteFileStatus } from './file-status.js';
 import logger from '../utils/logger.js';
@@ -82,7 +83,9 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     filePath = metadata.file_path;
   } else {
     // Fallback для PDF/PPTX/folders (в /content/{device}/)
-  const deviceFolder = path.join(DEVICES, d.folder);
+    // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+    const devicesPath = getDevicesPath();
+    const deviceFolder = path.join(devicesPath, d.folder);
     filePath = path.join(deviceFolder, fileName);
   }
   

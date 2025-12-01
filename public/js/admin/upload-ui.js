@@ -43,9 +43,9 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       `;
     } else {
       queue.innerHTML = pending.map((f,i) => `
-        <li style="display:flex; justify-content:space-between; align-items:center; padding:6px 0">
-          <span>${f.name} <span class="meta">(${(f.size/1024/1024).toFixed(2)} MB)</span></span>
-          <span class="meta" id="p_${deviceId}_${i}">0%</span>
+        <li style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border-2);">
+          <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${f.name} <span class="meta">(${(f.size/1024/1024).toFixed(2)} MB)</span></span>
+          <span class="meta" id="p_${deviceId}_${i}" style="flex-shrink:0; margin-left:var(--space-sm);">0%</span>
         </li>
       `).join('');
     }

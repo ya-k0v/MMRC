@@ -7,8 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import { exec as execCallback } from 'child_process';
 import util from 'util';
-import { DEVICES } from '../config/constants.js';
-import { getConvertedCache } from '../config/settings-manager.js';
+import { getDevicesPath, getConvertedCache } from '../config/settings-manager.js';
 import { makeSafeFolderName } from '../utils/transliterate.js';
 import logger from '../utils/logger.js';
 
@@ -22,7 +21,9 @@ const exec = util.promisify(execCallback);
  */
 export async function extractZipToFolder(deviceId, zipFileName) {
   try {
-    const deviceFolder = path.join(DEVICES, deviceId);
+    // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+    const devicesPath = getDevicesPath();
+    const deviceFolder = path.join(devicesPath, deviceId);
     const zipPath = path.join(deviceFolder, zipFileName);
     
     if (!fs.existsSync(zipPath)) {
@@ -163,7 +164,9 @@ export async function extractZipToFolder(deviceId, zipFileName) {
  */
 export async function getFolderImages(deviceId, folderName) {
   try {
-    const folderPath = path.join(DEVICES, deviceId, folderName);
+    // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+    const devicesPath = getDevicesPath();
+    const folderPath = path.join(devicesPath, deviceId, folderName);
     
     if (!fs.existsSync(folderPath)) {
       return [];
@@ -211,9 +214,11 @@ export async function getFolderImagesCount(deviceId, folderName) {
  */
 export function findImageFolder(deviceId, fileName) {
   try {
+    // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+    const devicesPath = getDevicesPath();
     // Убираем расширение .zip если есть
     const baseName = fileName.replace(/\.zip$/i, '');
-    const folderPath = path.join(DEVICES, deviceId, baseName);
+    const folderPath = path.join(devicesPath, deviceId, baseName);
     
     if (fs.existsSync(folderPath)) {
       const stat = fs.statSync(folderPath);

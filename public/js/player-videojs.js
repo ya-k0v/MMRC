@@ -947,7 +947,8 @@ if (!device_id || !device_id.trim()) {
                 type: 'streaming',
                 file: currentFileState.file,
                 currentTime: 0,
-                duration: 0
+                duration: 0,
+                stream_protocol: currentFileState.streamProtocol || protocolHint
               });
             }
           }).catch(err => {
@@ -975,7 +976,7 @@ if (!device_id || !device_id.trim()) {
     });
 
     clearAllBuffers();
-    currentFileState = { type: 'streaming', file, page: 1 };
+    currentFileState = { type: 'streaming', file, page: 1, streamProtocol: resolvedProtocol };
     currentVideoFile = file;
     savedVideoPosition = 0;
     destroyMpegtsPlayer('switch_to_streaming');
@@ -1055,7 +1056,8 @@ if (!device_id || !device_id.trim()) {
                   type: 'streaming',
                   file: file,
                   currentTime: 0,
-                  duration: 0
+                  duration: 0,
+                  stream_protocol: resolvedProtocol
                 });
               }
             }).catch(err => {
@@ -2242,6 +2244,18 @@ if (!device_id || !device_id.trim()) {
         // Переключаем буфер на 2 для следующего изображения
         currentImgBuffer = 2;
         console.log('[Player] ✅ Изображение показано в img1, следующий буфер: 2');
+        
+        // КРИТИЧНО: Отправляем player/progress для обновления информации на панели спикера
+        if (device_id && !preview && socket && socket.connected) {
+          socket.emit('player/progress', {
+            device_id,
+            type: 'image',
+            file: file,
+            currentTime: 0,
+            duration: 0,
+            page: 1
+          });
+        }
       };
       tempImg.onerror = () => {
         console.warn('[Player] ⚠️ Ошибка загрузки изображения');
@@ -2249,6 +2263,18 @@ if (!device_id || !device_id.trim()) {
         current.src = imageUrl;
         show(current);
         currentImgBuffer = 2;
+        
+        // КРИТИЧНО: Отправляем player/progress даже при ошибке
+        if (device_id && !preview && socket && socket.connected) {
+          socket.emit('player/progress', {
+            device_id,
+            type: 'image',
+            file: file,
+            currentTime: 0,
+            duration: 0,
+            page: 1
+          });
+        }
       };
       tempImg.src = imageUrl;
     } else if (type === 'pdf' && file) {

@@ -7,7 +7,8 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { DEVICES, ALLOWED_EXT } from '../config/constants.js';
+import { ALLOWED_EXT } from '../config/constants.js';
+import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId, isSystemFile } from '../utils/sanitize.js';
 import { extractZipToFolder, getFolderImagesCount } from '../converters/folder-converter.js';
 import { makeSafeFolderName } from '../utils/transliterate.js';
@@ -19,6 +20,7 @@ import { getCachedResolution, clearResolutionCache } from '../video/resolution-c
 import { processUploadedFilesAsync } from '../utils/file-metadata-processor.js';
 import { getFileMetadata, deleteFileMetadata, getDeviceFilesMetadata, saveFileMetadata, countFileReferences, updateFileOriginalName, createStreamingEntry, cleanupMissingFiles } from '../database/files-metadata.js';
 import { getStreamPlaybackUrl, getStreamRestreamStatus, upsertStreamJob, removeStreamJob } from '../streams/stream-manager.js';
+import { getTrailerPath } from '../video/trailer-generator.js';
 
 const STREAM_PROTOCOLS = new Set(['auto', 'hls', 'dash', 'mpegts']);
 
@@ -68,8 +70,10 @@ const router = express.Router();
  * Для PPTX/PDF/изображений которые должны оставаться в /content/{device}/
  */
 async function copyFolderPhysically(sourceId, targetId, folderName, move, devices, fileNamesMap, saveFileNamesMap, io, res) {
-  const sourceFolder = path.join(DEVICES, devices[sourceId].folder);
-  const targetFolder = path.join(DEVICES, devices[targetId].folder);
+  // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+  const devicesPath = getDevicesPath();
+  const sourceFolder = path.join(devicesPath, devices[sourceId].folder);
+  const targetFolder = path.join(devicesPath, devices[targetId].folder);
   
   const sourcePath = path.join(sourceFolder, folderName);
   const targetPath = path.join(targetFolder, folderName);
@@ -191,7 +195,9 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
   }
   
   // 2. Сканируем папку устройства для PDF/PPTX/image папок
-  const deviceFolder = path.join(DEVICES, device.folder);
+  // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+  const devicesPath = getDevicesPath();
+  const deviceFolder = path.join(devicesPath, device.folder);
   const folders = [];
   const folderPaths = []; // Полные пути к папкам устройства
   
@@ -493,6 +499,37 @@ export function createFilesRouter(deps) {
     });
   });
 
+  // POST /api/devices/:id/streams/:safeName/stop-preview - Остановить стрим после превью
+  router.post('/:id/streams/:safeName/stop-preview', requireAdmin, jsonParser, async (req, res) => {
+    const id = sanitizeDeviceId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid device id' });
+    const safeName = req.params.safeName;
+    if (!safeName) return res.status(400).json({ error: 'invalid stream name' });
+
+    const device = devices[id];
+    if (!device) {
+      return res.status(404).json({ error: 'device not found' });
+    }
+
+    const metadata = getFileMetadata(id, safeName);
+    if (!metadata || metadata.content_type !== 'streaming') {
+      return res.status(404).json({ error: 'stream not found' });
+    }
+
+    const isPlayingOnDevice = device.current &&
+      device.current.type === 'streaming' &&
+      device.current.file === safeName;
+
+    if (isPlayingOnDevice) {
+      return res.status(409).json({ error: 'stream currently in use by device' });
+    }
+
+    const reason = (req.body && req.body.reason) || 'preview_stop';
+    removeStreamJob(id, safeName, reason);
+    logger.info('[streams] Preview stream stop requested', { deviceId: id, safeName, reason });
+    res.json({ ok: true, stopped: true });
+  });
+
   
   // POST /api/devices/:id/upload - Загрузка файлов
   router.post('/:id/upload', uploadLimiter, async (req, res, next) => {
@@ -538,6 +575,9 @@ export function createFilesRouter(deps) {
       // ИСПРАВЛЕНО: Перемещаем PDF/PPTX/ZIP в /content/{device}/
       // Только видео/аудио/одиночные изображения остаются в /content/ для дедупликации
       
+      // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути (объявляем один раз для всего блока)
+      const devicesPath = getDevicesPath();
+      
       // Проверяем есть ли PDF/PPTX/ZIP среди загруженных файлов
       const documentsToMove = req.files ? req.files.filter(file => {
         const ext = path.extname(file.filename).toLowerCase();
@@ -546,14 +586,14 @@ export function createFilesRouter(deps) {
       
       // Перемещаем документы в папку устройства (НЕ в подпапку!)
       if (documentsToMove.length > 0) {
-        const deviceFolder = path.join(DEVICES, devices[id].folder);
+        const deviceFolder = path.join(devicesPath, devices[id].folder);
         if (!fs.existsSync(deviceFolder)) {
           fs.mkdirSync(deviceFolder, { recursive: true });
         }
         
         for (const file of documentsToMove) {
           try {
-            const sourcePath = path.join(DEVICES, file.filename);  // Из /content/
+            const sourcePath = path.join(devicesPath, file.filename);  // Из /content/
             const targetPath = path.join(deviceFolder, file.filename);  // В /content/{device}/{file}
             
             fs.renameSync(sourcePath, targetPath);
@@ -582,7 +622,8 @@ export function createFilesRouter(deps) {
         
         // Создаем безопасное имя папки через транслитерацию
         const safeFolderName = makeSafeFolderName(folderName);
-        const deviceFolder = path.join(DEVICES, devices[id].folder);
+        // devicesPath уже объявлен выше для всего блока загрузки
+        const deviceFolder = path.join(devicesPath, devices[id].folder);
         const targetFolder = path.join(deviceFolder, safeFolderName);
         
         logger.info(`[upload] 📝 Имя папки: "${folderName}" → "${safeFolderName}"`);
@@ -598,7 +639,9 @@ export function createFilesRouter(deps) {
         
         for (const file of req.files) {
           try {
-            const sourcePath = path.join(DEVICES, file.filename);  // Из /content/
+            // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+            const devicesPath = getDevicesPath();
+            const sourcePath = path.join(devicesPath, file.filename);  // Из /content/
             
             // Получаем оригинальное имя файла из originalname
             // originalname может содержать путь "folder/subfolder/file.jpg"
@@ -624,7 +667,9 @@ export function createFilesRouter(deps) {
               
               // Возможно файл с таким именем уже существует в shared storage (/content/)
               // Для папок нужно СКОПИРОВАТЬ его, а не переместить
-              const sharedFile = path.join(DEVICES, targetFileName);
+              // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+              const devicesPath = getDevicesPath();
+              const sharedFile = path.join(devicesPath, targetFileName);
               if (fs.existsSync(sharedFile)) {
                 logFile('info', `🔄 Файл найден в shared storage, копируем: ${targetFileName}`, { fileName: targetFileName, deviceId: id });
                 
@@ -661,7 +706,9 @@ export function createFilesRouter(deps) {
             // КРИТИЧНО: Если не удалось переместить - НЕ оставляем файл в корне!
             // Удаляем его чтобы не было "потерянных" файлов
             try {
-              const sourcePath = path.join(DEVICES, file.filename);
+              // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+              const devicesPath = getDevicesPath();
+              const sourcePath = path.join(devicesPath, file.filename);
               if (fs.existsSync(sourcePath)) {
                 fs.unlinkSync(sourcePath);
                 logFile('info', `🗑️ Удален файл который не удалось переместить: ${file.filename}`, { fileName: file.filename, deviceId: id });
@@ -719,9 +766,10 @@ export function createFilesRouter(deps) {
         logFile('info', `🔍 Проверка папки: ожидалось ${allExpectedFiles.length}, найдено ${filesInFolder.length}, не хватает ${missingFiles.length}`, { deviceId: id, folderName: safeFolderName, expected: allExpectedFiles.length, found: filesInFolder.length, missing: missingFiles.length });
         
         // Копируем недостающие файлы из shared storage
+        // devicesPath уже объявлен выше для всего блока загрузки
         let copiedFromShared = 0;
         for (const missingFile of missingFiles) {
-          const sharedPath = path.join(DEVICES, missingFile);
+          const sharedPath = path.join(devicesPath, missingFile);
           if (fs.existsSync(sharedPath)) {
             const targetPath = path.join(targetFolder, missingFile);
             try {
@@ -762,7 +810,9 @@ export function createFilesRouter(deps) {
           if (ext === '.pdf' || ext === '.pptx' || ext === '.zip') continue;
           
           try {
-            const filePath = path.join(DEVICES, file.filename);  // В /content/
+            // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+            const devicesPath = getDevicesPath();
+            const filePath = path.join(devicesPath, file.filename);  // В /content/
             fs.chmodSync(filePath, 0o644);
             logFile('info', `✅ Права 644 установлены: ${file.filename}`, { fileName: file.filename, deviceId: id });
           } catch (e) {
@@ -841,7 +891,9 @@ export function createFilesRouter(deps) {
           
           if (filesToProcess.length > 0) {
             try {
-              await processUploadedFilesAsync(id, filesToProcess, DEVICES, fileNamesMap);
+              // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+              const devicesPath = getDevicesPath();
+              await processUploadedFilesAsync(id, filesToProcess, devicesPath, fileNamesMap);
               logFile('debug', 'File metadata processed successfully', { deviceId: id, filesCount: filesToProcess.length });
             } catch (err) {
               logger.error('Metadata processing failed', { 
@@ -907,7 +959,9 @@ export function createFilesRouter(deps) {
     
     try {
       // Проверяем это файл или папка
-    const sourceFolder = path.join(DEVICES, devices[sourceId].folder);
+      // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+      const devicesPath = getDevicesPath();
+      const sourceFolder = path.join(devicesPath, devices[sourceId].folder);
       const sourcePath = path.join(sourceFolder, fileName);
       
       // Если это папка (PPTX/PDF/изображения) - используем физическое копирование
@@ -1127,7 +1181,9 @@ export function createFilesRouter(deps) {
       return res.status(404).json({ error: 'device not found' });
     }
     
-    const deviceFolder = path.join(DEVICES, d.folder);
+    // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+    const devicesPath = getDevicesPath();
+    const deviceFolder = path.join(devicesPath, d.folder);
     
     // НОВОЕ: Проверяем, это медиафайл с metadata в БД?
     const metadata = getFileMetadata(id, oldName);
@@ -1275,7 +1331,9 @@ export function createFilesRouter(deps) {
       return res.status(404).json({ error: 'device not found' });
     }
     
-    const deviceFolder = path.join(DEVICES, d.folder);
+    // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+    const devicesPath = getDevicesPath();
+    const deviceFolder = path.join(devicesPath, d.folder);
     
     // ЗАЩИТА: Простая проверка path traversal
     if (name.includes('..') || name.startsWith('/') || name.startsWith('\\')) {
@@ -1506,7 +1564,9 @@ export function createFilesRouter(deps) {
     
     const files = d.files || [];
     const fileNames = d.fileNames || files;
-    const deviceFolderPath = path.join(DEVICES, d.folder || id);
+    // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+    const devicesPath = getDevicesPath();
+    const deviceFolderPath = path.join(devicesPath, d.folder || id);
     
     const metadataMap = Array.isArray(d.fileMetadata)
       ? d.fileMetadata.reduce((acc, meta) => {
@@ -1561,6 +1621,8 @@ export function createFilesRouter(deps) {
       let contentType = 'file';
       let streamUrl = null;
       let streamProtocol = null;
+      let hasTrailer = false;
+      let trailerUrl = null;
       
       // Получаем метаданные из БД (разрешение + флаг заглушки + originalName)
       const ext = path.extname(safeName).toLowerCase();
@@ -1601,13 +1663,31 @@ export function createFilesRouter(deps) {
             streamUrl,
             streamProxyUrl,
             restreamStatus,
-            streamProtocol
+            streamProtocol,
+            hasTrailer: false,
+            trailerUrl: null
           });
           continue;
         }
         
         if (metadata.video_duration) {
           durationSeconds = Math.round(metadata.video_duration);
+        }
+
+        if (metadata.md5_hash && ['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) {
+          try {
+            const trailerPath = getTrailerPath(metadata.md5_hash);
+            if (fs.existsSync(trailerPath)) {
+              hasTrailer = true;
+              trailerUrl = `/api/files/trailer/${encodeURIComponent(id)}/${encodeURIComponent(safeName)}`;
+            }
+          } catch (error) {
+            logger.debug('[files-with-status] Trailer lookup failed', {
+              deviceId: id,
+              safeName,
+              error: error.message
+            });
+          }
         }
         
         // Разрешение для видео файлов
@@ -1676,7 +1756,9 @@ export function createFilesRouter(deps) {
         streamUrl,
         streamProxyUrl,
         restreamStatus,
-        streamProtocol
+        streamProtocol,
+        hasTrailer,
+        trailerUrl
       });
     }
     

@@ -7,7 +7,8 @@ import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { DEVICES, MAX_FILE_SIZE, ALLOWED_EXT } from '../config/constants.js';
+import { MAX_FILE_SIZE, ALLOWED_EXT } from '../config/constants.js';
+import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { fixEncoding } from '../utils/encoding.js';
 import { makeSafeFilename } from '../utils/transliterate.js';
@@ -27,8 +28,9 @@ export function createUploadMiddleware(devices) {
       const d = devices[id];
       if (!d) return cb(new Error('device not found'));
       
-      // НОВОЕ: Загружаем все файлы в общую папку /content/
-      const folder = DEVICES;  // /vid/videocontrol/public/content/
+      // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+      // Это важно, так как contentRoot может измениться через настройки
+      const folder = getDevicesPath();  // Динамический путь из настроек
       if (!fs.existsSync(folder)) {
         fs.mkdirSync(folder, { recursive: true });
       }
@@ -70,8 +72,9 @@ export function createUploadMiddleware(devices) {
       // Создаем безопасное имя файла через транслитерацию
       const safe = makeSafeFilename(base);
       
-      // НОВОЕ: Проверяем конфликты в общей папке /content/
-      const dest = path.join(DEVICES, safe);
+      // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+      const devicesPath = getDevicesPath();
+      const dest = path.join(devicesPath, safe);
       
       let finalSafeName = safe;
       

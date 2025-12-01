@@ -6,7 +6,7 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import { DEVICES, ALLOWED_EXT } from '../config/constants.js';
+import { ALLOWED_EXT } from '../config/constants.js';
 import { sanitizeDeviceId, isSystemFile } from '../utils/sanitize.js';
 import { scanDeviceFiles } from '../utils/file-scanner.js';
 import { getDatabase } from '../database/database.js';

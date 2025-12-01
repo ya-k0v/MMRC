@@ -9,7 +9,7 @@ import { exec } from 'child_process';
 import util from 'util';
 import { fromPath } from 'pdf2pic';
 import { PDFDocument } from 'pdf-lib';
-import { DEVICES } from '../config/constants.js';
+import { getDevicesPath } from '../config/settings-manager.js';
 import logger from '../utils/logger.js';
 
 const execAsync = util.promisify(exec);
@@ -85,12 +85,15 @@ export async function convertPptxToImages(pptxPath, outputDir) {
 
 /**
  * Найти папку с конвертированными файлами
- * @param {string} deviceId - ID устройства
+ * @param {string} deviceFolderOrId - Имя папки устройства или ID устройства (обычно совпадают)
  * @param {string} fileName - Имя файла (PDF/PPTX)
  * @returns {string|null} Путь к папке или null
  */
-export function findFileFolder(deviceId, fileName) {
-  const deviceFolder = path.join(DEVICES, deviceId);
+export function findFileFolder(deviceFolderOrId, fileName) {
+  // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+  // Это важно, так как contentRoot может измениться через настройки
+  const devicesPath = getDevicesPath();
+  const deviceFolder = path.join(devicesPath, deviceFolderOrId);
   if (!fs.existsSync(deviceFolder)) return null;
   
   const folderName = fileName.replace(/\.(pdf|pptx)$/i, '');
@@ -143,10 +146,16 @@ export async function autoConvertFile(deviceId, fileName, devices, fileNamesMap,
   const d = devices[deviceId];
   if (!d) return 0;
   
-  const deviceFolder = path.join(DEVICES, d.folder);
+  // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+  // Это важно, так как contentRoot может измениться через настройки
+  const devicesPath = getDevicesPath();
+  const deviceFolder = path.join(devicesPath, d.folder);
   const filePath = path.join(deviceFolder, fileName);
   
-  if (!fs.existsSync(filePath)) return 0;
+  if (!fs.existsSync(filePath)) {
+    logger.warn(`[Converter] ⚠️ Файл не найден: ${filePath}`, { deviceId, fileName, deviceFolder, devicesPath });
+    return 0;
+  }
   
   const ext = path.extname(fileName).toLowerCase();
   if (ext !== '.pdf' && ext !== '.pptx') return 0;

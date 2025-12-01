@@ -6,7 +6,7 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import { DEVICES } from '../config/constants.js';
+import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { deleteDevice as deleteDeviceFromDB, deleteDeviceFileNames } from '../database/database.js';
 import { createLimiter, deleteLimiter } from '../middleware/rate-limit.js';
@@ -71,7 +71,9 @@ export function createDevicesRouter(deps) {
       return res.status(409).json({ error: 'exists' });
     }
     
-    const devicePath = path.join(DEVICES, device_id);
+    // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+    const devicesPath = getDevicesPath();
+    const devicePath = path.join(devicesPath, device_id);
     fs.mkdirSync(devicePath, { recursive: true });
     
     // КРИТИЧНО: Устанавливаем права 755 на папку устройства
@@ -168,7 +170,9 @@ export function createDevicesRouter(deps) {
     logDevice('info', `Device files metadata deleted`, { deviceId: id, filesCount: deletedMetadata });
     
     // 2. Удаляем папку устройства
-    const devicePath = path.join(DEVICES, d.folder);
+    // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+    const devicesPath = getDevicesPath();
+    const devicePath = path.join(devicesPath, d.folder);
     logDevice('info', `Deleting device folder`, { deviceId: id, path: devicePath });
     fs.rmSync(devicePath, { recursive: true, force: true });
     logDevice('info', `Device folder deleted`, { deviceId: id, path: devicePath });

@@ -319,6 +319,9 @@ export function setupDeviceHandlers(socket, deps) {
       const rawType = typeof payload?.type === 'string' ? payload.type : 'video';
       const type = rawType.toLowerCase();
       const file = (typeof payload?.file === 'string' && payload.file) ? payload.file : null;
+      const streamProtocol = typeof payload?.stream_protocol === 'string'
+        ? payload.stream_protocol
+        : (typeof payload?.streamProtocol === 'string' ? payload.streamProtocol : null);
       
       // Если длительность не пришла от клиента (0), пытаемся получить из БД
       if (duration === 0 && file) {
@@ -341,6 +344,32 @@ export function setupDeviceHandlers(socket, deps) {
           const prev = device.current || {};
           if (prev.type !== 'video' || prev.file !== file || prev.state !== 'playing') {
             device.current = { type: 'video', file, state: 'playing' };
+            stateChanged = true;
+          }
+        } else if (type === 'streaming' && file) {
+          // КРИТИЧНО: Обновляем состояние для стримов
+          const prev = device.current || {};
+          const nextProtocol = streamProtocol || prev.streamProtocol || null;
+          if (
+            prev.type !== 'streaming' ||
+            prev.file !== file ||
+            prev.state !== 'playing' ||
+            prev.streamProtocol !== nextProtocol
+          ) {
+            device.current = { 
+              type: 'streaming', 
+              file, 
+              state: 'playing',
+              streamUrl: payload?.stream_url || prev.streamUrl,
+              streamProtocol: nextProtocol
+            };
+            stateChanged = true;
+          }
+        } else if (type === 'image' && file) {
+          // КРИТИЧНО: Обновляем состояние для изображений
+          const prev = device.current || {};
+          if (prev.type !== 'image' || prev.file !== file || prev.state !== 'playing') {
+            device.current = { type: 'image', file, state: 'playing', page: 1 };
             stateChanged = true;
           }
         } else if (type === 'idle' || type === 'placeholder') {
@@ -373,7 +402,15 @@ export function setupDeviceHandlers(socket, deps) {
       }
       
       // Отправляем всем слушателям (speaker UI) агрегированный прогресс
-      io.emit('player/progress', { device_id, type, file, currentTime, duration, page });
+      io.emit('player/progress', {
+        device_id,
+        type,
+        file,
+        currentTime,
+        duration,
+        page,
+        stream_protocol: streamProtocol || undefined
+      });
       
       if (stateChanged) {
         io.emit('preview/refresh', { device_id });

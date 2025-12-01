@@ -7,7 +7,7 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import mime from 'mime';
-import { DEVICES } from '../config/constants.js';
+import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import logger from '../utils/logger.js';
 import { getFolderImagesCount } from '../converters/folder-converter.js';
@@ -102,16 +102,21 @@ export function createConversionRouter(deps) {
       return res.status(400).json({ error: 'invalid page number' });
     }
     
-    let convertedDir = findFileFolder(id, fileName);
+    // КРИТИЧНО: Используем devices[id].folder для получения правильного пути
+    // Это важно, так как folder может отличаться от deviceId (хотя обычно совпадает)
+    const deviceFolder = devices[id]?.folder || id;
+    let convertedDir = findFileFolder(deviceFolder, fileName);
     
     if (!convertedDir) {
-      const filePath = path.join(DEVICES, id, fileName);
+      // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+      const devicesPath = getDevicesPath();
+      const filePath = path.join(devicesPath, deviceFolder, fileName);
       if (fs.existsSync(filePath)) {
         const count = await autoConvertFileWrapper(id, fileName);
         if (count === 0) {
           return res.status(500).json({ error: 'Conversion failed or in progress' });
         }
-        convertedDir = findFileFolder(id, fileName);
+        convertedDir = findFileFolder(deviceFolder, fileName);
       }
       if (!convertedDir) {
         return res.status(404).json({ error: 'file not found' });

@@ -6,7 +6,6 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import { DEVICES } from '../config/constants.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { findDuplicateFile, saveFileMetadata, getFileMetadata } from '../database/files-metadata.js';
 import { getDatabase } from '../database/database.js';

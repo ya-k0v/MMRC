@@ -6,7 +6,7 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import { DEVICES } from '../config/constants.js';
+import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import logger from '../utils/logger.js';
 
@@ -61,8 +61,10 @@ export function createVideoInfoRouter(deps) {
       return res.status(404).json({ error: 'device not found' });
     }
     
+    // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+    const devicesPath = getDevicesPath();
     const fileName = decodeURIComponent(req.params.name);
-    const filePath = path.join(DEVICES, d.folder, fileName);
+    const filePath = path.join(devicesPath, d.folder, fileName);
     
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: 'file not found' });

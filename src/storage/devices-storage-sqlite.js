@@ -13,7 +13,7 @@ import {
   saveFileName,
   deleteDeviceFileNames
 } from '../database/database.js';
-import { DEVICES } from '../config/constants.js';
+import { getDevicesPath } from '../config/settings-manager.js';
 import { scanDeviceFiles } from '../utils/file-scanner.js';
 import logger from '../utils/logger.js';
 
@@ -75,8 +75,11 @@ export function saveFileNamesToDB(fileNamesMap) {
 export function scanAllDevices(devices, fileNamesMap) {
   logger.info('[Scan] 🔍 Scanning all device folders...');
   
+  // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+  const devicesPath = getDevicesPath();
+  
   for (const [deviceId, device] of Object.entries(devices)) {
-    const deviceFolder = path.join(DEVICES, device.folder);
+    const deviceFolder = path.join(devicesPath, device.folder);
     const result = scanDeviceFiles(deviceId, deviceFolder, fileNamesMap);
     
     device.files = result.files;

@@ -551,7 +551,9 @@ app.get('/api/admin/database/check-files', requireAuth, requireAdmin, async (req
     // 2. Находим файлы на диске, которых нет в БД
     const dataRoot = getDataRoot();
     const contentDir = path.join(dataRoot, 'content');
+    const convertedCacheDir = getConvertedCache(); // Папка converted (если используется отдельно)
     const dbFilePaths = new Set();
+    const dbFolderPaths = []; // Пути к папкам из БД (content_type = 'folder')
     
     // Получаем все пути из БД
     const allDbPaths = getAllFilePaths();
@@ -561,10 +563,34 @@ app.get('/api/admin/database/check-files', requireAuth, requireAdmin, async (req
       }
     });
     
+    // Получаем все папки из БД (content_type = 'folder')
+    const { getDeviceFilesMetadata } = await import('./src/database/files-metadata.js');
+    const allDevices = Object.keys(devices);
+    for (const deviceId of allDevices) {
+      const deviceMetadata = getDeviceFilesMetadata(deviceId);
+      deviceMetadata
+        .filter(f => f.content_type === 'folder' && f.file_path)
+        .forEach(f => {
+          const folderPath = path.resolve(f.file_path);
+          if (!dbFolderPaths.includes(folderPath)) {
+            dbFolderPaths.push(folderPath);
+          }
+        });
+    }
+    
     // Рекурсивно сканируем файлы на диске
     const diskFiles = [];
+    const convertedDirs = new Set(); // Папки с converted файлами (PNG для PDF/PPTX)
+    
     function scanDirectory(dirPath) {
       if (!fs.existsSync(dirPath)) return;
+      
+      // Пропускаем папку converted (если она существует отдельно)
+      const normalizedDir = path.resolve(dirPath);
+      const normalizedConverted = convertedCacheDir ? path.resolve(convertedCacheDir) : null;
+      if (normalizedConverted && normalizedDir === normalizedConverted) {
+        return; // Пропускаем всю папку converted
+      }
       
       try {
         const entries = fs.readdirSync(dirPath, { withFileTypes: true });
@@ -577,6 +603,25 @@ app.get('/api/admin/database/check-files', requireAuth, requireAdmin, async (req
           }
           
           if (entry.isDirectory()) {
+            // Проверяем, не является ли это папкой с converted файлами (PNG для PDF/PPTX)
+            // Такие папки содержат только PNG файлы и находятся внутри папок устройств
+            try {
+              const dirContents = fs.readdirSync(fullPath);
+              const hasOnlyPng = dirContents.length > 0 && dirContents.every(f => 
+                f.toLowerCase().endsWith('.png')
+              );
+              
+              if (hasOnlyPng) {
+                // Это папка с converted файлами - добавляем все файлы в исключения
+                dirContents.forEach(f => {
+                  convertedDirs.add(path.resolve(path.join(fullPath, f)));
+                });
+                continue; // Не сканируем внутрь converted папок
+              }
+            } catch (e) {
+              // Игнорируем ошибки чтения папки
+            }
+            
             scanDirectory(fullPath);
           } else if (entry.isFile()) {
             diskFiles.push(fullPath);
@@ -590,8 +635,22 @@ app.get('/api/admin/database/check-files', requireAuth, requireAdmin, async (req
     scanDirectory(contentDir);
     
     // Находим файлы на диске, которых нет в БД
+    // Исключаем converted файлы (PNG для PDF/PPTX) и файлы внутри папок из БД
     const missingInDB = diskFiles.filter(diskFile => {
       const normalized = path.resolve(diskFile);
+      // Пропускаем converted файлы
+      if (convertedDirs.has(normalized)) {
+        return false;
+      }
+      // Пропускаем файлы, которые находятся внутри папок из БД
+      for (const folderPath of dbFolderPaths) {
+        const normalizedFolderPath = path.resolve(folderPath);
+        if (normalized.startsWith(normalizedFolderPath + path.sep) || 
+            normalized.startsWith(normalizedFolderPath + '/')) {
+          // Файл находится внутри папки из БД - исключаем его
+          return false;
+        }
+      }
       return !dbFilePaths.has(normalized);
     });
     
@@ -628,7 +687,9 @@ app.post('/api/admin/database/cleanup-missing-files', requireAuth, requireAdmin,
     // 2. Удаляем файлы с диска, которых нет в БД
     const dataRoot = getDataRoot();
     const contentDir = path.join(dataRoot, 'content');
+    const convertedCacheDir = getConvertedCache(); // Папка converted (если используется отдельно)
     const dbFilePaths = new Set();
+    const dbFolderPaths = []; // Пути к папкам из БД (content_type = 'folder')
     
     // Получаем все пути из БД
     const allDbPaths = getAllFilePaths();
@@ -638,10 +699,35 @@ app.post('/api/admin/database/cleanup-missing-files', requireAuth, requireAdmin,
       }
     });
     
+    // Получаем все папки из БД (content_type = 'folder')
+    const { getDeviceFilesMetadata } = await import('./src/database/files-metadata.js');
+    const allDevices = deviceId ? [deviceId] : Object.keys(devices);
+    for (const devId of allDevices) {
+      if (!devices[devId]) continue;
+      const deviceMetadata = getDeviceFilesMetadata(devId);
+      deviceMetadata
+        .filter(f => f.content_type === 'folder' && f.file_path)
+        .forEach(f => {
+          const folderPath = path.resolve(f.file_path);
+          if (!dbFolderPaths.includes(folderPath)) {
+            dbFolderPaths.push(folderPath);
+          }
+        });
+    }
+    
     // Рекурсивно сканируем файлы на диске
     const diskFiles = [];
+    const convertedDirs = new Set(); // Папки с converted файлами (PNG для PDF/PPTX)
+    
     function scanDirectory(dirPath) {
       if (!fs.existsSync(dirPath)) return;
+      
+      // Пропускаем папку converted (если она существует отдельно)
+      const normalizedDir = path.resolve(dirPath);
+      const normalizedConverted = convertedCacheDir ? path.resolve(convertedCacheDir) : null;
+      if (normalizedConverted && normalizedDir === normalizedConverted) {
+        return; // Пропускаем всю папку converted
+      }
       
       try {
         const entries = fs.readdirSync(dirPath, { withFileTypes: true });
@@ -654,6 +740,25 @@ app.post('/api/admin/database/cleanup-missing-files', requireAuth, requireAdmin,
           }
           
           if (entry.isDirectory()) {
+            // Проверяем, не является ли это папкой с converted файлами (PNG для PDF/PPTX)
+            // Такие папки содержат только PNG файлы и находятся внутри папок устройств
+            try {
+              const dirContents = fs.readdirSync(fullPath);
+              const hasOnlyPng = dirContents.length > 0 && dirContents.every(f => 
+                f.toLowerCase().endsWith('.png')
+              );
+              
+              if (hasOnlyPng) {
+                // Это папка с converted файлами - добавляем все файлы в исключения
+                dirContents.forEach(f => {
+                  convertedDirs.add(path.resolve(path.join(fullPath, f)));
+                });
+                continue; // Не сканируем внутрь converted папок
+              }
+            } catch (e) {
+              // Игнорируем ошибки чтения папки
+            }
+            
             scanDirectory(fullPath);
           } else if (entry.isFile()) {
             diskFiles.push(fullPath);
@@ -667,23 +772,105 @@ app.post('/api/admin/database/cleanup-missing-files', requireAuth, requireAdmin,
     scanDirectory(contentDir);
     
     // Находим файлы на диске, которых нет в БД
+    // Исключаем converted файлы (PNG для PDF/PPTX) и файлы внутри папок из БД
     const filesToDeleteFromDisk = diskFiles.filter(diskFile => {
       const normalized = path.resolve(diskFile);
+      // Пропускаем converted файлы
+      if (convertedDirs.has(normalized)) {
+        return false;
+      }
+      // Пропускаем файлы, которые находятся внутри папок из БД
+      for (const folderPath of dbFolderPaths) {
+        const normalizedFolderPath = path.resolve(folderPath);
+        if (normalized.startsWith(normalizedFolderPath + path.sep) || 
+            normalized.startsWith(normalizedFolderPath + '/')) {
+          // Файл находится внутри папки из БД - исключаем его
+          return false;
+        }
+      }
       return !dbFilePaths.has(normalized);
     });
     
     let deletedFromDisk = 0;
     const diskErrors = [];
+    const deletedFileDirs = new Set(); // Папки, из которых были удалены файлы
     
     // Удаляем файлы с диска
     for (const filePath of filesToDeleteFromDisk) {
       try {
+        const fileDir = path.dirname(filePath);
         fs.unlinkSync(filePath);
         deletedFromDisk++;
+        deletedFileDirs.add(fileDir);
         logger.info('[Admin] Deleted file from disk (not in DB)', { filePath });
       } catch (error) {
         diskErrors.push({ filePath, error: error.message });
         logger.error('[Admin] Failed to delete file from disk', { filePath, error: error.message });
+      }
+    }
+    
+    // Удаляем пустые папки после удаления файлов
+    // НЕ удаляем папки, которые есть в БД (content_type = 'folder')
+    for (const dirPath of deletedFileDirs) {
+      try {
+        const normalizedDirPath = path.resolve(dirPath);
+        
+        // Проверяем, не является ли эта папка папкой из БД
+        const isFolderInDB = dbFolderPaths.some(folderPath => {
+          const normalizedFolderPath = path.resolve(folderPath);
+          return normalizedDirPath === normalizedFolderPath;
+        });
+        
+        if (isFolderInDB) {
+          // Это папка из БД - не удаляем её
+          continue;
+        }
+        
+        // Проверяем, что папка пуста (кроме скрытых файлов)
+        const dirContents = fs.readdirSync(dirPath);
+        const visibleFiles = dirContents.filter(f => !f.startsWith('.'));
+        
+        if (visibleFiles.length === 0) {
+          // Папка пуста - удаляем её
+          fs.rmdirSync(dirPath);
+          logger.info('[Admin] Deleted empty folder', { dirPath });
+          
+          // Рекурсивно проверяем родительские папки
+          let parentDir = path.dirname(dirPath);
+          while (parentDir !== contentDir && parentDir.length > contentDir.length) {
+            try {
+              const normalizedParentDir = path.resolve(parentDir);
+              
+              // Проверяем, не является ли родительская папка папкой из БД
+              const isParentFolderInDB = dbFolderPaths.some(folderPath => {
+                const normalizedFolderPath = path.resolve(folderPath);
+                return normalizedParentDir === normalizedFolderPath;
+              });
+              
+              if (isParentFolderInDB) {
+                // Родительская папка есть в БД - не удаляем её
+                break;
+              }
+              
+              const parentContents = fs.readdirSync(parentDir);
+              const parentVisibleFiles = parentContents.filter(f => !f.startsWith('.'));
+              
+              if (parentVisibleFiles.length === 0) {
+                fs.rmdirSync(parentDir);
+                logger.info('[Admin] Deleted empty parent folder', { parentDir });
+                parentDir = path.dirname(parentDir);
+              } else {
+                break; // Папка не пуста, останавливаемся
+              }
+            } catch (e) {
+              // Игнорируем ошибки при проверке родительских папок
+              break;
+            }
+          }
+        }
+      } catch (error) {
+        // Игнорируем ошибки при удалении пустых папок
+        logger.warn('[Admin] Failed to check/delete empty folder', { dirPath, error: error.message });
       }
     }
     

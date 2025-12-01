@@ -7,8 +7,8 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import mime from 'mime';
-import { PUBLIC, ROOT, DEVICES } from '../config/constants.js';
-import { getStreamsOutputDir } from '../config/settings-manager.js';
+import { PUBLIC, ROOT } from '../config/constants.js';
+import { getDevicesPath, getStreamsOutputDir } from '../config/settings-manager.js';
 import { requestTimeout } from './timeout.js';
 import logger from '../utils/logger.js';
 import { getStreamManager } from '../streams/stream-manager.js';
@@ -87,7 +87,9 @@ export function setupStaticFiles(app) {
   }));
   
   // Контент устройств с настройками кэширования
-  app.use('/content', express.static(DEVICES, {
+  // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+  const devicesPath = getDevicesPath();
+  app.use('/content', express.static(devicesPath, {
     extensions: ['.mp4', '.webm', '.ogg', '.jpg', '.jpeg', '.png', '.gif', '.pdf'],
     setHeaders: (res, filePath) => {
       const type = mime.getType(filePath) || 'application/octet-stream';
