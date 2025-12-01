@@ -1893,9 +1893,12 @@ function getPlaybackInfoInnerHtml(playbackInfo) {
   if (!playbackInfo) {
     return '';
   }
+  // Определяем цвет meta-value в зависимости от источника duration
+  const durationFromDatabase = playbackInfo.progress?.durationFromDatabase || false;
+  const metaValueClass = durationFromDatabase ? 'meta-value-db' : 'meta-value-player';
   return `
     <span class="tvTile-previewTitle">${playbackInfo.title}</span>
-    <span class="tvTile-previewValue">${playbackInfo.value}</span>
+    <span class="tvTile-previewValue ${metaValueClass}">${playbackInfo.value}</span>
   `;
 }
 
@@ -1982,15 +1985,10 @@ function buildPreviewPlaybackInfo(device) {
     const safeName = escapeHtml(truncateText(displayName, 50)) || '—';
     return {
       title: safeName,
-      value: 'Воспроизведение...',
+      value: 'Беферизаиця...',
       mode: 'video',
       progress: null
     };
-  }
-
-  // Если видео закончилось - не показываем информацию
-  if (prog.duration > 0 && prog.currentTime >= prog.duration - 0.5) {
-    return null;
   }
 
   const { displayName, fileInfo } = resolveFileDisplayData(device.device_id, prog.file);
@@ -2000,23 +1998,85 @@ function buildPreviewPlaybackInfo(device) {
 
   const safeName = escapeHtml(truncateText(displayName, 50)) || '—';
   const currentTimeLabel = formatTime(prog.currentTime);
-  const total = (prog.duration && prog.duration > 0) ? formatTime(prog.duration) : '--:--';
+  
+  // Используем duration от плеера, если есть, иначе берем из метаданных базы
+  const durationFromPlayer = (prog.duration && prog.duration > 0) ? prog.duration : null;
+  
+  // Получаем durationSeconds из fileInfo или из device.fileMetadata (fallback)
+  let durationSecondsFromDB = fileInfo?.durationSeconds;
+  if (!durationSecondsFromDB && device) {
+    // Пробуем найти в device.fileMetadata
+    const metaFromDevice = device.fileMetadata?.find(m => {
+      const variants = [
+        ...normalizeFileNameVariants(m.safeName || ''),
+        ...normalizeFileNameVariants(m.originalName || '')
+      ];
+      const targetVariants = normalizeFileNameVariants(prog.file);
+      return variants.some(v => targetVariants.includes(v));
+    });
+    durationSecondsFromDB = metaFromDevice?.durationSeconds;
+    
+    // Если не нашли, пробуем найти в allFiles (если это текущее устройство)
+    if (!durationSecondsFromDB && device.device_id === currentDevice && allFiles) {
+      const fileInAllFiles = allFiles.find(f => {
+        const variants = [
+          ...normalizeFileNameVariants(f.safeName || ''),
+          ...normalizeFileNameVariants(f.originalName || '')
+        ];
+        const targetVariants = normalizeFileNameVariants(prog.file);
+        return variants.some(v => targetVariants.includes(v));
+      });
+      durationSecondsFromDB = fileInAllFiles?.durationSeconds;
+    }
+  }
+  
+  // КРИТИЧНО: Если duration от плеера равен 0 или отсутствует, используем duration из базы
+  const durationFromDatabase = (!durationFromPlayer && durationSecondsFromDB && durationSecondsFromDB > 0) 
+    ? durationSecondsFromDB 
+    : null;
+  const duration = durationFromPlayer || durationFromDatabase;
+  const isDurationFromDatabase = !!durationFromDatabase; // флаг для UI
+  
+  // Отладка: логируем источник duration
+  if (duration || prog.duration === 0) {
+    console.log('[buildPreviewPlaybackInfo] Duration source:', {
+      file: prog.file,
+      deviceId: device.device_id,
+      durationFromPlayer,
+      durationFromDatabase,
+      duration,
+      isDurationFromDatabase,
+      fileInfoDurationSeconds: fileInfo?.durationSeconds,
+      deviceMetadataDurationSeconds: device.fileMetadata?.find(m => m.safeName === prog.file)?.durationSeconds,
+      progDuration: prog.duration,
+      hasFileInfo: !!fileInfo,
+      hasDeviceMetadata: !!device.fileMetadata
+    });
+  }
+
+  // Если видео закончилось - не показываем информацию (проверяем общий duration)
+  if (duration && duration > 0 && prog.currentTime >= duration - 0.5) {
+    return null;
+  }
+
+  const total = duration ? formatTime(duration) : '--:--';
 
   let progressPercent = null;
-  if (prog.duration > 0) {
-    progressPercent = Math.min(100, Math.max(0, (prog.currentTime / prog.duration) * 100));
+  if (duration && duration > 0) {
+    progressPercent = Math.min(100, Math.max(0, (prog.currentTime / duration) * 100));
   }
 
   return {
     title: safeName,
     value: escapeHtml(`${currentTimeLabel} / ${total}`),
     mode: 'video',
-    progress: prog.duration > 0 ? {
+    progress: duration && duration > 0 ? {
       percent: progressPercent,
-      duration: prog.duration,
+      duration: duration,
       currentTime: prog.currentTime,
       file: prog.file,
-      durationKnownFromStart: prog.durationKnownFromStart || false
+      durationKnownFromStart: prog.durationKnownFromStart || false,
+      durationFromDatabase: isDurationFromDatabase // новый флаг
     } : null,
   };
 }
@@ -2080,10 +2140,25 @@ function updatePlaybackInfoUI() {
     return;
   }
 
+  // Определяем цвет meta-value в зависимости от источника duration
+  const durationFromDatabase = playbackInfo.progress?.durationFromDatabase || false;
+  const metaValueClass = durationFromDatabase ? 'meta-value-db' : 'meta-value-player';
+  
+  // Отладка: логируем определение цвета
+  if (playbackInfo.mode === 'video' && playbackInfo.progress) {
+    console.log('[updatePlaybackInfoUI] Duration color:', {
+      durationFromDatabase,
+      metaValueClass,
+      progressDuration: playbackInfo.progress.duration,
+      progressDurationFromDatabase: playbackInfo.progress.durationFromDatabase,
+      hasProgress: !!playbackInfo.progress
+    });
+  }
+
   infoEl.innerHTML = `
     <div class="meta-line">
       <span class="meta-title">${playbackInfo.title}</span>
-      <span class="meta-value">${playbackInfo.value}</span>
+      <span class="meta-value ${metaValueClass}">${playbackInfo.value}</span>
     </div>
   `;
 
@@ -2092,8 +2167,7 @@ function updatePlaybackInfoUI() {
       playbackInfo.mode === 'video' &&
       playbackInfo.progress &&
       playbackInfo.progress.duration &&
-      playbackInfo.progress.duration > 0 &&
-      playbackInfo.progress.durationKnownFromStart === true
+      playbackInfo.progress.duration > 0
     ) {
       if (!isVideoSeeking) {
         progressBar.value = playbackInfo.progress.percent ?? 0;
@@ -2102,6 +2176,19 @@ function updatePlaybackInfoUI() {
       progressBar.dataset.currentTime = playbackInfo.progress.currentTime;
       progressBar.dataset.duration = playbackInfo.progress.duration;
       progressBar.dataset.file = playbackInfo.progress.file;
+      progressBar.dataset.durationFromDatabase = playbackInfo.progress.durationFromDatabase ? 'true' : 'false';
+      
+      // Если duration из базы - отключаем перемотку
+      if (playbackInfo.progress.durationFromDatabase) {
+        progressBar.disabled = true;
+        progressBar.style.cursor = 'not-allowed';
+        progressBar.style.opacity = '0.6';
+      } else {
+        progressBar.disabled = false;
+        progressBar.style.cursor = 'pointer';
+        progressBar.style.opacity = '1';
+      }
+      
       progressContainer.style.display = 'block';
     } else {
       progressContainer.style.display = 'none';
@@ -2479,6 +2566,11 @@ if (videoProgressBar) {
   };
   
   videoProgressBar.addEventListener('input', (e) => {
+    // Не показываем tooltip если progress bar disabled (duration из базы)
+    if (e.target.disabled) {
+      if (videoProgressTooltip) videoProgressTooltip.style.display = 'none';
+      return;
+    }
     isVideoSeeking = true;
     updateTooltipPosition(parseFloat(e.target.value));
   });
@@ -2489,6 +2581,14 @@ if (videoProgressBar) {
     const progressBar = e.target;
     const duration = parseFloat(progressBar.dataset.duration);
     const file = progressBar.dataset.file;
+    const durationFromDatabase = progressBar.dataset.durationFromDatabase === 'true';
+    
+    // Блокируем перемотку если duration из базы данных
+    if (durationFromDatabase) {
+      isVideoSeeking = false;
+      if (videoProgressTooltip) videoProgressTooltip.style.display = 'none';
+      return;
+    }
     
     if (!duration || !file || duration <= 0) {
       isVideoSeeking = false;

@@ -158,6 +158,19 @@
       cursor: grabbing;
     }
     
+    .meta-value-player {
+      color: var(--success, #22c55e); /* зеленый - duration от плеера */
+    }
+    
+    .meta-value-db {
+      color: var(--danger, #ef4444); /* красный - duration из базы данных */
+    }
+    
+    #videoProgressBar:disabled {
+      cursor: not-allowed !important;
+      opacity: 0.6;
+    }
+    
   </style>
   <script src="/socket.io/socket.io.js"></script>
   <script type="module" src="/js/speaker.js"></script>

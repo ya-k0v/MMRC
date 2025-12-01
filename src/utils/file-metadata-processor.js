@@ -10,6 +10,7 @@ import { checkVideoParameters } from '../video/ffmpeg-wrapper.js';
 import logger, { logFile } from '../utils/logger.js';
 import { ensureTrailerForFile } from '../video/trailer-generator.js';
 import { getConvertedCache } from '../config/settings-manager.js';
+import { applyFaststartAsync } from '../video/mp4-faststart.js';
 
 /**
  * Обработать загруженный файл: вычислить MD5, получить метаданные, сохранить в БД
@@ -34,14 +35,64 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
     
     logFile('debug', 'Processing file metadata', { deviceId, safeName, fileSize });
     
-    // Вычисляем MD5 (в фоне, не блокируем upload response)
+    // КРИТИЧНО: НОВЫЙ ПОРЯДОК ОПЕРАЦИЙ
+    // 1. Сначала обрабатываем MP4 файлы (faststart) - это может изменить файл
+    // 2. Потом вычисляем MD5 обработанного файла
+    // 3. Затем проверяем дедупликацию по MD5 обработанного файла
+    // Это гарантирует что все файлы обработаны перед дедупликацией
+    
+    let deduplicationApplied = false;
+    let duplicate = null;
+    
+    // ШАГ 1: Обрабатываем MP4 файлы ДО вычисления MD5 и дедупликации
+    if (ext === '.mp4' || ext === '.m4v' || ext === '.m4a') {
+      logFile('info', '🚀 Обработка MP4 файла перед дедупликацией', {
+        deviceId,
+        safeName,
+        filePath
+      });
+      
+      // Синхронно обрабатываем файл (ждем завершения)
+      // Это важно, чтобы MD5 вычислялся для обработанного файла
+      // КРИТИЧНО: Всегда обрабатываем при загрузке (checkFirst: false)
+      // Потому что файлы с большим moov могут все равно не перематываться
+      // из-за fragmented структуры или неполных индексов
+      try {
+        const { applyFaststart } = await import('../video/mp4-faststart.js');
+        const processed = await applyFaststart(filePath, { checkFirst: false });
+        
+        if (processed) {
+          logFile('info', '✅ MP4 файл обработан перед дедупликацией', {
+            deviceId,
+            safeName
+          });
+          // Обновляем размер файла после обработки
+          const newStats = fs.statSync(filePath);
+          fileSize = newStats.size;
+        } else {
+          logFile('warn', '⚠️ MP4 файл не был обработан (возможна ошибка)', {
+            deviceId,
+            safeName
+          });
+        }
+      } catch (error) {
+        logFile('error', 'Ошибка обработки MP4 перед дедупликацией', {
+          deviceId,
+          safeName,
+          error: error.message
+        });
+        // Продолжаем даже при ошибке обработки
+      }
+    }
+    
+    // ШАГ 2: Вычисляем MD5 обработанного файла
     const isBigFile = fileSize > 100 * 1024 * 1024;
     
     // Для больших файлов вычисляем оба MD5: partial (10MB) и full
     const partialMd5 = isBigFile ? await calculateMD5(filePath, true) : null;
     const md5Hash = await calculateMD5(filePath, false);
     
-    logFile('debug', 'MD5 calculated', { 
+    logFile('debug', 'MD5 calculated (after processing)', { 
       deviceId, 
       safeName, 
       md5: md5Hash.substring(0, 12),
@@ -49,14 +100,10 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
       isBigFile
     });
     
-    // Определяем тип файла для проверки необходимости дедупликации
+    // ШАГ 3: Проверяем дедупликацию по MD5 обработанного файла
+    // Дедупликация применяется ТОЛЬКО для видео файлов
     const videoExtensions = ['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'];
     const isVideoFile = videoExtensions.includes(ext);
-    
-    // Дедупликация применяется ТОЛЬКО для видео файлов
-    // Презентации и картинки не дедуплицируются
-    let duplicate = null;
-    let deduplicationApplied = false;
     
     if (isVideoFile) {
       // Проверяем есть ли дубликат на других устройствах (используем partial для больших файлов)
@@ -64,7 +111,7 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
       duplicate = findDuplicateFile(searchMd5, fileSize, deviceId, !!partialMd5);
       
       if (duplicate && fs.existsSync(duplicate.file_path)) {
-        // Дубликат найден! НОВАЯ АРХИТЕКТУРА: удаляем загруженный файл, используем существующий
+        // Дубликат найден! Удаляем обработанный новый файл, используем существующий
         logFile('info', '⚡ Duplicate detected - using existing file (instant deduplication)', {
           deviceId,
           safeName,
@@ -76,10 +123,10 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
         });
         
         try {
-          // Удаляем только что загруженный файл (не нужен, используем существующий)
+          // Удаляем обработанный новый файл (не нужен, используем существующий)
           fs.unlinkSync(filePath);
           
-          // НОВОЕ: Заменяем filePath на путь к существующему файлу (shared storage)
+          // Заменяем filePath на путь к существующему файлу (shared storage)
           filePath = duplicate.file_path;
           
           deduplicationApplied = true;
@@ -209,6 +256,33 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
       deduplicated: deduplicationApplied,
       resolution: videoParams.width ? `${videoParams.width}x${videoParams.height}` : null
     });
+    
+    // КРИТИЧНО: Faststart обработка уже выполнена ДО дедупликации (см. выше в коде)
+    // Для дедуплицированных файлов проверяем нужна ли обработка существующего файла в фоне
+    if (deduplicationApplied && (ext === '.mp4' || ext === '.m4v' || ext === '.m4a') && filePath && fs.existsSync(filePath)) {
+      // Дедуплицированный файл - проверяем нужна ли обработка существующего файла
+      logFile('debug', 'Проверка faststart для дедуплицированного файла (фоновая)', {
+        deviceId,
+        safeName,
+        filePath
+      });
+      
+      // Запускаем в фоне, не блокируем ответ
+      applyFaststartAsync(filePath).then((success) => {
+        if (success) {
+          logFile('info', '✅ Дедуплицированный файл обработан', {
+            deviceId,
+            safeName
+          });
+        }
+      }).catch((error) => {
+        logFile('warn', 'Ошибка обработки дедуплицированного файла', {
+          deviceId,
+          safeName,
+          error: error.message
+        });
+      });
+    }
     
     // Фоновая генерация трейлера для видео (не блокирует ответ)
     if (['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext) && md5Hash && filePath) {
