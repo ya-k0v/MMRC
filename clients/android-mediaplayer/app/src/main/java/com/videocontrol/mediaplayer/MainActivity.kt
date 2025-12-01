@@ -22,6 +22,7 @@ import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.Player
 import com.google.android.exoplayer2.ui.StyledPlayerView
 import com.google.android.exoplayer2.source.ProgressiveMediaSource
+import com.google.android.exoplayer2.source.hls.HlsMediaSource
 import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
 import com.google.android.exoplayer2.upstream.DefaultDataSource
 import com.google.android.exoplayer2.upstream.DefaultAllocator
@@ -851,38 +852,30 @@ class MainActivity : AppCompatActivity() {
                         return@runOnUiThread
                     }
                     
-                    // Получаем позицию из аргументов
-                    val position = when {
-                        args.isNotEmpty() -> {
-                            val data = args[0]
-                            when (data) {
-                                is JSONObject -> data.optDouble("position", 0.0)
-                                is Number -> data.toDouble()
-                                else -> 0.0
-                            }
-                        }
-                        else -> 0.0
+                    // КРИТИЧНО: Проверяем состояние плеера перед seek
+                    val currentPlayer = player
+                    if (currentPlayer == null) {
+                        Log.w(TAG, "🎯 Seek: плеер не инициализирован")
+                        return@runOnUiThread
                     }
                     
-                    if (position >= 0 && player != null) {
-                        // Конвертируем секунды в миллисекунды для ExoPlayer
-                        val positionMs = (position * 1000).toLong()
-                        val duration = player?.duration ?: 0
-                        
-                        // Проверяем, что позиция не превышает длительность
-                        val targetPosition = if (duration > 0 && positionMs > duration) {
-                            duration
-                        } else {
-                            positionMs
-                        }
-                        
-                        player?.seekTo(targetPosition)
-                        // Обновляем savedPosition для корректного сохранения позиции
-                        savedPosition = targetPosition
-                        Log.i(TAG, "🎯 Seek выполнен: ${position}s (${targetPosition}ms)")
-                    } else {
-                        Log.w(TAG, "🎯 Seek: неверная позиция или плеер не инициализирован")
+                    // КРИТИЧНО: Не выполняем seek если плеер в процессе загрузки
+                    val playbackState = currentPlayer.playbackState
+                    if (playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_IDLE) {
+                        Log.d(TAG, "🎯 Seek отложен - плеер в состоянии $playbackState")
+                        // Повторяем попытку через 200ms
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            // Проверяем что состояние не изменилось
+                            if (currentVideoFile != null && player?.playbackState == Player.STATE_READY) {
+                                performSeek(args)
+                            } else {
+                                Log.w(TAG, "🎯 Seek отменен - состояние изменилось после задержки")
+                            }
+                        }, 200)
+                        return@runOnUiThread
                     }
+                    
+                    performSeek(args)
                 }
             }
 
@@ -1001,11 +994,21 @@ class MainActivity : AppCompatActivity() {
             val type = data.optString("type")
             val file = data.optString("file")
             val page = data.optInt("page", 1)
+            val streamUrl = data.optString("stream_url", null)
+            val streamProtocol = data.optString("stream_protocol", "hls")
 
-            Log.i(TAG, "📡 player/play: type=$type, file=$file, page=$page")
+            Log.i(TAG, "📡 player/play: type=$type, file=$file, page=$page, streamUrl=$streamUrl, streamProtocol=$streamProtocol")
 
             when (type) {
                 "video" -> playVideo(file, isPlaceholder = false)
+                "streaming" -> {
+                    if (!streamUrl.isNullOrEmpty()) {
+                        playStream(streamUrl, streamProtocol, file)
+                    } else {
+                        Log.e(TAG, "❌ Stream URL is missing")
+                        showStatus("Ошибка: URL стрима не указан")
+                    }
+                }
                 "image" -> showImage(file, isPlaceholder = false)
                 "pdf" -> showPdfPage(file, page)
                 "pptx" -> showPptxSlide(file, page)
@@ -1018,6 +1021,46 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "Error handling play command", e)
             showStatus("Ошибка воспроизведения")
+        }
+    }
+    
+    private fun performSeek(args: Array<out Any>) {
+        try {
+            val position = when {
+                args.isNotEmpty() -> {
+                    val data = args[0]
+                    when (data) {
+                        is JSONObject -> data.optDouble("position", 0.0)
+                        is Number -> data.toDouble()
+                        else -> 0.0
+                    }
+                }
+                else -> 0.0
+            }
+            
+            val currentPlayer = player ?: return
+            if (position >= 0) {
+                val positionMs = (position * 1000).toLong()
+                val duration = currentPlayer.duration
+                
+                val targetPosition = if (duration > 0 && positionMs > duration) {
+                    duration
+                } else {
+                    positionMs
+                }
+                
+                // КРИТИЧНО: Проверяем состояние перед seek
+                if (currentPlayer.playbackState == Player.STATE_READY || 
+                    currentPlayer.playbackState == Player.STATE_BUFFERING) {
+                    currentPlayer.seekTo(targetPosition)
+                    savedPosition = targetPosition
+                    Log.i(TAG, "🎯 Seek выполнен: ${position}s (${targetPosition}ms)")
+                } else {
+                    Log.w(TAG, "🎯 Seek отменен - плеер не готов (state=${currentPlayer.playbackState})")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error performing seek", e)
         }
     }
 
@@ -1262,6 +1305,92 @@ class MainActivity : AppCompatActivity() {
         }
     }
     
+    private fun playStream(streamUrl: String, streamProtocol: String, fileName: String) {
+        // КРИТИЧНО: Проверяем состояние Activity перед началом
+        if (isDestroyed || isFinishing) {
+            Log.d(TAG, "Activity destroyed, skipping playStream")
+            return
+        }
+        skipPlaceholderOnVideoEnd = false
+        // КРИТИЧНО: Сбрасываем счетчик ошибок при начале нового контента
+        errorRetryCount = 0
+        retryRunnable?.let { retryHandler.removeCallbacks(it) }
+        retryRunnable = null
+        try {
+            Log.i(TAG, "📺 Playing stream: $streamUrl (protocol=$streamProtocol, file=$fileName)")
+
+            // КРИТИЧНО: Полностью очищаем изображения ДО запуска стрима
+            Glide.with(this).clear(imageView)
+            imageView.setImageDrawable(null)
+            imageView.visibility = View.GONE
+            imageView.alpha = 0f
+            
+            // Сбрасываем состояние изображений/презентаций
+            currentPdfFile = null
+            currentPptxFile = null
+            currentFolderName = null
+
+            // Новый стрим - загружаем напрямую в активный плеер
+            Log.i(TAG, "📺 Загрузка НОВОГО стрима: $fileName")
+            stopProgressUpdates()
+            currentVideoFile = fileName
+            savedPosition = 0
+
+            val activePlayer = player
+            val activePlayerView = playerView
+            if (activePlayer == null || activePlayerView == null) {
+                Log.e(TAG, "❌ Плеер не инициализирован")
+                showStatus("Ошибка подготовки стрима")
+                return
+            }
+
+            loadNewStream(streamUrl, streamProtocol, fileName, activePlayer, activePlayerView)
+            
+        } catch (e: OutOfMemoryError) {
+            Log.e(TAG, "❌ OutOfMemoryError playing stream: $fileName", e)
+            handleOutOfMemory()
+            // Не показываем сообщение зрителям - очистка происходит в фоне
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error playing stream: $fileName", e)
+            if (!isDestroyed && !isFinishing) {
+                showStatus("Ошибка загрузки стрима")
+            }
+        }
+    }
+    
+    // Функция для безопасного освобождения плеера с увеличенной задержкой
+    private fun safeReleasePlayer(
+        player: ExoPlayer,
+        view: StyledPlayerView,
+        onComplete: (Boolean) -> Unit
+    ) {
+        try {
+            // 1. Отвязываем от Surface
+            view.player = null
+            
+            // 2. Останавливаем воспроизведение
+            if (player.playbackState != Player.STATE_IDLE) {
+                player.pause()
+                player.stop()
+            }
+            
+            // 3. Очищаем медиа
+            player.clearMediaItems()
+            
+            // 4. Увеличиваем задержку до 300ms для полного освобождения MediaCodec
+            Handler(Looper.getMainLooper()).postDelayed({
+                onComplete(true)
+            }, 300) // Увеличено с 100ms до 300ms для предотвращения вылетов
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error in safeReleasePlayer", e)
+            // Даже при ошибке продолжаем через задержку
+            Handler(Looper.getMainLooper()).postDelayed({
+                onComplete(false)
+            }, 300)
+        }
+    }
+    
     private fun loadNewVideo(
         videoUrl: String,
         originalFileName: String,
@@ -1296,20 +1425,29 @@ class MainActivity : AppCompatActivity() {
             // КРИТИЧНО: Отменяем предыдущую pending инициализацию MediaCodec, если была
             mediaCodecInitRunnable?.let { 
                 Handler(Looper.getMainLooper()).removeCallbacks(it)
+                mediaCodecInitRunnable = null
             }
             
-            // КРИТИЧНО: Полностью освобождаем активный плеер перед загрузкой нового видео
-            // Отвязываем от Surface для полного освобождения MediaCodec
-            targetView.player = null
-            // Останавливаем и очищаем
-            targetPlayer.stop()
-            targetPlayer.clearMediaItems()
+            // КРИТИЧНО: Проверяем состояние Activity перед операциями
+            if (isDestroyed || isFinishing) {
+                Log.d(TAG, "Activity destroyed, skipping loadNewVideo")
+                return
+            }
             
-            // Небольшая задержка для полного освобождения ресурсов MediaCodec
-            val handler = Handler(Looper.getMainLooper())
-            mediaCodecInitRunnable = Runnable {
-                if (!isDestroyed && !isFinishing) {
-                    // Привязываем обратно и инициализируем
+            // КРИТИЧНО: Безопасное освобождение ресурсов с увеличенной задержкой
+            safeReleasePlayer(targetPlayer, targetView) { released ->
+                if (!released) {
+                    Log.w(TAG, "⚠️ Player release failed or timed out, continuing anyway")
+                }
+                
+                // Проверяем состояние Activity после задержки
+                if (isDestroyed || isFinishing) {
+                    Log.d(TAG, "Activity destroyed after release delay, skipping initialization")
+                    return@safeReleasePlayer
+                }
+                
+                // Инициализируем новый контент
+                try {
                     targetView.player = targetPlayer
                     targetView.visibility = View.VISIBLE
                     targetView.alpha = 1f
@@ -1323,7 +1461,6 @@ class MainActivity : AppCompatActivity() {
                         playWhenReady = true
                         play()
                     }
-                    mediaCodecInitRunnable = null
                     
                     isPlayingPlaceholder = isPlaceholder
                     if (isPlaceholder) {
@@ -1332,9 +1469,15 @@ class MainActivity : AppCompatActivity() {
                     if (!isPlaceholder) {
                         startProgressUpdates()
                     }
+                    
+                    Log.i(TAG, "✅ Video source initialized successfully")
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Error initializing video source", e)
+                    if (!isDestroyed && !isFinishing) {
+                        showStatus("Ошибка инициализации видео")
+                    }
                 }
             }
-            handler.postDelayed(mediaCodecInitRunnable!!, 100)
             
             Log.i(TAG, "✅ Video source set, initializing...")
             
@@ -1346,6 +1489,119 @@ class MainActivity : AppCompatActivity() {
             Log.e(TAG, "❌ Error loading new video", e)
             if (!isDestroyed && !isFinishing) {
                 showStatus("Ошибка загрузки видео")
+            }
+        }
+    }
+    
+    private fun loadNewStream(
+        streamUrl: String,
+        streamProtocol: String,
+        originalFileName: String,
+        targetPlayer: ExoPlayer,
+        targetView: StyledPlayerView
+    ) {
+        try {
+            // КРИТИЧНО: Проверяем, является ли URL абсолютным (начинается с http:// или https://)
+            // Если нет - добавляем SERVER_URL в начало
+            val fullStreamUrl = if (streamUrl.startsWith("http://") || streamUrl.startsWith("https://")) {
+                streamUrl
+            } else {
+                // Относительный путь - добавляем SERVER_URL
+                val baseUrl = SERVER_URL.trimEnd('/')
+                val path = if (streamUrl.startsWith("/")) streamUrl else "/$streamUrl"
+                "$baseUrl$path"
+            }
+            
+            Log.d(TAG, "📺 Загрузка нового стрима: $fullStreamUrl (original=$streamUrl, protocol=$streamProtocol)")
+            
+            // HTTP Data Source с увеличенными таймаутами для стримов
+            val httpDataSourceFactory = DefaultHttpDataSource.Factory().apply {
+                setAllowCrossProtocolRedirects(true)
+                setConnectTimeoutMs(60000)   // 60 секунд на подключение
+                setReadTimeoutMs(60000)      // 60 секунд на чтение
+                setUserAgent("VideoControl/1.0")
+            }
+
+            val dataSourceFactory = DefaultDataSource.Factory(this, httpDataSourceFactory)
+            
+            // КРИТИЧНО: Для стримов используем HlsMediaSource (не кэшируем стримы)
+            val mediaItem = MediaItem.fromUri(fullStreamUrl)
+            val mediaSource = when (streamProtocol.lowercase()) {
+                "hls" -> {
+                    HlsMediaSource.Factory(dataSourceFactory)
+                        .setAllowChunklessPreparation(true)
+                        .createMediaSource(mediaItem)
+                }
+                else -> {
+                    // Для других протоколов (mpegts, dash) также используем HLS если сервер конвертирует
+                    // Сервер всегда конвертирует стримы в HLS через FFmpeg
+                    Log.d(TAG, "📺 Using HLS for protocol: $streamProtocol (server converts to HLS)")
+                    HlsMediaSource.Factory(dataSourceFactory)
+                        .setAllowChunklessPreparation(true)
+                        .createMediaSource(mediaItem)
+                }
+            }
+
+            // КРИТИЧНО: Отменяем предыдущую pending инициализацию MediaCodec, если была
+            mediaCodecInitRunnable?.let { 
+                Handler(Looper.getMainLooper()).removeCallbacks(it)
+                mediaCodecInitRunnable = null
+            }
+            
+            // КРИТИЧНО: Проверяем состояние Activity перед операциями
+            if (isDestroyed || isFinishing) {
+                Log.d(TAG, "Activity destroyed, skipping loadNewStream")
+                return
+            }
+            
+            // КРИТИЧНО: Безопасное освобождение ресурсов с увеличенной задержкой
+            safeReleasePlayer(targetPlayer, targetView) { released ->
+                if (!released) {
+                    Log.w(TAG, "⚠️ Player release failed or timed out, continuing anyway")
+                }
+                
+                // Проверяем состояние Activity после задержки
+                if (isDestroyed || isFinishing) {
+                    Log.d(TAG, "Activity destroyed after release delay, skipping initialization")
+                    return@safeReleasePlayer
+                }
+                
+                // Инициализируем новый стрим
+                try {
+                    targetView.player = targetPlayer
+                    targetView.visibility = View.VISIBLE
+                    targetView.alpha = 1f
+                    targetView.bringToFront()
+                    statusText.bringToFront()
+                    
+                    targetPlayer.apply {
+                        setMediaSource(mediaSource)
+                        repeatMode = Player.REPEAT_MODE_OFF // Стримы не повторяются
+                        prepare()
+                        playWhenReady = true
+                        play()
+                    }
+                    
+                    isPlayingPlaceholder = false
+                    startProgressUpdates()
+                    
+                    Log.i(TAG, "✅ Stream source initialized successfully")
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Error initializing stream source", e)
+                    if (!isDestroyed && !isFinishing) {
+                        showStatus("Ошибка инициализации стрима")
+                    }
+                }
+            }
+            
+        } catch (e: OutOfMemoryError) {
+            Log.e(TAG, "❌ OutOfMemoryError loading new stream", e)
+            handleOutOfMemory()
+            // Не показываем сообщение зрителям - очистка происходит в фоне
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error loading new stream", e)
+            if (!isDestroyed && !isFinishing) {
+                showStatus("Ошибка загрузки стрима")
             }
         }
     }
