@@ -5,7 +5,7 @@ import path from 'path';
 
 // Импорты из модулей
 import { 
-  ROOT, PUBLIC, DEVICES, MAX_FILE_SIZE, ALLOWED_EXT, PORT, HOST, useExternalDataDiskFlag
+  ROOT, PUBLIC, MAX_FILE_SIZE, ALLOWED_EXT, PORT, HOST
 } from './src/config/constants.js';
 import { createSocketServer } from './src/config/socket-config.js';
 import { initDatabase, closeDatabase, getDatabase, getAllDeviceVolumeStates, saveDeviceVolumeState } from './src/database/database.js';
@@ -22,7 +22,7 @@ import { autoOptimizeVideo } from './src/video/optimizer.js';
 import { 
   findFileFolder, getPageSlideCount, autoConvertFile 
 } from './src/converters/document-converter.js';
-import { initStreamManager, syncStreamJobs } from './src/streams/stream-manager.js';
+import { initStreamManager } from './src/streams/stream-manager.js';
 import { createDevicesRouter } from './src/routes/devices.js';
 import { createPlaceholderRouter } from './src/routes/placeholder.js';
 import { createFilesRouter, updateDeviceFilesFromDB } from './src/routes/files.js';

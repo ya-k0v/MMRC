@@ -23,15 +23,20 @@
 git clone https://github.com/ya-k0v/VideoControl.git
 cd VideoControl
 
-# 2. Устанавливаем зависимости
+# 2. Проверяем окружение (рекомендуется)
+bash scripts/check-environment.sh
+
+# 3. Устанавливаем зависимости
 npm install
 
-# 3. Создаем конфигурацию
+# 4. Создаем конфигурацию
 mkdir -p config data/content data/streams data/converted data/logs data/temp
 
-# 4. Запускаем
+# 5. Запускаем
 node server.js
 ```
+
+**Подробная инструкция:** см. `INSTALL.md` для установки на новую ОС
 
 **По умолчанию:**
 - Сервер: `http://localhost:3000`
@@ -202,7 +207,9 @@ videocontrol/
 │   ├── logs/                    # Winston логи
 │   └── temp/                    # Временные файлы
 └── scripts/
-    └── quick-setup-android.sh   # Быстрая установка Android
+    ├── quick-setup-android.sh   # Быстрая установка Android
+    ├── cleanup.sh               # Очистка временных файлов
+    └── check-environment.sh     # Проверка окружения
 ```
 
 ---
@@ -318,13 +325,19 @@ sudo systemctl stop videocontrol
 # 2. Обновить код
 git pull origin main
 
-# 3. Установить зависимости
+# 3. Очистить временные файлы (опционально)
+bash scripts/cleanup.sh
+
+# 4. Установить зависимости
 npm install
 
-# 4. Запустить
+# 5. Проверить окружение
+bash scripts/check-environment.sh
+
+# 6. Запустить
 sudo systemctl start videocontrol
 
-# 5. Обновить Android APK
+# 7. Обновить Android APK
 adb install -r VCMplayer-v3.0.0.apk
 ```
 
