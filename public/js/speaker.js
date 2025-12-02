@@ -79,6 +79,10 @@ const STATIC_CONTENT_TYPES = new Set(['pdf', 'pptx', 'folder']);
 const FOLDER_INTERVAL_OPTIONS = [5, 10, 15, 20];
 const DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS = 10;
 let previewLoadToken = 0;
+
+// КРИТИЧНО: Отслеживание активных превью стримов для корректной остановки ffmpeg
+const activePreviewStreams = new Map(); // deviceId::safeName -> {timestamp, timeoutId, iframe}
+const PREVIEW_STREAM_STOP_DELAY = 15000; // 15 секунд задержка перед остановкой
 // formatDuration удалена - используем унифицированную функцию formatTime
 
 function clampVolumePercent(value) {
@@ -436,6 +440,84 @@ function resetPreviewHighlightState() {
     thumb.classList.remove('is-active');
     thumb.removeAttribute('data-selected');
   });
+}
+
+/**
+ * Начинает отслеживание превью стрима
+ * @param {string} deviceId 
+ * @param {string} safeName 
+ */
+function startPreviewStreamTracking(deviceId, safeName) {
+  const key = `${deviceId}::${safeName}`;
+  
+  // Очищаем предыдущий таймер если есть
+  const existing = activePreviewStreams.get(key);
+  if (existing && existing.timeoutId) {
+    clearTimeout(existing.timeoutId);
+  }
+  
+  // Сохраняем iframe для отслеживания
+  const iframe = filePreview.querySelector('iframe');
+  
+  activePreviewStreams.set(key, {
+    timestamp: Date.now(),
+    timeoutId: null,
+    iframe: iframe
+  });
+  
+  console.log('[Speaker] 📡 Начато отслеживание превью стрима:', { deviceId, safeName, key });
+}
+
+/**
+ * Останавливает отслеживание превью стрима и запускает таймер остановки ffmpeg
+ * @param {string} deviceId 
+ * @param {string} safeName 
+ */
+function stopPreviewStreamTracking(deviceId, safeName) {
+  const key = `${deviceId}::${safeName}`;
+  const entry = activePreviewStreams.get(key);
+  
+  if (!entry) {
+    return; // Уже остановлено или не отслеживалось
+  }
+  
+  // Очищаем предыдущий таймер если есть
+  if (entry.timeoutId) {
+    clearTimeout(entry.timeoutId);
+  }
+  
+  console.log('[Speaker] 📡 Остановка отслеживания превью стрима, запуск таймера остановки ffmpeg:', { deviceId, safeName, key });
+  
+  // Запускаем таймер на 15 секунд для остановки ffmpeg
+  entry.timeoutId = setTimeout(async () => {
+    await stopPreviewStreamIfUnused(deviceId, safeName);
+    activePreviewStreams.delete(key);
+  }, PREVIEW_STREAM_STOP_DELAY);
+}
+
+/**
+ * Останавливает стрим если он не используется другими устройствами
+ * @param {string} deviceId 
+ * @param {string} safeName 
+ */
+async function stopPreviewStreamIfUnused(deviceId, safeName) {
+  try {
+    console.log('[Speaker] 📡 Проверяем использование стрима перед остановкой:', { deviceId, safeName });
+    
+    // Вызываем API для остановки превью стрима
+    // API проверит, используется ли стрим другими устройствами
+    const res = await speakerFetch(`/api/devices/${encodeURIComponent(deviceId)}/streams/${encodeURIComponent(safeName)}/stop-preview`, {
+      method: 'POST'
+    });
+    
+    if (res.ok) {
+      console.log('[Speaker] ✅ Превью стрим остановлен:', { deviceId, safeName });
+    } else {
+      console.log('[Speaker] ℹ️ Превью стрим не остановлен (используется другими устройствами):', { deviceId, safeName });
+    }
+  } catch (error) {
+    console.error('[Speaker] ❌ Ошибка при остановке превью стрима:', error);
+  }
 }
 
 function getPreviewContext() {
@@ -868,6 +950,17 @@ function renderThumbnailGrid(deviceId, safeName, contentType, imageUrls) {
 
 async function showStaticPreview(deviceId, safeName, contentType, { initiatedByUser = false } = {}) {
   if (!deviceId || !safeName || !isStaticContent(contentType)) return;
+  
+  // КРИТИЧНО: Останавливаем отслеживание превью стрима если было активно
+  if (currentPreviewContext.deviceId && currentPreviewContext.file) {
+    const fileData = allFiles.find(f => f.safeName === currentPreviewContext.file);
+    if (fileData && fileData.contentType === 'streaming' && 
+        currentPreviewContext.deviceId === deviceId && 
+        currentPreviewContext.file !== safeName) {
+      stopPreviewStreamTracking(deviceId, currentPreviewContext.file);
+    }
+  }
+  
   if (initiatedByUser) {
     previewManuallyClosed = false;
   }
@@ -1002,7 +1095,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   // Загружаем данные параллельно для ускорения
   [nodeNames] = await Promise.all([
-    loadNodeNames(),
+    loadNodeNames(speakerFetch),
     loadDevices()
   ]);
   
@@ -1043,18 +1136,41 @@ function updateDevicesCount() {
   }
 }
 
-function showStreamingPreview(deviceId, safeName, streamProtocol = '') {
+async function showStreamingPreview(deviceId, safeName, streamProtocol = '') {
   if (!deviceId || !safeName) return;
   previewManuallyClosed = false;
-  const protocolParam = streamProtocol ? `&protocol=${encodeURIComponent(streamProtocol)}` : '';
-  const src = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&type=streaming&file=${encodeURIComponent(safeName)}${protocolParam}&t=${Date.now()}`;
-  const frame = filePreview.querySelector('iframe');
-  if (frame) {
-    frame.src = src;
-  } else {
-    filePreview.innerHTML = `<iframe src="${src}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
+  
+  // КРИТИЧНО: Запускаем полноценный стрим через ffmpeg перед показом превью
+  try {
+    console.log('[Speaker] 📡 Запускаем стрим для превью:', { deviceId, safeName, streamProtocol });
+    const res = await speakerFetch(`/api/devices/${encodeURIComponent(deviceId)}/streams/${encodeURIComponent(safeName)}`);
+    if (!res.ok) {
+      console.error('[Speaker] ❌ Не удалось запустить стрим для превью:', res.status);
+      filePreview.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary)">Ошибка запуска стрима</div>`;
+      return;
+    }
+    const data = await res.json();
+    console.log('[Speaker] ✅ Стрим запущен для превью:', { streamProxyUrl: data.streamProxyUrl });
+    
+    // Обновляем контекст превью
+    currentPreviewContext = { deviceId, file: safeName, page: null };
+    
+    // Отслеживаем активное превью стрима
+    startPreviewStreamTracking(deviceId, safeName);
+    
+    const protocolParam = streamProtocol ? `&protocol=${encodeURIComponent(streamProtocol)}` : '';
+    const src = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&type=streaming&file=${encodeURIComponent(safeName)}${protocolParam}&t=${Date.now()}`;
+    const frame = filePreview.querySelector('iframe');
+    if (frame) {
+      frame.src = src;
+    } else {
+      filePreview.innerHTML = `<iframe src="${src}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
+    }
+    setTimeout(() => updatePreviewControlButtons(), 10);
+  } catch (error) {
+    console.error('[Speaker] ❌ Ошибка при запуске стрима для превью:', error);
+    filePreview.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary)">Ошибка: ${error.message}</div>`;
   }
-  setTimeout(() => updatePreviewControlButtons(), 10);
 }
 
 async function loadDevices() {
@@ -1191,6 +1307,17 @@ window.addEventListener('resize', () => {
 });
 
 function showLivePreviewForTV(deviceId, force = false) {
+  // КРИТИЧНО: Останавливаем отслеживание превью стрима если было активно
+  if (currentPreviewContext.deviceId && currentPreviewContext.file) {
+    const device = devices.find(d => d.device_id === currentPreviewContext.deviceId);
+    if (device) {
+      const fileData = allFiles.find(f => f.safeName === currentPreviewContext.file);
+      if (fileData && fileData.contentType === 'streaming') {
+        stopPreviewStreamTracking(currentPreviewContext.deviceId, currentPreviewContext.file);
+      }
+    }
+  }
+  
   // ИСПРАВЛЕНО: Если force=true - принудительно очищаем превью
   // Это используется при явном переключении устройства
   if (force) {
@@ -1325,7 +1452,9 @@ async function loadFiles() {
           contentType: item.contentType || null,
           streamUrl: item.streamUrl || null,
           streamProxyUrl: item.streamProxyUrl || null,
-          streamProtocol: item.streamProtocol || null
+          streamProtocol: item.streamProtocol || null,
+          hasTrailer: item.hasTrailer || false,
+          trailerUrl: item.trailerUrl || null
         };
       });
 
@@ -1360,7 +1489,7 @@ async function loadFiles() {
   const end = Math.min(start + pageSize, allFiles.length);
   const files = allFiles.slice(start, end);
 
-  fileList.innerHTML = files.map(({ safeName, originalName, resolution, durationSeconds, folderImageCount, contentType, streamProtocol }) => {
+  fileList.innerHTML = files.map(({ safeName, originalName, resolution, durationSeconds, folderImageCount, contentType, streamProtocol, hasTrailer, trailerUrl }) => {
     // Определяем расширение файла
     const hasExtension = safeName.includes('.');
     const ext = hasExtension ? safeName.split('.').pop().toLowerCase() : '';
@@ -1427,6 +1556,8 @@ async function loadFiles() {
           data-original="${encodeURIComponent(originalName)}"
           data-content-type="${contentType || ''}"
           data-stream-protocol="${streamProtocol || ''}"
+          data-has-trailer="${hasTrailer ? '1' : '0'}"
+          data-trailer-url="${trailerUrl || ''}"
           style="
             display:grid; 
             grid-template-columns:3fr 1fr; 
@@ -1549,11 +1680,22 @@ async function loadFiles() {
       const streamProtocol = item.getAttribute('data-stream-protocol') || '';
       const originalName = decodeURIComponent(item.getAttribute('data-original'));
       
+      // КРИТИЧНО: Останавливаем отслеживание предыдущего превью стрима если было активно
+      if (currentPreviewContext.deviceId && currentPreviewContext.file) {
+        const prevFileData = allFiles.find(f => f.safeName === currentPreviewContext.file);
+        if (prevFileData && prevFileData.contentType === 'streaming' && 
+            currentPreviewContext.deviceId === currentDevice && 
+            currentPreviewContext.file !== safeName) {
+          stopPreviewStreamTracking(currentDevice, currentPreviewContext.file);
+        }
+      }
+      
       setCurrentFileSelection(safeName, item);
       previewManuallyClosed = false;
       
+      // КРИТИЧНО: Превью стримов отключено - ничего не делаем при клике
       if (contentType === 'streaming') {
-        showStreamingPreview(currentDevice, safeName, streamProtocol);
+        console.log('[Speaker] 📡 Превью стримов отключено для:', safeName);
         return;
       }
 
@@ -1575,10 +1717,34 @@ async function loadFiles() {
         }
       } else {
         // Для видео и обычных изображений показываем в iframe - быстрая операция
+        
+        // КРИТИЧНО: Останавливаем отслеживание превью стрима если было активно
+        if (currentPreviewContext.deviceId && currentPreviewContext.file) {
+          const prevFileData = allFiles.find(f => f.safeName === currentPreviewContext.file);
+          if (prevFileData && prevFileData.contentType === 'streaming' && 
+              currentPreviewContext.deviceId === currentDevice && 
+              currentPreviewContext.file !== safeName) {
+            stopPreviewStreamTracking(currentDevice, currentPreviewContext.file);
+          }
+        }
+        
+        // КРИТИЧНО: Обновляем контекст превью
+        currentPreviewContext = { deviceId: currentDevice, file: safeName, page: null };
+        
         let src = `/player-videojs.html?device_id=${encodeURIComponent(currentDevice)}&preview=1&muted=1&file=${encodeURIComponent(safeName)}`;
         
         if (['png','jpg','jpeg','gif','webp'].includes(ext)) {
           src += `&type=image&page=1`;
+        } else if (['mp4','webm','ogg','mkv','mov','avi'].includes(ext)) {
+          // КРИТИЧНО: Для видео файлов проверяем наличие трейлера
+          const hasTrailer = item.getAttribute('data-has-trailer') === '1';
+          const trailerUrl = item.getAttribute('data-trailer-url');
+          if (hasTrailer && trailerUrl) {
+            // Используем трейлер вместо полного файла
+            // КРИТИЧНО: trailerUrl уже готовый путь (/api/files/trailer/...), кодируем только для URL параметра
+            src += `&trailerUrl=${encodeURIComponent(trailerUrl)}`;
+            console.log('[Speaker] 🎬 Используем трейлер для превью:', trailerUrl);
+          }
         }
         
         src += `&t=${Date.now()}`;
@@ -2037,22 +2203,6 @@ function buildPreviewPlaybackInfo(device) {
   const duration = durationFromPlayer || durationFromDatabase;
   const isDurationFromDatabase = !!durationFromDatabase; // флаг для UI
   
-  // Отладка: логируем источник duration
-  if (duration || prog.duration === 0) {
-    console.log('[buildPreviewPlaybackInfo] Duration source:', {
-      file: prog.file,
-      deviceId: device.device_id,
-      durationFromPlayer,
-      durationFromDatabase,
-      duration,
-      isDurationFromDatabase,
-      fileInfoDurationSeconds: fileInfo?.durationSeconds,
-      deviceMetadataDurationSeconds: device.fileMetadata?.find(m => m.safeName === prog.file)?.durationSeconds,
-      progDuration: prog.duration,
-      hasFileInfo: !!fileInfo,
-      hasDeviceMetadata: !!device.fileMetadata
-    });
-  }
 
   // Если видео закончилось - не показываем информацию (проверяем общий duration)
   if (duration && duration > 0 && prog.currentTime >= duration - 0.5) {
@@ -2096,20 +2246,6 @@ function updatePlaybackInfoUI() {
   const device = devices.find(d => d.device_id === currentDevice);
   const playbackInfo = buildPreviewPlaybackInfo(device);
 
-  console.log('[updatePlaybackInfoUI] Debug:', {
-    currentDevice,
-    hasDevice: !!device,
-    hasCurrent: !!device?.current,
-    currentType: device?.current?.type,
-    currentFile: device?.current?.file,
-    streamProtocol: device?.current?.streamProtocol,
-    streamUrl: device?.current?.streamUrl,
-    hasPlaybackInfo: !!playbackInfo,
-    playbackInfoMode: playbackInfo?.mode,
-    playbackInfoTitle: playbackInfo?.title,
-    playbackInfoValue: playbackInfo?.value
-  });
-
   if (!device || !device.current) {
     infoEl.innerHTML = '';
     if (progressContainer) progressContainer.style.display = 'none';
@@ -2144,16 +2280,6 @@ function updatePlaybackInfoUI() {
   const durationFromDatabase = playbackInfo.progress?.durationFromDatabase || false;
   const metaValueClass = durationFromDatabase ? 'meta-value-db' : 'meta-value-player';
   
-  // Отладка: логируем определение цвета
-  if (playbackInfo.mode === 'video' && playbackInfo.progress) {
-    console.log('[updatePlaybackInfoUI] Duration color:', {
-      durationFromDatabase,
-      metaValueClass,
-      progressDuration: playbackInfo.progress.duration,
-      progressDurationFromDatabase: playbackInfo.progress.durationFromDatabase,
-      hasProgress: !!playbackInfo.progress
-    });
-  }
 
   infoEl.innerHTML = `
     <div class="meta-line">
@@ -2646,6 +2772,14 @@ document.getElementById('pdfCloseBtn').onclick = () => {
   
   // Устанавливаем флаг что пользователь ЯВНО закрыл превью
   previewManuallyClosed = true;
+  
+  // КРИТИЧНО: Останавливаем отслеживание превью стрима если было активно
+  if (currentPreviewContext.deviceId && currentPreviewContext.file) {
+    const fileData = allFiles.find(f => f.safeName === currentPreviewContext.file);
+    if (fileData && fileData.contentType === 'streaming') {
+      stopPreviewStreamTracking(currentPreviewContext.deviceId, currentPreviewContext.file);
+    }
+  }
   
   // Останавливаем плейлист ТОЛЬКО для текущего устройства (локально и на сервере)
   const device = devices.find(d => d.device_id === currentDevice);

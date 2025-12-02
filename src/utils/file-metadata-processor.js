@@ -286,7 +286,7 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
     
     // Фоновая генерация трейлера для видео (не блокирует ответ)
     if (['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext) && md5Hash && filePath) {
-      ensureTrailerForFile(md5Hash, filePath, { seconds: 5 }).catch(() => {});
+      ensureTrailerForFile(md5Hash, filePath, { seconds: 10 }).catch(() => {});
     }
     
     // Возвращаем информацию о дедупликации

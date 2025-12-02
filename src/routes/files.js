@@ -21,6 +21,7 @@ import { processUploadedFilesAsync } from '../utils/file-metadata-processor.js';
 import { getFileMetadata, deleteFileMetadata, getDeviceFilesMetadata, saveFileMetadata, countFileReferences, updateFileOriginalName, createStreamingEntry, cleanupMissingFiles } from '../database/files-metadata.js';
 import { getStreamPlaybackUrl, getStreamRestreamStatus, upsertStreamJob, removeStreamJob } from '../streams/stream-manager.js';
 import { getTrailerPath } from '../video/trailer-generator.js';
+import { requireSpeaker } from '../middleware/auth.js';
 
 const STREAM_PROTOCOLS = new Set(['auto', 'hls', 'dash', 'mpegts']);
 
@@ -500,7 +501,8 @@ export function createFilesRouter(deps) {
   });
 
   // POST /api/devices/:id/streams/:safeName/stop-preview - Остановить стрим после превью
-  router.post('/:id/streams/:safeName/stop-preview', requireAdmin, jsonParser, async (req, res) => {
+  // КРИТИЧНО: Используем requireSpeaker для доступа из speaker панели
+  router.post('/:id/streams/:safeName/stop-preview', requireSpeaker[0], requireSpeaker[1], jsonParser, async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
     if (!id) return res.status(400).json({ error: 'invalid device id' });
     const safeName = req.params.safeName;

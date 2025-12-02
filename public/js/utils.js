@@ -132,9 +132,18 @@ export function getPageSize(itemHeight = null) {
 }
 
 // Загрузка маппинга имен устройств из API
-export async function loadNodeNames() {
+// @param {Function} fetchFn - Опциональная функция для выполнения запроса (speakerFetch, adminFetch и т.д.)
+//                            Если не передана, используется обычный fetch
+export async function loadNodeNames(fetchFn = null) {
   try {
-    const res = await fetch('/api/devices');
+    const fetchFunction = fetchFn || fetch;
+    const res = await fetchFunction('/api/devices');
+    
+    if (!res.ok) {
+      // Если запрос не успешен, возвращаем пустой объект
+      return {};
+    }
+    
     const devices = await res.json();
     
     // Преобразуем массив устройств в маппинг {device_id: name}

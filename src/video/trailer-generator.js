@@ -1,5 +1,5 @@
 /**
- * Trailer generator - создаёт короткий MP4 (≈5s) для превью видео
+ * Trailer generator - создаёт короткий MP4 (≈10s) для превью видео
  */
 import fs from 'fs';
 import path from 'path';

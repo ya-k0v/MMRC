@@ -51,6 +51,39 @@ function ensureDir(dirPath) {
   }
 }
 
+/**
+ * Нормализует URL стрима для корректной дедупликации
+ * Убирает trailing slash, сортирует query параметры
+ * @param {string} url - URL стрима
+ * @returns {string} - Нормализованный URL
+ */
+function normalizeStreamUrl(url) {
+  if (!url || typeof url !== 'string') return url;
+  
+  try {
+    const urlObj = new URL(url.trim());
+    // Нормализуем: убираем trailing slash из pathname (кроме корня)
+    if (urlObj.pathname.length > 1 && urlObj.pathname.endsWith('/')) {
+      urlObj.pathname = urlObj.pathname.slice(0, -1);
+    }
+    // Сортируем параметры query string для консистентности
+    if (urlObj.search) {
+      const params = new URLSearchParams(urlObj.search);
+      const sortedParams = new URLSearchParams();
+      // Сортируем ключи параметров
+      Array.from(params.keys()).sort().forEach(key => {
+        sortedParams.set(key, params.get(key));
+      });
+      urlObj.search = sortedParams.toString();
+    }
+    return urlObj.toString();
+  } catch (err) {
+    // Если не удалось распарсить - возвращаем как есть
+    logger.warn('[StreamManager] Failed to normalize URL', { url, error: err.message });
+    return url.trim();
+  }
+}
+
 class StreamManager extends EventEmitter {
   constructor(options = {}) {
     super();
@@ -174,7 +207,9 @@ class StreamManager extends EventEmitter {
         const idleTime = now - lastAccess;
         if (idleTime > this.idleTimeout) {
           // КРИТИЧНО: Проверяем, используется ли URL другими устройствами
-          const urlEntry = this.urlToJobMap.get(job.sourceUrl);
+          // Нормализуем URL для корректного поиска (на случай старых job с ненормализованными URL)
+          const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
+          const urlEntry = this.urlToJobMap.get(normalizedSourceUrl);
           if (urlEntry && urlEntry.devices.size > 1) {
             // URL используется другими устройствами - проверяем их активность
             let hasActiveDevice = false;
@@ -811,7 +846,9 @@ class StreamManager extends EventEmitter {
       job.status = 'stopped';
       
       // КРИТИЧНО: Удаляем из urlToJobMap при завершении процесса
-      const urlEntry = this.urlToJobMap.get(job.sourceUrl);
+      // Нормализуем URL для корректного поиска (на случай старых job с ненормализованными URL)
+      const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
+      const urlEntry = this.urlToJobMap.get(normalizedSourceUrl);
       if (urlEntry) {
         // Удаляем все устройства, использующие этот URL, и очищаем их файлы
         urlEntry.devices.forEach(deviceKey => {
@@ -823,7 +860,7 @@ class StreamManager extends EventEmitter {
           this.jobs.delete(deviceKey);
           this.lastAccessTime.delete(deviceKey);
         });
-        this.urlToJobMap.delete(job.sourceUrl);
+        this.urlToJobMap.delete(normalizedSourceUrl);
       }
       
       if (wasStopping) {
@@ -1184,6 +1221,12 @@ class StreamManager extends EventEmitter {
   async upsertStream(entry) {
     const key = this._jobKey(entry.device_id, entry.safe_name);
     
+    // КРИТИЧНО: Нормализуем URL для корректной дедупликации
+    // Это гарантирует, что одинаковые URL (с разными trailing slash, порядком параметров и т.д.) 
+    // будут распознаны как одинаковые
+    const normalizedUrl = normalizeStreamUrl(entry.stream_url);
+    entry.stream_url = normalizedUrl; // Обновляем entry для использования нормализованного URL
+    
     // КРИТИЧНО: Проверяем лимит на количество стримов для предотвращения утечек памяти
     if (this.jobs.size >= this.options.maxJobs) {
       logger.warn('[StreamManager] Max jobs limit reached, stopping oldest idle streams', {
@@ -1199,6 +1242,7 @@ class StreamManager extends EventEmitter {
       deviceId: entry.device_id,
       safeName: entry.safe_name,
       streamUrl: entry.stream_url,
+      originalStreamUrl: entry.stream_url, // Логируем нормализованный URL
       streamProtocol: entry.stream_protocol,
       hasExisting: !!existing,
       existingStatus: existing?.status,
@@ -1206,7 +1250,7 @@ class StreamManager extends EventEmitter {
     });
     
     // КРИТИЧНО: Проверяем pending операции для этого URL (предотвращение race conditions)
-    const pendingPromise = this.urlToJobMapPending.get(entry.stream_url);
+    const pendingPromise = this.urlToJobMapPending.get(normalizedUrl);
     if (pendingPromise) {
       logger.info('[StreamManager] Waiting for pending operation on URL', {
         deviceId: entry.device_id,
@@ -1221,7 +1265,7 @@ class StreamManager extends EventEmitter {
         // Если pending операция завершилась успешно, используем её результат
         if (pendingJob) {
           // Проверяем, можем ли мы использовать этот job
-          const pendingUrlEntry = this.urlToJobMap.get(entry.stream_url);
+          const pendingUrlEntry = this.urlToJobMap.get(normalizedUrl);
           if (pendingUrlEntry) {
             const pendingExistingJob = this.jobs.get(pendingUrlEntry.jobKey);
             if (pendingExistingJob && pendingExistingJob.process && 
@@ -1237,7 +1281,7 @@ class StreamManager extends EventEmitter {
               logger.info('[StreamManager] Reusing job from pending operation (deduplication)', {
                 deviceId: entry.device_id,
                 safeName: entry.safe_name,
-                streamUrl: entry.stream_url
+                streamUrl: normalizedUrl
               });
               
               // Выполняем дедупликацию (можно вынести в отдельный метод)
@@ -1293,7 +1337,45 @@ class StreamManager extends EventEmitter {
     
     // КРИТИЧНО: СНАЧАЛА проверяем дедупликацию по URL (до проверки существующего job)
     // Если для этого URL уже запущен FFmpeg процесс, используем его без перезапуска
-    const urlEntry = this.urlToJobMap.get(entry.stream_url);
+    // Используем нормализованный URL для корректной дедупликации
+    let urlEntry = this.urlToJobMap.get(normalizedUrl);
+    
+    // КРИТИЧНО: Дополнительная проверка pending операции после проверки urlToJobMap
+    // Это защищает от race condition, когда pending операция завершилась между проверками
+    if (!urlEntry) {
+      const pendingAfterCheck = this.urlToJobMapPending.get(normalizedUrl);
+      if (pendingAfterCheck) {
+        logger.info('[StreamManager] Found pending operation after urlToJobMap check (race condition protection)', {
+          deviceId: entry.device_id,
+          safeName: entry.safe_name,
+          streamUrl: normalizedUrl
+        });
+        try {
+          // Ждем завершения pending операции
+          const pendingJob = await pendingAfterCheck;
+          if (pendingJob) {
+            // Проверяем urlToJobMap еще раз после завершения pending операции
+            urlEntry = this.urlToJobMap.get(normalizedUrl);
+            if (urlEntry) {
+              logger.info('[StreamManager] Found URL in urlToJobMap after pending operation completed', {
+                deviceId: entry.device_id,
+                safeName: entry.safe_name,
+                streamUrl: normalizedUrl,
+                jobKey: urlEntry.jobKey
+              });
+            }
+          }
+        } catch (pendingErr) {
+          logger.warn('[StreamManager] Pending operation failed in race condition check', {
+            deviceId: entry.device_id,
+            safeName: entry.safe_name,
+            streamUrl: normalizedUrl,
+            error: pendingErr.message
+          });
+        }
+      }
+    }
+    
     if (urlEntry) {
       const existingJobKey = urlEntry.jobKey;
       const existingJob = this.jobs.get(existingJobKey);
@@ -1306,7 +1388,7 @@ class StreamManager extends EventEmitter {
           logger.info('[StreamManager] Stream already running for this device, reusing', {
             deviceId: entry.device_id,
             safeName: entry.safe_name,
-            streamUrl: entry.stream_url,
+            streamUrl: normalizedUrl,
             jobKey: key
           });
           this.lastAccessTime.set(key, Date.now());
@@ -1317,7 +1399,7 @@ class StreamManager extends EventEmitter {
         logger.info('[StreamManager] Reusing existing FFmpeg process for URL (deduplication)', {
           deviceId: entry.device_id,
           safeName: entry.safe_name,
-          streamUrl: entry.stream_url,
+          streamUrl: normalizedUrl,
           existingJobKey,
           existingDeviceId: existingJob.deviceId,
           existingSafeName: existingJob.safeName
@@ -1462,19 +1544,23 @@ class StreamManager extends EventEmitter {
         return virtualJob;
       } else {
         // Процесс остановлен, удаляем из urlToJobMap и запускаем новый
-        this.urlToJobMap.delete(entry.stream_url);
+        this.urlToJobMap.delete(normalizedUrl);
       }
     }
     
     // КРИТИЧНО: Если дедупликация не сработала, проверяем существующий job для deviceId+safeName
     if (existing) {
       // Source URL change -> restart
-      if (existing.sourceUrl !== entry.stream_url) {
+      // Сравниваем нормализованные URL для корректного определения изменений
+      const existingNormalizedUrl = normalizeStreamUrl(existing.sourceUrl || '');
+      if (existingNormalizedUrl !== normalizedUrl) {
         logger.info('[StreamManager] Source URL changed, restarting', {
           deviceId: entry.device_id,
           safeName: entry.safe_name,
           oldUrl: existing.sourceUrl,
-          newUrl: entry.stream_url
+          oldNormalizedUrl: existingNormalizedUrl,
+          newUrl: entry.stream_url,
+          newNormalizedUrl: normalizedUrl
         });
         this.stopStream(entry.device_id, entry.safe_name, 'source_changed');
         // Продолжаем дальше, чтобы запустить новый FFmpeg процесс
@@ -1485,7 +1571,7 @@ class StreamManager extends EventEmitter {
           logger.info('[StreamManager] Stream already running with same URL, reusing', {
             deviceId: entry.device_id,
             safeName: entry.safe_name,
-            streamUrl: entry.stream_url,
+            streamUrl: normalizedUrl,
             jobKey: key
           });
           this.lastAccessTime.set(key, Date.now());
@@ -1495,7 +1581,7 @@ class StreamManager extends EventEmitter {
           logger.info('[StreamManager] Job exists but process stopped, restarting', {
             deviceId: entry.device_id,
             safeName: entry.safe_name,
-            streamUrl: entry.stream_url
+            streamUrl: normalizedUrl
           });
         }
       }
@@ -1505,7 +1591,7 @@ class StreamManager extends EventEmitter {
     logger.info('[StreamManager] Starting new FFmpeg process', {
       deviceId: entry.device_id,
       safeName: entry.safe_name,
-      streamUrl: entry.stream_url,
+      streamUrl: normalizedUrl,
       streamProtocol: entry.stream_protocol
     });
     
@@ -1532,27 +1618,27 @@ class StreamManager extends EventEmitter {
           logger.error('[StreamManager] _spawnJob returned null, FFmpeg not started', {
             deviceId: entry.device_id,
             safeName: entry.safe_name,
-            streamUrl: entry.stream_url
+            streamUrl: normalizedUrl
           });
           return null;
         }
         
-        // Регистрируем в urlToJobMap
+        // Регистрируем в urlToJobMap используя нормализованный URL
         if (job) {
-          if (!this.urlToJobMap.has(entry.stream_url)) {
-            this.urlToJobMap.set(entry.stream_url, {
+          if (!this.urlToJobMap.has(normalizedUrl)) {
+            this.urlToJobMap.set(normalizedUrl, {
               jobKey: key,
               devices: new Set([key])
             });
             logger.info('[StreamManager] Registered new URL in urlToJobMap', {
-              streamUrl: entry.stream_url,
+              streamUrl: normalizedUrl,
               jobKey: key
             });
           } else {
             // Если почему-то уже есть (не должно быть), добавляем устройство
-            this.urlToJobMap.get(entry.stream_url).devices.add(key);
+            this.urlToJobMap.get(normalizedUrl).devices.add(key);
             logger.warn('[StreamManager] URL already in urlToJobMap, added device', {
-              streamUrl: entry.stream_url,
+              streamUrl: normalizedUrl,
               jobKey: key
             });
           }
@@ -1574,7 +1660,7 @@ class StreamManager extends EventEmitter {
         logger.error('[StreamManager] Error in spawn promise', {
           deviceId: entry.device_id,
           safeName: entry.safe_name,
-          streamUrl: entry.stream_url,
+          streamUrl: normalizedUrl,
           error: err.message,
           stack: err.stack,
           duration,
@@ -1583,36 +1669,36 @@ class StreamManager extends EventEmitter {
         
         // КРИТИЧНО: При ошибке все равно очищаем pending операцию
         // Это предотвращает блокировку последующих запросов
-        this.urlToJobMapPending.delete(entry.stream_url);
+        this.urlToJobMapPending.delete(normalizedUrl);
         
         throw err;
       } finally {
         // КРИТИЧНО: Очищаем pending операцию после завершения (даже при успехе)
         // Дополнительная гарантия очистки
-        const pendingStillExists = this.urlToJobMapPending.has(entry.stream_url);
+        const pendingStillExists = this.urlToJobMapPending.has(normalizedUrl);
         if (pendingStillExists) {
-          this.urlToJobMapPending.delete(entry.stream_url);
+          this.urlToJobMapPending.delete(normalizedUrl);
           logger.debug('[StreamManager] Cleaned up pending operation in finally block', {
-            streamUrl: entry.stream_url,
+            streamUrl: normalizedUrl,
             duration: Date.now() - startTime
           });
         }
       }
     })();
     
-    // Сохраняем Promise в pending перед запуском
-    this.urlToJobMapPending.set(entry.stream_url, spawnPromise);
+    // Сохраняем Promise в pending перед запуском используя нормализованный URL
+    this.urlToJobMapPending.set(normalizedUrl, spawnPromise);
     
     // КРИТИЧНО: Обрабатываем отклонение Promise, чтобы не было необработанных ошибок
     spawnPromise.catch(err => {
       // Ошибка уже обработана в try-catch внутри Promise
       // Но убеждаемся, что pending операция очищена
-      if (this.urlToJobMapPending.has(entry.stream_url)) {
+      if (this.urlToJobMapPending.has(normalizedUrl)) {
         logger.warn('[StreamManager] Pending operation still exists after error, cleaning up', {
-          streamUrl: entry.stream_url,
+          streamUrl: normalizedUrl,
           error: err.message
         });
-        this.urlToJobMapPending.delete(entry.stream_url);
+        this.urlToJobMapPending.delete(normalizedUrl);
       }
     });
     
@@ -1640,7 +1726,9 @@ class StreamManager extends EventEmitter {
       // КРИТИЧНО: Проверяем, является ли это shared job (дедупликация по URL)
       if (job.isShared && job.sharedFrom) {
         // Это shared job - удаляем только симлинк и запись из urlToJobMap
-        const urlEntry = this.urlToJobMap.get(job.sourceUrl);
+        // Нормализуем URL для корректного поиска
+        const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
+        const urlEntry = this.urlToJobMap.get(normalizedSourceUrl);
         if (urlEntry) {
           // КРИТИЧНО: Сохраняем размер ДО удаления для правильной проверки
           const devicesCountBefore = urlEntry.devices.size;
@@ -1697,8 +1785,9 @@ class StreamManager extends EventEmitter {
                     this.jobs.delete(job.sharedFrom);
                     this.lastAccessTime.delete(job.sharedFrom);
                     // КРИТИЧНО: Удаляем из urlToJobMap после остановки процесса
-                    if (this.urlToJobMap.has(job.sourceUrl)) {
-                      this.urlToJobMap.delete(job.sourceUrl);
+                    const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
+                    if (this.urlToJobMap.has(normalizedSourceUrl)) {
+                      this.urlToJobMap.delete(normalizedSourceUrl);
                     }
                     this._cleanupFolder(sharedFolderPath);
                     this.emit('stream:stopped', { deviceId: sharedJob.deviceId, safeName: sharedJob.safeName, reason });
@@ -1725,8 +1814,9 @@ class StreamManager extends EventEmitter {
                   this.jobs.delete(job.sharedFrom);
                   this.lastAccessTime.delete(job.sharedFrom);
                   // КРИТИЧНО: Удаляем из urlToJobMap даже при ошибке
-                  if (this.urlToJobMap.has(job.sourceUrl)) {
-                    this.urlToJobMap.delete(job.sourceUrl);
+                  const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
+                  if (this.urlToJobMap.has(normalizedSourceUrl)) {
+                    this.urlToJobMap.delete(normalizedSourceUrl);
                   }
                   this._cleanupFolder(sharedFolderPath);
                 }
@@ -1734,18 +1824,20 @@ class StreamManager extends EventEmitter {
                 // КРИТИЧНО: Если процесса нет, все равно очищаем все записи
                 this.jobs.delete(job.sharedFrom);
                 this.lastAccessTime.delete(job.sharedFrom);
-                if (this.urlToJobMap.has(job.sourceUrl)) {
-                  this.urlToJobMap.delete(job.sourceUrl);
+                const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
+                if (this.urlToJobMap.has(normalizedSourceUrl)) {
+                  this.urlToJobMap.delete(normalizedSourceUrl);
                 }
                 this._cleanupFolder(sharedFolderPath);
               }
             } else {
               // КРИТИЧНО: Если shared job не найден, все равно удаляем из urlToJobMap
+              const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
               logger.warn('[StreamManager] Shared job not found, cleaning up urlToJobMap', {
-                streamUrl: job.sourceUrl,
+                streamUrl: normalizedSourceUrl,
                 sharedFrom: job.sharedFrom
               });
-              this.urlToJobMap.delete(job.sourceUrl);
+              this.urlToJobMap.delete(normalizedSourceUrl);
             }
           }
         } else {
@@ -1774,7 +1866,9 @@ class StreamManager extends EventEmitter {
       }
       
       // КРИТИЧНО: Для обычного job проверяем, используется ли URL другими устройствами
-      const urlEntryForStop = this.urlToJobMap.get(job.sourceUrl);
+      // Нормализуем URL для корректного поиска
+      const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
+      const urlEntryForStop = this.urlToJobMap.get(normalizedSourceUrl);
       if (urlEntryForStop) {
         // КРИТИЧНО: Проверяем размер ДО удаления, чтобы правильно определить, остались ли другие устройства
         const hasOtherDevices = urlEntryForStop.devices.size > 1;
@@ -1801,7 +1895,7 @@ class StreamManager extends EventEmitter {
         
         // Если это последнее устройство, удаляем запись из urlToJobMap
         if (urlEntryForStop.devices.size === 0) {
-          this.urlToJobMap.delete(job.sourceUrl);
+          this.urlToJobMap.delete(normalizedSourceUrl);
           logger.info('[StreamManager] Last device removed from URL, will stop FFmpeg', {
             deviceId,
             safeName,
@@ -1900,8 +1994,10 @@ class StreamManager extends EventEmitter {
       
       // КРИТИЧНО: Для shared jobs обновляем время доступа для всех устройств, использующих этот URL
       // Это предотвращает остановку FFmpeg, если хотя бы одно устройство активно использует стрим
+      // Нормализуем URL для корректного поиска
+      const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
       if (job.isShared && job.sharedFrom) {
-        const urlEntry = this.urlToJobMap.get(job.sourceUrl);
+        const urlEntry = this.urlToJobMap.get(normalizedSourceUrl);
         if (urlEntry) {
           // Обновляем время доступа для всех устройств, использующих этот URL
           urlEntry.devices.forEach(deviceKey => {
@@ -1910,7 +2006,7 @@ class StreamManager extends EventEmitter {
         }
       } else {
         // Для обычных jobs обновляем время доступа для всех устройств, использующих тот же URL
-        const urlEntry = this.urlToJobMap.get(job.sourceUrl);
+        const urlEntry = this.urlToJobMap.get(normalizedSourceUrl);
         if (urlEntry && urlEntry.devices.size > 1) {
           urlEntry.devices.forEach(deviceKey => {
             this.lastAccessTime.set(deviceKey, Date.now());
@@ -1930,8 +2026,10 @@ class StreamManager extends EventEmitter {
       this.lastAccessTime.set(key, Date.now());
       
       // Для shared jobs обновляем время доступа для всех устройств
+      // Нормализуем URL для корректного поиска
       if (job.isShared && job.sharedFrom) {
-        const urlEntry = this.urlToJobMap.get(job.sourceUrl);
+        const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
+        const urlEntry = this.urlToJobMap.get(normalizedSourceUrl);
         if (urlEntry) {
           urlEntry.devices.forEach(deviceKey => {
             this.lastAccessTime.set(deviceKey, Date.now());

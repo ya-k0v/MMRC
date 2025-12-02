@@ -112,7 +112,7 @@ router.get('/resolve/:deviceId/:fileName(*)', (req, res) => {
 
 /**
  * GET /api/files/trailer/:deviceId/:fileName
- * Отдаёт готовый трейлер (5s) если он сгенерирован
+ * Отдаёт готовый трейлер (10s) если он сгенерирован
  */
 router.get('/trailer/:deviceId/:fileName(*)', (req, res) => {
   const deviceId = sanitizeDeviceId(req.params.deviceId);
@@ -146,7 +146,7 @@ router.get('/trailer/:deviceId/:fileName(*)', (req, res) => {
     }
     
     // Если нет — запустить генерацию в фоне и сообщить что пока нет
-    ensureTrailerForFile(md5, metadata.file_path, { seconds: 5 }).catch(()=>{});
+    ensureTrailerForFile(md5, metadata.file_path, { seconds: 10 }).catch(()=>{});
     return res.status(404).send('trailer not ready');
   }).catch(() => res.status(500).send('internal error'));
 });

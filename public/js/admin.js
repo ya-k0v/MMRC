@@ -282,7 +282,7 @@ window.addEventListener('resize', () => {
 });
 
 async function loadAndSetNodeNames() {
-  nodeNames = await loadNodeNames();
+  nodeNames = await loadNodeNames(adminFetch);
 }
 function renderLayout() {
   grid.innerHTML = `

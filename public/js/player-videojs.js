@@ -267,7 +267,6 @@ if (!device_id || !device_id.trim()) {
       v.load(); // Принудительно перезагружаем видео-элемент для очистки буферов
     } catch (e) {
       // Игнорируем ошибки если видео еще не инициализировано
-      console.debug('[Player] Видео элемент еще не инициализирован, пропускаем очистку');
     }
   }
   
@@ -321,7 +320,6 @@ if (!device_id || !device_id.trim()) {
               // Очистка src нужна только при переключении контента, не при инициализации
             } catch (e) {
               // Игнорируем ошибки при инициализации
-              console.debug('[Player] Ошибка остановки видео при инициализации:', e);
             }
           }
           
@@ -364,7 +362,6 @@ if (!device_id || !device_id.trim()) {
               setTimeout(() => {
                 if (vjsPlayer.paused()) {
                   vjsPlayer.play().catch(err => {
-                    console.debug('[Player] Auto-resume after ended failed', err);
                   });
                 }
               }, 100);
@@ -453,12 +450,10 @@ if (!device_id || !device_id.trim()) {
           vjsPlayer.on('stalled', () => {
             // КРИТИЧНО: stalled - нормальное поведение при медленном интернете
             // Браузер сам управляет буферизацией, не нужно ничего делать
-            console.debug('[Player] ⚠️ Video stalled (нормально при медленном интернете)');
           });
           
           vjsPlayer.on('waiting', () => {
             // КРИТИЧНО: waiting - нормальное поведение, видео ждет буферизации
-            console.debug('[Player] ⏳ Video waiting (буферизация)');
           });
           
           // КРИТИЧНО: Функция для отправки прогресса воспроизведения
@@ -545,7 +540,6 @@ if (!device_id || !device_id.trim()) {
                   wakeLock = null;
                 });
               }).catch(e => {
-                console.debug('[Player] Wake Lock недоступен:', e);
               });
             }
           });
@@ -561,7 +555,6 @@ if (!device_id || !device_id.trim()) {
               
               // Логируем каждый раз при изменении процента (для отладки)
               if (percent !== lastLoggedPercent) {
-                console.log(`[Player] 📊 Буферизовано: ${percent}% (${bufferedEnd.toFixed(2)}s / ${duration > 0 ? duration.toFixed(2) : '?'}s)`);
                 lastLoggedPercent = percent;
               }
             } else {
@@ -575,9 +568,6 @@ if (!device_id || !device_id.trim()) {
           });
           
           vjsPlayer.on('suspend', () => {
-            // НИЧЕГО НЕ ДЕЛАЕМ - Android сам управляет буферизацией
-            // videoEl.load() ПРЕРЫВАЕТ воспроизведение - это создает цикл ошибок
-            console.debug('[Player] Video suspend (игнорируем, Android сам управляет буферизацией)');
           });
           
           vjsPlayer.on('canplay', () => {
@@ -595,7 +585,6 @@ if (!device_id || !device_id.trim()) {
             const bufferedInfo = buffered.length > 0 
               ? `${buffered.end(buffered.length - 1).toFixed(2)}s` 
               : '0s';
-            console.log(`[Player] ✅ canplaythrough - весь файл может быть воспроизведен (buffered=${bufferedInfo}, duration=${duration > 0 ? duration.toFixed(2) : '?'}s)`);
           });
           
           vjsPlayer.on('loadstart', () => {
@@ -648,7 +637,46 @@ if (!device_id || !device_id.trim()) {
                     if (playbackUrl) {
                       const proto = data?.protocol || previewStreamProtocol;
                       console.log('[Player] 📡 Используем URL для превью:', { playbackUrl, proto, hasProxy: !!data?.streamProxyUrl });
-                      handleStreamingPlayback(playbackUrl, previewFile, proto);
+                      
+                      // КРИТИЧНО: Для HLS стримов проверяем доступность плейлиста с retry
+                      if (playbackUrl.includes('.m3u8') || proto === 'hls') {
+                        console.log('[Player] 📡 Проверяем доступность HLS плейлиста для превью...');
+                        let retryCount = 0;
+                        const maxRetries = 5;
+                        const retryDelay = 1000; // 1 секунда
+                        
+                        const tryLoadStream = async () => {
+                          try {
+                            // Проверяем доступность плейлиста
+                            const checkRes = await fetch(playbackUrl, { method: 'HEAD', cache: 'no-cache' });
+                            if (checkRes.ok) {
+                              console.log('[Player] ✅ HLS плейлист доступен, запускаем воспроизведение');
+                              handleStreamingPlayback(playbackUrl, previewFile, proto);
+                            } else if (retryCount < maxRetries) {
+                              retryCount++;
+                              console.log(`[Player] ⏳ HLS плейлист еще не готов, повтор через ${retryDelay}ms (попытка ${retryCount}/${maxRetries})`);
+                              setTimeout(tryLoadStream, retryDelay);
+                            } else {
+                              console.warn('[Player] ⚠️ HLS плейлист не стал доступен после всех попыток, пробуем запустить');
+                              handleStreamingPlayback(playbackUrl, previewFile, proto);
+                            }
+                          } catch (err) {
+                            if (retryCount < maxRetries) {
+                              retryCount++;
+                              console.log(`[Player] ⏳ Ошибка проверки плейлиста, повтор через ${retryDelay}ms (попытка ${retryCount}/${maxRetries}):`, err.message);
+                              setTimeout(tryLoadStream, retryDelay);
+                            } else {
+                              console.warn('[Player] ⚠️ Не удалось проверить HLS плейлист, пробуем запустить:', err);
+                              handleStreamingPlayback(playbackUrl, previewFile, proto);
+                            }
+                          }
+                        };
+                        
+                        // Начинаем с небольшой задержки
+                        setTimeout(tryLoadStream, 500);
+                      } else {
+                        handleStreamingPlayback(playbackUrl, previewFile, proto);
+                      }
                     } else {
                       console.warn('[Player] ⚠️ Предпросмотр стрима: отсутствует streamUrl');
                     }
@@ -662,9 +690,27 @@ if (!device_id || !device_id.trim()) {
                 vjsPlayer.loop(true);
                 vjsPlayer.muted(true);
                 vjsPlayer.volume(0);
-                const previewSeconds = parseInt(url.searchParams.get('seconds') || '10', 10);
-                const previewStart = parseInt(url.searchParams.get('start') || '0', 10);
-                vjsPlayer.src({ src: videoPreviewSource(previewFile, { start: previewStart, seconds: previewSeconds }), type: 'video/mp4' });
+                
+                // КРИТИЧНО: Проверяем наличие трейлера - используем его вместо полного файла
+                const trailerUrlParam = url.searchParams.get('trailerUrl');
+                let videoSrc;
+                
+                if (trailerUrlParam) {
+                  // КРИТИЧНО: URLSearchParams.get() автоматически декодирует значение
+                  // trailerUrlParam уже должен быть правильным путем (/api/files/trailer/...)
+                  // Используем как есть, так как это уже декодированный путь
+                  const trailerUrl = trailerUrlParam;
+                  console.log('[Player] 🎬 Используем трейлер для превью:', trailerUrl);
+                  videoSrc = trailerUrl;
+                } else {
+                  // Fallback: используем preview endpoint (первые 10 секунд)
+                  const previewSeconds = parseInt(url.searchParams.get('seconds') || '10', 10);
+                  const previewStart = parseInt(url.searchParams.get('start') || '0', 10);
+                  videoSrc = videoPreviewSource(previewFile, { start: previewStart, seconds: previewSeconds });
+                  console.log('[Player] 🎬 Используем preview endpoint (трейлер недоступен):', videoSrc);
+                }
+                
+                vjsPlayer.src({ src: videoSrc, type: 'video/mp4' });
                 videoContainer.style.display = ''; // КРИТИЧНО: Сбрасываем display:none
                 show(videoContainer);
                 
@@ -1076,7 +1122,6 @@ if (!device_id || !device_id.trim()) {
               // Если мы близко к концу буфера (в пределах 1 секунды), возобновляем
               if (bufferedEnd > 0 && (bufferedEnd - currentTime) < 1) {
                 mediaEl.play().catch(err => {
-                  console.debug('[Player] Auto-resume failed', err);
                 });
               }
             }
@@ -1084,6 +1129,15 @@ if (!device_id || !device_id.trim()) {
           hlsPlayer.on(window.Hls.Events.ERROR, (_, data) => {
             if (data?.fatal) {
               console.error('[Player] ❌ HLS fatal error', data);
+              
+              // КРИТИЧНО: Для preview стримов не пытаемся перезапускать через Video.js
+              // так как это может быть проблема с доступностью плейлиста
+              if (preview && previewFile) {
+                console.warn('[Player] ⚠️ HLS ошибка в preview режиме, возможно плейлист еще не готов');
+                // Не перезапускаем, просто логируем
+                return;
+              }
+              
               destroyHlsPlayer('fatal_error');
               playViaVideoJs(streamUrl, 'hls');
             }
