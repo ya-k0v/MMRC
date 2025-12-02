@@ -1,4 +1,4 @@
-# 📺 VideoControl
+# 📺 VideoControl 3.0.0
 
 **Система управления медиаконтентом для цифровых дисплеев**
 
@@ -10,342 +10,144 @@
 
 ## 🚀 Быстрый старт
 
-### Требования
-- **Node.js** 20.x+
-- **FFmpeg** + **FFprobe**
-- **LibreOffice** (для PDF/PPTX)
-- **SQLite3**
-
-### Установка
+### Установка одной командой
 
 ```bash
-# 1. Клонируем репозиторий
-git clone https://github.com/ya-k0v/VideoControl.git
-cd VideoControl
+# Production установка с Nginx и systemd
+sudo bash scripts/quick-install.sh
+```
 
-# 2. Проверяем окружение (рекомендуется)
-bash scripts/check-environment.sh
+### Ручная установка
 
-# 3. Устанавливаем зависимости
+```bash
+# 1. Установите зависимости
 npm install
 
-# 4. Создаем конфигурацию
-mkdir -p config data/content data/streams data/converted data/logs data/temp
+# 2. Создайте конфигурацию
+cp .env.example .env
+nano .env  # Настройте переменные окружения
 
-# 5. Запускаем
+# 3. Создайте структуру директорий
+mkdir -p config config/hero data/{content,streams,converted,logs,temp}
+
+# 4. Запустите сервер
 node server.js
 ```
 
-**Подробная инструкция:** см. `INSTALL.md` для установки на новую ОС
-
 **По умолчанию:**
 - Сервер: `http://localhost:3000`
-- Админ: `admin / admin123`
-
-### Что нового (3.0.0)
-
-- 🔄 **Дедупликация стримов** — один FFmpeg процесс обслуживает все устройства, использующие один и тот же исходный URL стрима. Стрим работает, пока хотя бы одно устройство его использует.
-- 📁 **Динамические пути данных** — все пути данных (content, streams, converted, logs, temp) определяются динамически на основе единой настройки `contentRoot` в админ-панели. Автоматическое создание поддиректорий.
-- 🧹 **Очистка несуществующих файлов** — автоматическая проверка файлов в БД и удаление записей для файлов, которых нет на диске. API endpoint для ручной очистки.
-- ⚡ **Улучшенная логика idle timeout** — стримы останавливаются только если все устройства закрыли стрим и прошло 3 минуты без активности.
-- 🧭 **Hero-модуль** — отдельный фронтенд в `public/hero/` (`index.html`, `admin.html`, `js/`) с доступом по `/hero/index.html` и `/hero/admin.html`, общей базой `config/hero/heroes.db` и медиагалереей.
-- 🗃️ **Автоматические миграции heroes.db** — база переносится в `config/hero/heroes.db`, создаётся/синхронизируется на старте, доступен API `/api/hero/export-database`.
-- ⚡ **Quick-install 2.0** — интерактивный выбор хранилища, автоматический sysctl-тюнинг и готовый systemd unit с geo-блоком в Nginx.
-- 📱 **Android APK v3.0.0** — свежая сборка плеера в корне репозитория, автоматическая настройка через `scripts/quick-setup-android.sh`.
-
-### Быстрая установка (production, с Nginx и systemd)
-
-```bash
-# Интерактивная установка
-sudo bash scripts/quick-install.sh
-
-# Или полностью non-interactive (AUTO_CONFIRM=1) с выбором хранилища
-AUTO_CONFIRM=1 STORAGE_MODE=external CONTENT_DIR=/mnt/vc-content \
-  sudo bash scripts/quick-install.sh /vid/videocontrol
-
-# Базовый сервер без Nginx (auto-yes для systemd/Nginx вопросов)
-AUTO_CONFIRM=1 sudo bash scripts/install-server.sh
-```
-
-Доступные режимы хранения:
-- `local` — все данные в `data/*` (content, streams, converted, logs, temp)
-- `external` — все данные в `DATA_ROOT/*` (по умолчанию `/mnt/videocontrol-data/*`)
-- `external_fstab` — внешний диск монтируется в `DATA_ROOT` через `/etc/fstab`
-
-> После установки путь к хранилищу можно менять через админ‑панель: `⚙️ Настройки → Хранилище контента`.  
-> Все загрузки/воспроизведение идут через backend, поэтому Nginx alias для `/content/` не используется.
-
-См. также: `docs/MANUAL.md` — полезные команды (SQLite, systemd, Nginx, бэкапы).
-
-### Systemd (для production)
-
-```bash
-sudo cp videocontrol.service /etc/systemd/system/
-sudo systemctl enable videocontrol
-sudo systemctl start videocontrol
-```
+- Админ: `admin / admin123` (⚠️ **ОБЯЗАТЕЛЬНО СМЕНИТЬ** после первого входа!)
 
 ---
 
 ## 📚 Документация
 
+Вся документация находится в папке [`docs/`](docs/):
+
 ### Основная документация
-- `README.md` — обзор, архитектура и возможности
-- `QUICK-START.md` — пошаговая установка и подготовка окружения
-- `docs/MANUAL.md` — эксплуатация, мониторинг, бэкапы и сценарии устранения неполадок
+- [`docs/README.md`](docs/README.md) — полное описание проекта, архитектура и возможности
+- [`docs/INSTALL.md`](docs/INSTALL.md) — подробная инструкция по установке на новую ОС
+- [`docs/QUICK-START.md`](docs/QUICK-START.md) — быстрый старт и настройка
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — развертывание в продакшене и перенос на новый сервер
+- [`docs/MANUAL.md`](docs/MANUAL.md) — эксплуатация, мониторинг, бэкапы
 
 ### Панели управления
-- `public/ADMIN_PANEL_README.md` — подробное описание админ-панели
-- `public/SPEAKER_PANEL_README.md` — подробное описание спикер-панели
-- `public/hero/README.md` — подробное описание Hero-модуля (картотека героев)
+- [`docs/ADMIN_PANEL_README.md`](docs/ADMIN_PANEL_README.md) — админ-панель
+- [`docs/SPEAKER_PANEL_README.md`](docs/SPEAKER_PANEL_README.md) — спикер-панель
+- [`docs/HERO_README.md`](docs/HERO_README.md) — Hero-модуль (картотека героев)
 
 ### Клиенты
-- `clients/android-mediaplayer/README.md` + `QUICK_SETUP.md` — Android/ADB инструкции
-- `clients/mpv/README.md` — MPV‑клиент для Linux‑плееров
+- [`docs/ANDROID_README.md`](docs/ANDROID_README.md) — Android клиент
+- [`docs/ANDROID_QUICK_SETUP.md`](docs/ANDROID_QUICK_SETUP.md) — быстрая настройка Android
+- [`docs/ANDROID_BUILD.md`](docs/ANDROID_BUILD.md) — сборка Android APK
+- [`docs/ANDROID_AUTOSTART.md`](docs/ANDROID_AUTOSTART.md) — настройка автозапуска
+- [`docs/MPV_README.md`](docs/MPV_README.md) — MPV клиент для Linux
+
+### Техническая документация
+- [`docs/AUDIT.md`](docs/AUDIT.md) — технический аудит проекта
+- [`docs/HERO_PANELS_OPTIMIZATION.md`](docs/HERO_PANELS_OPTIMIZATION.md) — оптимизация панелей героев
+- [`docs/MP4_FASTSTART.md`](docs/MP4_FASTSTART.md) — оптимизация MP4
+- [`docs/UPLOAD_PROCESS_ANALYSIS.md`](docs/UPLOAD_PROCESS_ANALYSIS.md) — анализ процесса загрузки
 
 ---
 
-## 📱 Android клиент
+## 🎯 Основные возможности
 
-### Быстрая установка
-
-```bash
-cd scripts
-./quick-setup-android.sh
-```
-
-**Скрипт автоматически:**
-- Подключается к устройству через ADB
-- Устанавливает APK
-- Настраивает server URL и device ID
-- Отключает энергосбережение
-- Запускает приложение
-
-**Вручную:**
-
-```bash
-# 1. Установить актуальный APK (v3.0.0)
-adb install -r VCMplayer-v3.0.0.apk
-
-# 2. Запустить
-adb shell am start -n com.videocontrol.mediaplayer/.MainActivity
-
-# 3. Настроить через админ панель
-#    Server URL: http://your-server:3000
-#    Device ID: DEVICE001
-```
-
-**Новые улучшения Android-клиента:**
-- Переходы изображений/PDF/PPTX строго поверх бренд-фона (без чёрного экрана)
-- Placeholder крутится всегда, socket-команды не прерываются
-- Lifecycle-aware корутины, перехват OutOfMemory, WakeLock safety, retry logic
+- ✅ **SQLite** — быстрая БД с WAL mode
+- ✅ **JWT Auth** — безопасная аутентификация
+- ✅ **MD5 Deduplication** — экономия места на диске
+- ✅ **FFmpeg** — автооптимизация видео
+- ✅ **PDF/PPTX → изображения** — автоконвертация
+- ✅ **Graceful Shutdown** — корректное завершение
+- ✅ **Winston Logging** — структурированные логи
+- ✅ **Rate Limiting** — защита от brute-force
+- ✅ **Health Check** — мониторинг состояния
+- ✅ **Metrics** — отслеживание производительности
 
 ---
 
-## 🎯 Возможности
-
-### Backend
-- **SQLite** - быстрая БД с WAL mode и автоматическим переподключением
-- **JWT Auth** - 12h access + 30d refresh tokens
-- **MD5 Deduplication** - экономия места на диске
-- **FFmpeg** - автооптимизация видео (720p/1080p)
-- **PDF/PPTX → изображения** - автоконвертация
-- **Graceful Shutdown** - корректное завершение
-- **Winston Logging** - структурированные логи с ротацией
-- **Rate Limiting** - защита от brute-force
-- **Health Check** - `/health` endpoint для мониторинга
-- **Metrics** - `/api/metrics` для отслеживания производительности
-- **Circuit Breaker** - защита от каскадных сбоев
-- **Retry Logic** - автоматические повторы при ошибках БД
-- **Request Timeouts** - защита от зависших запросов
-
-### Frontend
-- **Админ панель** - управление устройствами и файлами
-- **Спикер панель** - воспроизведение контента
-- **Sync-preview** - превью/подсветка слайдов берётся из фактического состояния плееров
-- **JWT Auth UI** - безопасная авторизация
-- **Drag & Drop** - перемещение файлов между устройствами
-- **Live Preview** - предпросмотр контента
-- **PWA** - работает offline
-
-### Android Player
-- **ExoPlayer** - стабильное воспроизведение + кэш 500 MB
-- **Glide** - плавная загрузка изображений с crossfade
-- **Презентации** - PDF/PPTX слайды
-- **Папки** - навигация по изображениям с плейлистом
-- **Заглушка** - автовоспроизведение при отсутствии контента
-- **24/7 Ready** - обработка OOM в фоне, автоматическое восстановление, watchdog для соединения
-- **Плавные переходы** - fade-in/fade-out для всех типов контента
-
----
-
-## 📁 Структура
+## 📦 Структура проекта
 
 ```
 videocontrol/
-├── server.js                    # Точка входа
-├── src/
-│   ├── routes/                  # 10 роутеров (auth, devices, files...)
-│   ├── database/                # SQLite (БД + metadata)
-│   ├── video/                   # FFmpeg обработка
-│   ├── converters/              # PDF/PPTX → изображения
-│   ├── socket/                  # Socket.IO handlers
-│   ├── middleware/              # Auth, rate limit
-│   └── utils/                   # Helpers
-├── public/
-│   ├── js/                      # Frontend (модульный)
-│   │   ├── admin/               # 13 модулей админ панели
-│   │   └── speaker/             # Спикер панель
-│   └── sw.js                    # Service Worker
-├── clients/android-mediaplayer/ # Android приложение
-├── config/
-│   └── main.db                  # SQLite база
-├── data/                        # Все данные приложения
-│   ├── content/                 # Медиафайлы устройств
-│   ├── streams/                 # HLS рестрим выход
-│   ├── converted/               # Кэш конвертированных PDF/PPTX
-│   ├── logs/                    # Winston логи
-│   └── temp/                    # Временные файлы
-└── scripts/
-    ├── quick-setup-android.sh   # Быстрая установка Android
-    ├── cleanup.sh               # Очистка временных файлов
-    └── check-environment.sh     # Проверка окружения
+├── server.js              # Точка входа
+├── package.json           # Зависимости
+├── .env.example           # Пример конфигурации
+├── docs/                  # Вся документация
+├── src/                   # Backend код
+├── public/                # Frontend (HTML, JS, CSS)
+├── config/                # Конфигурация (БД, настройки)
+├── scripts/               # Скрипты установки
+├── clients/               # Клиентские приложения
+│   ├── android-mediaplayer/
+│   └── mpv/
+└── nginx/                 # Конфигурация Nginx
 ```
 
 ---
 
-## 🔧 API
+## 🔧 Требования
 
-### Аутентификация
-```http
-POST /api/auth/login
-POST /api/auth/refresh
-POST /api/auth/logout
-GET  /api/auth/me
-```
-
-### Устройства
-```http
-GET    /api/devices
-POST   /api/devices
-DELETE /api/devices/:id
-```
-
-### Файлы
-```http
-POST   /api/devices/:id/upload
-GET    /api/devices/:id/files-with-status
-POST   /api/devices/:id/files/:name/rename
-DELETE /api/devices/:id/files/:name
-GET    /api/files/resolve/:deviceId/:fileName
-```
-
-### Заглушка
-```http
-GET  /api/devices/:id/placeholder
-POST /api/devices/:id/placeholder
-```
+- **Node.js** 20.x+
+- **FFmpeg** + **FFprobe**
+- **LibreOffice** (для PDF/PPTX)
+- **SQLite3**
 
 ---
 
 ## 🔐 Безопасность
 
-- ✅ **JWT** - access (12h) + refresh tokens (30d)
-- ✅ **Rate Limiting** - защита от brute-force
-- ✅ **SQL Prepared Statements** - защита от injection
-- ✅ **Sanitization** - все device ID очищаются
-- ✅ **Audit Logging** - все операции логируются
-- ✅ **Password Reset** - только admin
+После установки:
+1. **Измените пароль администратора** (по умолчанию: `admin / admin123`)
+2. **Настройте JWT_SECRET** в `.env` файле
+3. **Настройте файрвол** (используйте только Nginx)
+4. **Настройте SSL/TLS** (через Nginx)
 
 ---
 
-## 📊 Производительность
+## 📱 Клиенты
 
-- **Дедупликация:** 33% экономия места (в среднем)
-- **FFmpeg timeout:** 30 мин (защита от зависания)
-- **Upload limit:** 5 GB на файл
-- **ExoPlayer cache:** 500 MB
-- **TCP buffers:** 16 MB (быстрая загрузка)
-
----
-
-## 🐛 Troubleshooting
-
-### Видео не воспроизводится
-```bash
-# Очистить кэш браузера
-Ctrl + Shift + R
-
-# Очистить кэш Android
-adb shell pm clear com.videocontrol.mediaplayer
-```
-
-### Заглушка не показывается
-```bash
-# Проверить БД
-sqlite3 config/main.db "SELECT * FROM files_metadata WHERE is_placeholder=1;"
-
-# Проверить логи
-sudo journalctl -u videocontrol -f
-```
-
-### Файлы не загружаются
-```bash
-# Проверить место на диске
-df -h /vid/videocontrol/data/content
-
-# Проверить права
-ls -la data/content/
-```
-
----
-
-## 📝 Логи
-
-```bash
-# Server логи
-sudo journalctl -u videocontrol -f
-
-# Android логи
-adb logcat | grep -iE "VCMedia|VideoControl"
-
-# Winston логи
-tail -f data/logs/error-*.log
-tail -f data/logs/combined-*.log
-```
+- **Android TV / Media Player** — APK в корне проекта (`VCMplayer-v3.0.0.apk`)
+- **MPV Player (Linux)** — нативный медиаплеер
+- **Browser** — веб-плеер через Video.js
 
 ---
 
 ## 🔄 Обновление
 
 ```bash
-# 1. Остановить сервер
+cd /vid/videocontrol
 sudo systemctl stop videocontrol
-
-# 2. Обновить код
 git pull origin main
-
-# 3. Очистить временные файлы (опционально)
-bash scripts/cleanup.sh
-
-# 4. Установить зависимости
 npm install
-
-# 5. Проверить окружение
-bash scripts/check-environment.sh
-
-# 6. Запустить
 sudo systemctl start videocontrol
-
-# 7. Обновить Android APK
-adb install -r VCMplayer-v3.0.0.apk
 ```
 
 ---
 
 ## 📄 Лицензия
 
-MIT License - свободное использование
+MIT License — свободное использование
 
 ---
 
@@ -354,3 +156,12 @@ MIT License - свободное использование
 **ya-k0v** - [GitHub](https://github.com/ya-k0v/VideoControl)
 
 **Версия:** 3.0.0
+
+---
+
+## 📞 Поддержка
+
+- GitHub: https://github.com/ya-k0v/VideoControl
+- Issues: https://github.com/ya-k0v/VideoControl/issues
+- Документация: [`docs/`](docs/)
+

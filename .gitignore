@@ -46,6 +46,8 @@ public/content/*
 # Environment & secrets
 .env
 .env.local
+.env.*
+!.env.example
 .test
 *.backup
 *.backup.*
