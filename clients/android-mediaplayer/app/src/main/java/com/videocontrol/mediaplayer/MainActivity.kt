@@ -303,6 +303,30 @@ class MainActivity : AppCompatActivity() {
             Log.w(TAG, "⚠️ Failed to emit idle progress", e)
         }
     }
+    
+    // КРИТИЧНО: Отправка события player/progress для статического контента (folder, pdf, pptx)
+    // Это нужно для немедленного обновления состояния устройства на сервере
+    private fun emitStaticContentProgress(contentType: String, file: String, page: Int) {
+        if (socket?.connected() != true) {
+            Log.w(TAG, "Socket not connected, skipping static content progress update")
+            return
+        }
+        try {
+            val progressData = JSONObject().apply {
+                put("device_id", DEVICE_ID)
+                put("type", contentType)
+                put("file", file)
+                put("page", page)
+                put("currentTime", 0)
+                put("duration", 0)
+            }
+            
+            socket?.emit("player/progress", progressData)
+            Log.d(TAG, "📊 Static content progress sent: type=$contentType, file=$file, page=$page")
+        } catch (e: Exception) {
+            Log.w(TAG, "Error sending static content progress: ${e.message}")
+        }
+    }
 
     private fun registerVolumeReceiver() {
         if (!::audioManager.isInitialized || volumeChangeReceiver != null) return
@@ -1781,6 +1805,10 @@ class MainActivity : AppCompatActivity() {
                 crossFadeFromVideo = hasVideo
             )
             
+            // КРИТИЧНО: Отправляем событие player/progress с типом pdf сразу после показа страницы
+            // Это нужно для немедленного обновления состояния устройства на сервере
+            emitStaticContentProgress("pdf", file, page)
+            
             // Предзагружаем соседние страницы для быстрого переключения
             preloadAdjacentSlides(file, page, 999, "pdf")  // 999 как max (не знаем точное кол-во)
             
@@ -1861,6 +1889,10 @@ class MainActivity : AppCompatActivity() {
                 crossFadeFromVideo = hasVideo
             )
             
+            // КРИТИЧНО: Отправляем событие player/progress с типом pptx сразу после показа слайда
+            // Это нужно для немедленного обновления состояния устройства на сервере
+            emitStaticContentProgress("pptx", file, slide)
+            
             // Предзагружаем соседние слайды для быстрого переключения
             preloadAdjacentSlides(file, slide, 999, "pptx")  // 999 как max (не знаем точное кол-во)
             
@@ -1940,6 +1972,10 @@ class MainActivity : AppCompatActivity() {
                 crossFadeFromCurrent = !hasVideo && hasPreviousImage,
                 crossFadeFromVideo = hasVideo
             )
+            
+            // КРИТИЧНО: Отправляем событие player/progress с типом folder сразу после показа изображения
+            // Это нужно для немедленного обновления состояния устройства на сервере
+            emitStaticContentProgress("folder", folder, imageNum)
             
             // Предзагружаем соседние изображения для быстрого переключения
             preloadAdjacentSlides(folder, imageNum, 999, "folder")  // 999 как max (не знаем точное кол-во)

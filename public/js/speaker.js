@@ -989,7 +989,7 @@ async function showStaticPreview(deviceId, safeName, contentType, { initiatedByU
   // Используем небольшой timeout, чтобы DOM успел обновиться
   setTimeout(() => {
     updatePreviewControlButtons();
-  }, 10);
+  }, 50);
 }
 
 async function syncPreviewWithPlayerState() {

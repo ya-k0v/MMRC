@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import logger from '../../utils/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,9 +18,9 @@ const moveFileIfExists = (source, destination) => {
       fs.mkdirSync(destDir, { recursive: true });
     }
     fs.renameSync(source, destination);
-    console.log(`[Hero DB] Moved ${source} -> ${destination}`);
+    logger.info(`[Hero DB] Moved ${source} -> ${destination}`);
   } catch (err) {
-    console.warn(`[Hero DB] Failed to move ${source} to ${destination}:`, err.message);
+    logger.warn(`[Hero DB] Failed to move ${source} to ${destination}`, { error: err.message });
   }
 };
 
@@ -27,7 +28,7 @@ const migrateLegacyDb = () => {
   if (!fs.existsSync(LEGACY_DB_PATH)) return;
 
   if (!fs.existsSync(DB_PATH)) {
-    console.log('[Hero DB] Legacy heroes.db detected. Migrating to config/hero/heroes.db ...');
+    logger.info('[Hero DB] Legacy heroes.db detected. Migrating to config/hero/heroes.db ...');
     moveFileIfExists(LEGACY_DB_PATH, DB_PATH);
   }
 
@@ -57,10 +58,10 @@ initDb.close();
 migrateLegacyDb();
 
 if (!fs.existsSync(DB_PATH)) {
-  console.log('[Hero DB] Creating heroes database...');
+  logger.info('[Hero DB] Creating heroes database...');
   ensureHeroesDb();
 } else {
-  console.log('[Hero DB] Syncing schema for heroes database...');
+  logger.info('[Hero DB] Syncing schema for heroes database...');
   ensureHeroesDb();
 }
 

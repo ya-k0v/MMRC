@@ -51,10 +51,12 @@ const combinedFileTransport = new DailyRotateFile({
   format: logFormat
 });
 
-// Транспорт: консоль (только в development)
+// Транспорт: консоль (в production показываем только warn и error)
 const consoleTransport = new winston.transports.Console({
   format: consoleFormat,
-  level: process.env.NODE_ENV === 'production' ? 'info' : 'debug'
+  level: process.env.NODE_ENV === 'production' ? 'warn' : 'debug',
+  // Опционально: полностью отключить консоль если нужно
+  silent: process.env.SILENT_CONSOLE === 'true'
 });
 
 // Создаем основной logger

@@ -4,8 +4,18 @@
  */
 
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
+import logger from '../utils/logger.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'CHANGE_ME_IN_PRODUCTION';
+// Генерируем JWT_SECRET при запуске если не задан в env
+let JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+  JWT_SECRET = crypto.randomBytes(64).toString('hex');
+  logger.warn('[Auth] ⚠️ JWT_SECRET not set in env, generated random secret. Tokens will be invalidated on server restart!');
+  logger.warn('[Auth] 💡 Set JWT_SECRET in .env file for production persistence.');
+}
+
 const JWT_EXPIRES_IN = process.env.JWT_ACCESS_EXPIRES_IN || '12h';  // 12 часов для работы 24/7
 const REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || '30d';  // 30 дней
 

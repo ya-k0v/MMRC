@@ -107,3 +107,31 @@ export function createUploadMiddleware(devices) {
   return upload;
 }
 
+/**
+ * Middleware для проверки размера файла ДО начала загрузки
+ * Проверяет Content-Length заголовок чтобы предотвратить DoS
+ * @param {Request} req - Express request
+ * @param {Response} res - Express response
+ * @param {Function} next - Express next
+ */
+export function validateUploadSize(req, res, next) {
+  const contentLength = parseInt(req.headers['content-length'] || '0', 10);
+  
+  if (contentLength > MAX_FILE_SIZE) {
+    logger.warn('[Multer] Upload rejected: file too large', {
+      contentLength,
+      maxSize: MAX_FILE_SIZE,
+      ip: req.ip
+    });
+    return res.status(413).json({ 
+      error: 'File too large', 
+      maxSize: MAX_FILE_SIZE,
+      requestedSize: contentLength,
+      maxSizeMB: Math.round(MAX_FILE_SIZE / 1024 / 1024),
+      requestedSizeMB: Math.round(contentLength / 1024 / 1024)
+    });
+  }
+  
+  next();
+}
+

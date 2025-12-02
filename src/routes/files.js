@@ -22,6 +22,7 @@ import { getFileMetadata, deleteFileMetadata, getDeviceFilesMetadata, saveFileMe
 import { getStreamPlaybackUrl, getStreamRestreamStatus, upsertStreamJob, removeStreamJob } from '../streams/stream-manager.js';
 import { getTrailerPath } from '../video/trailer-generator.js';
 import { requireSpeaker } from '../middleware/auth.js';
+import { validateUploadSize } from '../middleware/multer-config.js';
 
 const STREAM_PROTOCOLS = new Set(['auto', 'hls', 'dash', 'mpegts']);
 
@@ -534,7 +535,7 @@ export function createFilesRouter(deps) {
 
   
   // POST /api/devices/:id/upload - Загрузка файлов
-  router.post('/:id/upload', uploadLimiter, async (req, res, next) => {
+  router.post('/:id/upload', uploadLimiter, validateUploadSize, async (req, res, next) => {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {

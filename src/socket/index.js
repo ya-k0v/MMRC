@@ -25,12 +25,12 @@ export function setupSocketHandlers(io, deps) {
   
   io.on('connection', socket => {
     const transport = socket.conn?.transport?.name;
-    logger.info(`[Socket.IO] 🔌 connection id=${socket.id}`, { socketId: socket.id, transport });
+    logger.debug(`[Socket.IO] 🔌 connection id=${socket.id}`, { socketId: socket.id, transport });
 
     // Логирование transport events
     if (socket.conn) {
       socket.conn.on('upgrade', () => {
-        logger.info(`[Socket.IO] 🚀 transport upgraded for ${socket.id}`, { socketId: socket.id, newTransport: socket.conn.transport.name });
+        logger.debug(`[Socket.IO] 🚀 transport upgraded for ${socket.id}`, { socketId: socket.id, newTransport: socket.conn.transport.name });
       });
       
       socket.conn.on('close', (reason) => {

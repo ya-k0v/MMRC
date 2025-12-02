@@ -517,6 +517,9 @@ app.post('/api/admin/settings/content-root', requireAuth, requireAdmin, async (r
     logger.info('[Admin] Updating content root path', { newPath });
     const normalizedPath = await updateContentRootPath(newPath);
 
+    // Ждем небольшую задержку для завершения всех операций миграции в БД
+    await new Promise(resolve => setTimeout(resolve, 100));
+
     // Пересканируем устройства, чтобы обновить список файлов после миграции
     logger.info('[Admin] Rescanning devices after path migration', { deviceCount: Object.keys(devices).length });
     Object.keys(devices).forEach((deviceId) => {
@@ -1098,6 +1101,19 @@ process.on('uncaughtException', (err) => {
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
-  // Не выходим при unhandledRejection, только логируем
+  logger.error('💥 Unhandled Rejection', {
+    reason: reason instanceof Error ? {
+      message: reason.message,
+      stack: reason.stack
+    } : reason,
+    promise: promise?.toString?.() || String(promise)
+  });
+  
+  // В production завершаем процесс через 5 секунд (даем время на логирование)
+  if (process.env.NODE_ENV === 'production') {
+    logger.error('🛑 Server will exit in 5 seconds due to unhandled rejection');
+    setTimeout(() => {
+      process.exit(1);
+    }, 5000);
+  }
 });

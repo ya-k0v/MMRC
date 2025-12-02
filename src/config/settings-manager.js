@@ -79,9 +79,9 @@ function loadSettingsFromFile() {
       };
     }
   } catch (error) {
-    // КРИТИЧНО: Не используем logger здесь, так как он может быть не инициализирован
-    // Используем console.error для критических ошибок при загрузке модуля
-    console.error('[Settings] Failed to read settings file:', error.message);
+    // КРИТИЧНО: Не используем logger здесь из-за циклической зависимости
+    // Используем process.stderr для критических ошибок при загрузке модуля
+    process.stderr.write(`[Settings] Failed to read settings file: ${error.message}\n`);
   }
 }
 

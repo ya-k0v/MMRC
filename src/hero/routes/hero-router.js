@@ -3,6 +3,7 @@ import { heroQueries } from '../database/queries.js';
 import { HERO_DB_PATH, LEGACY_HERO_DB_PATH } from '../database/hero-db.js';
 import path from 'path';
 import fs from 'fs';
+import logger from '../../utils/logger.js';
 
 function validateMediaSize(base64String, limitBytes = 10 * 1024 * 1024) {
   if (!base64String || typeof base64String !== 'string') return;
@@ -17,7 +18,7 @@ function validateMediaSize(base64String, limitBytes = 10 * 1024 * 1024) {
     // Если ошибка валидации размера - пробрасываем её
     if (err.message.includes('too large')) throw err;
     // Иначе игнорируем ошибки декодирования base64
-    console.warn('[Hero Router] validateMediaSize warning:', err.message);
+    logger.warn('[Hero Router] validateMediaSize warning', { error: err.message });
   }
 }
 
@@ -60,7 +61,7 @@ export function createHeroRouter({ requireHeroAdmin }) {
       }
 
       if (resolved.legacy) {
-        console.warn('[Hero Router] Using legacy heroes.db path for export. Consider restarting the server to finish migration.');
+        logger.warn('[Hero Router] Using legacy heroes.db path for export. Consider restarting the server to finish migration.');
       }
       
       const stats = fs.statSync(resolved.path);
