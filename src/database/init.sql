@@ -221,6 +221,23 @@ CREATE TABLE IF NOT EXISTS placeholders (
 );
 
 -- ========================================
+-- USER DEVICES TABLE (назначение устройств пользователям)
+-- ========================================
+CREATE TABLE IF NOT EXISTS user_devices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  device_id TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE,
+  UNIQUE(user_id, device_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_devices_user ON user_devices(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_devices_device ON user_devices(device_id);
+CREATE INDEX IF NOT EXISTS idx_user_devices_user_device ON user_devices(user_id, device_id);
+
+-- ========================================
 -- SETTINGS TABLE (настройки системы)
 -- ========================================
 CREATE TABLE IF NOT EXISTS settings (

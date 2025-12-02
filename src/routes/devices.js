@@ -14,6 +14,8 @@ import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import logger, { logDevice } from '../utils/logger.js';
 import { deleteDeviceFilesMetadata, getDeviceFilesMetadata } from '../database/files-metadata.js';
 import { removeStreamJob } from '../streams/stream-manager.js';
+import { requireAuth } from '../middleware/auth.js';
+import { getUserDevices } from '../middleware/device-access.js';
 
 const router = express.Router();
 
@@ -34,9 +36,18 @@ export function createDevicesRouter(deps) {
     onDeviceDeleted
   } = deps;
   
-  // GET /api/devices - Получить список всех устройств (доступно speaker)
-  router.get('/', (req, res) => {
-    res.json(Object.entries(devices).map(([id, d]) => ({
+  // GET /api/devices - Получить список всех устройств
+  // Фильтрует устройства по доступу пользователя:
+  // - admin: видит все устройства
+  // - speaker: только назначенные устройства
+  // - hero_admin: не имеет доступа к устройствам (своя панель)
+  router.get('/', requireAuth, (req, res) => {
+    // HERO ADMIN не имеет доступа к устройствам
+    if (req.user.role === 'hero_admin') {
+      return res.json([]);
+    }
+
+    let devicesList = Object.entries(devices).map(([id, d]) => ({
       device_id: id, 
       name: d.name, 
       folder: d.folder, 
@@ -56,7 +67,16 @@ export function createDevicesRouter(deps) {
       platform: d.platform || 'Unknown',
       lastSeen: d.lastSeen || null,
       ipAddress: d.ipAddress || null
-    })));
+    }));
+
+    // Если пользователь не admin, фильтруем по назначенным устройствам
+    if (req.user.role !== 'admin') {
+      const allowedDevices = getUserDevices(req.user.userId);
+      const allowedDevicesSet = new Set(allowedDevices);
+      devicesList = devicesList.filter(d => allowedDevicesSet.has(d.device_id));
+    }
+
+    res.json(devicesList);
   });
   
   // POST /api/devices - Создать новое устройство (только admin)

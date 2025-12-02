@@ -145,6 +145,15 @@ export async function showUsersModal(adminFetch) {
   // Сохраняем adminFetch в window для использования в inline onclick
   window.adminFetch = adminFetch;
   
+  // Состояние для поиска и пагинации
+  window.usersModalState = {
+    allUsers: [],
+    filteredUsers: [],
+    currentPage: 1,
+    itemsPerPage: 5,
+    searchQuery: ''
+  };
+  
   const content = `
     <div style="display:flex; flex-direction:column; gap:var(--space-lg);">
       <!-- Форма создания пользователя -->
@@ -167,8 +176,45 @@ export async function showUsersModal(adminFetch) {
       <!-- Список пользователей -->
       <div>
         <div style="margin-bottom:var(--space-md); font-weight:600;">Список пользователей</div>
-        <div id="modalUsersList" style="display:flex; flex-direction:column; gap:var(--space-sm);">
+        
+        <!-- Поле поиска -->
+        <div style="margin-bottom:var(--space-sm);">
+          <input 
+            id="modalUsersSearch" 
+            class="input" 
+            type="text" 
+            placeholder="Поиск по логину или ФИО..." 
+            style="width:100%;"
+          />
+        </div>
+        
+        <!-- Список пользователей -->
+        <div id="modalUsersList" style="display:flex; flex-direction:column; gap:var(--space-sm); min-height:200px;">
           <div class="meta" style="text-align:center; padding:var(--space-lg);">Загрузка...</div>
+        </div>
+        
+        <!-- Пагинация -->
+        <div id="modalUsersPagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:var(--space-md); padding-top:var(--space-md); border-top:1px solid var(--border);">
+          <div class="meta" id="modalUsersPaginationInfo" style="color:var(--text-secondary);"></div>
+          <div style="display:flex; gap:var(--space-xs); align-items:center;">
+            <button 
+              id="modalUsersPrevPage" 
+              class="secondary" 
+              style="min-width:auto; padding:6px 12px;"
+              disabled
+            >
+              ← Назад
+            </button>
+            <span class="meta" id="modalUsersPageInfo" style="padding:0 var(--space-sm);"></span>
+            <button 
+              id="modalUsersNextPage" 
+              class="secondary" 
+              style="min-width:auto; padding:6px 12px;"
+              disabled
+            >
+              Вперед →
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -177,7 +223,10 @@ export async function showUsersModal(adminFetch) {
   showModal(`${getUsersIcon(18)} Управление пользователями`, content);
   
   // Загружаем список пользователей
-  setTimeout(() => loadModalUsersList(adminFetch), 100);
+  setTimeout(() => {
+    loadModalUsersList(adminFetch);
+    setupUsersModalHandlers(adminFetch);
+  }, 100);
   
   // Обработчик создания
   setTimeout(() => {
@@ -251,42 +300,164 @@ async function loadModalUsersList(adminFetch) {
   const container = document.getElementById('modalUsersList');
   if (!container) return;
   
+  // Инициализируем состояние, если его еще нет
+  if (!window.usersModalState) {
+    window.usersModalState = {
+      allUsers: [],
+      filteredUsers: [],
+      currentPage: 1,
+      itemsPerPage: 5,
+      searchQuery: ''
+    };
+  }
+  
   try {
     const res = await adminFetch('/api/auth/users');
     const users = await res.json();
     
-    if (users.length === 0) {
-      container.innerHTML = '<div class="meta" style="text-align:center; padding:var(--space-lg);">Нет пользователей</div>';
-      return;
+    // Загружаем количество устройств для каждого пользователя
+    const usersWithDeviceCount = await Promise.all(users.map(async (u) => {
+      try {
+        const devicesRes = await adminFetch(`/api/auth/users/${u.id}/devices`);
+        const deviceIds = await devicesRes.json();
+        return { ...u, deviceCount: Array.isArray(deviceIds) ? deviceIds.length : 0 };
+      } catch (err) {
+        return { ...u, deviceCount: 0 };
+      }
+    }));
+    
+    // Сохраняем всех пользователей в состояние
+    window.usersModalState.allUsers = usersWithDeviceCount;
+    
+    // Применяем фильтрацию и пагинацию
+    filterAndRenderUsers(adminFetch);
+    
+  } catch (err) {
+    container.innerHTML = '<div class="meta" style="color:var(--danger); text-align:center;">Ошибка загрузки</div>';
+  }
+}
+
+function setupUsersModalHandlers(adminFetch) {
+  const searchInput = document.getElementById('modalUsersSearch');
+  const prevBtn = document.getElementById('modalUsersPrevPage');
+  const nextBtn = document.getElementById('modalUsersNextPage');
+  
+  if (!searchInput || !prevBtn || !nextBtn) return;
+  
+  // Обработчик поиска с debounce
+  let searchTimeout;
+  searchInput.addEventListener('input', (e) => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+      window.usersModalState.searchQuery = e.target.value.trim().toLowerCase();
+      window.usersModalState.currentPage = 1; // Сбрасываем на первую страницу при поиске
+      filterAndRenderUsers(adminFetch);
+    }, 300);
+  });
+  
+  // Обработчики пагинации
+  prevBtn.onclick = () => {
+    if (window.usersModalState.currentPage > 1) {
+      window.usersModalState.currentPage--;
+      filterAndRenderUsers(adminFetch);
     }
-    
-    container.innerHTML = users.map(u => `
-      <div class="item" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm);">
-        <div style="flex:1; min-width:0;">
-          <div style="display:flex; align-items:center; gap:var(--space-xs); flex-wrap:wrap;">
-            <strong>${u.username}</strong>
-            ${u.role === 'admin' ? '<span style="background:var(--brand); color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem;">ADMIN</span>' : ''}
-            ${u.role === 'speaker' ? '<span style="background:var(--success); color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem;">SPEAKER</span>' : ''}
-            ${u.role === 'hero_admin' ? '<span style="background:var(--warning); color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem;">HERO ADMIN</span>' : ''}
-            ${!u.is_active ? '<span style="background:var(--danger); color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem;">OFF</span>' : ''}
-          </div>
-          <div class="meta">${u.full_name}</div>
+  };
+  
+  nextBtn.onclick = () => {
+    const totalPages = Math.ceil(window.usersModalState.filteredUsers.length / window.usersModalState.itemsPerPage);
+    if (window.usersModalState.currentPage < totalPages) {
+      window.usersModalState.currentPage++;
+      filterAndRenderUsers(adminFetch);
+    }
+  };
+}
+
+function filterAndRenderUsers(adminFetch) {
+  const state = window.usersModalState;
+  const container = document.getElementById('modalUsersList');
+  const paginationInfo = document.getElementById('modalUsersPaginationInfo');
+  const pageInfo = document.getElementById('modalUsersPageInfo');
+  const prevBtn = document.getElementById('modalUsersPrevPage');
+  const nextBtn = document.getElementById('modalUsersNextPage');
+  
+  if (!container) return;
+  
+  // Фильтрация пользователей
+  if (state.searchQuery) {
+    state.filteredUsers = state.allUsers.filter(u => 
+      u.username.toLowerCase().includes(state.searchQuery) ||
+      (u.full_name && u.full_name.toLowerCase().includes(state.searchQuery))
+    );
+  } else {
+    state.filteredUsers = [...state.allUsers];
+  }
+  
+  // Вычисляем пагинацию
+  const totalPages = Math.ceil(state.filteredUsers.length / state.itemsPerPage);
+  const startIndex = (state.currentPage - 1) * state.itemsPerPage;
+  const endIndex = startIndex + state.itemsPerPage;
+  const pageUsers = state.filteredUsers.slice(startIndex, endIndex);
+  
+  // Обновляем информацию о пагинации
+  if (paginationInfo) {
+    const total = state.filteredUsers.length;
+    const showing = total > 0 ? `${startIndex + 1}-${Math.min(endIndex, total)}` : '0';
+    paginationInfo.textContent = total > 0 
+      ? `Показано ${showing} из ${total}` 
+      : state.searchQuery ? 'Ничего не найдено' : 'Нет пользователей';
+  }
+  
+  if (pageInfo) {
+    pageInfo.textContent = totalPages > 0 ? `Страница ${state.currentPage} из ${totalPages}` : '';
+  }
+  
+  // Обновляем кнопки пагинации
+  if (prevBtn) {
+    prevBtn.disabled = state.currentPage <= 1;
+  }
+  if (nextBtn) {
+    nextBtn.disabled = state.currentPage >= totalPages || totalPages === 0;
+  }
+  
+  // Рендерим пользователей текущей страницы
+  if (pageUsers.length === 0) {
+    container.innerHTML = state.searchQuery 
+      ? '<div class="meta" style="text-align:center; padding:var(--space-lg);">Ничего не найдено</div>'
+      : '<div class="meta" style="text-align:center; padding:var(--space-lg);">Нет пользователей</div>';
+    return;
+  }
+  
+  container.innerHTML = pageUsers.map(u => `
+    <div class="item" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm);">
+      <div style="flex:1; min-width:0;">
+        <div style="display:flex; align-items:center; gap:var(--space-xs); flex-wrap:wrap;">
+          <strong>${u.username}</strong>
+          ${u.role === 'admin' ? '<span style="background:var(--brand); color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem;">ADMIN</span>' : ''}
+          ${u.role === 'speaker' ? '<span style="background:var(--success); color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem;">SPEAKER</span>' : ''}
+          ${u.role === 'hero_admin' ? '<span style="background:var(--warning); color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem;">HERO ADMIN</span>' : ''}
+          ${!u.is_active ? '<span style="background:var(--danger); color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem;">OFF</span>' : ''}
         </div>
-        <div style="display:flex; gap:4px; flex-shrink:0;">
-          <button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="resetUserPasswordInModal(${u.id}, '${u.username}')" title="Сбросить пароль">${getKeyIcon(16)}</button>
-          ${u.is_active 
-            ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="toggleUserInModal(${u.id}, false)" title="Отключить">${getLockIcon(16)}</button>`
-            : `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="toggleUserInModal(${u.id}, true)" title="Включить">${getUnlockIcon(16)}</button>`
-          }
-          ${u.id !== 1 ? `<button class="danger meta-lg" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="deleteUserInModal(${u.id}, '${u.username}')" title="Удалить">${getTrashIcon(16)}</button>` : ''}
-        </div>
+        <div class="meta">${u.full_name}</div>
+        ${u.role === 'speaker' ? `<div class="meta" style="font-size:0.75rem; color:var(--text-secondary);">Устройств: ${u.deviceCount || 0}</div>` : ''}
       </div>
-    `).join('');
+      <div style="display:flex; gap:4px; flex-shrink:0;">
+        ${u.role === 'speaker' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="showUserDevicesModalInModal(${u.id}, '${u.username.replace(/'/g, "\\'")}', '${u.role}')" title="Управление устройствами">${getSettingsIcon(16)}</button>` : ''}
+        ${u.role === 'admin' || u.role === 'hero_admin' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="showUserDevicesModalInModal(${u.id}, '${u.username.replace(/'/g, "\\'")}', '${u.role}')" title="Информация об устройствах">${getSettingsIcon(16)}</button>` : ''}
+        <button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="resetUserPasswordInModal(${u.id}, '${u.username.replace(/'/g, "\\'")}')" title="Сбросить пароль">${getKeyIcon(16)}</button>
+        ${u.is_active 
+          ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="toggleUserInModal(${u.id}, false)" title="Отключить">${getLockIcon(16)}</button>`
+          : `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="toggleUserInModal(${u.id}, true)" title="Включить">${getUnlockIcon(16)}</button>`
+        }
+        ${u.id !== 1 ? `<button class="danger meta-lg" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="deleteUserInModal(${u.id}, '${u.username.replace(/'/g, "\\'")}')" title="Удалить">${getTrashIcon(16)}</button>` : ''}
+      </div>
+    </div>
+  `).join('');
     
-    // Глобальные функции для onclick (используют adminFetch из замыкания)
+  // Регистрируем глобальные функции для onclick (если еще не зарегистрированы)
+  if (!window.toggleUserInModal) {
     window.toggleUserInModal = async (userId, activate) => {
       try {
-        const res = await adminFetch(`/api/auth/users/${userId}/toggle`, {
+        const res = await window.adminFetch(`/api/auth/users/${userId}/toggle`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ is_active: activate })
@@ -294,7 +465,7 @@ async function loadModalUsersList(adminFetch) {
         
         if (res.ok) {
           // Сразу обновляем список пользователей
-          await loadModalUsersList(adminFetch);
+          await loadModalUsersList(window.adminFetch);
         } else {
           const error = await res.json().catch(() => ({ error: 'Ошибка' }));
           alert(error.error || 'Ошибка при изменении статуса пользователя');
@@ -303,18 +474,20 @@ async function loadModalUsersList(adminFetch) {
         alert(`Ошибка: ${err.message}`);
       }
     };
-    
+  }
+  
+  if (!window.deleteUserInModal) {
     window.deleteUserInModal = async (userId, username) => {
       if (!confirm(`Удалить "${username}"?`)) return;
       
       try {
-        const res = await adminFetch(`/api/auth/users/${userId}`, {
+        const res = await window.adminFetch(`/api/auth/users/${userId}`, {
           method: 'DELETE'
         });
         
         if (res.ok) {
           // Сразу обновляем список пользователей
-          await loadModalUsersList(adminFetch);
+          await loadModalUsersList(window.adminFetch);
         } else {
           const error = await res.json().catch(() => ({ error: 'Ошибка' }));
           alert(error.error || 'Ошибка при удалении пользователя');
@@ -323,7 +496,9 @@ async function loadModalUsersList(adminFetch) {
         alert(`Ошибка: ${err.message}`);
       }
     };
-    
+  }
+  
+  if (!window.resetUserPasswordInModal) {
     window.resetUserPasswordInModal = async (userId, username) => {
       const passwordResetContent = `
         <div style="display:flex; flex-direction:column; gap:var(--space-md);">
@@ -405,11 +580,338 @@ async function loadModalUsersList(adminFetch) {
         password1Input.focus();
       }, 100);
     };
-    
-  } catch (err) {
-    container.innerHTML = '<div class="meta" style="color:var(--danger); text-align:center;">Ошибка загрузки</div>';
   }
 }
+
+// Глобальная функция для открытия модального окна назначения устройств
+window.showUserDevicesModalInModal = async function(userId, username, userRole) {
+  if (!window.adminFetch) return;
+  
+  // Если admin, показываем сообщение что ему доступны все устройства
+  if (userRole === 'admin') {
+    showModal(`${getSettingsIcon(18)} Управление устройствами`, `
+      <div style="text-align:center; padding:var(--space-lg);">
+        <div class="meta" style="margin-bottom:var(--space-md);">
+          Пользователь <strong>${username}</strong> имеет роль <strong>ADMIN</strong>
+        </div>
+        <div class="meta" style="color:var(--text-secondary);">
+          Администраторам доступны все устройства автоматически
+        </div>
+        <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-md);">OK</button>
+      </div>
+    `);
+    return;
+  }
+  
+  // Если hero_admin, показываем сообщение что у него своя панель
+  if (userRole === 'hero_admin') {
+    showModal(`${getSettingsIcon(18)} Управление устройствами`, `
+      <div style="text-align:center; padding:var(--space-lg);">
+        <div class="meta" style="margin-bottom:var(--space-md);">
+          Пользователь <strong>${username}</strong> имеет роль <strong>HERO ADMIN</strong>
+        </div>
+        <div class="meta" style="color:var(--text-secondary);">
+          Hero Admin имеет свою панель управления и не имеет доступа к устройствам
+        </div>
+        <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-md);">OK</button>
+      </div>
+    `);
+    return;
+  }
+  
+  // Состояние для модального окна устройств
+  window.userDevicesModalState = {
+    allDevices: [],
+    filteredDevices: [],
+    userDeviceIds: [],
+    currentPage: 1,
+    itemsPerPage: 5,
+    searchQuery: ''
+  };
+  
+  const content = `
+    <div style="display:flex; flex-direction:column; gap:var(--space-lg);">
+      <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm);">
+        <div style="margin-bottom:var(--space-sm);">
+          <div class="meta" style="color:var(--text-secondary);">Пользователь:</div>
+          <div style="font-weight:600; margin-top:4px;">${username}</div>
+        </div>
+      </div>
+      
+      <div>
+        <div style="margin-bottom:var(--space-md); font-weight:600;">Доступные устройства</div>
+        
+        <!-- Поле поиска -->
+        <div style="margin-bottom:var(--space-sm);">
+          <input 
+            id="modalDevicesSearch" 
+            class="input" 
+            type="text" 
+            placeholder="Поиск устройств..." 
+            style="width:100%;"
+          />
+        </div>
+        
+        <!-- Кнопки выбора -->
+        <div style="display:flex; gap:var(--space-xs); margin-bottom:var(--space-sm);">
+          <button id="modalDevicesSelectAll" class="secondary meta" style="flex:1;">Выбрать все</button>
+          <button id="modalDevicesDeselectAll" class="secondary meta" style="flex:1;">Снять все</button>
+        </div>
+        
+        <!-- Список устройств -->
+        <div id="modalDevicesList" style="display:flex; flex-direction:column; gap:var(--space-xs); min-height:200px; max-height:400px; overflow-y:auto;">
+          <div class="meta" style="text-align:center; padding:var(--space-lg);">Загрузка...</div>
+        </div>
+        
+        <!-- Информация о выборе -->
+        <div id="modalDevicesSelectedInfo" class="meta" style="margin-top:var(--space-sm); color:var(--text-secondary);"></div>
+        
+        <!-- Пагинация -->
+        <div id="modalDevicesPagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:var(--space-md); padding-top:var(--space-md); border-top:1px solid var(--border);">
+          <div class="meta" id="modalDevicesPaginationInfo" style="color:var(--text-secondary);"></div>
+          <div style="display:flex; gap:var(--space-xs); align-items:center;">
+            <button 
+              id="modalDevicesPrevPage" 
+              class="secondary" 
+              style="min-width:auto; padding:6px 12px;"
+              disabled
+            >
+              ← Назад
+            </button>
+            <span class="meta" id="modalDevicesPageInfo" style="padding:0 var(--space-sm);"></span>
+            <button 
+              id="modalDevicesNextPage" 
+              class="secondary" 
+              style="min-width:auto; padding:6px 12px;"
+              disabled
+            >
+              Вперед →
+            </button>
+          </div>
+        </div>
+        
+        <!-- Кнопки действий -->
+        <div style="display:flex; gap:var(--space-sm); margin-top:var(--space-md);">
+          <button id="modalDevicesSaveBtn" class="primary" style="flex:1;">Сохранить</button>
+          <button onclick="closeModal()" class="secondary" style="flex:1;">Отмена</button>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  showModal(`${getSettingsIcon(18)} Назначение устройств`, content);
+  
+  // Загружаем данные
+  setTimeout(() => {
+    loadUserDevicesModalData(window.adminFetch, userId);
+    setupUserDevicesModalHandlers(window.adminFetch, userId, username);
+  }, 100);
+};
+
+async function loadUserDevicesModalData(adminFetch, userId) {
+  try {
+    // Загружаем все устройства
+    const devicesRes = await adminFetch('/api/devices');
+    const allDevices = await devicesRes.json();
+    
+    // Загружаем назначенные устройства пользователя
+    const userDevicesRes = await adminFetch(`/api/auth/users/${userId}/devices`);
+    const userDeviceIds = await userDevicesRes.json();
+    
+    window.userDevicesModalState.allDevices = allDevices;
+    window.userDevicesModalState.userDeviceIds = Array.isArray(userDeviceIds) ? userDeviceIds : [];
+    
+    // Применяем фильтрацию и рендеринг
+    filterAndRenderDevices();
+  } catch (err) {
+    const container = document.getElementById('modalDevicesList');
+    if (container) {
+      container.innerHTML = '<div class="meta" style="color:var(--danger); text-align:center;">Ошибка загрузки</div>';
+    }
+  }
+}
+
+function setupUserDevicesModalHandlers(adminFetch, userId, username) {
+  const searchInput = document.getElementById('modalDevicesSearch');
+  const selectAllBtn = document.getElementById('modalDevicesSelectAll');
+  const deselectAllBtn = document.getElementById('modalDevicesDeselectAll');
+  const saveBtn = document.getElementById('modalDevicesSaveBtn');
+  const prevBtn = document.getElementById('modalDevicesPrevPage');
+  const nextBtn = document.getElementById('modalDevicesNextPage');
+  
+  if (!searchInput || !selectAllBtn || !deselectAllBtn || !saveBtn) return;
+  
+  // Обработчик поиска
+  let searchTimeout;
+  searchInput.addEventListener('input', (e) => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+      window.userDevicesModalState.searchQuery = e.target.value.trim().toLowerCase();
+      window.userDevicesModalState.currentPage = 1;
+      filterAndRenderDevices();
+    }, 300);
+  });
+  
+  // Выбрать все
+  selectAllBtn.onclick = () => {
+    const state = window.userDevicesModalState;
+    const filteredIds = state.filteredDevices.map(d => d.device_id);
+    state.userDeviceIds = [...new Set([...state.userDeviceIds, ...filteredIds])];
+    filterAndRenderDevices();
+  };
+  
+  // Снять все
+  deselectAllBtn.onclick = () => {
+    const state = window.userDevicesModalState;
+    const filteredIds = state.filteredDevices.map(d => d.device_id);
+    state.userDeviceIds = state.userDeviceIds.filter(id => !filteredIds.includes(id));
+    filterAndRenderDevices();
+  };
+  
+  // Сохранение
+  saveBtn.onclick = async () => {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Сохранение...';
+    
+    try {
+      const res = await adminFetch(`/api/auth/users/${userId}/devices`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceIds: window.userDevicesModalState.userDeviceIds })
+      });
+      
+      if (res.ok) {
+        closeModal();
+        showModal(`${getSuccessIcon(18)} Успешно`, `
+          <div style="text-align:center; padding:var(--space-lg);">
+            Устройства для <strong>${username}</strong> успешно обновлены
+          </div>
+          <button onclick="closeModal(); setTimeout(() => window.showUsersModal && window.showUsersModal(window.adminFetch), 100)" class="primary" style="width:100%;">OK</button>
+        `);
+      } else {
+        const error = await res.json();
+        alert(error.error || 'Ошибка сохранения');
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Сохранить';
+      }
+    } catch (err) {
+      alert(`Ошибка: ${err.message}`);
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Сохранить';
+    }
+  };
+  
+  // Пагинация
+  if (prevBtn) {
+    prevBtn.onclick = () => {
+      if (window.userDevicesModalState.currentPage > 1) {
+        window.userDevicesModalState.currentPage--;
+        filterAndRenderDevices();
+      }
+    };
+  }
+  
+  if (nextBtn) {
+    nextBtn.onclick = () => {
+      const totalPages = Math.ceil(window.userDevicesModalState.filteredDevices.length / window.userDevicesModalState.itemsPerPage);
+      if (window.userDevicesModalState.currentPage < totalPages) {
+        window.userDevicesModalState.currentPage++;
+        filterAndRenderDevices();
+      }
+    };
+  }
+}
+
+function filterAndRenderDevices() {
+  const state = window.userDevicesModalState;
+  const container = document.getElementById('modalDevicesList');
+  const paginationInfo = document.getElementById('modalDevicesPaginationInfo');
+  const pageInfo = document.getElementById('modalDevicesPageInfo');
+  const selectedInfo = document.getElementById('modalDevicesSelectedInfo');
+  const prevBtn = document.getElementById('modalDevicesPrevPage');
+  const nextBtn = document.getElementById('modalDevicesNextPage');
+  
+  if (!container) return;
+  
+  // Фильтрация устройств
+  if (state.searchQuery) {
+    state.filteredDevices = state.allDevices.filter(d => 
+      d.device_id.toLowerCase().includes(state.searchQuery) ||
+      (d.name && d.name.toLowerCase().includes(state.searchQuery))
+    );
+  } else {
+    state.filteredDevices = [...state.allDevices];
+  }
+  
+  // Вычисляем пагинацию
+  const totalPages = Math.ceil(state.filteredDevices.length / state.itemsPerPage);
+  const startIndex = (state.currentPage - 1) * state.itemsPerPage;
+  const endIndex = startIndex + state.itemsPerPage;
+  const pageDevices = state.filteredDevices.slice(startIndex, endIndex);
+  
+  // Обновляем информацию
+  if (paginationInfo) {
+    const total = state.filteredDevices.length;
+    const showing = total > 0 ? `${startIndex + 1}-${Math.min(endIndex, total)}` : '0';
+    paginationInfo.textContent = total > 0 ? `Показано ${showing} из ${total}` : 'Нет устройств';
+  }
+  
+  if (pageInfo) {
+    pageInfo.textContent = totalPages > 0 ? `Страница ${state.currentPage} из ${totalPages}` : '';
+  }
+  
+  if (selectedInfo) {
+    const selectedCount = state.userDeviceIds.length;
+    selectedInfo.textContent = `Выбрано: ${selectedCount} из ${state.allDevices.length}`;
+  }
+  
+  // Обновляем кнопки пагинации
+  if (prevBtn) {
+    prevBtn.disabled = state.currentPage <= 1;
+  }
+  if (nextBtn) {
+    nextBtn.disabled = state.currentPage >= totalPages || totalPages === 0;
+  }
+  
+  // Рендерим устройства
+  if (pageDevices.length === 0) {
+    container.innerHTML = state.searchQuery 
+      ? '<div class="meta" style="text-align:center; padding:var(--space-lg);">Ничего не найдено</div>'
+      : '<div class="meta" style="text-align:center; padding:var(--space-lg);">Нет устройств</div>';
+    return;
+  }
+  
+  container.innerHTML = pageDevices.map(d => {
+    const isSelected = state.userDeviceIds.includes(d.device_id);
+    const deviceName = d.name || d.device_id;
+    return `
+      <label style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm); border-radius:var(--radius-sm); cursor:pointer; transition:background 0.2s; ${isSelected ? 'background:var(--panel-2);' : ''}" onmouseover="this.style.background='var(--panel-2)'" onmouseout="this.style.background=${isSelected ? "'var(--panel-2)'" : "'transparent'"}">
+        <input 
+          type="checkbox" 
+          ${isSelected ? 'checked' : ''} 
+          onchange="toggleDeviceSelection('${d.device_id}')"
+          style="cursor:pointer;"
+        />
+        <div style="flex:1; min-width:0;">
+          <div style="font-weight:500;">${deviceName}</div>
+          <div class="meta" style="font-size:0.75rem;">ID: ${d.device_id}</div>
+        </div>
+      </label>
+    `;
+  }).join('');
+}
+
+// Глобальная функция для переключения выбора устройства
+window.toggleDeviceSelection = function(deviceId) {
+  const state = window.userDevicesModalState;
+  const index = state.userDeviceIds.indexOf(deviceId);
+  if (index > -1) {
+    state.userDeviceIds.splice(index, 1);
+  } else {
+    state.userDeviceIds.push(deviceId);
+  }
+  filterAndRenderDevices();
+};
 
 export function showSettingsModal() {
   // Импортируем системный монитор динамически

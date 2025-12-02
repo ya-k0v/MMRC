@@ -287,6 +287,41 @@ export function initDatabase(initialDbPath) {
           }
         }
       }
+      
+      // Миграция: Создаем таблицу user_devices если её нет
+      try {
+        const userDevicesTableExists = db.prepare(`
+          SELECT name FROM sqlite_master 
+          WHERE type='table' AND name='user_devices'
+        `).get();
+        
+        if (!userDevicesTableExists) {
+          logger.info('[DB] Creating user_devices table...');
+          
+          db.exec(`
+            CREATE TABLE user_devices (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              user_id INTEGER NOT NULL,
+              device_id TEXT NOT NULL,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+              FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE,
+              UNIQUE(user_id, device_id)
+            )
+          `);
+          
+          db.exec('CREATE INDEX IF NOT EXISTS idx_user_devices_user ON user_devices(user_id)');
+          db.exec('CREATE INDEX IF NOT EXISTS idx_user_devices_device ON user_devices(device_id)');
+          db.exec('CREATE INDEX IF NOT EXISTS idx_user_devices_user_device ON user_devices(user_id, device_id)');
+          
+          logger.info('[DB] ✅ user_devices table created successfully');
+        } else {
+          logger.info('[DB] user_devices table already exists');
+        }
+      } catch (userDevicesErr) {
+        logger.error('[DB] Failed to create user_devices table:', userDevicesErr);
+        logger.warn('[DB] Continuing without user_devices table - device access control may not work');
+      }
     } catch (migrationErr) {
       logger.error('[DB] Migration failed:', migrationErr);
       // Не прерываем инициализацию, но логируем ошибку

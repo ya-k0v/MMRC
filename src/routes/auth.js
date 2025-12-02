@@ -531,6 +531,106 @@ router.post('/users/:id/reset-password',
   }
 );
 
+/**
+ * GET /api/auth/users/:id/devices
+ * Получить список устройств пользователя (только admin)
+ */
+router.get('/users/:id/devices', requireAuth, requireAdmin, async (req, res) => {
+  const userId = parseInt(req.params.id);
+  const db = getDatabase();
+
+  try {
+    const devices = db.prepare(`
+      SELECT device_id
+      FROM user_devices
+      WHERE user_id = ?
+      ORDER BY created_at DESC
+    `).all(userId);
+
+    res.json(devices.map(d => d.device_id));
+  } catch (err) {
+    logger.error('Get user devices error', { error: err.message, stack: err.stack, userId });
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+  }
+});
+
+/**
+ * POST /api/auth/users/:id/devices
+ * Назначить устройства пользователю (только admin)
+ */
+router.post('/users/:id/devices',
+  requireAuth,
+  requireAdmin,
+  body('deviceIds').isArray(),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const userId = parseInt(req.params.id);
+    const { deviceIds } = req.body;
+    const db = getDatabase();
+
+    try {
+      // Проверяем существование пользователя
+      const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(userId);
+      if (!user) {
+        return res.status(404).json({ error: 'Пользователь не найден' });
+      }
+
+      // Начинаем транзакцию
+      const transaction = db.transaction((userId, deviceIds) => {
+        // Удаляем все существующие назначения
+        db.prepare('DELETE FROM user_devices WHERE user_id = ?').run(userId);
+
+        // Добавляем новые назначения
+        const insertStmt = db.prepare(`
+          INSERT INTO user_devices (user_id, device_id)
+          VALUES (?, ?)
+        `);
+
+        for (const deviceId of deviceIds) {
+          try {
+            insertStmt.run(userId, deviceId);
+          } catch (insertErr) {
+            // Игнорируем ошибки дубликатов (UNIQUE constraint)
+            if (!insertErr.message.includes('UNIQUE constraint')) {
+              throw insertErr;
+            }
+          }
+        }
+      });
+
+      transaction(userId, deviceIds);
+
+      // Логируем назначение
+      await auditLog({
+        userId: req.user.userId,
+        action: AuditAction.USER_UPDATE,
+        resource: `user:${userId}`,
+        details: { 
+          targetUsername: user.username,
+          deviceCount: deviceIds.length,
+          deviceIds: deviceIds,
+          updatedBy: req.user.username
+        },
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent'),
+        status: 'success'
+      });
+
+      res.json({ 
+        success: true,
+        deviceCount: deviceIds.length
+      });
+    } catch (err) {
+      logger.error('Set user devices error', { error: err.message, stack: err.stack, userId });
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+    }
+  }
+);
+
 export function createAuthRouter() {
   return router;
 }
