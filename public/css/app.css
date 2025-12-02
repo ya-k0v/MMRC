@@ -245,7 +245,7 @@ h1, h2, h3, h4, h5, h6 {
   height: 32px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--panel);
+  background: var(--panel-2);
   color: var(--text);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
@@ -257,8 +257,8 @@ h1, h2, h3, h4, h5, h6 {
 
 /* Выбранный интервал - серое состояние */
 .folder-playlist-interval-btn.is-active {
-  background: var(--panel-2);
-  border-color: var(--border-2);
+  background: var(--brand-light);
+  border-color: var(--brand-light);
   color: var(--text);
 }
 

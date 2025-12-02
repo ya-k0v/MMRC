@@ -46,7 +46,8 @@
 # ЧТО СОЗДАЁТСЯ:
 #   - Структура папок: $INSTALL_DIR/{config, data/*, public, src, ...}
 #   - База данных: $INSTALL_DIR/config/main.db (admin/admin123)
-#   - Настройки: $INSTALL_DIR/config/app-settings.json
+#   - Hero БД: $INSTALL_DIR/config/hero/heroes.db
+#   - Настройки: $INSTALL_DIR/config/app-settings.json (динамические пути данных)
 #   - Nginx конфиг: /etc/nginx/sites-available/videocontrol
 #   - Systemd сервис: /etc/systemd/system/videocontrol.service
 #   - Сетевые настройки: /etc/sysctl.d/99-videocontrol.conf
@@ -56,6 +57,13 @@
 #   - Speaker Panel: http://YOUR_SERVER_IP/speaker.html
 #   - Hero Panel: http://YOUR_SERVER_IP/hero/index.html
 #   - По умолчанию: admin / admin123 (ОБЯЗАТЕЛЬНО СМЕНИТЬ!)
+#
+# НОВОЕ В v3.0.0:
+#   - Динамические пути данных через config/app-settings.json
+#   - Автоматические миграции heroes.db
+#   - Дедупликация стримов (один FFmpeg на URL)
+#   - Скрипты проверки: scripts/check-environment.sh
+#   - Скрипты очистки: scripts/cleanup.sh
 #
 # ========================================
 
@@ -224,6 +232,15 @@ npm install
 
 echo -e "${GREEN}✅ NPM packages installed${NC}"
 
+# Проверяем окружение после установки зависимостей
+if [ -f scripts/check-environment.sh ]; then
+    echo ""
+    echo "  Running environment check..."
+    bash scripts/check-environment.sh || {
+        echo -e "  ${YELLOW}⚠️  Environment check completed with warnings${NC}"
+    }
+fi
+
 # ==========================================
 # PHASE 4: PROJECT STRUCTURE
 # ==========================================
@@ -308,9 +325,16 @@ esac
 # Устанавливаем права
 chown -R $CURRENT_USER:$CURRENT_USER "$INSTALL_DIR"
 if [ "$STORAGE_MODE" != "local" ]; then
-    chown -R $CURRENT_USER:$CURRENT_USER "$CONTENT_DIR"
+    chown -R $CURRENT_USER:$CURRENT_USER "$DATA_ROOT" 2>/dev/null || true
+    if [ -n "$CONTENT_DIR" ] && [ "$CONTENT_DIR" != "$DATA_ROOT" ]; then
+        chown -R $CURRENT_USER:$CURRENT_USER "$CONTENT_DIR" 2>/dev/null || true
+    fi
 fi
-chmod 755 temp/nginx_upload
+# Создаем nginx_upload если нужно (для старых конфигов)
+if [ -d "temp" ] && [ ! -d "temp/nginx_upload" ]; then
+    mkdir -p temp/nginx_upload
+    chmod 755 temp/nginx_upload
+fi
 
 # Создаем .env с JWT secret
 echo "  Creating .env configuration..."
@@ -365,6 +389,28 @@ if [ ! -f config/video-optimization.json ]; then
   "defaultProfile": "1080p"
 }
 EOF
+fi
+
+# Создаем app-settings.json с правильным contentRoot (v3.0.0)
+echo "  Creating app-settings.json..."
+if [ ! -f config/app-settings.json ]; then
+    # Определяем contentRoot в зависимости от режима хранения
+    if [ "$STORAGE_MODE" = "local" ]; then
+        CONTENT_ROOT="$INSTALL_DIR/data"
+    else
+        CONTENT_ROOT="$DATA_ROOT"
+    fi
+    
+    cat > config/app-settings.json << EOF
+{
+  "contentRoot": "$CONTENT_ROOT",
+  "version": "3.0.0"
+}
+EOF
+    chown $CURRENT_USER:$CURRENT_USER config/app-settings.json
+    echo -e "  ${GREEN}✅ app-settings.json created with contentRoot: $CONTENT_ROOT${NC}"
+else
+    echo -e "  ${YELLOW}⚠️  app-settings.json already exists${NC}"
 fi
 
 echo -e "${GREEN}✅ Project structure created${NC}"
@@ -446,9 +492,16 @@ chown -R $CURRENT_USER:vcgroup /home/$CURRENT_USER/.cache /home/$CURRENT_USER/.c
 chmod 755 /home/$CURRENT_USER/.cache /home/$CURRENT_USER/.config
 echo -e "  ${GREEN}✅ LibreOffice cache directories created${NC}"
 
+# Определяем ReadWritePaths для systemd (v3.0.0 - динамические пути)
+if [ "$STORAGE_MODE" = "local" ]; then
+    READ_WRITE_PATHS="$INSTALL_DIR/data $INSTALL_DIR/config"
+else
+    READ_WRITE_PATHS="$DATA_ROOT $INSTALL_DIR/config"
+fi
+
 cat > /etc/systemd/system/videocontrol.service << EOF
 [Unit]
-Description=VCServer
+Description=VideoControl Server v3.0.0
 After=network.target
 
 [Service]
@@ -466,7 +519,7 @@ StandardError=journal
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=$DATA_ROOT/* $INSTALL_DIR/data/* $INSTALL_DIR/config
+ReadWritePaths=$READ_WRITE_PATHS
 
 # Environment
 Environment=NODE_ENV=production
@@ -549,14 +602,24 @@ echo ""
 echo "🔧 Useful commands:"
 echo "  Status:  sudo systemctl status videocontrol"
 echo "  Restart: sudo systemctl restart videocontrol"
-echo "  Logs:    tail -f $INSTALL_DIR/data/logs/combined-*.log"
-echo "  Errors:  tail -f $INSTALL_DIR/data/logs/error-*.log"
+if [ "$STORAGE_MODE" = "local" ]; then
+    LOGS_DIR="$INSTALL_DIR/data/logs"
+else
+    LOGS_DIR="$DATA_ROOT/logs"
+fi
+echo "  Logs:    tail -f $LOGS_DIR/combined-*.log"
+echo "  Errors:  tail -f $LOGS_DIR/error-*.log"
 echo "  Audit:   sqlite3 $INSTALL_DIR/config/main.db 'SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 10;'"
 echo "  Stop:    sudo systemctl stop videocontrol"
 echo ""
 echo "📚 Documentation:"
 echo "  Main:     $INSTALL_DIR/README.md"
+echo "  Install:  $INSTALL_DIR/INSTALL.md (new OS setup)"
 echo "  Quick:    $INSTALL_DIR/QUICK-START.md"
 echo "  Manual:   $INSTALL_DIR/docs/MANUAL.md"
+echo ""
+echo "🛠️  Utility scripts:"
+echo "  Check env:  bash $INSTALL_DIR/scripts/check-environment.sh"
+echo "  Cleanup:    bash $INSTALL_DIR/scripts/cleanup.sh"
 echo ""
 
