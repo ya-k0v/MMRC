@@ -520,19 +520,28 @@ class StreamManager extends EventEmitter {
   _cleanupFolder(folderPath) {
     try {
       if (fs.existsSync(folderPath)) {
-        // КРИТИЧНО: Сначала удаляем все .ts сегменты вручную, чтобы освободить их
+        // КРИТИЧНО: Сначала удаляем ВСЕ файлы вручную, чтобы освободить их
         // Это важно, так как они могут быть заблокированы FFmpeg процессом
         try {
           const files = fs.readdirSync(folderPath);
           for (const file of files) {
-            if (file.endsWith('.ts') || file.endsWith('.m3u8')) {
-              const filePath = path.join(folderPath, file);
-              try {
+            const filePath = path.join(folderPath, file);
+            try {
+              // Удаляем все файлы, не только .ts и .m3u8
+              const stats = fs.lstatSync(filePath);
+              if (stats.isDirectory()) {
+                // Если это папка - удаляем рекурсивно
+                fs.rmSync(filePath, { recursive: true, force: true });
+              } else if (stats.isSymbolicLink()) {
+                // Если это симлинк - удаляем только ссылку
                 fs.unlinkSync(filePath);
-                logger.debug('[StreamManager] Удален файл', { filePath, file });
-              } catch (e) {
-                logger.warn('[StreamManager] Не удалось удалить файл', { filePath, error: e.message });
+              } else {
+                // Обычный файл - удаляем
+                fs.unlinkSync(filePath);
               }
+              logger.debug('[StreamManager] Удален файл/папка', { filePath, file });
+            } catch (e) {
+              logger.warn('[StreamManager] Не удалось удалить файл', { filePath, error: e.message });
             }
           }
         } catch (e) {
@@ -560,8 +569,36 @@ class StreamManager extends EventEmitter {
         
         // КРИТИЧНО: Удаляем все файлы и папку рекурсивно
         // Для симлинков это безопасно - удалится только симлинк, не целевой файл
-        fs.rmSync(folderPath, { recursive: true, force: true });
-        logger.info('[StreamManager] Cleaned up stream folder', { folderPath });
+        try {
+          fs.rmSync(folderPath, { recursive: true, force: true });
+          logger.info('[StreamManager] Cleaned up stream folder', { folderPath });
+          
+          // Проверяем через небольшую задержку, что папка действительно удалена
+          setTimeout(() => {
+            if (fs.existsSync(folderPath)) {
+              logger.warn('[StreamManager] Folder still exists after rmSync, retrying cleanup', { folderPath });
+              // Повторная попытка удаления всех файлов и папки
+              try {
+                const remainingFiles = fs.readdirSync(folderPath);
+                for (const file of remainingFiles) {
+                  const filePath = path.join(folderPath, file);
+                  try {
+                    fs.unlinkSync(filePath);
+                  } catch (e) {
+                    logger.warn('[StreamManager] Failed to delete file on retry', { filePath, error: e.message });
+                  }
+                }
+                fs.rmSync(folderPath, { recursive: true, force: true });
+                logger.info('[StreamManager] Folder cleaned up on retry', { folderPath });
+              } catch (retryErr) {
+                logger.error('[StreamManager] Failed to cleanup folder on retry', { folderPath, error: retryErr.message });
+              }
+            }
+          }, 500);
+        } catch (rmErr) {
+          logger.warn('[StreamManager] rmSync failed, trying alternative cleanup', { folderPath, error: rmErr.message });
+          throw rmErr; // Пробрасываем ошибку для fallback логики
+        }
       }
     } catch (err) {
       logger.warn('[StreamManager] Failed to cleanup folder', { folderPath, error: err.message, stack: err.stack });
@@ -1611,18 +1648,19 @@ class StreamManager extends EventEmitter {
         }
         
         // Обновляем запись после успешного запуска
-        const nameEntry = this.nameToJobMap.get(safeName);
+        let nameEntry = this.nameToJobMap.get(safeName);
         if (nameEntry) {
           nameEntry.job = job;
           nameEntry.pending = false;
           } else {
           // Создаем новую запись, если не было
-          this.nameToJobMap.set(safeName, {
+          nameEntry = {
             job,
             devices: new Set([device_id]),
             lastAccess: new Map([[device_id, Date.now()]]),
             pending: false
-          });
+          };
+          this.nameToJobMap.set(safeName, nameEntry);
         }
         
         // Убеждаемся, что job.sourceUrl использует нормализованный URL
@@ -1638,8 +1676,7 @@ class StreamManager extends EventEmitter {
         
         this.jobs.set(safeName, job);
         
-        // КРИТИЧНО: Обновляем nameEntry.job для синхронизации
-        nameEntry = this.nameToJobMap.get(safeName);
+        // КРИТИЧНО: Финальная синхронизация nameEntry.job
         if (nameEntry) {
           nameEntry.job = job;
           nameEntry.pending = false;
@@ -1747,6 +1784,20 @@ class StreamManager extends EventEmitter {
       job.stopping = true;
       const folderPathToClean = job.paths.folderPath;
       
+      // КРИТИЧНО: Если процесс уже завершился, сразу очищаем джоб
+      if (job.process && (job.process.killed || !this._checkProcessAlive(job.process))) {
+        logger.info('[StreamManager] Process already dead, cleaning up job immediately', {
+          safeName: safeNameSanitized,
+          pid: job.process?.pid,
+          reason
+        });
+        this.jobs.delete(safeNameSanitized);
+        this.nameToJobMap.delete(safeNameSanitized);
+        this._cleanupFolder(folderPathToClean);
+        this.emit('stream:stopped', { deviceId, safeName: safeNameSanitized, reason });
+        return;
+      }
+      
       if (job.process) {
         try {
           const cleanupOnExit = () => {
@@ -1845,7 +1896,21 @@ class StreamManager extends EventEmitter {
             this.nameToJobMap.delete(safeNameSanitized);
             
             // Очищаем файлы
+            // КРИТИЧНО: Очищаем папку даже если процесс все еще работает
             this._cleanupFolder(folderPathToClean);
+            
+            // Дополнительная попытка очистки через небольшую задержку, если процесс завершился
+            if (!isProcessAlive) {
+              setTimeout(() => {
+                if (fs.existsSync(folderPathToClean)) {
+                  logger.warn('[StreamManager] Folder still exists after cleanup, retrying', {
+                    safeName: safeNameSanitized,
+                    folderPath: folderPathToClean
+                  });
+                  this._cleanupFolder(folderPathToClean);
+                }
+              }, 1000);
+            }
             
             this.emit('stream:stopped', { deviceId, safeName: safeNameSanitized, reason });
             logger.info('[StreamManager] Job force cleaned after timeout', {
