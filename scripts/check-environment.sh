@@ -184,7 +184,32 @@ main() {
     check_command "npm" "npm" true
     check_command "ffmpeg" "FFmpeg" true
     check_command "ffprobe" "FFprobe" true
-    check_command "libreoffice" "LibreOffice" false
+    
+    # LibreOffice обязателен для PPTX конвертации
+    if command -v soffice > /dev/null 2>&1; then
+        local version=$(soffice --version 2>&1 | head -1 || echo "unknown")
+        echo -e "${GREEN}✅${NC} LibreOffice (soffice): $version"
+    elif command -v libreoffice > /dev/null 2>&1; then
+        local version=$(libreoffice --version 2>&1 | head -1 || echo "unknown")
+        echo -e "${YELLOW}⚠️${NC}  LibreOffice найден, но soffice недоступен. Создайте симлинк: ln -s $(which libreoffice) /usr/bin/soffice"
+        ((WARNINGS++))
+    else
+        echo -e "${RED}❌${NC} LibreOffice (soffice): не установлен (обязателен для PPTX конвертации)"
+        ((ERRORS++))
+    fi
+    
+    # GraphicsMagick или ImageMagick обязательны для PDF конвертации (pdf2pic)
+    if command -v gm > /dev/null 2>&1; then
+        local version=$(gm version 2>&1 | head -1 || echo "unknown")
+        echo -e "${GREEN}✅${NC} GraphicsMagick: $version"
+    elif command -v convert > /dev/null 2>&1; then
+        local version=$(convert -version 2>&1 | head -1 || echo "unknown")
+        echo -e "${GREEN}✅${NC} ImageMagick: $version (будет использован для pdf2pic)"
+    else
+        echo -e "${RED}❌${NC} GraphicsMagick или ImageMagick: не установлены (обязательны для PDF конвертации)"
+        ((ERRORS++))
+    fi
+    
     check_command "sqlite3" "SQLite3 CLI" false
     
     check_npm_packages

@@ -214,7 +214,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (heroBtn) {
     if (user.role === 'admin') {
       heroBtn.onclick = () => {
-        window.location.href = '/hero/admin.html';
+        window.open('/hero/admin.html', '_blank');
       };
     } else {
       heroBtn.style.display = 'none';
@@ -321,27 +321,14 @@ async function promptAddStream() {
     alert('Сначала выберите устройство');
     return;
   }
-  const name = prompt('Название стрима');
-  if (!name) return;
-  const url = prompt('URL стрима (http/https)');
-  if (!url) return;
-  const suggested = guessStreamProtocolFromUrl(url);
-  const protoInput = prompt('Тип потока (hls/dash/mpegts, пусто = авто)', suggested || 'auto');
-  const protocol = (protoInput || '').trim().toLowerCase() || 'auto';
-  try {
-    const res = await adminFetch(`/api/devices/${encodeURIComponent(currentDeviceId)}/streams`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: name.trim(), url: url.trim(), protocol })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Не удалось создать стрим');
+  const { showStreamModal } = await import('./admin/files-manager.js');
+  await showStreamModal({
+    deviceId: currentDeviceId,
+    mode: 'add',
+    onSuccess: async () => {
+      await renderFilesPane(currentDeviceId);
     }
-    await renderFilesPane(currentDeviceId);
-  } catch (error) {
-    alert(error.message || 'Ошибка создания стрима');
-  }
+  });
 }
 
 function guessStreamProtocolFromUrl(url = '') {

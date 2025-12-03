@@ -37,8 +37,9 @@
 # ЧТО УСТАНАВЛИВАЕТСЯ:
 #   - Node.js 20.x LTS (Nodesource)
 #   - FFmpeg + FFprobe (обработка видео)
-#   - LibreOffice (конвертация PDF/PPTX)
+#   - LibreOffice (конвертация PPTX → PDF)
 #   - ImageMagick (рендер изображений)
+#   - GraphicsMagick (конвертация PDF → PNG через pdf2pic)
 #   - SQLite3 (база данных)
 #   - Nginx (reverse proxy)
 #   - build-essential, curl, wget, git, unzip
@@ -103,11 +104,22 @@ echo ""
 
 # Определяем установочную директорию
 INSTALL_DIR="${1:-/vid/videocontrol}"
+
+# Для продакшена всегда используем vcuser
+SERVICE_USER="vcuser"
+SERVICE_GROUP="vcgroup"
+
+# CURRENT_USER используется только для начальной установки (если запущено не от root)
 CURRENT_USER="${SUDO_USER:-$(whoami)}"
+if [ "$CURRENT_USER" = "root" ] || [ -z "$CURRENT_USER" ]; then
+    CURRENT_USER="vcuser"
+fi
 
 echo "Installation settings:"
 echo "  Directory: $INSTALL_DIR"
-echo "  User: $CURRENT_USER"
+echo "  Service User: $SERVICE_USER"
+echo "  Service Group: $SERVICE_GROUP"
+echo "  Install User: $CURRENT_USER"
 echo ""
 if [ "$AUTO_CONFIRM" = "1" ]; then
     echo "AUTO_CONFIRM=1 → продолжение без подтверждения"
@@ -184,9 +196,35 @@ else
     echo -e "  ${GREEN}✅ Node.js already installed: $(node --version)${NC}"
 fi
 
-# FFmpeg, LibreOffice, ImageMagick, unzip
+# FFmpeg, LibreOffice, ImageMagick, GraphicsMagick, unzip
 echo "  Installing media processing tools..."
-apt-get install -y ffmpeg libreoffice imagemagick unzip sqlite3
+apt-get install -y ffmpeg libreoffice imagemagick graphicsmagick unzip sqlite3
+
+# Проверяем что LibreOffice доступен
+if ! command -v soffice &> /dev/null; then
+    echo -e "  ${YELLOW}⚠️  soffice не найден, проверяем LibreOffice...${NC}"
+    if command -v libreoffice &> /dev/null; then
+        # Создаем симлинк если нужно
+        if [ ! -f /usr/bin/soffice ]; then
+            LIBREOFFICE_PATH=$(which libreoffice)
+            if [ -n "$LIBREOFFICE_PATH" ]; then
+                ln -sf "$LIBREOFFICE_PATH" /usr/bin/soffice 2>/dev/null || true
+                echo -e "  ${GREEN}✅ Создан симлинк для soffice${NC}"
+            fi
+        fi
+    else
+        echo -e "  ${RED}❌ LibreOffice не установлен${NC}"
+    fi
+fi
+
+# Проверяем GraphicsMagick или ImageMagick (нужен для pdf2pic)
+if command -v gm &> /dev/null; then
+    echo -e "  ${GREEN}✅ GraphicsMagick установлен${NC}"
+elif command -v convert &> /dev/null; then
+    echo -e "  ${GREEN}✅ ImageMagick установлен (будет использован для pdf2pic)${NC}"
+else
+    echo -e "  ${RED}❌ GraphicsMagick или ImageMagick не установлены (нужны для PDF конвертации)${NC}"
+fi
 
 echo -e "${GREEN}✅ System dependencies installed${NC}"
 
@@ -322,8 +360,9 @@ case "$STORAGE_MODE" in
         ;;
 esac
 
-# Устанавливаем права
-chown -R $CURRENT_USER:$CURRENT_USER "$INSTALL_DIR"
+# Временно устанавливаем права на текущего пользователя (до создания vcuser)
+# Позже права будут изменены на vcuser в PHASE 7
+chown -R $CURRENT_USER:$CURRENT_USER "$INSTALL_DIR" 2>/dev/null || true
 if [ "$STORAGE_MODE" != "local" ]; then
     chown -R $CURRENT_USER:$CURRENT_USER "$DATA_ROOT" 2>/dev/null || true
     if [ -n "$CONTENT_DIR" ] && [ "$CONTENT_DIR" != "$DATA_ROOT" ]; then
@@ -353,7 +392,8 @@ JWT_REFRESH_EXPIRES_IN=30d
 # Logging level (info, warn, error, debug)
 LOG_LEVEL=info
 EOF
-    chown $CURRENT_USER:$CURRENT_USER .env
+    # Права будут установлены на vcuser в PHASE 7
+    chown $CURRENT_USER:$CURRENT_USER .env 2>/dev/null || true
     echo -e "  ${GREEN}✅ .env created with secure JWT secret${NC}"
 fi
 
@@ -361,7 +401,8 @@ fi
 echo "  Initializing SQLite database..."
 if [ ! -f config/main.db ]; then
     sqlite3 config/main.db < src/database/init.sql
-    chown $CURRENT_USER:$CURRENT_USER config/main.db
+    # Права будут установлены на vcuser в PHASE 7
+    chown $CURRENT_USER:$CURRENT_USER config/main.db 2>/dev/null || true
     echo -e "  ${GREEN}✅ Database initialized with default schema and admin user${NC}"
     echo -e "  ${YELLOW}📝 Default admin: admin / admin123${NC}"
     echo -e "  ${RED}⚠️  CHANGE PASSWORD AFTER FIRST LOGIN!${NC}"
@@ -372,7 +413,8 @@ fi
 echo "  Initializing hero module database..."
 if [ ! -f config/hero/heroes.db ]; then
     sqlite3 config/hero/heroes.db < src/hero/database/schema.sql
-    chown $CURRENT_USER:$CURRENT_USER config/hero/heroes.db
+    # Права будут установлены на vcuser в PHASE 7
+    chown $CURRENT_USER:$CURRENT_USER config/hero/heroes.db 2>/dev/null || true
     echo -e "  ${GREEN}✅ Hero database initialized (config/hero/heroes.db)${NC}"
 else
     echo -e "  ${YELLOW}⚠️  Hero database already exists${NC}"
@@ -407,7 +449,8 @@ if [ ! -f config/app-settings.json ]; then
   "version": "3.0.0"
 }
 EOF
-    chown $CURRENT_USER:$CURRENT_USER config/app-settings.json
+    # Права будут установлены на vcuser в PHASE 7
+    chown $CURRENT_USER:$CURRENT_USER config/app-settings.json 2>/dev/null || true
     echo -e "  ${GREEN}✅ app-settings.json created with contentRoot: $CONTENT_ROOT${NC}"
 else
     echo -e "  ${YELLOW}⚠️  app-settings.json already exists${NC}"
@@ -456,7 +499,21 @@ rm -f /etc/nginx/sites-enabled/videocontrol.conf 2>/dev/null
 rm -f /etc/nginx/sites-available/videocontrol.conf 2>/dev/null
 
 # Создаем симлинк
+rm -f /etc/nginx/sites-enabled/videocontrol
 ln -sf /etc/nginx/sites-available/videocontrol /etc/nginx/sites-enabled/videocontrol
+
+# Проверяем что симлинк создан
+if [ ! -L /etc/nginx/sites-enabled/videocontrol ]; then
+    echo -e "${RED}❌ Failed to create Nginx symlink${NC}"
+    echo "   Trying to create manually..."
+    rm -f /etc/nginx/sites-enabled/videocontrol
+    ln -s /etc/nginx/sites-available/videocontrol /etc/nginx/sites-enabled/videocontrol
+    if [ ! -L /etc/nginx/sites-enabled/videocontrol ]; then
+        echo -e "${RED}❌ Cannot create Nginx symlink. Check permissions.${NC}"
+        exit 1
+    fi
+fi
+echo -e "  ${GREEN}✅ Nginx symlink created${NC}"
 
 # Проверяем конфигурацию
 if nginx -t; then
@@ -465,6 +522,7 @@ if nginx -t; then
     echo -e "${GREEN}✅ Nginx configured and running${NC}"
 else
     echo -e "${RED}❌ Nginx configuration error${NC}"
+    echo "   Check: nginx -t"
     exit 1
 fi
 
@@ -475,22 +533,46 @@ echo ""
 echo -e "${BLUE}[7/7] Creating systemd service...${NC}"
 
 # Создаем группу vcgroup для управления правами
-if ! getent group vcgroup > /dev/null 2>&1; then
-    groupadd vcgroup
-    echo -e "  ${GREEN}✅ Group vcgroup created${NC}"
+if ! getent group $SERVICE_GROUP > /dev/null 2>&1; then
+    groupadd $SERVICE_GROUP
+    echo -e "  ${GREEN}✅ Group $SERVICE_GROUP created${NC}"
 else
-    echo -e "  ${GREEN}✅ Group vcgroup already exists${NC}"
+    echo -e "  ${GREEN}✅ Group $SERVICE_GROUP already exists${NC}"
 fi
 
-# Добавляем текущего пользователя в vcgroup
-usermod -a -G vcgroup $CURRENT_USER
-echo -e "  ${GREEN}✅ User $CURRENT_USER added to vcgroup${NC}"
+# Создаем пользователя vcuser (если не существует)
+if ! id -u $SERVICE_USER > /dev/null 2>&1; then
+    useradd -r -g $SERVICE_GROUP -d /home/$SERVICE_USER -s /bin/bash $SERVICE_USER
+    echo -e "  ${GREEN}✅ User $SERVICE_USER created${NC}"
+else
+    echo -e "  ${GREEN}✅ User $SERVICE_USER already exists${NC}"
+    # Убеждаемся что пользователь в правильной группе
+    usermod -a -G $SERVICE_GROUP $SERVICE_USER 2>/dev/null || true
+fi
 
-# Создаем домашнюю директорию с .cache для LibreOffice
-mkdir -p /home/$CURRENT_USER/.cache /home/$CURRENT_USER/.config
-chown -R $CURRENT_USER:vcgroup /home/$CURRENT_USER/.cache /home/$CURRENT_USER/.config
-chmod 755 /home/$CURRENT_USER/.cache /home/$CURRENT_USER/.config
-echo -e "  ${GREEN}✅ LibreOffice cache directories created${NC}"
+# Создаем домашнюю директорию для vcuser
+mkdir -p /home/$SERVICE_USER/.cache /home/$SERVICE_USER/.config
+chown -R $SERVICE_USER:$SERVICE_GROUP /home/$SERVICE_USER/.cache /home/$SERVICE_USER/.config
+chmod 755 /home/$SERVICE_USER/.cache /home/$SERVICE_USER/.config
+echo -e "  ${GREEN}✅ LibreOffice cache directories created for $SERVICE_USER${NC}"
+
+# Убеждаемся что LibreOffice доступен для vcuser
+if command -v soffice &> /dev/null; then
+    SOFFICE_PATH=$(which soffice)
+    echo -e "  ${GREEN}✅ LibreOffice (soffice) доступен: $SOFFICE_PATH${NC}"
+else
+    echo -e "  ${YELLOW}⚠️  soffice не найден в PATH, проверьте установку LibreOffice${NC}"
+fi
+
+# Устанавливаем права на проект для vcuser
+chown -R $SERVICE_USER:$SERVICE_GROUP "$INSTALL_DIR"
+if [ "$STORAGE_MODE" != "local" ]; then
+    chown -R $SERVICE_USER:$SERVICE_GROUP "$DATA_ROOT" 2>/dev/null || true
+    if [ -n "$CONTENT_DIR" ] && [ "$CONTENT_DIR" != "$DATA_ROOT" ]; then
+        chown -R $SERVICE_USER:$SERVICE_GROUP "$CONTENT_DIR" 2>/dev/null || true
+    fi
+fi
+echo -e "  ${GREEN}✅ Permissions set for $SERVICE_USER${NC}"
 
 # Определяем ReadWritePaths для systemd (v3.0.0 - динамические пути)
 if [ "$STORAGE_MODE" = "local" ]; then
@@ -499,6 +581,30 @@ else
     READ_WRITE_PATHS="$DATA_ROOT $INSTALL_DIR/config"
 fi
 
+# Читаем JWT_SECRET из .env
+JWT_SECRET_VALUE=""
+if [ -f "$INSTALL_DIR/.env" ]; then
+    JWT_SECRET_VALUE=$(grep "^JWT_SECRET=" "$INSTALL_DIR/.env" | cut -d'=' -f2- | tr -d '"' | tr -d "'" | xargs)
+fi
+
+# Если JWT_SECRET не найден, генерируем новый
+if [ -z "$JWT_SECRET_VALUE" ]; then
+    echo -e "  ${YELLOW}⚠️  JWT_SECRET not found in .env, generating new one${NC}"
+    JWT_SECRET_VALUE=$(node -e "console.log(require('crypto').randomBytes(64).toString('hex'))")
+    # Обновляем .env
+    if grep -q "^JWT_SECRET=" "$INSTALL_DIR/.env"; then
+        sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$JWT_SECRET_VALUE|" "$INSTALL_DIR/.env"
+    else
+        echo "JWT_SECRET=$JWT_SECRET_VALUE" >> "$INSTALL_DIR/.env"
+    fi
+    chown $SERVICE_USER:$SERVICE_GROUP "$INSTALL_DIR/.env"
+    chmod 600 "$INSTALL_DIR/.env"
+    echo -e "  ${GREEN}✅ JWT_SECRET generated and saved to .env${NC}"
+else
+    echo -e "  ${GREEN}✅ JWT_SECRET found in .env${NC}"
+fi
+
+# Создаем systemd unit файл
 cat > /etc/systemd/system/videocontrol.service << EOF
 [Unit]
 Description=VideoControl Server v3.0.0
@@ -506,8 +612,8 @@ After=network.target
 
 [Service]
 Type=simple
-User=$CURRENT_USER
-Group=vcgroup
+User=$SERVICE_USER
+Group=$SERVICE_GROUP
 WorkingDirectory=$INSTALL_DIR
 ExecStart=/usr/bin/node $INSTALL_DIR/server.js
 Restart=always
@@ -523,10 +629,20 @@ ReadWritePaths=$READ_WRITE_PATHS
 
 # Environment
 Environment=NODE_ENV=production
+Environment=JWT_SECRET=$JWT_SECRET_VALUE
+EnvironmentFile=$INSTALL_DIR/.env
 
 [Install]
 WantedBy=multi-user.target
 EOF
+
+# Устанавливаем права на .env
+chown $SERVICE_USER:$SERVICE_GROUP "$INSTALL_DIR/.env"
+chmod 600 "$INSTALL_DIR/.env"
+
+echo -e "  ${GREEN}✅ Systemd unit file created${NC}"
+echo -e "  ${GREEN}✅ Service user: $SERVICE_USER${NC}"
+echo -e "  ${GREEN}✅ ReadWritePaths: $READ_WRITE_PATHS${NC}"
 
 systemctl daemon-reload
 systemctl enable videocontrol
@@ -535,10 +651,11 @@ systemctl start videocontrol
 # Проверяем запуск
 sleep 3
 if systemctl is-active --quiet videocontrol; then
-    echo -e "${GREEN}✅ VideoControl service running${NC}"
+    echo -e "${GREEN}✅ VideoControl service running as $SERVICE_USER${NC}"
 else
     echo -e "${RED}❌ Service failed to start. Check logs:${NC}"
     echo "   journalctl -u videocontrol -n 50"
+    echo "   systemctl status videocontrol"
     exit 1
 fi
 
@@ -553,6 +670,7 @@ echo ""
 echo "🎉 VideoControl v3.0.0 successfully installed!"
 echo ""
 echo "📂 Installation directory: $INSTALL_DIR"
+echo "👤 Service user: $SERVICE_USER ($SERVICE_GROUP)"
 echo "📊 Database: config/main.db (SQLite)"
 echo "🌐 Server: http://$(hostname -I | awk '{print $1}')"
 echo ""

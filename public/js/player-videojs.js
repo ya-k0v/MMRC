@@ -18,6 +18,7 @@ const forceMuted = url.searchParams.get('muted') === '1';
 const forceSound = (url.searchParams.get('sound') === '1') || (url.searchParams.get('autoplay') === '1');
 const previewFile = url.searchParams.get('file');
 const previewStreamProtocol = url.searchParams.get('protocol');
+const previewStreamUrl = url.searchParams.get('stream_url'); // Прямой URL стрима для превью
 
 const idle = document.getElementById('idle');
 const v = document.getElementById('v');
@@ -435,6 +436,31 @@ if (!device_id || !device_id.trim()) {
             // КРИТИЧНО: При ошибке MEDIA_ERR_SRC_NOT_SUPPORTED пытаемся перезагрузить
             if (error && error.code === 4) {
               console.warn('[Player] ⚠️ MEDIA_ERR_SRC_NOT_SUPPORTED, возможно элемент был скрыт при загрузке');
+              
+              // КРИТИЧНО: Если на плеере во время стрима пропало соединение, возвращаемся на заглушку
+              const isStreaming = currentFileState.type === 'streaming';
+              const isDisconnected = !socket.connected;
+              
+              if (isStreaming && !preview && isDisconnected) {
+                console.log('[Player] 🔄 Ошибка Video.js при потере соединения во время стрима, возвращаемся на заглушку');
+                
+                // Останавливаем все плееры стрима
+                destroyMpegtsPlayer('videojs_error_disconnect');
+                destroyHlsPlayer('videojs_error_disconnect');
+                destroyDashPlayer('videojs_error_disconnect');
+                
+                // Очищаем состояние стрима
+                clearAllBuffers();
+                currentFileState = { type: null, file: null, page: 1 };
+                currentVideoFile = null;
+                savedVideoPosition = 0;
+                isSwitchingFromPlaceholder = false;
+                
+                // Возвращаемся на заглушку
+                showPlaceholder(false);
+                return;
+              }
+              
               // Не делаем автоматический retry - это может создать цикл
               // Просто логируем для диагностики
             }
@@ -629,14 +655,68 @@ if (!device_id || !device_id.trim()) {
                 show(img);
               } else if (previewType === 'streaming') {
                 console.log('[Player] 📡 Preview стрима:', previewFile);
+                
+                // КРИТИЧНО: Если stream_url передан напрямую (из превью), используем его без запроса к API
+                if (previewStreamUrl) {
+                  // КРИТИЧНО: Если URL содержит .m3u8 (проксированный HLS), всегда используем 'hls'
+                  // независимо от исходного протокола
+                  let proto = previewStreamProtocol || 'hls';
+                  if (previewStreamUrl.includes('.m3u8')) {
+                    proto = 'hls';
+                  }
+                  console.log('[Player] 📡 Используем прямой URL для превью (из параметра):', { playbackUrl: previewStreamUrl, proto });
+                  
+                  // КРИТИЧНО: Для HLS стримов проверяем доступность плейлиста с retry
+                  if (previewStreamUrl.includes('.m3u8') || proto === 'hls') {
+                    console.log('[Player] 📡 Проверяем доступность HLS плейлиста для превью...');
+                    let retryCount = 0;
+                    const maxRetries = 5;
+                    const retryDelay = 1000; // 1 секунда
+                    
+                    const tryLoadStream = async () => {
+                      try {
+                        // Проверяем доступность плейлиста
+                        const checkRes = await fetch(previewStreamUrl, { method: 'HEAD', cache: 'no-cache' });
+                        if (checkRes.ok) {
+                          console.log('[Player] ✅ HLS плейлист доступен, запускаем воспроизведение');
+                          handleStreamingPlayback(previewStreamUrl, previewFile, proto);
+                        } else if (retryCount < maxRetries) {
+                          retryCount++;
+                          console.log(`[Player] ⏳ HLS плейлист еще не готов, повтор через ${retryDelay}ms (попытка ${retryCount}/${maxRetries})`);
+                          setTimeout(tryLoadStream, retryDelay);
+                        } else {
+                          console.warn('[Player] ⚠️ HLS плейлист не стал доступен после всех попыток, пробуем запустить');
+                          handleStreamingPlayback(previewStreamUrl, previewFile, proto);
+                        }
+                      } catch (err) {
+                        if (retryCount < maxRetries) {
+                          retryCount++;
+                          console.log(`[Player] ⏳ Ошибка проверки плейлиста, повтор через ${retryDelay}ms (попытка ${retryCount}/${maxRetries}):`, err.message);
+                          setTimeout(tryLoadStream, retryDelay);
+                        } else {
+                          console.warn('[Player] ⚠️ Не удалось проверить HLS плейлист, пробуем запустить:', err);
+                          handleStreamingPlayback(previewStreamUrl, previewFile, proto);
+                        }
+                      }
+                    };
+                    
+                    // Начинаем с небольшой задержки
+                    setTimeout(tryLoadStream, 500);
+                  } else {
+                    handleStreamingPlayback(previewStreamUrl, previewFile, proto);
+                  }
+                  return;
+                }
+                
+                // Если stream_url не передан - получаем через API (старый способ для обратной совместимости)
                 fetch(`/api/devices/${encodeURIComponent(device_id)}/streams/${encodeURIComponent(previewFile)}`)
                   .then(res => res.ok ? res.json() : Promise.reject(new Error('stream not found')))
                   .then(data => {
-                    // КРИТИЧНО: Используем streamProxyUrl (проксированный HLS) если доступен, иначе оригинальный streamUrl
-                    const playbackUrl = data?.streamProxyUrl || data?.proxyUrl || data?.streamUrl;
+                    // КРИТИЧНО: Используем ИСКЛЮЧИТЕЛЬНО streamProxyUrl (без fallback)
+                    const playbackUrl = data?.streamProxyUrl;
                     if (playbackUrl) {
                       const proto = data?.protocol || previewStreamProtocol;
-                      console.log('[Player] 📡 Используем URL для превью:', { playbackUrl, proto, hasProxy: !!data?.streamProxyUrl });
+                      console.log('[Player] 📡 Используем streamProxyUrl для превью (из API):', { playbackUrl, proto });
                       
                       // КРИТИЧНО: Для HLS стримов проверяем доступность плейлиста с retry
                       if (playbackUrl.includes('.m3u8') || proto === 'hls') {
@@ -884,10 +964,26 @@ if (!device_id || !device_id.trim()) {
   }
 
   function normalizeStreamProtocol(protocol, url) {
+    // КРИТИЧНО: Сначала проверяем URL - если это проксированный HLS (содержит .m3u8),
+    // то всегда используем HLS, независимо от исходного протокола
+    // Это важно, так как все стримы рестримятся в HLS формат через FFmpeg
+    if (url) {
+      const urlLower = url.toLowerCase();
+      if (urlLower.includes('.m3u8') || urlLower.includes('format=m3u8')) {
+        return 'hls';
+      }
+      if (urlLower.includes('.mpd') || urlLower.includes('format=mpd') || urlLower.includes('dash-live')) {
+        return 'dash';
+      }
+    }
+    
+    // Если URL не указывает на формат, проверяем переданный протокол
     const normalized = (protocol || '').toString().trim().toLowerCase();
     if (STREAM_PROTOCOLS.has(normalized)) {
       return normalized;
     }
+    
+    // Fallback: определяем по URL
     return detectStreamProtocolFromUrl(url);
   }
 
@@ -987,7 +1083,8 @@ if (!device_id || !device_id.trim()) {
             show(videoContainer, true);
             console.log('[Player] ▶️ Стрим запущен через Video.js', { streamUrl, mimeType });
             // КРИТИЧНО: Отправляем player/progress для обновления информации на панели спикера
-            if (device_id && currentFileState?.file && currentFileState?.type === 'streaming') {
+            // КРИТИЧНО: Не отправляем в preview режиме
+            if (!preview && device_id && currentFileState?.file && currentFileState?.type === 'streaming') {
               socket.emit('player/progress', {
                 device_id,
                 type: 'streaming',
@@ -999,6 +1096,24 @@ if (!device_id || !device_id.trim()) {
             }
           }).catch(err => {
             console.error('[Player] ❌ Ошибка запуска стрима через Video.js', err);
+            
+            // КРИТИЧНО: Если на плеере во время стрима пропало соединение, возвращаемся на заглушку
+            const isStreaming = currentFileState.type === 'streaming';
+            const isDisconnected = !socket.connected;
+            
+            if (isStreaming && !preview && isDisconnected) {
+              console.log('[Player] 🔄 Ошибка запуска стрима при потере соединения, возвращаемся на заглушку');
+              
+              // Очищаем состояние стрима
+              clearAllBuffers();
+              currentFileState = { type: null, file: null, page: 1 };
+              currentVideoFile = null;
+              savedVideoPosition = 0;
+              isSwitchingFromPlaceholder = false;
+              
+              // Возвращаемся на заглушку
+              showPlaceholder(false);
+            }
           });
         }, 50);
       });
@@ -1096,7 +1211,8 @@ if (!device_id || !device_id.trim()) {
               show(videoContainer, true);
               console.log('[Player] ▶️ HLS поток запущен');
               // КРИТИЧНО: Отправляем player/progress для обновления информации на панели спикера
-              if (device_id && file) {
+              // КРИТИЧНО: Не отправляем в preview режиме
+              if (!preview && device_id && file) {
                 socket.emit('player/progress', {
                   device_id,
                   type: 'streaming',
@@ -1135,6 +1251,28 @@ if (!device_id || !device_id.trim()) {
               if (preview && previewFile) {
                 console.warn('[Player] ⚠️ HLS ошибка в preview режиме, возможно плейлист еще не готов');
                 // Не перезапускаем, просто логируем
+                return;
+              }
+              
+              // КРИТИЧНО: Если на плеере во время стрима пропало соединение, возвращаемся на заглушку
+              const isStreaming = currentFileState.type === 'streaming';
+              const isNetworkError = data.type === 'networkError' || data.details === 'levelLoadError';
+              const isDisconnected = !socket.connected;
+              
+              if (isStreaming && !preview && (isDisconnected || isNetworkError)) {
+                console.log('[Player] 🔄 HLS fatal ошибка при потере соединения во время стрима, возвращаемся на заглушку');
+                
+                destroyHlsPlayer('fatal_error_disconnect');
+                
+                // Очищаем состояние стрима
+                clearAllBuffers();
+                currentFileState = { type: null, file: null, page: 1 };
+                currentVideoFile = null;
+                savedVideoPosition = 0;
+                isSwitchingFromPlaceholder = false;
+                
+                // Возвращаемся на заглушку
+                showPlaceholder(false);
                 return;
               }
               
@@ -1178,7 +1316,8 @@ if (!device_id || !device_id.trim()) {
           show(videoContainer, true);
           console.log('[Player] ▶️ MPEG-TS поток запущен');
           // КРИТИЧНО: Отправляем player/progress для обновления информации на панели спикера
-          if (device_id && file) {
+          // КРИТИЧНО: Не отправляем в preview режиме
+          if (!preview && device_id && file) {
             socket.emit('player/progress', {
               device_id,
               type: 'streaming',
@@ -1219,7 +1358,8 @@ if (!device_id || !device_id.trim()) {
                 show(videoContainer, true);
                 console.log('[Player] ▶️ DASH поток запущен через dashjs');
                 // КРИТИЧНО: Отправляем player/progress для обновления информации на панели спикера
-                if (device_id && file) {
+                // КРИТИЧНО: Не отправляем в preview режиме
+                if (!preview && device_id && file) {
                   socket.emit('player/progress', {
                     device_id,
                     type: 'streaming',
@@ -2823,6 +2963,26 @@ if (!device_id || !device_id.trim()) {
     if (registrationTimeout) {
       clearTimeout(registrationTimeout);
       registrationTimeout = null;
+    }
+    
+    // КРИТИЧНО: Если на плеере во время стрима пропало соединение, возвращаемся на заглушку
+    if (currentFileState.type === 'streaming' && !preview) {
+      console.log('[Player] 🔄 Потеря соединения во время стрима, возвращаемся на заглушку');
+      
+      // Останавливаем все плееры стрима
+      destroyMpegtsPlayer('disconnect_during_stream');
+      destroyHlsPlayer('disconnect_during_stream');
+      destroyDashPlayer('disconnect_during_stream');
+      
+      // Очищаем состояние стрима
+      clearAllBuffers();
+      currentFileState = { type: null, file: null, page: 1 };
+      currentVideoFile = null;
+      savedVideoPosition = 0;
+      isSwitchingFromPlaceholder = false;
+      
+      // Возвращаемся на заглушку
+      showPlaceholder(false);
     }
     
     // КРИТИЧНО: Для Android - явное переподключение после disconnect

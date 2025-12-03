@@ -283,27 +283,14 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   const addStreamBtn = card.querySelector('.addStreamBtn');
   if (addStreamBtn && isAdmin) {
     addStreamBtn.onclick = async () => {
-      const name = prompt('Название стрима');
-      if (!name) return;
-      const url = prompt('URL стрима (http/https)');
-      if (!url) return;
-      const suggested = guessStreamProtocolFromUrl(url);
-      const protoInput = prompt('Тип потока (hls/dash/mpegts, пусто = авто)', suggested || 'auto');
-      const protocol = (protoInput || '').trim().toLowerCase() || 'auto';
-      try {
-        const res = await adminFetch(`/api/devices/${encodeURIComponent(d.device_id)}/streams`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name.trim(), url: url.trim(), protocol })
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.error || 'Не удалось создать стрим');
+      const { showStreamModal } = await import('./files-manager.js');
+      await showStreamModal({
+        deviceId: d.device_id,
+        mode: 'add',
+        onSuccess: async () => {
+          await renderFilesPane(d.device_id);
         }
-        await renderFilesPane(d.device_id);
-      } catch (error) {
-        alert(error.message || 'Ошибка создания стрима');
-      }
+      });
     };
   }
 

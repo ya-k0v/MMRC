@@ -92,9 +92,9 @@ echo ""
 echo "Installing system dependencies..."
 if [ "$OS" = "ubuntu" ] || [ "$OS" = "debian" ]; then
     sudo apt-get update
-    sudo apt-get install -y ffmpeg libreoffice imagemagick unzip sqlite3
+    sudo apt-get install -y ffmpeg libreoffice imagemagick graphicsmagick unzip sqlite3
 elif [ "$OS" = "centos" ] || [ "$OS" = "rhel" ]; then
-    sudo yum install -y ffmpeg libreoffice ImageMagick unzip sqlite
+    sudo yum install -y ffmpeg libreoffice ImageMagick GraphicsMagick unzip sqlite
 fi
 
 # Install npm packages

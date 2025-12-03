@@ -18,7 +18,7 @@ import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import logger, { logFile, logSecurity } from '../utils/logger.js';
 import { getCachedResolution, clearResolutionCache } from '../video/resolution-cache.js';
 import { processUploadedFilesAsync } from '../utils/file-metadata-processor.js';
-import { getFileMetadata, deleteFileMetadata, getDeviceFilesMetadata, saveFileMetadata, countFileReferences, updateFileOriginalName, createStreamingEntry, cleanupMissingFiles } from '../database/files-metadata.js';
+import { getFileMetadata, deleteFileMetadata, getDeviceFilesMetadata, saveFileMetadata, countFileReferences, updateFileOriginalName, createStreamingEntry, updateStreamMetadata, cleanupMissingFiles } from '../database/files-metadata.js';
 import { getStreamPlaybackUrl, getStreamRestreamStatus, upsertStreamJob, removeStreamJob } from '../streams/stream-manager.js';
 import { getTrailerPath } from '../video/trailer-generator.js';
 import { requireSpeaker } from '../middleware/auth.js';
@@ -314,9 +314,9 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
         .replace(/[^a-zA-Z0-9\-_.]/g, '_')
         .substring(0, 200);
     }
-    const safeDevice = sanitizePathFragment(deviceId);
     const safeFile = sanitizePathFragment(safeName);
-    const proxyUrl = `/streams/${encodeURIComponent(safeDevice)}/${encodeURIComponent(safeFile)}/index.m3u8`;
+    // КРИТИЧНО: Убрали deviceId из пути - стримы теперь идентифицируются только по safeName
+    const proxyUrl = `/streams/${encodeURIComponent(safeFile)}/index.m3u8`;
     const restreamStatus = getStreamRestreamStatus(deviceId, safeName);
     metadataList.push({
       safeName,
@@ -501,8 +501,112 @@ export function createFilesRouter(deps) {
     });
   });
 
+  // PUT /api/devices/:id/streams/:safeName - Обновление стрима (только админ)
+  router.put('/:id/streams/:safeName', requireAdmin, jsonParser, async (req, res) => {
+    const id = sanitizeDeviceId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid device id' });
+    const device = devices[id];
+    if (!device) return res.status(404).json({ error: 'device not found' });
+
+    const safeName = req.params.safeName;
+    if (!safeName) return res.status(400).json({ error: 'invalid stream name' });
+
+    const { name, url, protocol } = req.body || {};
+    if (!name || !url) {
+      return res.status(400).json({ error: 'name and url required' });
+    }
+
+    // Проверяем существование стрима
+    const existingMetadata = getFileMetadata(id, safeName);
+    if (!existingMetadata || existingMetadata.content_type !== 'streaming') {
+      return res.status(404).json({ error: 'stream not found' });
+    }
+
+    // Валидация URL
+    let parsedUrl = null;
+    try {
+      parsedUrl = new URL(url);
+      if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+        return res.status(400).json({ error: 'only http/https streams supported' });
+      }
+    } catch {
+      return res.status(400).json({ error: 'invalid url' });
+    }
+
+    const normalizedProtocol = normalizeStreamProtocol(protocol, parsedUrl.toString());
+
+    try {
+      // Обновляем метаданные стрима
+      const updated = updateStreamMetadata(
+        id,
+        safeName,
+        name,
+        parsedUrl.toString(),
+        normalizedProtocol
+      );
+
+      if (!updated) {
+        return res.status(404).json({ error: 'stream not found' });
+      }
+
+      // Обновляем fileNamesMap
+      if (!fileNamesMap[id]) fileNamesMap[id] = {};
+      fileNamesMap[id][safeName] = name;
+      saveFileNamesMap(fileNamesMap);
+
+      // КРИТИЧНО: Перезапускаем FFmpeg с новым URL, если стрим был запущен
+      // Сначала останавливаем старый job
+      try {
+        removeStreamJob(id, safeName, 'updated');
+      } catch (err) {
+        // Игнорируем ошибки остановки (может быть не запущен)
+        logger.debug('[streams] Stream job not running or already stopped', { deviceId: id, safeName });
+      }
+
+      // Получаем обновленные метаданные и создаем новый job
+      const updatedMetadata = getFileMetadata(id, safeName);
+      if (updatedMetadata) {
+        upsertStreamJob(updatedMetadata);
+      }
+
+      // Обновляем список файлов устройства
+      updateDeviceFilesFromDB(id, devices, fileNamesMap);
+      io.emit('devices/updated');
+
+      await auditLog({
+        userId: req.user?.id || null,
+        action: AuditAction.FILE_UPLOAD,
+        resource: `device:${id}`,
+        details: {
+          deviceId: id,
+          action: 'stream_updated',
+          safeName,
+          originalName: name,
+          streamUrl: parsedUrl.toString(),
+          protocol: normalizedProtocol,
+          updatedBy: req.user?.username || 'anonymous'
+        },
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent'),
+        status: 'success'
+      });
+
+      res.json({
+        ok: true,
+        safeName,
+        originalName: name,
+        streamUrl: parsedUrl.toString(),
+        protocol: normalizedProtocol
+      });
+    } catch (error) {
+      logger.error('[streams] Failed to update stream', { error: error.message, deviceId: id, safeName });
+      res.status(500).json({ error: 'failed to update stream' });
+    }
+  });
+
   // POST /api/devices/:id/streams/:safeName/stop-preview - Остановить стрим после превью
   // КРИТИЧНО: Используем requireSpeaker для доступа из speaker панели
+  // КРИТИЧНО: Теперь стримы общие, проверяем только наличие активных устройств
   router.post('/:id/streams/:safeName/stop-preview', requireSpeaker[0], requireSpeaker[1], jsonParser, async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
     if (!id) return res.status(400).json({ error: 'invalid device id' });
@@ -519,17 +623,29 @@ export function createFilesRouter(deps) {
       return res.status(404).json({ error: 'stream not found' });
     }
 
-    const isPlayingOnDevice = device.current &&
-      device.current.type === 'streaming' &&
-      device.current.file === safeName;
+    // КРИТИЧНО: Проверяем, используется ли стрим на любом устройстве
+    // Если используется - не останавливаем
+    let isPlayingOnAnyDevice = false;
+    for (const [deviceId, dev] of Object.entries(devices)) {
+      if (dev.current && dev.current.type === 'streaming' && dev.current.file === safeName) {
+        isPlayingOnAnyDevice = true;
+        break;
+      }
+    }
 
-    if (isPlayingOnDevice) {
+    if (isPlayingOnAnyDevice) {
       return res.status(409).json({ error: 'stream currently in use by device' });
     }
 
-    const reason = (req.body && req.body.reason) || 'preview_stop';
-    removeStreamJob(id, safeName, reason);
-    logger.info('[streams] Preview stream stop requested', { deviceId: id, safeName, reason });
+    // КРИТИЧНО: Используем stopStream вместо removeStreamJob
+    // stopStream проверит количество активных устройств и остановит только если это последнее
+    const { getStreamManager } = await import('../streams/stream-manager.js');
+    const streamManager = getStreamManager();
+    if (streamManager) {
+      streamManager.stopStream(id, safeName, 'preview_stop');
+    }
+    
+    logger.info('[streams] Preview stream stop requested', { deviceId: id, safeName });
     res.json({ ok: true, stopped: true });
   });
 

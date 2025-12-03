@@ -512,6 +512,75 @@ export function createStreamingEntry({ deviceId, safeName, originalName, streamU
   });
 }
 
+/**
+ * Обновить стрим (URL, протокол, название)
+ * @param {string} deviceId
+ * @param {string} safeName - Физическое имя файла (не меняется)
+ * @param {string} newOriginalName - Новое отображаемое имя
+ * @param {string} newStreamUrl - Новый URL стрима
+ * @param {string} newProtocol - Новый протокол
+ * @returns {boolean} - true если обновлено успешно
+ */
+export function updateStreamMetadata(deviceId, safeName, newOriginalName, newStreamUrl, newProtocol = 'auto') {
+  try {
+    const db = getDatabase();
+    
+    // Проверяем существование записи
+    const existing = getFileMetadata(deviceId, safeName);
+    if (!existing || existing.content_type !== 'streaming') {
+      logger.warn('No streaming entry found to update', { deviceId, safeName });
+      return false;
+    }
+    
+    // Вычисляем новый MD5 хэш для нового URL
+    const md5Hash = crypto.createHash('md5').update(`${deviceId}:${newStreamUrl}`).digest('hex');
+    const normalizedProtocol = newProtocol || 'auto';
+    
+    // Определяем MIME тип на основе протокола
+    let mimeType = 'video/mp2t';
+    if (normalizedProtocol === 'dash') {
+      mimeType = 'application/dash+xml';
+    } else if (normalizedProtocol === 'hls') {
+      mimeType = 'application/x-mpegURL';
+    }
+    
+    // Обновляем запись
+    const stmt = db.prepare(`
+      UPDATE files_metadata
+      SET original_name = ?,
+          stream_url = ?,
+          stream_protocol = ?,
+          file_path = ?,
+          mime_type = ?,
+          md5_hash = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE device_id = ? AND safe_name = ?
+    `);
+    
+    const result = stmt.run(
+      newOriginalName,
+      newStreamUrl,
+      normalizedProtocol,
+      newStreamUrl, // file_path для стримов тоже содержит URL
+      mimeType,
+      md5Hash,
+      deviceId,
+      safeName
+    );
+    
+    if (result.changes > 0) {
+      logFile('info', 'Stream metadata updated', { deviceId, safeName, newOriginalName, newStreamUrl, newProtocol: normalizedProtocol });
+      return true;
+    } else {
+      logger.warn('No stream found to update', { deviceId, safeName });
+      return false;
+    }
+  } catch (error) {
+    logger.error('Failed to update stream metadata', { error: error.message, deviceId, safeName, newOriginalName, newStreamUrl, newProtocol });
+    throw error;
+  }
+}
+
 export function deleteStreamingEntry(deviceId, safeName) {
   deleteFileMetadata(deviceId, safeName);
 }

@@ -88,28 +88,38 @@ class StreamManager extends EventEmitter {
   constructor(options = {}) {
     super();
     this.options = { ...DEFAULT_OPTIONS, ...options };
-    this.jobs = new Map(); // Map<deviceId::safeName, job>
-    this.urlToJobMap = new Map(); // Map<streamUrl, {jobKey, devices: Set<deviceId::safeName>}>
-    this.lastAccessTime = new Map(); // Отслеживание последнего доступа к стриму
-    // КРИТИЧНО: Map для отслеживания pending операций по URL (предотвращение race conditions)
-    this.urlToJobMapPending = new Map(); // Map<streamUrl, Promise<Job>>
+    this.jobs = new Map(); // Map<safeName, job> - один стрим на имя, независимо от устройства
+    // КРИТИЧНО: Map для отслеживания стримов по имени с информацией об устройствах
+    this.nameToJobMap = new Map(); // Map<safeName, {
+    //   job: Job,                    // Основной job стрима
+    //   devices: Set<deviceId>,      // Устройства, использующие стрим
+    //   lastAccess: Map<deviceId, timestamp>, // Время последнего доступа для каждого устройства
+    //   pending: boolean             // Флаг pending операции
+    // }>
+    this.nameToJobMapPending = new Map(); // Map<safeName, Promise<Job>> - pending операции по имени
     // КРИТИЧНО: Кэш результатов определения кодеков для оптимизации
     this.codecCache = new Map(); // Map<streamUrl, {codecs: {videoCodec, audioCodec}, timestamp: number}>
     this.codecCacheMaxSize = 100; // Максимум 100 записей в кэше
     this.codecCacheTTL = 10 * 60 * 1000; // TTL: 10 минут
-    // КРИТИЧНО: idleTimeout для автоматической остановки неиспользуемых стримов
-    // Стрим работает, пока его смотрят (плеер запрашивает сегменты)
-    // Если стрим не используется (нет запросов сегментов) - останавливается через 3 минуты
-    // HLS плееры запрашивают плейлист каждые 3-5 секунд, поэтому 3 минуты достаточно
-    this.idleTimeout = Number(process.env.STREAM_IDLE_TIMEOUT_MS || 180000); // 180 секунд (3 минуты) по умолчанию
+    // КРИТИЧНО: Убраны таймауты для джобов
+    // Стримы работают пока есть активные запросы от плееров (через lastAccess)
+    // Останавливаются только если нет запросов больше минуты
+    // Это позволяет стримам работать без ограничений по времени, пока их смотрят
+    this.idleTimeout = Number(process.env.STREAM_IDLE_TIMEOUT_MS || 60000); // 60 секунд - только для проверки активности
+    this.previewIdleTimeout = Number(process.env.PREVIEW_STREAM_IDLE_TIMEOUT_MS || 60000); // 60 секунд - одинаково для всех
     
     // Интервалы для очистки при shutdown
     this.idleCleanupInterval = null;
     this.segmentCleanupInterval = null;
     this.circuitBreakerCheckInterval = null;
+    this.healthCheckInterval = null;
     
     // КРИТИЧНО: Флаг остановки для предотвращения повторного запуска
     this.stopped = false;
+    
+    // Кэш статусов файлов (TTL 2 секунды)
+    this.fileStatusCache = new Map(); // Map<safeName, {exists: boolean, size: number, mtime: number, timestamp: number}>
+    this.fileStatusCacheTTL = 2000; // 2 секунды
     
     // КРИТИЧНО: outputRoot теперь вычисляется динамически из настроек БД
     // Обновляем его при инициализации, чтобы использовать актуальный путь
@@ -130,6 +140,9 @@ class StreamManager extends EventEmitter {
     
     // Запускаем периодическую проверку circuit breaker
     this._startCircuitBreakerCheck();
+    
+    // Запускаем периодический health check для активных стримов
+    this._startHealthCheck();
   }
   
   /**
@@ -141,117 +154,232 @@ class StreamManager extends EventEmitter {
     this.idleCleanupInterval = setInterval(() => {
       const now = Date.now();
       
-      // КРИТИЧНО: Очищаем "сиротские" записи в lastAccessTime для несуществующих jobs
-      const orphanedKeys = [];
-      for (const [key] of this.lastAccessTime.entries()) {
-        if (!this.jobs.has(key)) {
-          orphanedKeys.push(key);
-        }
-      }
-      if (orphanedKeys.length > 0) {
-        orphanedKeys.forEach(key => {
-          this.lastAccessTime.delete(key);
-        });
-        logger.debug('[StreamManager] Cleaned up orphaned lastAccessTime entries', {
-          count: orphanedKeys.length
-        });
-      }
-      
-      for (const [key, job] of this.jobs.entries()) {
-        // КРИТИЧНО: Пропускаем shared jobs - они обрабатываются через основной job
-        if (job.isShared) {
-          continue;
-        }
+      for (const [safeName, nameEntry] of this.nameToJobMap.entries()) {
+        if (!nameEntry.job || nameEntry.pending) continue;
         
-        // КРИТИЧНО: Проверяем зависшие процессы через heartbeat
+        const job = nameEntry.job;
+        
+        // Проверяем зависшие процессы через heartbeat
         if (job.status === 'running' && job.process && !job.process.killed) {
-          // Проверяем статус процесса через систему
           const isProcessAlive = this._checkProcessAlive(job.process);
           if (!isProcessAlive) {
             logger.warn('[StreamManager] 🔴 FFmpeg process is dead but not detected', {
-              deviceId: job.deviceId,
-              safeName: job.safeName,
+              safeName,
               pid: job.process.pid
             });
-            // Процесс мертв, но не был обнаружен - перезапускаем
             this._restartHungProcess(job);
             continue;
           }
           
-          // Проверяем heartbeat для активных процессов
           if (job.lastSegmentWrite) {
             const timeSinceLastWrite = now - job.lastSegmentWrite;
             if (timeSinceLastWrite > this.options.hungProcessTimeout) {
               logger.warn('[StreamManager] 🔴 Detected hung FFmpeg process (no heartbeat)', {
-                deviceId: job.deviceId,
-                safeName: job.safeName,
+                safeName,
                 timeSinceLastWriteMs: timeSinceLastWrite,
-                timeSinceLastWriteSeconds: Math.round(timeSinceLastWrite / 1000),
-                hungProcessTimeoutMs: this.options.hungProcessTimeout,
                 pid: job.process.pid
               });
-              
-              // Принудительно перезапускаем зависший процесс
               this._restartHungProcess(job);
-              continue; // Пропускаем дальнейшую обработку для этого job
-            }
-          }
-        }
-        
-        const lastAccess = this.lastAccessTime.get(key);
-        if (!lastAccess) {
-          // Если нет записи о доступе - это новый стрим, пропускаем
-          continue;
-        }
-        
-        const idleTime = now - lastAccess;
-        if (idleTime > this.idleTimeout) {
-          // КРИТИЧНО: Проверяем, используется ли URL другими устройствами
-          // Нормализуем URL для корректного поиска (на случай старых job с ненормализованными URL)
-          const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
-          const urlEntry = this.urlToJobMap.get(normalizedSourceUrl);
-          if (urlEntry && urlEntry.devices.size > 1) {
-            // URL используется другими устройствами - проверяем их активность
-            let hasActiveDevice = false;
-            for (const deviceKey of urlEntry.devices) {
-              const deviceLastAccess = this.lastAccessTime.get(deviceKey);
-              if (deviceLastAccess && (now - deviceLastAccess) <= this.idleTimeout) {
-                hasActiveDevice = true;
-                break;
-              }
-            }
-            if (hasActiveDevice) {
-              // Есть активное устройство - не останавливаем
               continue;
             }
           }
+        }
+        
+        // КРИТИЧНО: Проверяем только активность плееров через lastAccess
+        // НЕ используем таймауты - стрим работает пока есть активные запросы
+        // Останавливаем только если нет запросов вообще (lastAccess отсутствует или очень старый)
+        let hasActiveRequests = false;
+        let mostRecentAccess = 0;
+        const MAX_IDLE_TIME = 60000; // 60 секунд - если нет запросов больше минуты, считаем стрим неактивным
+        
+        if (nameEntry.lastAccess && nameEntry.lastAccess.size > 0) {
+          for (const [deviceId, lastAccess] of nameEntry.lastAccess.entries()) {
+            mostRecentAccess = Math.max(mostRecentAccess, lastAccess);
+            const idleTime = now - lastAccess;
+            
+            // Если был запрос за последнюю минуту - стрим активен
+            if (idleTime <= MAX_IDLE_TIME) {
+              hasActiveRequests = true;
+              break; // Достаточно одного активного запроса
+            }
+          }
+        }
+        
+        // КРИТИЧНО: Останавливаем стрим только если нет активных запросов больше минуты
+        // Это означает, что плееры не запрашивают плейлист/сегменты
+        if (!hasActiveRequests && nameEntry.devices.size > 0) {
+          const timeSinceLastAccess = mostRecentAccess > 0 ? now - mostRecentAccess : Infinity;
           
-          logger.info('[StreamManager] 🕐 Stopping idle stream (no activity)', {
-            deviceId: job.deviceId,
-            safeName: job.safeName,
-            idleTimeMs: idleTime,
-            idleTimeSeconds: Math.round(idleTime / 1000),
-            idleTimeoutMs: this.idleTimeout,
-            idleTimeoutSeconds: Math.round(this.idleTimeout / 1000)
+          // Останавливаем только если нет запросов больше минуты
+          if (timeSinceLastAccess > MAX_IDLE_TIME) {
+            logger.info('[StreamManager] 🕐 Stopping stream (no active requests)', {
+              safeName,
+              devices: Array.from(nameEntry.devices),
+              timeSinceLastAccess,
+              hasLastAccess: mostRecentAccess > 0
+            });
+            
+            // Останавливаем стрим (будет проверка количества устройств в stopStream)
+            this.stopStream(Array.from(nameEntry.devices)[0], safeName, 'no_active_requests');
+          }
+        } else if (hasActiveRequests) {
+          // Логируем для отладки активных стримов
+          logger.debug('[StreamManager] Stream is active (has requests)', {
+            safeName,
+            mostRecentAccess: mostRecentAccess > 0 ? now - mostRecentAccess : null,
+            devices: Array.from(nameEntry.devices)
           });
-          this.stopStream(job.deviceId, job.safeName, 'idle_timeout');
         }
       }
-    }, 10000); // Проверяем каждые 10 секунд для быстрой реакции
+    }, 15000); // Проверяем каждые 15 секунд (увеличено для снижения нагрузки и учета буферизации)
+  }
+
+  /**
+   * Запускает периодический health check для активных стримов
+   * Проверяет обновление плейлистов и состояние процессов
+   */
+  _startHealthCheck() {
+    this.healthCheckInterval = setInterval(() => {
+      const now = Date.now();
+      
+      for (const [safeName, job] of this.jobs.entries()) {
+        if (job.status !== 'running' || !job.process || job.process.killed) {
+          continue;
+        }
+        
+        const paths = job.paths;
+        
+        // Проверяем, что плейлист обновляется
+        if (fs.existsSync(paths.playlistPath)) {
+          try {
+            const stats = fs.statSync(paths.playlistPath);
+            const playlistAge = Date.now() - stats.mtimeMs;
+            
+            // Если плейлист не обновлялся более 30 секунд - проблема
+            if (playlistAge > 30000) {
+              logger.warn('[StreamManager] Health check: Playlist not updating', {
+                safeName,
+                playlistAge,
+                pid: job.process.pid
+              });
+              
+              // Проверяем процесс
+              const isAlive = this._checkProcessAlive(job.process);
+              if (!isAlive) {
+                logger.error('[StreamManager] Health check: Process is dead', {
+                  safeName,
+                  pid: job.process.pid
+                });
+                this._restartHungProcess(job);
+              }
+            }
+          } catch (err) {
+            logger.debug('[StreamManager] Health check error', {
+              safeName,
+              error: err.message
+            });
+          }
+        } else {
+          // Плейлист не существует для running процесса - проблема
+          logger.warn('[StreamManager] Health check: Playlist missing for running process', {
+            safeName,
+            pid: job.process.pid
+          });
+        }
+      }
+    }, 10000); // Проверка каждые 10 секунд
   }
 
   _jobKey(deviceId, safeName) {
     return `${deviceId}${STREAM_KEY_SEPARATOR}${safeName}`;
   }
 
-  _getPaths(deviceId, safeName) {
-    const safeDevice = sanitizePathFragment(deviceId);
+  _getPaths(safeName) {
+    // КРИТИЧНО: Убрали deviceId - стримы теперь идентифицируются только по safeName
     const safeFile = sanitizePathFragment(safeName);
-    const folderPath = path.join(this.options.outputRoot, safeDevice, safeFile);
+    const folderPath = path.join(this.options.outputRoot, safeFile);
     const playlistPath = path.join(folderPath, 'index.m3u8');
     const segmentPattern = path.join(folderPath, 'segment_%05d.ts');
-    const publicUrl = `${this.options.publicBasePath}/${encodeURIComponent(safeDevice)}/${encodeURIComponent(safeFile)}/index.m3u8`;
+    const publicUrl = `${this.options.publicBasePath}/${encodeURIComponent(safeFile)}/index.m3u8`;
     return { folderPath, playlistPath, segmentPattern, publicUrl };
+  }
+
+  /**
+   * Получает кэшированный статус файла плейлиста
+   * @param {string} safeName - Безопасное имя стрима
+   * @returns {Object} Статус файла {exists: boolean, size: number, mtime: number, timestamp: number}
+   */
+  _getCachedFileStatus(safeName) {
+    const cached = this.fileStatusCache.get(safeName);
+    if (cached && (Date.now() - cached.timestamp) < this.fileStatusCacheTTL) {
+      return cached;
+    }
+    
+    // Обновляем кэш
+    const paths = this._getPaths(safeName);
+    let fileStatus = {
+      exists: false,
+      size: 0,
+      mtime: 0,
+      timestamp: Date.now()
+    };
+    
+    try {
+      if (fs.existsSync(paths.playlistPath)) {
+        const stats = fs.statSync(paths.playlistPath);
+        fileStatus = {
+          exists: true,
+          size: stats.size,
+          mtime: stats.mtimeMs,
+          timestamp: Date.now()
+        };
+      }
+    } catch (err) {
+      // Игнорируем ошибки
+    }
+    
+    this.fileStatusCache.set(safeName, fileStatus);
+    return fileStatus;
+  }
+
+  /**
+   * Быстрая валидация HLS плейлиста
+   * @param {string} playlistPath - Путь к плейлисту
+   * @returns {boolean} true если плейлист валиден
+   */
+  _validatePlaylistQuick(playlistPath) {
+    try {
+      if (!fs.existsSync(playlistPath)) {
+        return false;
+      }
+      
+      const stats = fs.statSync(playlistPath);
+      if (stats.size < 50) { // Минимум 50 байт для валидного плейлиста
+        return false;
+      }
+      
+      const content = fs.readFileSync(playlistPath, 'utf-8');
+      
+      // Базовая валидация структуры HLS
+      if (!content.includes('#EXTM3U')) {
+        return false;
+      }
+      
+      // Для live стримов должен быть хотя бы один сегмент
+      if (content.includes('#EXT-X-ENDLIST')) {
+        // VOD плейлист - должен иметь сегменты
+        return content.includes('#EXTINF');
+      } else {
+        // Live плейлист - должен иметь сегменты или быть в процессе создания
+        return content.includes('#EXTINF') || content.includes('#EXT-X-MEDIA-SEQUENCE');
+      }
+    } catch (err) {
+      logger.debug('[StreamManager] Playlist validation error', {
+        playlistPath,
+        error: err.message
+      });
+      return false;
+    }
   }
 
   /**
@@ -485,8 +613,8 @@ class StreamManager extends EventEmitter {
       return null;
     }
 
-    const key = this._jobKey(device_id, safe_name);
-    const paths = this._getPaths(device_id, safe_name);
+      const safeNameSanitized = sanitizePathFragment(safe_name);
+      const paths = this._getPaths(safeNameSanitized);
     
     logger.info('[StreamManager] Preparing stream folder', {
       deviceId: device_id,
@@ -589,7 +717,7 @@ class StreamManager extends EventEmitter {
 
     // КРИТИЧНО: Для DASH стримов определение кодеков может быть проблематичным
     // FFprobe может не успеть прочитать манифест или выбрать представление
-    // Поэтому для DASH всегда перекодируем, чтобы гарантировать запуск FFmpeg
+    // Пробуем определить кодеки, но с увеличенным таймаутом и fallback на перекодирование
     const isDash = stream_protocol === 'dash' || stream_url.toLowerCase().includes('.mpd');
     
     let videoCodec = 'unknown';
@@ -597,29 +725,35 @@ class StreamManager extends EventEmitter {
     let needsVideoTranscode = true; // По умолчанию перекодируем
     let needsAudioTranscode = true;
     
-    // Для DASH стримов пропускаем определение кодеков и всегда перекодируем
-    // Это гарантирует, что FFmpeg запустится и обработает стрим
-    if (!isDash) {
-      try {
-        const codecs = await this._detectStreamCodecs(stream_url, stream_protocol);
-        videoCodec = codecs.videoCodec;
-        audioCodec = codecs.audioCodec;
-        needsVideoTranscode = this._needsTranscoding(videoCodec, 'video');
-        needsAudioTranscode = this._needsTranscoding(audioCodec, 'audio');
-      } catch (err) {
-        logger.warn('[StreamManager] Codec detection failed, will transcode', {
+    // Для DASH стримов пробуем определить кодеки с увеличенным таймаутом
+    // Если не удалось - перекодируем (fallback)
+    try {
+      const codecs = await this._detectStreamCodecs(stream_url, stream_protocol);
+      videoCodec = codecs.videoCodec;
+      audioCodec = codecs.audioCodec;
+      
+      // КРИТИЧНО: Для DASH стримов проверяем, что кодеки действительно определены
+      // Если unknown - перекодируем
+      if (isDash && (videoCodec === 'unknown' || audioCodec === 'unknown')) {
+        logger.info('[StreamManager] DASH stream codecs not detected, will transcode', {
           deviceId: device_id,
           safeName: safe_name,
-          error: err.message
+          videoCodec,
+          audioCodec
         });
-        // Продолжаем с перекодированием
+        // Оставляем needsVideoTranscode и needsAudioTranscode = true
+      } else {
+        needsVideoTranscode = this._needsTranscoding(videoCodec, 'video');
+        needsAudioTranscode = this._needsTranscoding(audioCodec, 'audio');
       }
-    } else {
-      logger.info('[StreamManager] DASH stream detected, skipping codec detection, will transcode', {
+    } catch (err) {
+      logger.warn('[StreamManager] Codec detection failed, will transcode', {
         deviceId: device_id,
         safeName: safe_name,
-        streamUrl: stream_url
+        isDash,
+        error: err.message
       });
+      // Продолжаем с перекодированием
     }
 
     logger.info('[StreamManager] Stream codecs detected', {
@@ -658,11 +792,16 @@ class StreamManager extends EventEmitter {
         '-multiple_requests', '1',       // Разрешаем множественные запросы для адаптивного битрейта
         '-user_agent', 'FFmpeg/VideoControl', // Указываем User-Agent
         '-seekable', '0'                 // Отключаем seek для live стримов
+        // КРИТИЧНО: -http_persistent удален, так как не поддерживается в новых версиях FFmpeg
       );
       logger.info('[StreamManager] Using DASH-specific input parameters', { 
         deviceId: device_id, 
         safeName: safe_name,
-        streamUrl: stream_url
+        streamUrl: stream_url,
+        videoCodec,
+        audioCodec,
+        needsVideoTranscode,
+        needsAudioTranscode
       });
     }
     
@@ -728,9 +867,8 @@ class StreamManager extends EventEmitter {
     let stderrBuffer = '';
     
     const job = {
-      key,
       deviceId: device_id,
-      safeName: safe_name,
+      safeName: safeNameSanitized,
       process: child,
       sourceUrl: stream_url,
       protocol: stream_protocol || 'auto',
@@ -748,16 +886,29 @@ class StreamManager extends EventEmitter {
       consecutiveFailures: 0 // Количество последовательных неудач
     };
 
-    // КРИТИЧНО: Обрабатываем stderr для отслеживания статуса и сбора ошибок
-    child.stderr.on('data', (data) => {
-      const chunk = data.toString();
-      stderrBuffer += chunk;
+      // КРИТИЧНО: Обрабатываем stderr для отслеживания статуса и сбора ошибок
+      // Периодически очищаем буфер для предотвращения утечек памяти
+      let stderrLastCleanup = Date.now();
+      const stderrCleanupInterval = 60000; // Очищаем каждую минуту
       
-      // КРИТИЧНО: Ограничиваем размер буфера для предотвращения утечек памяти
-      if (stderrBuffer.length > MAX_STDERR_BUFFER_SIZE) {
-        // Оставляем последние 10KB буфера
-        stderrBuffer = stderrBuffer.substring(stderrBuffer.length - MAX_STDERR_BUFFER_SIZE);
-      }
+      child.stderr.on('data', (data) => {
+        const chunk = data.toString();
+        stderrBuffer += chunk;
+        
+        // КРИТИЧНО: Ограничиваем размер буфера для предотвращения утечек памяти
+        // Периодически очищаем старые данные, оставляя только последние 10KB
+        const now = Date.now();
+        if (stderrBuffer.length > MAX_STDERR_BUFFER_SIZE || 
+            (now - stderrLastCleanup > stderrCleanupInterval && stderrBuffer.length > 5000)) {
+          // Оставляем последние 10KB буфера
+          stderrBuffer = stderrBuffer.substring(stderrBuffer.length - MAX_STDERR_BUFFER_SIZE);
+          stderrLastCleanup = now;
+          logger.debug('[StreamManager] Cleaned stderr buffer', {
+            deviceId: device_id,
+            safeName: safe_name,
+            remainingSize: stderrBuffer.length
+          });
+        }
       
       // Обновляем статус при первом выводе (FFmpeg начал работу)
       if (job.status === 'starting') {
@@ -845,28 +996,40 @@ class StreamManager extends EventEmitter {
       job.process = null;
       job.status = 'stopped';
       
-      // КРИТИЧНО: Удаляем из urlToJobMap при завершении процесса
-      // Нормализуем URL для корректного поиска (на случай старых job с ненормализованными URL)
-      const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
-      const urlEntry = this.urlToJobMap.get(normalizedSourceUrl);
-      if (urlEntry) {
-        // Удаляем все устройства, использующие этот URL, и очищаем их файлы
-        urlEntry.devices.forEach(deviceKey => {
-          const deviceJob = this.jobs.get(deviceKey);
-          if (deviceJob) {
-            // Очищаем файлы устройства (симлинки или прямые файлы)
-            this._cleanupFolder(deviceJob.paths.folderPath);
-          }
-          this.jobs.delete(deviceKey);
-          this.lastAccessTime.delete(deviceKey);
-        });
-        this.urlToJobMap.delete(normalizedSourceUrl);
-      }
+      // КРИТИЧНО: НЕ удаляем из nameToJobMap при завершении процесса, если стрим используется
+      // Это позволяет перезапустить стрим, если он еще нужен
+      const safeName = job.safeName;
+      const nameEntry = this.nameToJobMap.get(safeName);
+      
+      // КРИТИЧНО: Проверяем, используется ли стрим перед удалением
+      const now = Date.now();
+      // КРИТИЧНО: Проверяем активность через lastAccess (60 секунд)
+      const MAX_IDLE_TIME = 60000; // 60 секунд
+      const isStreamInUse = nameEntry && (
+        nameEntry.devices.size > 0 || 
+        (nameEntry.lastAccess && nameEntry.lastAccess.has('_direct') && 
+         (now - nameEntry.lastAccess.get('_direct')) < MAX_IDLE_TIME)
+      );
       
       if (wasStopping) {
+        // При ручной остановке удаляем запись только если стрим не используется
+        if (nameEntry) {
+          if (!isStreamInUse) {
+            this._cleanupFolder(job.paths.folderPath);
+            this.nameToJobMap.delete(safeName);
+            this.jobs.delete(safeName);
+          } else {
+            // Стрим используется - оставляем запись, но очищаем job
+            logger.info('[StreamManager] Stream in use, keeping entry after manual stop', {
+              safeName,
+              devices: Array.from(nameEntry.devices)
+            });
+            nameEntry.job = null; // Очищаем job, но оставляем entry
+            this.jobs.delete(safeName);
+          }
+        }
         // КРИТИЧНО: Удаляем job и очищаем файлы при остановке
-        this.jobs.delete(key);
-        this.lastAccessTime.delete(key);
+        this.jobs.delete(safeName);
         this._cleanupFolder(job.paths.folderPath);
         this.emit('stream:stopped', { deviceId: job.deviceId, safeName: job.safeName, code, signal });
         logger.info('[StreamManager] FFmpeg process exited, files cleaned', { 
@@ -895,6 +1058,20 @@ class StreamManager extends EventEmitter {
         stderr: stderrBuffer.substring(0, 2000) // Последние 2000 символов stderr
       });
 
+      // КРИТИЧНО: Проверяем, используется ли стрим перед принятием решения о перезапуске
+      // Если стрим используется - всегда пытаемся перезапустить, даже если circuit breaker открыт
+      if (isStreamInUse) {
+        logger.info('[StreamManager] Stream is in use, will attempt restart despite errors', {
+          deviceId: job.deviceId,
+          safeName: job.safeName,
+          devices: nameEntry ? Array.from(nameEntry.devices) : [],
+          hasDirectAccess: nameEntry?.lastAccess?.has('_direct')
+        });
+        // Сбрасываем circuit breaker если стрим используется
+        job.circuitBreakerState = 'halfOpen';
+        job.consecutiveFailures = 0;
+      }
+      
       // КРИТИЧНО: Проверяем, нужно ли перезапускать
       if (!this._shouldRestart(job)) {
         logger.warn('[StreamManager] Stream restart blocked', {
@@ -903,11 +1080,26 @@ class StreamManager extends EventEmitter {
           reason: job.circuitBreakerState === 'open' ? 'circuit_breaker' : 'max_attempts_reached',
           circuitBreakerState: job.circuitBreakerState,
           restarts: job.restarts,
-          consecutiveFailures: job.consecutiveFailures
+          consecutiveFailures: job.consecutiveFailures,
+          isStreamInUse
         });
-        this.jobs.delete(key);
-        this.lastAccessTime.delete(key);
-        this._cleanupFolder(job.paths.folderPath);
+        
+        // КРИТИЧНО: Если стрим используется - НЕ удаляем запись, чтобы можно было перезапустить позже
+        if (!isStreamInUse) {
+          this.jobs.delete(safeName);
+          const nameEntry = this.nameToJobMap.get(safeName);
+          if (nameEntry) {
+            this.nameToJobMap.delete(safeName);
+          }
+          this._cleanupFolder(job.paths.folderPath);
+        } else {
+          // Оставляем запись для возможного перезапуска
+          logger.info('[StreamManager] Keeping stream entry for possible restart', {
+            safeName,
+            devices: nameEntry ? Array.from(nameEntry.devices) : []
+          });
+        }
+        
         this.emit('stream:restart:limit_reached', { 
           deviceId: job.deviceId, 
           safeName: job.safeName,
@@ -928,43 +1120,84 @@ class StreamManager extends EventEmitter {
       });
 
       setTimeout(async () => {
-        if (!this.jobs.has(key)) {
+        // КРИТИЧНО: Проверяем nameToJobMap вместо jobs, так как job может быть удален из jobs, но остаться в nameToJobMap
+        const nameEntry = this.nameToJobMap.get(safeName);
+        if (!nameEntry || !nameEntry.job) {
+          logger.debug('[StreamManager] Stream entry not found, skipping restart', { safeName });
           return;
         }
-        const current = this.jobs.get(key);
-        if (!current || current.process) {
+        
+        const current = nameEntry.job;
+        
+        // КРИТИЧНО: Проверяем активность через lastAccess (60 секунд)
+        const MAX_IDLE_TIME = 60000; // 60 секунд
+        const isStreamInUse = nameEntry.devices.size > 0 || 
+                              (nameEntry.lastAccess && nameEntry.lastAccess.has('_direct') && 
+                               (Date.now() - nameEntry.lastAccess.get('_direct')) < MAX_IDLE_TIME);
+        
+        if (!isStreamInUse) {
+          logger.info('[StreamManager] Stream not in use, skipping restart', {
+            safeName,
+            devices: Array.from(nameEntry.devices)
+          });
+          // Удаляем запись если стрим не используется
+          this.jobs.delete(safeName);
+          this.nameToJobMap.delete(safeName);
+          this._cleanupFolder(current.paths.folderPath);
+          return;
+        }
+        
+        if (current.process && !current.process.killed) {
+          logger.debug('[StreamManager] Process still running, skipping restart', { safeName });
           return;
         }
         
         // КРИТИЧНО: Проверяем доступность источника перед перезапуском
-        if (this.options.sourceCheckEnabled && !await this._checkSourceAvailable(current.sourceUrl)) {
-          logger.error('[StreamManager] Source unavailable, stopping stream', {
-            deviceId: current.deviceId,
-            safeName: current.safeName,
-            streamUrl: current.sourceUrl
-          });
-          this.jobs.delete(key);
-          this.lastAccessTime.delete(key);
-          this._cleanupFolder(current.paths.folderPath);
-          this.emit('stream:source_unavailable', { 
-            deviceId: current.deviceId, 
-            safeName: current.safeName 
-          });
-          return;
+        // Но НЕ останавливаем стрим если источник недоступен - продолжаем попытки
+        if (this.options.sourceCheckEnabled) {
+          const sourceAvailable = await this._checkSourceAvailable(current.sourceUrl);
+          if (!sourceAvailable) {
+            logger.warn('[StreamManager] Source unavailable, but will attempt restart anyway (stream in use)', {
+              deviceId: current.deviceId,
+              safeName: current.safeName,
+              streamUrl: current.sourceUrl,
+              isStreamInUse
+            });
+            // НЕ останавливаем - продолжаем попытки перезапуска
+          }
         }
         
         current.restarts += 1;
         current.status = 'restarting';
         this.emit('stream:restarting', { deviceId: current.deviceId, safeName: current.safeName, attempt: current.restarts });
+        
+        logger.info('[StreamManager] Restarting stream (in use)', {
+          deviceId: current.deviceId,
+          safeName: current.safeName,
+          attempt: current.restarts,
+          devices: Array.from(nameEntry.devices),
+          hasDirectAccess: nameEntry.lastAccess?.has('_direct')
+        });
+        
         await this._restartJob(current);
       }, delay);
     });
 
-    this.jobs.set(key, job);
-    // КРИТИЧНО: Устанавливаем время последнего доступа при запуске стрима
-    // Это предотвращает немедленную остановку стрима как idle
-    this.lastAccessTime.set(key, Date.now());
-    logger.info('[StreamManager] ffmpeg started', { deviceId: device_id, safeName: safe_name, pid: child.pid });
+    this.jobs.set(safeNameSanitized, job);
+    
+    // КРИТИЧНО: Обновляем nameEntry.job для синхронизации
+    const nameEntry = this.nameToJobMap.get(safeNameSanitized);
+    if (nameEntry) {
+      nameEntry.job = job;
+      nameEntry.pending = false;
+    }
+    
+    logger.info('[StreamManager] ffmpeg started', { 
+      deviceId: device_id, 
+      safeName: safe_name, 
+      pid: child.pid,
+      hasNameEntry: !!nameEntry
+    });
     return job;
   }
 
@@ -1019,8 +1252,11 @@ class StreamManager extends EventEmitter {
       this._cleanupFolder(job.paths.folderPath);
       
       // Удаляем job из Maps
-      this.jobs.delete(job.key);
-      this.lastAccessTime.delete(job.key);
+      this.jobs.delete(job.safeName);
+      const nameEntry = this.nameToJobMap.get(job.safeName);
+      if (nameEntry) {
+        this.nameToJobMap.delete(job.safeName);
+      }
       
       // КРИТИЧНО: Сбрасываем счетчики перезапусков для зависших процессов
       // Это не считается ошибкой, поэтому не увеличиваем consecutiveFailures
@@ -1060,21 +1296,46 @@ class StreamManager extends EventEmitter {
       stream_protocol: job.protocol
     };
     
+    logger.info('[StreamManager] _restartJob called', {
+      deviceId: job.deviceId,
+      safeName: job.safeName,
+      restarts: job.restarts,
+      consecutiveFailures: job.consecutiveFailures
+    });
+    
     // КРИТИЧНО: Очищаем папку перед перезапуском
     this._cleanupFolder(job.paths.folderPath);
     
     // Запускаем новый процесс
     const newJob = await this._spawnJob(meta);
     
+    if (!newJob) {
+      logger.error('[StreamManager] _spawnJob returned null during restart', {
+        deviceId: job.deviceId,
+        safeName: job.safeName
+      });
+      return;
+    }
+    
     // КРИТИЧНО: При успешном запуске сбрасываем счетчик последовательных неудач
     if (newJob && newJob.status === 'running') {
       // Сбрасываем счетчики при успешном запуске
-      const existingJob = this.jobs.get(job.key);
+      const existingJob = this.jobs.get(job.safeName);
       if (existingJob) {
         existingJob.consecutiveFailures = 0;
         existingJob.circuitBreakerState = 'closed';
         existingJob.circuitBreakerOpenTime = null;
+        logger.info('[StreamManager] Stream restarted successfully, reset counters', {
+          deviceId: job.deviceId,
+          safeName: job.safeName
+        });
       }
+    } else {
+      logger.warn('[StreamManager] Stream restart completed but status is not running', {
+        deviceId: job.deviceId,
+        safeName: job.safeName,
+        status: newJob?.status
+      });
     }
   }
 
@@ -1155,17 +1416,27 @@ class StreamManager extends EventEmitter {
     const now = Date.now();
     const candidates = [];
     
-    // Собираем все не-shared стримы с временем последнего доступа
-    for (const [key, job] of this.jobs.entries()) {
-      if (job.isShared) continue;
-      const lastAccess = this.lastAccessTime.get(key);
-      if (!lastAccess) continue;
+    // Собираем все стримы с временем последнего доступа
+    for (const [safeName, nameEntry] of this.nameToJobMap.entries()) {
+      if (!nameEntry.job || nameEntry.pending) continue;
       
-      const idleTime = now - lastAccess;
+      // Находим самое старое время доступа среди всех устройств
+      let oldestAccess = null;
+      if (nameEntry.lastAccess && nameEntry.lastAccess.size > 0) {
+        for (const [deviceId, lastAccess] of nameEntry.lastAccess.entries()) {
+          if (!oldestAccess || lastAccess < oldestAccess) {
+            oldestAccess = lastAccess;
+          }
+        }
+      }
+      
+      if (!oldestAccess) continue;
+      
+      const idleTime = now - oldestAccess;
       candidates.push({
-        key,
-        job,
-        lastAccess,
+        key: safeName,
+        job: nameEntry.job,
+        lastAccess: oldestAccess,
         idleTime
       });
     }
@@ -1201,7 +1472,7 @@ class StreamManager extends EventEmitter {
   }
 
   syncAll(entries = []) {
-    const desiredKeys = new Set(entries.map(entry => this._jobKey(entry.device_id, entry.safe_name)));
+    const desiredKeys = new Set(entries.map(entry => sanitizePathFragment(entry.safe_name)));
 
     // Stop jobs that no longer exist
     for (const [key, job] of this.jobs.entries()) {
@@ -1219,15 +1490,17 @@ class StreamManager extends EventEmitter {
   }
 
   async upsertStream(entry) {
-    const key = this._jobKey(entry.device_id, entry.safe_name);
+    const { device_id, safe_name, stream_url } = entry;
+    const safeName = sanitizePathFragment(safe_name);
+    const normalizedUrl = normalizeStreamUrl(stream_url);
     
-    // КРИТИЧНО: Нормализуем URL для корректной дедупликации
-    // Это гарантирует, что одинаковые URL (с разными trailing slash, порядком параметров и т.д.) 
-    // будут распознаны как одинаковые
-    const normalizedUrl = normalizeStreamUrl(entry.stream_url);
-    entry.stream_url = normalizedUrl; // Обновляем entry для использования нормализованного URL
+    logger.info('[StreamManager] upsertStream called', {
+      deviceId: device_id,
+      safeName,
+      streamUrl: normalizedUrl
+    });
     
-    // КРИТИЧНО: Проверяем лимит на количество стримов для предотвращения утечек памяти
+    // КРИТИЧНО: Проверяем лимит на количество стримов
     if (this.jobs.size >= this.options.maxJobs) {
       logger.warn('[StreamManager] Max jobs limit reached, stopping oldest idle streams', {
         currentJobs: this.jobs.size,
@@ -1236,685 +1509,247 @@ class StreamManager extends EventEmitter {
       await this._cleanupOldestIdleStreams(this.jobs.size - this.options.maxJobs + 1);
     }
     
-    const existing = this.jobs.get(key);
+    // ШАГ 1: Проверяем, есть ли уже стрим с таким именем
+    let nameEntry = this.nameToJobMap.get(safeName);
     
-    logger.info('[StreamManager] upsertStream called', {
-      deviceId: entry.device_id,
-      safeName: entry.safe_name,
-      streamUrl: entry.stream_url,
-      originalStreamUrl: entry.stream_url, // Логируем нормализованный URL
-      streamProtocol: entry.stream_protocol,
-      hasExisting: !!existing,
-      existingStatus: existing?.status,
-      isShared: existing?.isShared
-    });
-    
-    // КРИТИЧНО: Проверяем pending операции для этого URL (предотвращение race conditions)
-    const pendingPromise = this.urlToJobMapPending.get(normalizedUrl);
-    if (pendingPromise) {
-      logger.info('[StreamManager] Waiting for pending operation on URL', {
-        deviceId: entry.device_id,
-        safeName: entry.safe_name,
-        streamUrl: entry.stream_url
-      });
+    if (nameEntry && nameEntry.job && nameEntry.job.process && 
+        !nameEntry.job.process.killed && nameEntry.job.status !== 'stopped') {
+      // Стрим уже запущен - добавляем устройство в список
+      nameEntry.devices.add(device_id);
+      if (!nameEntry.lastAccess) {
+        nameEntry.lastAccess = new Map();
+      }
+      nameEntry.lastAccess.set(device_id, Date.now());
       
-      try {
-        // Ждем завершения pending операции
-        const pendingJob = await pendingPromise;
-        
-        // Если pending операция завершилась успешно, используем её результат
-        if (pendingJob) {
-          // Проверяем, можем ли мы использовать этот job
-          const pendingUrlEntry = this.urlToJobMap.get(normalizedUrl);
-          if (pendingUrlEntry) {
-            const pendingExistingJob = this.jobs.get(pendingUrlEntry.jobKey);
-            if (pendingExistingJob && pendingExistingJob.process && 
-                !pendingExistingJob.process.killed && pendingExistingJob.status !== 'stopped') {
-              
-              // Если это тот же deviceId+safeName - возвращаем job
-              if (pendingUrlEntry.jobKey === key) {
-                this.lastAccessTime.set(key, Date.now());
-                return pendingExistingJob;
-              }
-              
-              // Для другого устройства создаем симлинк (повторяем логику дедупликации)
-              logger.info('[StreamManager] Reusing job from pending operation (deduplication)', {
-                deviceId: entry.device_id,
-                safeName: entry.safe_name,
+      logger.info('[StreamManager] Stream already running, added device', {
+        safeName,
+        deviceId: device_id,
+        totalDevices: nameEntry.devices.size,
                 streamUrl: normalizedUrl
               });
               
-              // Выполняем дедупликацию (можно вынести в отдельный метод)
-              if (existing && !existing.isShared) {
-                this.stopStream(entry.device_id, entry.safe_name, 'switching_to_shared');
-                await new Promise(resolve => setTimeout(resolve, 200));
-              }
-              
-              pendingUrlEntry.devices.add(key);
-              if (!pendingUrlEntry.devices.has(pendingUrlEntry.jobKey)) {
-                pendingUrlEntry.devices.add(pendingUrlEntry.jobKey);
-              }
-              
-              const newPaths = this._getPaths(entry.device_id, entry.safe_name);
-              const existingPaths = pendingExistingJob.paths;
-              
-              this._cleanupFolder(newPaths.folderPath);
-              ensureDir(newPaths.folderPath);
-              
-              try {
-                if (fs.existsSync(existingPaths.playlistPath)) {
-                  fs.symlinkSync(existingPaths.playlistPath, newPaths.playlistPath);
-                }
-              } catch (err) {
-                logger.warn('[StreamManager] Failed to create symlink from pending', { error: err.message });
-              }
-              
-              const virtualJob = {
-                ...pendingExistingJob,
-                deviceId: entry.device_id,
-                safeName: entry.safe_name,
-                key,
-                paths: newPaths,
-                isShared: true,
-                sharedFrom: pendingUrlEntry.jobKey
-              };
-              
-              this.jobs.set(key, virtualJob);
-              this.lastAccessTime.set(key, Date.now());
-              return virtualJob;
-            }
-          }
-        }
-      } catch (pendingErr) {
-        logger.warn('[StreamManager] Pending operation failed, will start new process', {
-          deviceId: entry.device_id,
-          safeName: entry.safe_name,
-          error: pendingErr.message
-        });
-        // Продолжаем дальше для запуска нового процесса
-      }
+      return nameEntry.job;
     }
     
-    // КРИТИЧНО: СНАЧАЛА проверяем дедупликацию по URL (до проверки существующего job)
-    // Если для этого URL уже запущен FFmpeg процесс, используем его без перезапуска
-    // Используем нормализованный URL для корректной дедупликации
-    let urlEntry = this.urlToJobMap.get(normalizedUrl);
-    
-    // КРИТИЧНО: Дополнительная проверка pending операции после проверки urlToJobMap
-    // Это защищает от race condition, когда pending операция завершилась между проверками
-    if (!urlEntry) {
-      const pendingAfterCheck = this.urlToJobMapPending.get(normalizedUrl);
-      if (pendingAfterCheck) {
-        logger.info('[StreamManager] Found pending operation after urlToJobMap check (race condition protection)', {
-          deviceId: entry.device_id,
-          safeName: entry.safe_name,
-          streamUrl: normalizedUrl
-        });
-        try {
-          // Ждем завершения pending операции
-          const pendingJob = await pendingAfterCheck;
-          if (pendingJob) {
-            // Проверяем urlToJobMap еще раз после завершения pending операции
-            urlEntry = this.urlToJobMap.get(normalizedUrl);
-            if (urlEntry) {
-              logger.info('[StreamManager] Found URL in urlToJobMap after pending operation completed', {
-                deviceId: entry.device_id,
-                safeName: entry.safe_name,
-                streamUrl: normalizedUrl,
-                jobKey: urlEntry.jobKey
-              });
+    // ШАГ 2: Проверяем pending операции
+    const pendingPromise = this.nameToJobMapPending.get(safeName);
+    if (pendingPromise) {
+      logger.info('[StreamManager] Waiting for pending stream', { safeName, deviceId: device_id });
+      try {
+        const pendingJob = await pendingPromise;
+        if (pendingJob) {
+          nameEntry = this.nameToJobMap.get(safeName);
+          if (nameEntry) {
+            nameEntry.devices.add(device_id);
+            if (!nameEntry.lastAccess) {
+              nameEntry.lastAccess = new Map();
             }
+            nameEntry.lastAccess.set(device_id, Date.now());
+            
+            logger.info('[StreamManager] Stream started from pending, added device', {
+              safeName,
+              deviceId: device_id,
+              totalDevices: nameEntry.devices.size
+            });
+          }
+          return pendingJob;
           }
         } catch (pendingErr) {
-          logger.warn('[StreamManager] Pending operation failed in race condition check', {
-            deviceId: entry.device_id,
-            safeName: entry.safe_name,
-            streamUrl: normalizedUrl,
+        logger.warn('[StreamManager] Pending operation failed', {
+          safeName,
+          deviceId: device_id,
             error: pendingErr.message
           });
-        }
       }
     }
     
-    if (urlEntry) {
-      const existingJobKey = urlEntry.jobKey;
-      const existingJob = this.jobs.get(existingJobKey);
-      
-      if (existingJob && existingJob.process && !existingJob.process.killed && existingJob.status !== 'stopped') {
-        // FFmpeg уже запущен для этого URL - используем его
-        
-        // Если это тот же deviceId+safeName - просто возвращаем существующий job
-        if (existingJobKey === key) {
-          logger.info('[StreamManager] Stream already running for this device, reusing', {
-            deviceId: entry.device_id,
-            safeName: entry.safe_name,
-            streamUrl: normalizedUrl,
-            jobKey: key
-          });
-          this.lastAccessTime.set(key, Date.now());
-          return existingJob;
-        }
-        
-        // Для другого устройства - создаем симлинк
-        logger.info('[StreamManager] Reusing existing FFmpeg process for URL (deduplication)', {
-          deviceId: entry.device_id,
-          safeName: entry.safe_name,
-          streamUrl: normalizedUrl,
-          existingJobKey,
-          existingDeviceId: existingJob.deviceId,
-          existingSafeName: existingJob.safeName
-        });
-        
-        // Если для этого deviceId+safeName уже есть job - останавливаем его (он не используется)
-        if (existing && !existing.isShared) {
-          logger.info('[StreamManager] Stopping unused job for device (will use shared stream)', {
-            deviceId: entry.device_id,
-            safeName: entry.safe_name,
-            oldJobKey: key
-          });
-          this.stopStream(entry.device_id, entry.safe_name, 'switching_to_shared');
-          await new Promise(resolve => setTimeout(resolve, 200));
-        }
-        
-        // КРИТИЧНО: Добавляем это устройство в список использующих этот URL
-        // Также проверяем, что основное устройство (которое запустило FFmpeg) тоже в списке
-        urlEntry.devices.add(key);
-        if (!urlEntry.devices.has(existingJobKey)) {
-          // Основное устройство еще не в списке - добавляем его
-          urlEntry.devices.add(existingJobKey);
-          logger.debug('[StreamManager] Added primary device to urlToJobMap.devices', {
-            primaryJobKey: existingJobKey,
-            primaryDeviceId: existingJob.deviceId,
-            primarySafeName: existingJob.safeName
-          });
-        }
-        
-        // Создаем симлинк для нового устройства на существующий плейлист
-        const newPaths = this._getPaths(entry.device_id, entry.safe_name);
-        const existingPaths = existingJob.paths;
-        
-        // Удаляем старые файлы, если есть
-        this._cleanupFolder(newPaths.folderPath);
-        ensureDir(newPaths.folderPath);
-        
-        // Создаем симлинк на плейлист
-        try {
-          if (fs.existsSync(existingPaths.playlistPath)) {
-            // КРИТИЧНО: Удаляем старый симлинк/файл, если существует
-            if (fs.existsSync(newPaths.playlistPath)) {
-              try {
-                const stats = fs.lstatSync(newPaths.playlistPath);
-                if (stats.isSymbolicLink()) {
-                  fs.unlinkSync(newPaths.playlistPath); // Удаляем старый симлинк
-                } else {
-                  fs.unlinkSync(newPaths.playlistPath); // Удаляем обычный файл
-                }
-              } catch (unlinkErr) {
-                logger.debug('[StreamManager] Error removing old symlink/file before creating new', {
-                  symlinkPath: newPaths.playlistPath,
-                  error: unlinkErr.message
-                });
-              }
-            }
-            
-            fs.symlinkSync(existingPaths.playlistPath, newPaths.playlistPath);
-            
-            // КРИТИЧНО: Валидируем созданный симлинк сразу после создания
-            const symlinkValid = this._validateSymlink(newPaths.playlistPath, existingPaths.playlistPath, entry.device_id, entry.safe_name);
-            
-            if (!symlinkValid) {
-              // Пытаемся пересоздать симлинк один раз
-              logger.warn('[StreamManager] Symlink validation failed, attempting to recreate', {
-                deviceId: entry.device_id,
-                safeName: entry.safe_name,
-                symlinkPath: newPaths.playlistPath
-              });
-              
-              try {
-                // Удаляем невалидный симлинк
-                if (fs.existsSync(newPaths.playlistPath)) {
-                  const stats = fs.lstatSync(newPaths.playlistPath);
-                  if (stats.isSymbolicLink() || stats.isFile()) {
-                    fs.unlinkSync(newPaths.playlistPath);
-                  }
-                }
-                
-                // Пересоздаем симлинк
-                if (fs.existsSync(existingPaths.playlistPath)) {
-                  fs.symlinkSync(existingPaths.playlistPath, newPaths.playlistPath);
-                  
-                  // Повторная валидация
-                  const retryValid = this._validateSymlink(newPaths.playlistPath, existingPaths.playlistPath, entry.device_id, entry.safe_name);
-                  if (!retryValid) {
-                    logger.error('[StreamManager] Symlink validation failed after retry', {
-                      deviceId: entry.device_id,
-                      safeName: entry.safe_name,
-                      symlinkPath: newPaths.playlistPath,
-                      targetPath: existingPaths.playlistPath
-                    });
-                  }
-                }
-              } catch (retryErr) {
-                logger.error('[StreamManager] Failed to recreate symlink after validation error', {
-                  deviceId: entry.device_id,
-                  safeName: entry.safe_name,
-                  error: retryErr.message
-                });
-              }
-            }
-            
-            logger.info('[StreamManager] Created symlink for shared stream', {
-              deviceId: entry.device_id,
-              safeName: entry.safe_name,
-              symlinkPath: newPaths.playlistPath,
-              targetPath: existingPaths.playlistPath
-            });
-          } else {
-            logger.warn('[StreamManager] Target playlist does not exist, cannot create symlink', {
-              deviceId: entry.device_id,
-              safeName: entry.safe_name,
-              targetPath: existingPaths.playlistPath
-            });
-          }
-        } catch (err) {
-          logger.warn('[StreamManager] Failed to create symlink, will use direct path', {
-            deviceId: entry.device_id,
-            safeName: entry.safe_name,
-            error: err.message,
-            errorCode: err.code
-          });
-        }
-        
-        // Создаем виртуальный job для отслеживания
-        const virtualJob = {
-          ...existingJob,
-          deviceId: entry.device_id,
-          safeName: entry.safe_name,
-          key,
-          paths: newPaths,
-          isShared: true, // Флаг, что это shared job
-          sharedFrom: existingJobKey
-        };
-        
-        this.jobs.set(key, virtualJob);
-        // КРИТИЧНО: Устанавливаем время последнего доступа при создании shared job
-        // Это предотвращает немедленную остановку стрима как idle
-        this.lastAccessTime.set(key, Date.now());
-        
-        return virtualJob;
-      } else {
-        // Процесс остановлен, удаляем из urlToJobMap и запускаем новый
-        this.urlToJobMap.delete(normalizedUrl);
-      }
-    }
-    
-    // КРИТИЧНО: Если дедупликация не сработала, проверяем существующий job для deviceId+safeName
-    if (existing) {
-      // Source URL change -> restart
-      // Сравниваем нормализованные URL для корректного определения изменений
-      const existingNormalizedUrl = normalizeStreamUrl(existing.sourceUrl || '');
-      if (existingNormalizedUrl !== normalizedUrl) {
-        logger.info('[StreamManager] Source URL changed, restarting', {
-          deviceId: entry.device_id,
-          safeName: entry.safe_name,
-          oldUrl: existing.sourceUrl,
-          oldNormalizedUrl: existingNormalizedUrl,
-          newUrl: entry.stream_url,
-          newNormalizedUrl: normalizedUrl
-        });
-        this.stopStream(entry.device_id, entry.safe_name, 'source_changed');
-        // Продолжаем дальше, чтобы запустить новый FFmpeg процесс
-      } else {
-        // URL тот же и FFmpeg уже запущен - просто возвращаем существующий job
-        // НЕ перезапускаем FFmpeg, так как это тот же стрим
-        if (existing.process && !existing.process.killed && existing.status !== 'stopped') {
-          logger.info('[StreamManager] Stream already running with same URL, reusing', {
-            deviceId: entry.device_id,
-            safeName: entry.safe_name,
-            streamUrl: normalizedUrl,
-            jobKey: key
-          });
-          this.lastAccessTime.set(key, Date.now());
-          return existing;
-        } else {
-          // Процесс остановлен, но job существует - запускаем заново
-          logger.info('[StreamManager] Job exists but process stopped, restarting', {
-            deviceId: entry.device_id,
-            safeName: entry.safe_name,
+    // ШАГ 3: Запускаем новый стрим
+    logger.info('[StreamManager] Starting new stream', {
+      safeName,
+      deviceId: device_id,
             streamUrl: normalizedUrl
           });
-        }
-      }
-    }
     
-    // Запускаем новый FFmpeg процесс для этого URL
-    logger.info('[StreamManager] Starting new FFmpeg process', {
-      deviceId: entry.device_id,
-      safeName: entry.safe_name,
-      streamUrl: normalizedUrl,
-      streamProtocol: entry.stream_protocol
+    // Регистрируем pending ДО запуска
+    this.nameToJobMap.set(safeName, {
+      devices: new Set([device_id]),
+      lastAccess: new Map([[device_id, Date.now()]]),
+      pending: true
     });
     
-    // КРИТИЧНО: Создаем Promise для pending операции и сохраняем его
-    // Это предотвратит параллельный запуск нескольких процессов для одного URL
     const spawnPromise = (async () => {
       const startTime = Date.now();
-      const maxPendingTimeout = 120000; // 2 минуты максимум для pending операции
+      const maxPendingTimeout = 120000;
       
       try {
-        // КРИТИЧНО: Добавляем таймаут для pending операции
         const timeoutPromise = new Promise((_, reject) => {
           setTimeout(() => {
             reject(new Error(`Pending operation timeout after ${maxPendingTimeout}ms`));
           }, maxPendingTimeout);
         });
         
+        // Обновляем entry для использования безопасного имени и нормализованного URL
+        const jobEntry = {
+          ...entry,
+          safe_name: safeName,
+          stream_url: normalizedUrl
+        };
+        
         const job = await Promise.race([
-          this._spawnJob(entry),
+          this._spawnJob(jobEntry),
           timeoutPromise
         ]);
         
         if (!job) {
-          logger.error('[StreamManager] _spawnJob returned null, FFmpeg not started', {
-            deviceId: entry.device_id,
-            safeName: entry.safe_name,
+          logger.error('[StreamManager] _spawnJob returned null', {
+            safeName,
+            deviceId: device_id,
             streamUrl: normalizedUrl
           });
+          this.nameToJobMap.delete(safeName);
           return null;
         }
         
-        // Регистрируем в urlToJobMap используя нормализованный URL
-        if (job) {
-          if (!this.urlToJobMap.has(normalizedUrl)) {
-            this.urlToJobMap.set(normalizedUrl, {
-              jobKey: key,
-              devices: new Set([key])
-            });
-            logger.info('[StreamManager] Registered new URL in urlToJobMap', {
-              streamUrl: normalizedUrl,
-              jobKey: key
-            });
+        // Обновляем запись после успешного запуска
+        const nameEntry = this.nameToJobMap.get(safeName);
+        if (nameEntry) {
+          nameEntry.job = job;
+          nameEntry.pending = false;
           } else {
-            // Если почему-то уже есть (не должно быть), добавляем устройство
-            this.urlToJobMap.get(normalizedUrl).devices.add(key);
-            logger.warn('[StreamManager] URL already in urlToJobMap, added device', {
-              streamUrl: normalizedUrl,
-              jobKey: key
-            });
-          }
+          // Создаем новую запись, если не было
+          this.nameToJobMap.set(safeName, {
+            job,
+            devices: new Set([device_id]),
+            lastAccess: new Map([[device_id, Date.now()]]),
+            pending: false
+          });
         }
         
-        logger.info('[StreamManager] upsertStream completed successfully', {
-          deviceId: entry.device_id,
-          safeName: entry.safe_name,
-          jobKey: job.key,
+        // Убеждаемся, что job.sourceUrl использует нормализованный URL
+        if (job.sourceUrl !== normalizedUrl) {
+          logger.warn('[StreamManager] Job sourceUrl differs from normalized URL, updating', {
+            safeName,
+            deviceId: device_id,
+            jobSourceUrl: job.sourceUrl,
+            normalizedUrl: normalizedUrl
+          });
+          job.sourceUrl = normalizedUrl;
+        }
+        
+        this.jobs.set(safeName, job);
+        
+        // КРИТИЧНО: Обновляем nameEntry.job для синхронизации
+        nameEntry = this.nameToJobMap.get(safeName);
+        if (nameEntry) {
+          nameEntry.job = job;
+          nameEntry.pending = false;
+        }
+        
+        logger.info('[StreamManager] Stream started successfully', {
+          safeName,
+          deviceId: device_id,
           jobStatus: job.status,
           hasProcess: !!job.process,
           processPid: job.process?.pid,
-          duration: Date.now() - startTime
+          duration: Date.now() - startTime,
+          hasNameEntry: !!nameEntry
         });
         
         return job;
       } catch (err) {
         const duration = Date.now() - startTime;
-        logger.error('[StreamManager] Error in spawn promise', {
-          deviceId: entry.device_id,
-          safeName: entry.safe_name,
+        logger.error('[StreamManager] Error spawning job', {
+          safeName,
+          deviceId: device_id,
           streamUrl: normalizedUrl,
           error: err.message,
           stack: err.stack,
-          duration,
-          isTimeout: err.message.includes('timeout')
+          duration
         });
-        
-        // КРИТИЧНО: При ошибке все равно очищаем pending операцию
-        // Это предотвращает блокировку последующих запросов
-        this.urlToJobMapPending.delete(normalizedUrl);
-        
+        this.nameToJobMap.delete(safeName);
         throw err;
       } finally {
-        // КРИТИЧНО: Очищаем pending операцию после завершения (даже при успехе)
-        // Дополнительная гарантия очистки
-        const pendingStillExists = this.urlToJobMapPending.has(normalizedUrl);
-        if (pendingStillExists) {
-          this.urlToJobMapPending.delete(normalizedUrl);
-          logger.debug('[StreamManager] Cleaned up pending operation in finally block', {
-            streamUrl: normalizedUrl,
-            duration: Date.now() - startTime
-          });
-        }
+        this.nameToJobMapPending.delete(safeName);
       }
     })();
     
-    // Сохраняем Promise в pending перед запуском используя нормализованный URL
-    this.urlToJobMapPending.set(normalizedUrl, spawnPromise);
+    this.nameToJobMapPending.set(safeName, spawnPromise);
     
-    // КРИТИЧНО: Обрабатываем отклонение Promise, чтобы не было необработанных ошибок
-    spawnPromise.catch(err => {
-      // Ошибка уже обработана в try-catch внутри Promise
-      // Но убеждаемся, что pending операция очищена
-      if (this.urlToJobMapPending.has(normalizedUrl)) {
-        logger.warn('[StreamManager] Pending operation still exists after error, cleaning up', {
+    try {
+      const job = await spawnPromise;
+      return job;
+    } catch (err) {
+      logger.error('[StreamManager] Failed to start stream', {
+        safeName,
+        deviceId: device_id,
           streamUrl: normalizedUrl,
           error: err.message
         });
-        this.urlToJobMapPending.delete(normalizedUrl);
-      }
-    });
-    
-    // Ждем завершения операции
-    const job = await spawnPromise;
-    
-    return job;
+      return null;
+    }
   }
 
   stopStream(deviceId, safeName, reason = 'manual') {
     try {
-      const key = this._jobKey(deviceId, safeName);
-      const job = this.jobs.get(key);
-      const paths = job ? job.paths : this._getPaths(deviceId, safeName);
+      const safeNameSanitized = sanitizePathFragment(safeName);
+      const nameEntry = this.nameToJobMap.get(safeNameSanitized);
       
+      if (!nameEntry) {
+        logger.info('[StreamManager] Stream not found', { deviceId, safeName: safeNameSanitized, reason });
+        return;
+      }
+      
+      // Удаляем устройство из списка
+      const hadDevice = nameEntry.devices.has(deviceId);
+      nameEntry.devices.delete(deviceId);
+      
+      if (nameEntry.lastAccess) {
+        nameEntry.lastAccess.delete(deviceId);
+      }
+      
+      const remainingDevices = nameEntry.devices.size;
+      
+      logger.info('[StreamManager] Removed device from stream', {
+            deviceId,
+        safeName: safeNameSanitized,
+        reason,
+        hadDevice,
+        remainingDevices,
+        allDevices: Array.from(nameEntry.devices)
+      });
+      
+      // Если остались другие устройства - НЕ останавливаем стрим
+      if (remainingDevices > 0) {
+        logger.info('[StreamManager] Stream still in use by other devices', {
+          safeName: safeNameSanitized,
+          remainingDevices,
+          remainingDeviceIds: Array.from(nameEntry.devices)
+        });
+        return;
+      }
+      
+      // Если это последнее устройство - останавливаем стрим
+      logger.info('[StreamManager] Last device removed, stopping stream', {
+        safeName: safeNameSanitized,
+            deviceId,
+        reason
+      });
+      
+      const job = nameEntry.job;
       if (!job) {
-        // КРИТИЧНО: Даже если job не найден, очищаем старые файлы
-        this._cleanupFolder(paths.folderPath);
-        // Удаляем время доступа
-        this.lastAccessTime.delete(key);
-        logger.info('[StreamManager] Cleaned up old stream files (no job found)', { deviceId, safeName, reason });
-        return;
-      }
-      
-      // КРИТИЧНО: Проверяем, является ли это shared job (дедупликация по URL)
-      if (job.isShared && job.sharedFrom) {
-        // Это shared job - удаляем только симлинк и запись из urlToJobMap
-        // Нормализуем URL для корректного поиска
-        const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
-        const urlEntry = this.urlToJobMap.get(normalizedSourceUrl);
-        if (urlEntry) {
-          // КРИТИЧНО: Сохраняем размер ДО удаления для правильной проверки
-          const devicesCountBefore = urlEntry.devices.size;
-          urlEntry.devices.delete(key);
-          const remainingDevices = urlEntry.devices.size;
-          
-          logger.info('[StreamManager] Removed device from shared stream', {
-            deviceId,
-            safeName,
-            streamUrl: job.sourceUrl,
-            devicesCountBefore,
-            remainingDevices
-          });
-          
-          // КРИТИЧНО: Удаляем все связанные записи из lastAccessTime
-          // Проверяем все устройства, использующие этот URL
-          const devicesToClean = [];
-          for (const deviceKey of urlEntry.devices) {
-            if (deviceKey === key) {
-              // Это текущее устройство - удаляем
-              devicesToClean.push(deviceKey);
-            }
-          }
-          devicesToClean.forEach(deviceKey => {
-            this.lastAccessTime.delete(deviceKey);
-          });
-          
-          // Если это последнее устройство, использующее этот URL, останавливаем FFmpeg
-          if (remainingDevices === 0) {
-            const sharedJob = this.jobs.get(job.sharedFrom);
-            if (sharedJob) {
-              logger.info('[StreamManager] Last device removed, stopping shared FFmpeg process', {
-                streamUrl: job.sourceUrl,
-                sharedJobKey: job.sharedFrom
-              });
-              // Останавливаем основной FFmpeg процесс
-              // Используем прямой вызов stopStream, но с проверкой, чтобы не проверять дедупликацию
-              sharedJob.stopping = true;
-              const sharedFolderPath = sharedJob.paths.folderPath;
-              
-              if (sharedJob.process) {
-                try {
-                  const cleanupOnExit = () => {
-                    // КРИТИЧНО: Очищаем все обработчики событий процесса
-                    if (sharedJob.process) {
-                      sharedJob.process.removeAllListeners('exit');
-                      sharedJob.process.removeAllListeners('error');
-                      if (sharedJob.process.stderr) {
-                        sharedJob.process.stderr.removeAllListeners('data');
-                      }
-                    }
-                    
-                    // КРИТИЧНО: Удаляем все записи из Maps
-                    this.jobs.delete(job.sharedFrom);
-                    this.lastAccessTime.delete(job.sharedFrom);
-                    // КРИТИЧНО: Удаляем из urlToJobMap после остановки процесса
-                    const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
-                    if (this.urlToJobMap.has(normalizedSourceUrl)) {
-                      this.urlToJobMap.delete(normalizedSourceUrl);
-                    }
-                    this._cleanupFolder(sharedFolderPath);
-                    this.emit('stream:stopped', { deviceId: sharedJob.deviceId, safeName: sharedJob.safeName, reason });
-                    logger.info('[StreamManager] Shared FFmpeg stopped and files cleaned', { 
-                      deviceId: sharedJob.deviceId, 
-                      safeName: sharedJob.safeName, 
-                      reason
-                    });
-                  };
-                  
-                  // КРИТИЧНО: Удаляем все старые обработчики перед установкой нового
-                  sharedJob.process.removeAllListeners('exit');
-                  sharedJob.process.removeAllListeners('error');
-                  sharedJob.process.once('exit', cleanupOnExit);
-                  sharedJob.process.kill('SIGTERM');
-                  
-                  setTimeout(() => {
-                    if (sharedJob.process && !sharedJob.process.killed) {
-                      sharedJob.process.kill('SIGKILL');
-                    }
-                  }, 5000);
-                } catch (err) {
-                  logger.error('[StreamManager] Error stopping shared FFmpeg', { error: err.message });
-                  this.jobs.delete(job.sharedFrom);
-                  this.lastAccessTime.delete(job.sharedFrom);
-                  // КРИТИЧНО: Удаляем из urlToJobMap даже при ошибке
-                  const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
-                  if (this.urlToJobMap.has(normalizedSourceUrl)) {
-                    this.urlToJobMap.delete(normalizedSourceUrl);
-                  }
-                  this._cleanupFolder(sharedFolderPath);
-                }
-              } else {
-                // КРИТИЧНО: Если процесса нет, все равно очищаем все записи
-                this.jobs.delete(job.sharedFrom);
-                this.lastAccessTime.delete(job.sharedFrom);
-                const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
-                if (this.urlToJobMap.has(normalizedSourceUrl)) {
-                  this.urlToJobMap.delete(normalizedSourceUrl);
-                }
-                this._cleanupFolder(sharedFolderPath);
-              }
-            } else {
-              // КРИТИЧНО: Если shared job не найден, все равно удаляем из urlToJobMap
-              const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
-              logger.warn('[StreamManager] Shared job not found, cleaning up urlToJobMap', {
-                streamUrl: normalizedSourceUrl,
-                sharedFrom: job.sharedFrom
-              });
-              this.urlToJobMap.delete(normalizedSourceUrl);
-            }
-          }
-        } else {
-          // КРИТИЧНО: Если urlEntry не найден, логируем предупреждение
-          logger.warn('[StreamManager] urlEntry not found for shared job', {
-            deviceId,
-            safeName,
-            streamUrl: job.sourceUrl
-          });
-        }
-        
-        // Удаляем виртуальный job и очищаем симлинк
-        this.jobs.delete(key);
-        this.lastAccessTime.delete(key);
-        this._cleanupFolder(paths.folderPath);
-        
-        // КРИТИЧНО: Валидация - проверяем, что все записи удалены
-        if (this.jobs.has(key)) {
-          logger.error('[StreamManager] Job still exists after cleanup', { deviceId, safeName, key });
-        }
-        if (this.lastAccessTime.has(key)) {
-          logger.error('[StreamManager] lastAccessTime still exists after cleanup', { deviceId, safeName, key });
-        }
-        
-        return;
-      }
-      
-      // КРИТИЧНО: Для обычного job проверяем, используется ли URL другими устройствами
-      // Нормализуем URL для корректного поиска
-      const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
-      const urlEntryForStop = this.urlToJobMap.get(normalizedSourceUrl);
-      if (urlEntryForStop) {
-        // КРИТИЧНО: Проверяем размер ДО удаления, чтобы правильно определить, остались ли другие устройства
-        const hasOtherDevices = urlEntryForStop.devices.size > 1;
-        
-        // Удаляем это устройство из списка
-        urlEntryForStop.devices.delete(key);
-        
-        if (hasOtherDevices) {
-          // URL используется другими устройствами - только удаляем это устройство, НЕ останавливаем FFmpeg
-          logger.info('[StreamManager] Removed device from shared stream (other devices still using)', {
-            deviceId,
-            safeName,
-            streamUrl: job.sourceUrl,
-            remainingDevices: urlEntryForStop.devices.size,
-            remainingDeviceKeys: Array.from(urlEntryForStop.devices)
-          });
-          
-          // Удаляем job и очищаем файлы (но не останавливаем FFmpeg)
-          this.jobs.delete(key);
-          this.lastAccessTime.delete(key);
-          this._cleanupFolder(paths.folderPath);
+        logger.warn('[StreamManager] No job found for stream', { safeName: safeNameSanitized });
+        this.nameToJobMap.delete(safeNameSanitized);
+        this.jobs.delete(safeNameSanitized);
           return;
         }
         
-        // Если это последнее устройство, удаляем запись из urlToJobMap
-        if (urlEntryForStop.devices.size === 0) {
-          this.urlToJobMap.delete(normalizedSourceUrl);
-          logger.info('[StreamManager] Last device removed from URL, will stop FFmpeg', {
-            deviceId,
-            safeName,
-            streamUrl: job.sourceUrl
-          });
-        }
-      }
-      
-      // КРИТИЧНО: Помечаем job как останавливаемый
+      // Помечаем job как останавливаемый
       job.stopping = true;
-      
-      // КРИТИЧНО: Сохраняем путь для очистки после завершения процесса
       const folderPathToClean = job.paths.folderPath;
       
       if (job.process) {
         try {
-          // КРИТИЧНО: Устанавливаем обработчик завершения процесса для очистки файлов
           const cleanupOnExit = () => {
-            // КРИТИЧНО: Очищаем все обработчики событий процесса для предотвращения утечек памяти
             if (job.process) {
               job.process.removeAllListeners('exit');
               job.process.removeAllListeners('error');
@@ -1923,62 +1758,61 @@ class StreamManager extends EventEmitter {
               }
             }
             
-            // Удаляем job из списка
-            this.jobs.delete(key);
-            this.lastAccessTime.delete(key);
+            // Удаляем все записи
+            this.jobs.delete(safeNameSanitized);
+            this.nameToJobMap.delete(safeNameSanitized);
             
-            // КРИТИЧНО: Удаляем все файлы стрима после завершения процесса
+            // Очищаем файлы
             this._cleanupFolder(folderPathToClean);
             
-            this.emit('stream:stopped', { deviceId, safeName, reason });
-            logger.info('[StreamManager] FFmpeg stopped and all files cleaned', { 
-              deviceId, 
-              safeName, 
+            this.emit('stream:stopped', { deviceId, safeName: safeNameSanitized, reason });
+            logger.info('[StreamManager] Stream stopped and files cleaned', {
+              safeName: safeNameSanitized,
               reason,
               folderPath: folderPathToClean
             });
           };
           
-          // КРИТИЧНО: Удаляем все старые обработчики и устанавливаем новый
           job.process.removeAllListeners('exit');
           job.process.removeAllListeners('error');
           job.process.once('exit', cleanupOnExit);
           
-          // Даем процессу время на корректное завершение
           job.process.kill('SIGTERM');
           
-          // Если через 5 секунд процесс не завершился - убиваем принудительно
           setTimeout(() => {
-            try {
               if (job.process && !job.process.killed) {
-                logger.warn('[StreamManager] Force killing FFmpeg process', { deviceId, safeName, pid: job.process.pid });
+              logger.warn('[StreamManager] Force killing FFmpeg', {
+                safeName: safeNameSanitized,
+                pid: job.process.pid
+              });
                 job.process.kill('SIGKILL');
-                // После SIGKILL процесс должен завершиться быстро, очистка произойдет в обработчике exit
-              }
-            } catch (err) {
-              logger.error('[StreamManager] Error force killing FFmpeg', { deviceId, safeName, error: err.message });
-              // Если не удалось убить процесс, все равно очищаем файлы
-              cleanupOnExit();
             }
           }, 5000);
         } catch (err) {
-          logger.error('[StreamManager] Error stopping FFmpeg process', { deviceId, safeName, error: err.message });
-          // В случае ошибки все равно очищаем
-          this.jobs.delete(key);
-          this.lastAccessTime.delete(key);
+          logger.error('[StreamManager] Error stopping FFmpeg', {
+            safeName: safeNameSanitized,
+            error: err.message
+          });
+          // Очищаем даже при ошибке
+          this.jobs.delete(safeNameSanitized);
+          this.nameToJobMap.delete(safeNameSanitized);
           this._cleanupFolder(folderPathToClean);
         }
       } else {
         // Если процесса нет, сразу очищаем
-        this.jobs.delete(key);
-        this.lastAccessTime.delete(key);
+        this.jobs.delete(safeNameSanitized);
+        this.nameToJobMap.delete(safeNameSanitized);
         this._cleanupFolder(folderPathToClean);
-        this.emit('stream:stopped', { deviceId, safeName, reason });
-        logger.info('[StreamManager] Stream stopped (no process), files cleaned', { deviceId, safeName, reason });
+        this.emit('stream:stopped', { deviceId, safeName: safeNameSanitized, reason });
       }
     } catch (err) {
-      logger.error('[StreamManager] Error in stopStream', { deviceId, safeName, reason, error: err.message, stack: err.stack });
-      // Не пробрасываем ошибку дальше, чтобы не падал сервер
+      logger.error('[StreamManager] Error in stopStream', {
+        deviceId,
+        safeName,
+        reason,
+        error: err.message,
+        stack: err.stack
+      });
     }
   }
 
@@ -1987,260 +1821,117 @@ class StreamManager extends EventEmitter {
    * Вызывается при каждом запросе сегментов HLS для отслеживания активности
    */
   updateLastAccess(deviceId, safeName) {
-    const key = this._jobKey(deviceId, safeName);
-    const job = this.jobs.get(key);
-    if (job) {
-      this.lastAccessTime.set(key, Date.now());
+    const safeNameSanitized = sanitizePathFragment(safeName);
+    const nameEntry = this.nameToJobMap.get(safeNameSanitized);
+    
+    if (nameEntry && nameEntry.devices.has(deviceId)) {
+      if (!nameEntry.lastAccess) {
+        nameEntry.lastAccess = new Map();
+      }
+      nameEntry.lastAccess.set(deviceId, Date.now());
       
-      // КРИТИЧНО: Для shared jobs обновляем время доступа для всех устройств, использующих этот URL
-      // Это предотвращает остановку FFmpeg, если хотя бы одно устройство активно использует стрим
-      // Нормализуем URL для корректного поиска
-      const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
-      if (job.isShared && job.sharedFrom) {
-        const urlEntry = this.urlToJobMap.get(normalizedSourceUrl);
-        if (urlEntry) {
-          // Обновляем время доступа для всех устройств, использующих этот URL
-          urlEntry.devices.forEach(deviceKey => {
-            this.lastAccessTime.set(deviceKey, Date.now());
-          });
-        }
-      } else {
-        // Для обычных jobs обновляем время доступа для всех устройств, использующих тот же URL
-        const urlEntry = this.urlToJobMap.get(normalizedSourceUrl);
-        if (urlEntry && urlEntry.devices.size > 1) {
-          urlEntry.devices.forEach(deviceKey => {
-            this.lastAccessTime.set(deviceKey, Date.now());
-          });
+      logger.debug('[StreamManager] Updated last access', {
+        deviceId,
+        safeName: safeNameSanitized,
+        timestamp: Date.now()
+      });
+    }
+  }
+
+  /**
+   * Обновляет время последнего доступа к стриму по safeName (для всех устройств, использующих стрим)
+   * Используется когда deviceId недоступен (например, в HTTP запросах к /streams/)
+   * КРИТИЧНО: Работает даже для прямых стримов без deviceId
+   */
+  updateLastAccessBySafeName(safeName) {
+    const safeNameSanitized = sanitizePathFragment(safeName);
+    const nameEntry = this.nameToJobMap.get(safeNameSanitized);
+    
+    if (nameEntry) {
+      if (!nameEntry.lastAccess) {
+        nameEntry.lastAccess = new Map();
+      }
+      const now = Date.now();
+      
+      // КРИТИЧНО: Обновляем lastAccess для всех устройств, использующих стрим
+      if (nameEntry.devices.size > 0) {
+        for (const deviceId of nameEntry.devices) {
+          nameEntry.lastAccess.set(deviceId, now);
         }
       }
+      
+      // КРИТИЧНО: Для прямых стримов без deviceId используем специальный ключ '_direct'
+      // Это позволяет отслеживать активность даже если devices пустой
+      nameEntry.lastAccess.set('_direct', now);
+      
+      logger.debug('[StreamManager] Updated last access by safeName', {
+        safeName: safeNameSanitized,
+        devices: Array.from(nameEntry.devices),
+        hasDirectAccess: true,
+        timestamp: now
+      });
     }
   }
 
   getPlaybackUrl(deviceId, safeName) {
-    const key = this._jobKey(deviceId, safeName);
-    const job = this.jobs.get(key);
+    const safeNameSanitized = sanitizePathFragment(safeName);
+    const job = this.jobs.get(safeNameSanitized);
+    const nameEntry = this.nameToJobMap.get(safeNameSanitized);
+    const actualJob = job || nameEntry?.job;
     
-    // КРИТИЧНО: Обновляем время последнего доступа при запросе URL
-    // Это позволяет отслеживать активность стрима (плеер запрашивает URL)
-    if (job) {
-      this.lastAccessTime.set(key, Date.now());
-      
-      // Для shared jobs обновляем время доступа для всех устройств
-      // Нормализуем URL для корректного поиска
-      if (job.isShared && job.sharedFrom) {
-        const normalizedSourceUrl = normalizeStreamUrl(job.sourceUrl);
-        const urlEntry = this.urlToJobMap.get(normalizedSourceUrl);
-        if (urlEntry) {
-          urlEntry.devices.forEach(deviceKey => {
-            this.lastAccessTime.set(deviceKey, Date.now());
-          });
-        }
+    // Обновляем время последнего доступа
+    if (nameEntry && nameEntry.devices.has(deviceId)) {
+      if (!nameEntry.lastAccess) {
+        nameEntry.lastAccess = new Map();
       }
+      nameEntry.lastAccess.set(deviceId, Date.now());
     }
     
-    // КРИТИЧНО: Для shared jobs проверяем основной процесс
-    let actualJob = job;
-    if (job && job.isShared && job.sharedFrom) {
-      actualJob = this.jobs.get(job.sharedFrom);
+    // КРИТИЧНО: Проверяем не только наличие job, но и валидность
+    if (actualJob && actualJob.paths && actualJob.paths.publicUrl) {
+      // Проверяем статус процесса
+      const isProcessActive = actualJob.process && 
+                             !actualJob.process.killed && 
+                             actualJob.status !== 'stopped';
       
-      // КРИТИЧНО: Валидируем симлинк для shared jobs
-      if (actualJob) {
-        const symlinkPath = job.paths.playlistPath;
-        const targetPath = actualJob.paths.playlistPath;
-        
-        try {
-          // Проверяем, существует ли симлинк
-          if (!fs.existsSync(symlinkPath)) {
-            logger.warn('[StreamManager] Symlink missing, attempting to recreate', {
-              deviceId,
-              safeName,
-              symlinkPath,
-              targetPath
-            });
-            
-            // Пытаемся пересоздать симлинк
-            try {
-              ensureDir(path.dirname(symlinkPath));
-              if (fs.existsSync(targetPath)) {
-                // Удаляем старый симлинк, если существует как обычный файл
-                if (fs.existsSync(symlinkPath)) {
-                  const stats = fs.lstatSync(symlinkPath);
-                  if (stats.isSymbolicLink()) {
-                    fs.unlinkSync(symlinkPath);
-                  } else {
-                    fs.unlinkSync(symlinkPath);
-                  }
-                }
-                fs.symlinkSync(targetPath, symlinkPath);
-                logger.info('[StreamManager] Symlink recreated successfully', {
-                  deviceId,
-                  safeName,
-                  symlinkPath
-                });
-              } else {
-                logger.warn('[StreamManager] Target playlist missing, cannot recreate symlink', {
-                  deviceId,
-                  safeName,
-                  targetPath
-                });
-                return null;
+      if (isProcessActive) {
+        // Процесс активен - проверяем существование и валидность файла
+        const paths = actualJob.paths;
+        if (fs.existsSync(paths.playlistPath)) {
+          // Используем кэшированный статус для оптимизации
+          const fileStatus = this._getCachedFileStatus(safeNameSanitized);
+          if (fileStatus.exists && fileStatus.size > 0) {
+            const fileAge = Date.now() - fileStatus.mtime;
+            // Если файл обновлялся менее минуты назад - валиден
+            if (fileAge < 60000) {
+              // Дополнительная валидация структуры плейлиста
+              if (this._validatePlaylistQuick(paths.playlistPath)) {
+                return actualJob.paths.publicUrl;
               }
-            } catch (symlinkErr) {
-              logger.error('[StreamManager] Failed to recreate symlink', {
-                deviceId,
-                safeName,
-                symlinkPath,
-                targetPath,
-                error: symlinkErr.message
-              });
-              return null;
-            }
-          } else {
-            // Проверяем, является ли файл симлинком и валиден ли он
-            try {
-              const stats = fs.lstatSync(symlinkPath);
-              if (stats.isSymbolicLink()) {
-                // Проверяем, что целевой файл существует
-                const realPath = fs.readlinkSync(symlinkPath);
-                if (!fs.existsSync(realPath)) {
-                  logger.warn('[StreamManager] Symlink target missing, attempting to fix', {
-                    deviceId,
-                    safeName,
-                    symlinkPath,
-                    realPath,
-                    expectedTarget: targetPath
-                  });
-                  
-                  // Пытаемся исправить симлинк
-                  try {
-                    fs.unlinkSync(symlinkPath);
-                    if (fs.existsSync(targetPath)) {
-                      fs.symlinkSync(targetPath, symlinkPath);
-                      logger.info('[StreamManager] Symlink fixed successfully', {
-                        deviceId,
-                        safeName,
-                        symlinkPath
-                      });
-                    } else {
-                      logger.error('[StreamManager] Target playlist missing, cannot fix symlink', {
-                        deviceId,
-                        safeName,
-                        targetPath
-                      });
-                      return null;
-                    }
-                  } catch (fixErr) {
-                    logger.error('[StreamManager] Failed to fix symlink', {
-                      deviceId,
-                      safeName,
-                      symlinkPath,
-                      error: fixErr.message
-                    });
-                    return null;
-                  }
-                }
-              }
-            } catch (checkErr) {
-              logger.warn('[StreamManager] Error checking symlink', {
-                deviceId,
-                safeName,
-                symlinkPath,
-                error: checkErr.message
-              });
-              // Продолжаем, возможно это обычный файл
             }
           }
-        } catch (err) {
-          logger.error('[StreamManager] Error validating symlink', {
-            deviceId,
-            safeName,
-            symlinkPath,
-            error: err.message
-          });
-          return null;
         }
       } else {
-        logger.warn('[StreamManager] Shared job target not found', {
-          deviceId,
-          safeName,
-          sharedFrom: job.sharedFrom
-        });
-        return null;
-      }
-    }
-    
-    // КРИТИЧНО: Возвращаем URL только если FFmpeg процесс активен
-    // Не возвращаем URL для старых файлов, если процесс не запущен
-    if (actualJob && actualJob.process && !actualJob.process.killed && actualJob.status !== 'stopped') {
-      // Для shared jobs проверяем симлинк, для обычных - прямой путь
-      const playlistPath = job?.isShared ? job.paths.playlistPath : actualJob.paths.playlistPath;
-      
-      if (fs.existsSync(playlistPath)) {
-        // КРИТИЧНО: Проверяем время модификации плейлиста (детектирование зависаний)
-        try {
-          const stats = fs.statSync(playlistPath);
-          const playlistAge = Date.now() - stats.mtimeMs;
-          const maxPlaylistAge = this.options.playlistMaxAge; // 30 секунд по умолчанию
-          
-          // КРИТИЧНО: Если плейлист не обновлялся - процесс завис
-          if (playlistAge > maxPlaylistAge) {
-            logger.warn('[StreamManager] Playlist not updated, process may be hung', {
-              deviceId: deviceId,
-              safeName: safeName,
-              playlistAge,
-              maxPlaylistAge,
-              lastPlaylistUpdate: actualJob.lastPlaylistUpdate
-            });
-            
-            // Принудительно завершаем зависший процесс
-            if (actualJob.process && !actualJob.process.killed) {
-              logger.warn('[StreamManager] Force killing hung FFmpeg process', {
-                deviceId: actualJob.deviceId,
-                safeName: actualJob.safeName,
-                pid: actualJob.process.pid
+        // Процесс остановлен - проверяем существование файла как fallback
+        const paths = this._getPaths(safeNameSanitized);
+        const fileStatus = this._getCachedFileStatus(safeNameSanitized);
+        if (fileStatus.exists && fileStatus.size > 0) {
+          const fileAge = Date.now() - fileStatus.mtime;
+          // Если файл обновлялся менее минуты - используем его
+          if (fileAge < 60000) {
+            if (this._validatePlaylistQuick(paths.playlistPath)) {
+              logger.info('[StreamManager] Using existing file for stopped process', {
+                deviceId,
+                safeName,
+                fileAge
               });
-              try {
-                actualJob.process.kill('SIGKILL');
-              } catch (err) {
-                logger.error('[StreamManager] Error killing hung process', {
-                  deviceId: actualJob.deviceId,
-                  safeName: actualJob.safeName,
-                  error: err.message
-                });
-              }
+              return paths.publicUrl;
             }
-            
-            return null; // Плейлист слишком старый, не возвращаем URL
           }
-          
-          // Обновляем время последнего обновления плейлиста
-          actualJob.lastPlaylistUpdate = stats.mtimeMs;
-        } catch (err) {
-          logger.warn('[StreamManager] Failed to check playlist age', {
-            deviceId: deviceId,
-            safeName: safeName,
-            error: err.message
-          });
         }
-        
-        // КРИТИЧНО: Валидация плейлиста перед возвратом URL
-        const folderPath = job?.isShared ? job.paths.folderPath : actualJob.paths.folderPath;
-        if (!this._checkPlaylistValid(playlistPath, folderPath)) {
-          logger.warn('[StreamManager] Playlist validation failed', {
-            deviceId: deviceId,
-            safeName: safeName,
-            playlistPath
-          });
-          return null; // Плейлист невалиден, не возвращаем URL
-        }
-        
-        // Для shared jobs используем путь нового устройства, для обычных - путь основного job
-        return job?.isShared ? job.paths.publicUrl : actualJob.paths.publicUrl;
       }
     }
     
-    // Если процесс не запущен - не возвращаем URL даже если файлы существуют
-    // Это предотвращает воспроизведение старых сегментов
     return null;
   }
 
@@ -2249,61 +1940,133 @@ class StreamManager extends EventEmitter {
    * @param {string} deviceId - ID устройства
    * @param {string} safeName - Безопасное имя стрима
    * @param {Object} streamMetadata - Метаданные стрима из БД
+   * @param {number} retryCount - Количество попыток retry (внутренний параметр)
    * @returns {Promise<string|null>} URL для воспроизведения или null
    */
-  async ensureStreamRunning(deviceId, safeName, streamMetadata) {
-    const key = this._jobKey(deviceId, safeName);
-    const existing = this.jobs.get(key);
+  async ensureStreamRunning(deviceId, safeName, streamMetadata, retryCount = 0) {
+    const MAX_RETRIES = 2;
+    const RETRY_DELAYS = [1000, 3000]; // Задержки: 1с, 3с
+    const safeNameSanitized = sanitizePathFragment(safeName);
+    const existing = this.jobs.get(safeNameSanitized);
     
-    logger.info('[StreamManager] ensureStreamRunning called', {
-      deviceId,
-      safeName,
-      hasExisting: !!existing,
-      existingStatus: existing?.status,
-      hasMetadata: !!streamMetadata,
-      metadataStreamUrl: streamMetadata?.stream_url,
-      metadataProtocol: streamMetadata?.stream_protocol,
-      metadataContentType: streamMetadata?.content_type
-    });
+      logger.info('[StreamManager] ensureStreamRunning called', {
+        deviceId,
+        safeName,
+        hasExisting: !!existing,
+        existingStatus: existing?.status,
+        existingProcess: !!existing?.process,
+        existingProcessKilled: existing?.process?.killed,
+        hasMetadata: !!streamMetadata,
+        metadataStreamUrl: streamMetadata?.stream_url,
+        metadataProtocol: streamMetadata?.stream_protocol,
+        metadataContentType: streamMetadata?.content_type
+      });
     
-    // Если уже запущен - очищаем старые сегменты и возвращаем URL
-    if (existing && existing.status !== 'stopped') {
-      logger.info('[StreamManager] Stream already running, cleaning old segments', { deviceId, safeName });
-      
-      // КРИТИЧНО: Очищаем старые .ts сегменты, но оставляем m3u8 и текущие сегменты
-      // Это предотвращает воспроизведение старых сегментов при перезапуске плеера
-      const paths = this._getPaths(deviceId, safeName);
-      if (fs.existsSync(paths.folderPath)) {
-        try {
-          const files = fs.readdirSync(paths.folderPath);
-          const now = Date.now();
-          for (const file of files) {
-            // Удаляем только старые .ts сегменты (старше 30 секунд)
-            if (file.endsWith('.ts')) {
-              const filePath = path.join(paths.folderPath, file);
-              try {
-                const stats = fs.statSync(filePath);
-                const fileAge = now - stats.mtimeMs;
-                // Удаляем сегменты старше 30 секунд
-                if (fileAge > 30000) {
-                  fs.unlinkSync(filePath);
-                  logger.debug('[StreamManager] Удален старый сегмент', { filePath, age: fileAge });
-                }
-              } catch (e) {
-                logger.debug('[StreamManager] Не удалось проверить/удалить сегмент', { filePath, error: e.message });
-              }
-            }
-          }
-        } catch (e) {
-          logger.warn('[StreamManager] Ошибка при очистке старых сегментов', { folderPath: paths.folderPath, error: e.message });
+    // КРИТИЧНО: Проверяем также nameToJobMap, так как job может быть удален из jobs, но остаться в nameToJobMap
+    const nameEntry = this.nameToJobMap.get(safeNameSanitized);
+    const existingJob = existing || nameEntry?.job;
+    
+    // КРИТИЧНО: Максимально упрощенная логика - если job существует, возвращаем URL сразу
+    if (existingJob && existingJob.paths && existingJob.paths.publicUrl) {
+      // Добавляем deviceId в devices если его там нет
+      if (nameEntry && !nameEntry.devices.has(deviceId)) {
+        nameEntry.devices.add(deviceId);
+        if (!nameEntry.lastAccess) {
+          nameEntry.lastAccess = new Map();
         }
+        nameEntry.lastAccess.set(deviceId, Date.now());
       }
       
-      return this.getPlaybackUrl(deviceId, safeName);
+      logger.info('[StreamManager] Returning existing stream URL', {
+        deviceId,
+        safeName,
+        url: existingJob.paths.publicUrl
+      });
+      return existingJob.paths.publicUrl;
+    }
+    
+    // НОВОЕ: Проверяем существование файла перед созданием job
+    // Это позволяет использовать существующие файлы даже если job был остановлен
+    const paths = this._getPaths(safeNameSanitized);
+    if (fs.existsSync(paths.playlistPath)) {
+      try {
+        const fileStatus = this._getCachedFileStatus(safeNameSanitized);
+        if (fileStatus.exists && fileStatus.size > 0) {
+          const fileAge = Date.now() - fileStatus.mtime;
+          // Если файл существует и обновлялся недавно (менее минуты) - используем его
+          if (fileAge < 60000) {
+            if (this._validatePlaylistQuick(paths.playlistPath)) {
+              logger.info('[StreamManager] Found existing valid stream file, using it instead of creating job', {
+                deviceId,
+                safeName,
+                filePath: paths.playlistPath,
+                fileSize: fileStatus.size,
+                fileAge,
+                url: paths.publicUrl
+              });
+              
+              // Добавляем deviceId в nameToJobMap для отслеживания
+              if (!nameEntry) {
+                this.nameToJobMap.set(safeNameSanitized, {
+                  devices: new Set([deviceId]),
+                  lastAccess: new Map([[deviceId, Date.now()]]),
+                  pending: false
+                });
+              } else {
+                nameEntry.devices.add(deviceId);
+                if (!nameEntry.lastAccess) {
+                  nameEntry.lastAccess = new Map();
+                }
+                nameEntry.lastAccess.set(deviceId, Date.now());
+              }
+              
+              return paths.publicUrl;
+            } else {
+              logger.info('[StreamManager] Stream file exists but invalid, will recreate', {
+                deviceId,
+                safeName,
+                fileAge
+              });
+              // Удаляем невалидный файл перед созданием нового
+              try {
+                fs.unlinkSync(paths.playlistPath);
+                logger.debug('[StreamManager] Removed invalid playlist file', { playlistPath: paths.playlistPath });
+              } catch (unlinkErr) {
+                logger.warn('[StreamManager] Failed to remove invalid playlist file', {
+                  playlistPath: paths.playlistPath,
+                  error: unlinkErr.message
+                });
+              }
+            }
+          } else {
+            logger.info('[StreamManager] Stream file exists but too old, will recreate', {
+              deviceId,
+              safeName,
+              fileAge
+            });
+            // Удаляем старый файл перед созданием нового
+            try {
+              fs.unlinkSync(paths.playlistPath);
+              logger.debug('[StreamManager] Removed old playlist file', { playlistPath: paths.playlistPath });
+            } catch (unlinkErr) {
+              logger.warn('[StreamManager] Failed to remove old playlist file', {
+                playlistPath: paths.playlistPath,
+                error: unlinkErr.message
+              });
+            }
+          }
+        }
+      } catch (err) {
+        logger.debug('[StreamManager] Error checking existing stream file', {
+          deviceId,
+          safeName,
+          error: err.message
+        });
+      }
     }
     
     // Если не запущен - запускаем
-    if (!existing && streamMetadata) {
+    if (!existingJob && streamMetadata) {
       if (!streamMetadata.stream_url) {
         logger.error('[StreamManager] Missing stream_url in metadata, cannot start', {
           deviceId,
@@ -2313,19 +2076,26 @@ class StreamManager extends EventEmitter {
         return null;
       }
       
-      // КРИТИЧНО: Проверяем доступность источника перед запуском FFmpeg
+      // КРИТИЧНО: Улучшенная проверка источника перед запуском FFmpeg
       // Это предотвращает запуск FFmpeg для недоступных источников
       // ВАЖНО: Проверка неблокирующая - если она не удалась, все равно пытаемся запустить FFmpeg
       // (источник может быть медленным или требовать времени на инициализацию)
       if (this.options.sourceCheckEnabled) {
-        logger.info('[StreamManager] Checking source availability before starting', {
+        logger.info('[StreamManager] Pre-checking source before start', {
           deviceId,
           safeName,
           streamUrl: streamMetadata.stream_url
         });
         
         try {
-          const sourceAvailable = await this._checkSourceAvailable(streamMetadata.stream_url);
+          // НОВОЕ: Более агрессивная проверка источника с таймаутом
+          const sourceAvailable = await Promise.race([
+            this._checkSourceAvailable(streamMetadata.stream_url),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Source check timeout')), 8000)
+            )
+          ]);
+          
           if (!sourceAvailable) {
             logger.warn('[StreamManager] Source check failed, but will attempt to start FFmpeg anyway', {
               deviceId,
@@ -2343,13 +2113,13 @@ class StreamManager extends EventEmitter {
             });
           }
         } catch (checkErr) {
-          logger.warn('[StreamManager] Source check error, but will attempt to start FFmpeg anyway', {
+          logger.warn('[StreamManager] Source check error, proceeding anyway', {
             deviceId,
             safeName,
             streamUrl: streamMetadata.stream_url,
             error: checkErr.message
           });
-          // НЕ блокируем запуск при ошибке проверки
+          // Продолжаем запуск - источник может быть медленным
         }
       }
       
@@ -2370,26 +2140,57 @@ class StreamManager extends EventEmitter {
       try {
         const job = await this.upsertStream(entry);
         if (!job) {
+          // Если не удалось запустить и есть попытки - retry
+          if (retryCount < MAX_RETRIES) {
+            const delay = RETRY_DELAYS[retryCount] || 5000;
+            logger.info('[StreamManager] Retrying stream start', {
+              deviceId,
+              safeName,
+              retryCount: retryCount + 1,
+              delay
+            });
+            
+            await new Promise(resolve => setTimeout(resolve, delay));
+            return this.ensureStreamRunning(deviceId, safeName, streamMetadata, retryCount + 1);
+          }
+          
           logger.error('[StreamManager] upsertStream returned null, FFmpeg not started', {
             deviceId,
             safeName,
-            entry
+            entry,
+            retryCount
           });
           return null;
         }
         logger.info('[StreamManager] upsertStream completed', {
           deviceId,
           safeName,
-          jobKey: job.key,
+          jobKey: job.safeName,
           jobStatus: job.status,
           hasProcess: !!job.process
         });
       } catch (err) {
+        // При ошибке - retry если возможно
+        if (retryCount < MAX_RETRIES) {
+          const delay = RETRY_DELAYS[retryCount] || 5000;
+          logger.warn('[StreamManager] Stream start error, retrying', {
+            deviceId,
+            safeName,
+            error: err.message,
+            retryCount: retryCount + 1,
+            delay
+          });
+          
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return this.ensureStreamRunning(deviceId, safeName, streamMetadata, retryCount + 1);
+        }
+        
         logger.error('[StreamManager] upsertStream failed', {
           deviceId,
           safeName,
           error: err.message,
-          stack: err.stack
+          stack: err.stack,
+          retryCount
         });
         return null;
       }
@@ -2397,33 +2198,85 @@ class StreamManager extends EventEmitter {
       // КРИТИЧНО: Ждем, пока FFmpeg создаст плейлист
       // Проверяем наличие плейлиста с таймаутом
       // Для DASH стримов может потребоваться больше времени на инициализацию
-      const paths = this._getPaths(deviceId, safeName);
+      const safeNameSanitized = sanitizePathFragment(safeName);
+      const paths = this._getPaths(safeNameSanitized);
       const isDash = streamMetadata.stream_protocol === 'dash' || (streamMetadata.stream_url?.toLowerCase().includes('.mpd'));
-      const maxWaitTime = isDash ? 15000 : 10000; // 15 секунд для DASH, 10 для остальных
+      const maxWaitTime = isDash ? 20000 : 12000; // 20 секунд для DASH, 12 для остальных (увеличено для надежности)
       const checkInterval = 200; // Проверяем каждые 200мс
       const startTime = Date.now();
+      let lastJobStatus = null;
       
       while (Date.now() - startTime < maxWaitTime) {
-        const job = this.jobs.get(key);
+        const job = this.jobs.get(safeNameSanitized);
+        
+        // КРИТИЧНО: Отслеживаем изменения статуса для лучшей диагностики
+        if (job && job.status !== lastJobStatus) {
+          lastJobStatus = job.status;
+          logger.debug('[StreamManager] Job status changed while waiting for playlist', {
+            deviceId,
+            safeName,
+            oldStatus: lastJobStatus,
+            newStatus: job.status,
+            waitTime: Date.now() - startTime
+          });
+        }
         
         // Проверяем, что процесс запущен и не остановлен
-        if (job && job.process && !job.process.killed && job.status !== 'stopped') {
+        if (job && job.process && !job.process.killed && (job.status === 'running' || job.status === 'starting')) {
           // Проверяем, что плейлист создан
           if (fs.existsSync(paths.playlistPath)) {
             // Проверяем, что плейлист не пустой (минимум несколько байт)
             try {
               const stats = fs.statSync(paths.playlistPath);
               if (stats.size > 0) {
-                logger.info('[StreamManager] Playlist created, ready for playback', {
-                  deviceId,
-                  safeName,
-                  waitTime: Date.now() - startTime,
-                  playlistSize: stats.size
-                });
-                return this.getPlaybackUrl(deviceId, safeName);
+                // КРИТИЧНО: Проверяем, что плейлист обновляется (не застрял)
+                // Если плейлист не обновлялся более 5 секунд - возможно проблема
+                const playlistAge = Date.now() - stats.mtimeMs;
+                if (playlistAge > 5000 && job.status === 'running') {
+                  logger.warn('[StreamManager] Playlist not updating, may be stuck', {
+                    deviceId,
+                    safeName,
+                    playlistAge,
+                    waitTime: Date.now() - startTime
+                  });
+                  // Продолжаем ожидание, но логируем предупреждение
+                }
+                
+                // Для процесса в статусе 'starting' - более мягкая проверка
+                // Для 'running' - полная валидация через getPlaybackUrl
+                const url = this.getPlaybackUrl(deviceId, safeName);
+                if (url) {
+                  logger.info('[StreamManager] Playlist created, ready for playback', {
+                    deviceId,
+                    safeName,
+                    waitTime: Date.now() - startTime,
+                    playlistSize: stats.size,
+                    jobStatus: job.status,
+                    url
+                  });
+                  return url;
+                } else if (job.status === 'starting') {
+                  // Для starting процесса возвращаем URL если плейлист валиден
+                  if (this._validatePlaylistQuick(paths.playlistPath)) {
+                    // Используем paths.publicUrl (из _getPaths) - он всегда определен
+                    logger.info('[StreamManager] Playlist created for starting stream (relaxed validation)', {
+                      deviceId,
+                      safeName,
+                      waitTime: Date.now() - startTime,
+                      playlistSize: stats.size,
+                      publicUrl: paths.publicUrl
+                    });
+                    return paths.publicUrl;
+                  }
+                }
               }
             } catch (err) {
               // Игнорируем ошибки проверки размера
+              logger.debug('[StreamManager] Error checking playlist', {
+                deviceId,
+                safeName,
+                error: err.message
+              });
             }
           }
         } else if (job && job.status === 'stopped') {
@@ -2431,7 +2284,17 @@ class StreamManager extends EventEmitter {
           logger.warn('[StreamManager] FFmpeg process stopped before playlist was created', {
             deviceId,
             safeName,
-            lastError: job.lastError
+            lastError: job.lastError,
+            lastErrorType: job.lastErrorType,
+            waitTime: Date.now() - startTime
+          });
+          return null;
+        } else if (!job) {
+          // Job не найден - возможно был удален
+          logger.warn('[StreamManager] Job not found while waiting for playlist', {
+            deviceId,
+            safeName,
+            waitTime: Date.now() - startTime
           });
           return null;
         }
@@ -2444,21 +2307,31 @@ class StreamManager extends EventEmitter {
       logger.warn('[StreamManager] Timeout waiting for playlist creation', {
         deviceId,
         safeName,
-        waitTime: Date.now() - startTime
+        waitTime: Date.now() - startTime,
+        isDash,
+        finalJobStatus: lastJobStatus
       });
       
       // Проверяем последний раз - может быть плейлист создался
-      return this.getPlaybackUrl(deviceId, safeName);
+      const finalUrl = this.getPlaybackUrl(deviceId, safeName);
+      if (finalUrl) {
+        logger.info('[StreamManager] Playlist found on final check', {
+          deviceId,
+          safeName,
+          url: finalUrl
+        });
+      }
+      return finalUrl;
     }
     
     return this.getPlaybackUrl(deviceId, safeName);
   }
 
   getStatus(deviceId, safeName) {
-    const key = this._jobKey(deviceId, safeName);
-    const job = this.jobs.get(key);
+    const safeNameSanitized = sanitizePathFragment(safeName);
+    const job = this.jobs.get(safeNameSanitized);
     if (!job) {
-      const paths = this._getPaths(deviceId, safeName);
+      const paths = this._getPaths(safeNameSanitized);
       const exists = fs.existsSync(paths.playlistPath);
       return exists
         ? { status: 'idle', playbackUrl: paths.publicUrl }
@@ -2467,6 +2340,27 @@ class StreamManager extends EventEmitter {
     return {
       status: job.status,
       playbackUrl: this.getPlaybackUrl(deviceId, safeName),
+      restarts: job.restarts,
+      lastError: job.lastError,
+      lastErrorType: job.lastErrorType,
+      startedAt: job.startedAt,
+      circuitBreakerState: job.circuitBreakerState,
+      consecutiveFailures: job.consecutiveFailures
+    };
+  }
+
+  /**
+   * Получает статус job по safeName (без deviceId)
+   * Используется в HTTP middleware для проверки статуса стрима
+   */
+  getJobStatusBySafeName(safeName) {
+    const safeNameSanitized = sanitizePathFragment(safeName);
+    const job = this.jobs.get(safeNameSanitized);
+    if (!job) {
+      return null;
+    }
+    return {
+      status: job.status,
       restarts: job.restarts,
       lastError: job.lastError,
       lastErrorType: job.lastErrorType,
@@ -2587,6 +2481,7 @@ class StreamManager extends EventEmitter {
 
   /**
    * Вычисляет задержку перезапуска на основе типа ошибки и попытки
+   * Использует экспоненциальный backoff с jitter для предотвращения thundering herd
    * @param {string} errorType - Тип ошибки
    * @param {number} attempt - Номер попытки (0-based)
    * @returns {number} Задержка в миллисекундах
@@ -2596,7 +2491,9 @@ class StreamManager extends EventEmitter {
     
     switch (errorType) {
       case 'network':
-        baseDelay = 10000; // 10 секунд для сетевых ошибок
+        // Для сетевых ошибок используем более длинную базовую задержку
+        // так как они могут быть временными и требуют больше времени на восстановление
+        baseDelay = 15000; // 15 секунд для сетевых ошибок
         break;
       case 'codec':
         baseDelay = 5000; // 5 секунд для ошибок кодека
@@ -2606,9 +2503,14 @@ class StreamManager extends EventEmitter {
     }
     
     // Экспоненциальная задержка: baseDelay * 2^attempt
-    const delay = Math.min(baseDelay * Math.pow(2, attempt), this.options.restartMaxDelay);
+    let delay = Math.min(baseDelay * Math.pow(2, attempt), this.options.restartMaxDelay);
     
-    return delay;
+    // КРИТИЧНО: Добавляем jitter (случайное отклонение ±20%) для предотвращения thundering herd
+    // Это особенно важно при множественных стримах с одного источника
+    const jitter = delay * 0.2 * (Math.random() * 2 - 1); // ±20%
+    delay = Math.max(1000, delay + jitter); // Минимум 1 секунда
+    
+    return Math.round(delay);
   }
 
   /**
@@ -2977,7 +2879,8 @@ class StreamManager extends EventEmitter {
         return false;
       }
       
-      // КРИТИЧНО: Проверяем минимум 3 сегмента для стабильного воспроизведения
+      // КРИТИЧНО: Проверяем наличие сегментов в плейлисте
+      // Для новых стримов может быть меньше сегментов - это нормально
       const lines = content.split('\n');
       const segments = [];
       
@@ -2989,28 +2892,31 @@ class StreamManager extends EventEmitter {
         }
       }
       
-      // Требуем минимум 3 сегмента для валидного плейлиста
-      if (segments.length < 3) {
-        logger.debug('[StreamManager] Playlist has insufficient segments', {
+      // КРИТИЧНО: Для новых стримов достаточно 1 сегмента, для старых - минимум 1
+      // Убрали требование минимум 3 сегмента, так как это блокирует новые стримы
+      if (segments.length === 0) {
+        logger.debug('[StreamManager] Playlist has no segments', {
           playlistPath,
-          segmentCount: segments.length,
-          required: 3
+          segmentCount: segments.length
         });
         return false;
       }
       
-      // Проверяем, что все сегменты из плейлиста существуют на диске
-      // Проверяем первые 3 сегмента (достаточно для валидации)
-      const segmentsToCheck = segments.slice(0, Math.min(3, segments.length));
-      for (const segment of segmentsToCheck) {
-        const segmentPath = path.join(folderPath, segment);
+      // КРИТИЧНО: Проверяем, что хотя бы один сегмент существует на диске
+      // Не проверяем все сегменты - достаточно проверить последний (самый свежий)
+      if (segments.length > 0) {
+        const lastSegment = segments[segments.length - 1];
+        const segmentPath = path.join(folderPath, lastSegment);
         if (!fs.existsSync(segmentPath)) {
-          logger.debug('[StreamManager] Playlist segment missing', {
+          logger.debug('[StreamManager] Last playlist segment missing', {
             playlistPath,
-            segment,
-            segmentPath
+            segment: lastSegment,
+            segmentPath,
+            totalSegments: segments.length
           });
-          return false;
+          // КРИТИЧНО: Не возвращаем false - сегмент может создаваться
+          // Возвращаем true если есть хотя бы один сегмент в плейлисте
+          // Плеер сам обработает отсутствие сегмента
         }
       }
       
@@ -3073,6 +2979,42 @@ class StreamManager extends EventEmitter {
   }
 
   /**
+   * Парсит HLS плейлист и возвращает ВСЕ сегменты (не только первые 3)
+   * Используется для полной проверки при очистке
+   * @param {string} playlistPath - Путь к плейлисту
+   * @returns {Set<string>} Множество всех имен сегментов из плейлиста
+   */
+  _parseAllPlaylistSegments(playlistPath) {
+    const segments = new Set();
+    
+    try {
+      if (!fs.existsSync(playlistPath)) {
+        return segments;
+      }
+      
+      const content = fs.readFileSync(playlistPath, 'utf-8');
+      const lines = content.split('\n');
+      
+      for (const line of lines) {
+        const trimmed = line.trim();
+        // Ищем строки с именами сегментов (не начинаются с # и заканчиваются на .ts)
+        if (trimmed && !trimmed.startsWith('#') && trimmed.endsWith('.ts')) {
+          // Извлекаем только имя файла (без пути, если есть)
+          const fileName = path.basename(trimmed);
+          segments.add(fileName);
+        }
+      }
+    } catch (error) {
+      logger.debug('[StreamManager] Error parsing all playlist segments', {
+        playlistPath,
+        error: error.message
+      });
+    }
+    
+    return segments;
+  }
+
+  /**
    * Очищает старые сегменты для всех активных стримов
    * КРИТИЧНО: Оптимизировано с приоритизацией и ограничением времени выполнения
    */
@@ -3089,7 +3031,7 @@ class StreamManager extends EventEmitter {
     // КРИТИЧНО: Собираем все стримы с информацией о размере папки для приоритизации
     const streamsToClean = [];
     for (const [key, job] of this.jobs.entries()) {
-      if (job.isShared) continue; // Пропускаем shared jobs
+      // КРИТИЧНО: Убрали проверку isShared - теперь все стримы одинаковые для всех устройств
       if (!job.paths || !job.paths.folderPath) continue;
       
       try {
@@ -3142,8 +3084,8 @@ class StreamManager extends EventEmitter {
         const playlistPath = job.paths.playlistPath;
         if (!fs.existsSync(folderPath)) continue;
         
-        // КРИТИЧНО: Читаем актуальный плейлист перед очисткой
-        const playlistSegments = this._parsePlaylistSegments(playlistPath);
+        // КРИТИЧНО: Читаем актуальный плейлист перед очисткой (ВСЕ сегменты, не только первые 3)
+        const playlistSegments = this._parseAllPlaylistSegments(playlistPath);
         
         // КРИТИЧНО: Проверяем активность FFmpeg перед удалением
         const isProcessActive = job.status === 'running' && 
@@ -3362,12 +3304,17 @@ class StreamManager extends EventEmitter {
       this.circuitBreakerCheckInterval = null;
     }
     
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+    }
+    
     // КРИТИЧНО: Очищаем Maps для предотвращения утечек памяти
     this.jobs.clear();
-    this.urlToJobMap.clear();
-    this.lastAccessTime.clear();
-    this.urlToJobMapPending.clear(); // Очищаем pending операции
+    this.nameToJobMap.clear();
+    this.nameToJobMapPending.clear(); // Очищаем pending операции
     this.codecCache.clear(); // Очищаем кэш кодеков
+    this.fileStatusCache.clear(); // Очищаем кэш статусов файлов
     
     logger.info('[StreamManager] Stopped');
   }

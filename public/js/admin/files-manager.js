@@ -3,6 +3,183 @@ import { adminFetch } from './auth.js';
 import { getCheckIcon, getCrossIcon, getClockIcon } from '../shared/svg-icons.js';
 import { formatTime } from '../shared/formatters.js';
 
+/**
+ * Универсальная функция для показа модального окна стрима (добавление/редактирование)
+ * @param {Object} options
+ * @param {string} options.deviceId - ID устройства
+ * @param {string} options.mode - 'add' или 'edit'
+ * @param {string} [options.safeName] - Имя файла (только для режима edit)
+ * @param {string} [options.originalName] - Отображаемое имя (только для режима edit)
+ * @param {string} [options.streamUrl] - URL стрима (только для режима edit)
+ * @param {string} [options.streamProtocol] - Протокол стрима (только для режима edit)
+ * @param {Function} [options.onSuccess] - Callback после успешного сохранения
+ */
+export async function showStreamModal({ deviceId, mode = 'add', safeName = null, originalName = '', streamUrl = '', streamProtocol = 'auto', onSuccess = null }) {
+  const { showModal, closeModal } = await import('./modal.js');
+  
+  const isEdit = mode === 'edit';
+  const title = isEdit ? 'Изменить стрим' : 'Добавить стрим';
+  
+  const content = `
+    <div style="display:flex; flex-direction:column; gap:var(--space-md);">
+      <div>
+        <label style="display:block; margin-bottom:4px; font-weight:500;">Название стрима</label>
+        <input id="streamModalName" class="input" value="${(originalName || '').replace(/"/g, '&quot;')}" placeholder="Название стрима" />
+      </div>
+      
+      <div>
+        <label style="display:block; margin-bottom:4px; font-weight:500;">URL стрима</label>
+        <input id="streamModalUrl" class="input" value="${(streamUrl || '').replace(/"/g, '&quot;')}" placeholder="https://example.com/stream.m3u8" spellcheck="false" />
+        <div class="meta" style="margin-top:4px; font-size:0.85rem; color:var(--text-secondary);">
+          Поддерживаются HTTP/HTTPS стримы (HLS, DASH, MPEG-TS)
+        </div>
+      </div>
+      
+      <div>
+        <label style="display:block; margin-bottom:4px; font-weight:500;">Протокол</label>
+        <select id="streamModalProtocol" class="input">
+          <option value="auto" ${streamProtocol === 'auto' || !streamProtocol ? 'selected' : ''}>Автоопределение</option>
+          <option value="hls" ${streamProtocol === 'hls' ? 'selected' : ''}>HLS (.m3u8)</option>
+          <option value="dash" ${streamProtocol === 'dash' ? 'selected' : ''}>DASH (.mpd)</option>
+          <option value="mpegts" ${streamProtocol === 'mpegts' ? 'selected' : ''}>MPEG-TS</option>
+        </select>
+        <div class="meta" style="margin-top:4px; font-size:0.85rem; color:var(--text-secondary);">
+          Если не уверены, оставьте "Автоопределение"
+        </div>
+      </div>
+      
+      <div id="streamModalError" style="color:var(--danger); font-size:0.875rem; display:none;"></div>
+      
+      <div style="display:flex; gap:var(--space-sm);">
+        <button id="streamModalSaveBtn" class="primary" style="flex:1;">${isEdit ? 'Сохранить' : 'Добавить'}</button>
+        <button id="streamModalCancelBtn" class="secondary" style="flex:1;">Отмена</button>
+      </div>
+    </div>
+  `;
+  
+  showModal(title, content);
+  
+  // Обработчики после рендера модального окна
+  setTimeout(() => {
+    const nameInput = document.getElementById('streamModalName');
+    const urlInput = document.getElementById('streamModalUrl');
+    const protocolSelect = document.getElementById('streamModalProtocol');
+    const saveBtn = document.getElementById('streamModalSaveBtn');
+    const cancelBtn = document.getElementById('streamModalCancelBtn');
+    const errorEl = document.getElementById('streamModalError');
+    
+    if (!nameInput || !urlInput || !protocolSelect || !saveBtn || !cancelBtn) return;
+    
+    // Автоопределение протокола при вводе URL
+    urlInput.addEventListener('input', () => {
+      const url = urlInput.value.trim().toLowerCase();
+      if (!url) return;
+      
+      // Автоматически определяем протокол
+      if (url.includes('.m3u8') || url.includes('format=m3u8')) {
+        protocolSelect.value = 'hls';
+      } else if (url.includes('.mpd') || url.includes('format=mpd') || url.includes('dash')) {
+        protocolSelect.value = 'dash';
+      } else if (protocolSelect.value === 'auto') {
+        // Оставляем auto если не определили
+      }
+    });
+    
+    const doSave = async () => {
+      const newName = nameInput.value.trim();
+      const newUrl = urlInput.value.trim();
+      const newProtocol = protocolSelect.value;
+      
+      if (!newName) {
+        errorEl.textContent = 'Введите название стрима';
+        errorEl.style.display = 'block';
+        return;
+      }
+      
+      if (!newUrl) {
+        errorEl.textContent = 'Введите URL стрима';
+        errorEl.style.display = 'block';
+        return;
+      }
+      
+      // Валидация URL
+      try {
+        const urlObj = new URL(newUrl);
+        if (!['http:', 'https:'].includes(urlObj.protocol)) {
+          errorEl.textContent = 'Поддерживаются только HTTP/HTTPS стримы';
+          errorEl.style.display = 'block';
+          return;
+        }
+      } catch (e) {
+        errorEl.textContent = 'Некорректный URL';
+        errorEl.style.display = 'block';
+        return;
+      }
+      
+      saveBtn.disabled = true;
+      saveBtn.textContent = isEdit ? 'Сохранение...' : 'Добавление...';
+      errorEl.style.display = 'none';
+      
+      try {
+        let res;
+        if (isEdit) {
+          // Редактирование существующего стрима
+          res = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/streams/${encodeURIComponent(safeName)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: newName,
+              url: newUrl,
+              protocol: newProtocol
+            })
+          });
+        } else {
+          // Добавление нового стрима
+          res = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/streams`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: newName,
+              url: newUrl,
+              protocol: newProtocol
+            })
+          });
+        }
+        
+        if (res.ok) {
+          closeModal();
+          if (onSuccess) {
+            await onSuccess();
+          }
+        } else {
+          const error = await res.json();
+          errorEl.textContent = error.error || (isEdit ? 'Ошибка сохранения' : 'Ошибка добавления');
+          errorEl.style.display = 'block';
+          saveBtn.disabled = false;
+          saveBtn.textContent = isEdit ? 'Сохранить' : 'Добавить';
+        }
+      } catch (err) {
+        errorEl.textContent = 'Ошибка подключения';
+        errorEl.style.display = 'block';
+        saveBtn.disabled = false;
+        saveBtn.textContent = isEdit ? 'Сохранить' : 'Добавить';
+      }
+    };
+    
+    saveBtn.onclick = doSave;
+    cancelBtn.onclick = () => closeModal();
+    urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSave(); });
+    nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') urlInput.focus(); });
+    
+    // Фокус на первое пустое поле
+    if (isEdit) {
+      nameInput.focus();
+    } else {
+      nameInput.focus();
+    }
+  }, 100);
+}
+
 export async function loadFilesWithStatus(deviceId) {
   const res = await adminFetch(`/api/devices/${deviceId}/files-with-status`);
   return await res.json();
@@ -67,7 +244,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
   
   panelEl.innerHTML = `
     <ul class="list" style="display:grid; gap:var(--space-sm)">
-      ${files.map(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, streamProtocol }) => {
+      ${files.map(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, streamUrl, streamProtocol }) => {
         // placeholders allowed only for image/video (no pdf/pptx/folders)
         const isStreaming = contentType === 'streaming';
         const isEligible = !isStreaming && /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp)$/i.test(safeName);
@@ -179,7 +356,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
               </div>
             </div>
             <div class="file-item-actions">
-              <button class="meta-lg previewFileBtn" data-safe="${encodeURIComponent(safeName)}" data-original="${encodeURIComponent(originalName)}" data-stream-protocol="${streamProtocol || ''}" data-content-type="${contentType || ''}" title="Предпросмотр" ${!canPlay ? 'disabled' : ''}>Превью</button>
+              ${isStreaming ? `<button class="meta-lg editStreamBtn" data-safe="${encodeURIComponent(safeName)}" data-original="${encodeURIComponent(originalName)}" data-stream-url="${encodeURIComponent(streamUrl || '')}" data-stream-protocol="${encodeURIComponent(streamProtocol || '')}" data-content-type="${contentType || ''}" title="Изменить стрим">Изменить</button>` : `<button class="meta-lg previewFileBtn" data-safe="${encodeURIComponent(safeName)}" data-original="${encodeURIComponent(originalName)}" data-stream-protocol="${streamProtocol || ''}" data-content-type="${contentType || ''}" title="Предпросмотр" ${!canPlay ? 'disabled' : ''}>Превью</button>`}
               ${isEligible ? `<button class="meta-lg makeDefaultBtn" data-safe="${encodeURIComponent(safeName)}" data-original="${encodeURIComponent(originalName)}" title="Сделать заглушкой" ${!canPlay ? 'disabled' : ''}>Заглушка</button>` : ``}
               <button class="danger meta-lg delFileBtn" data-safe="${encodeURIComponent(safeName)}" data-original="${encodeURIComponent(originalName)}" title="Удалить">Удалить</button>
             </div>
@@ -213,6 +390,29 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
   } else if (filePagerAdmin) {
     filePagerAdmin.innerHTML = '';
   }
+
+  // Обработчик кнопки "Изменить" для стримов
+  panelEl.querySelectorAll('.editStreamBtn').forEach(btn => {
+    btn.onclick = async () => {
+      const safeName = decodeURIComponent(btn.getAttribute('data-safe'));
+      const originalName = decodeURIComponent(btn.getAttribute('data-original'));
+      const currentStreamUrl = decodeURIComponent(btn.getAttribute('data-stream-url') || '');
+      const currentProtocol = decodeURIComponent(btn.getAttribute('data-stream-protocol') || '');
+      
+      await showStreamModal({
+        deviceId,
+        mode: 'edit',
+        safeName,
+        originalName,
+        streamUrl: currentStreamUrl,
+        streamProtocol: currentProtocol,
+        onSuccess: async () => {
+          await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, filePage, socket);
+          socket.emit('devices/updated');
+        }
+      });
+    };
+  });
 
   panelEl.querySelectorAll('.previewFileBtn').forEach(btn => {
     btn.onclick = async () => {
@@ -277,7 +477,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
                     <img src="${url}" 
                          alt="${idx + 1}" 
                          loading="lazy"
-                         style="width:100%; height:100%; object-fit:cover; display:block"
+                         style="width:100%; height:100%; object-fit:contain; display:block"
                          onerror="this.parentElement.innerHTML='<div style=\\'display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);font-size:10px\\'>Ошибка</div>'">
                     <div style="position:absolute; bottom:2px; right:4px; background:rgba(0,0,0,0.7); color:#fff; padding:2px 4px; border-radius:3px; font-size:10px">${idx + 1}</div>
                   </div>

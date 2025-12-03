@@ -161,24 +161,22 @@ export function setupStaticFiles(app) {
     
     // КРИТИЧНО: Применяем sanitizePathFragment к частям пути, как в stream-manager.js
     // Это гарантирует, что путь совпадает с тем, что создает FFmpeg
-    // Путь должен быть: deviceId/safeName/index.m3u8 или deviceId/safeName/segment_00001.ts
+    // КРИТИЧНО: Убрали deviceId из пути - стримы теперь идентифицируются только по safeName
+    // Путь должен быть: safeName/index.m3u8 или safeName/segment_00001.ts
     let filePath;
-    if (decodedParts.length >= 2) {
-      const deviceId = decodedParts[0];
-      const safeName = decodedParts[1];
-      const sanitizedDevice = sanitizePathFragment(deviceId);
+    if (decodedParts.length >= 1) {
+      const safeName = decodedParts[0];
       const sanitizedFile = sanitizePathFragment(safeName);
-      const restOfPath = decodedParts.slice(2).join('/'); // index.m3u8 или segment_00001.ts
+      const restOfPath = decodedParts.slice(1).join('/'); // index.m3u8 или segment_00001.ts
       
       // КРИТИЧНО: Формируем путь так же, как в stream-manager.js._getPaths()
+      // КРИТИЧНО: Убрали deviceId из пути - стримы теперь идентифицируются только по safeName
       // Используем getStreamsOutputDir() из настроек (contentRoot/streams)
-      filePath = path.join(getStreamsOutputDir(), sanitizedDevice, sanitizedFile, restOfPath);
+      filePath = path.join(getStreamsOutputDir(), sanitizedFile, restOfPath);
       
       logger.debug('[Express] Stream file path constructed', {
         originalRelativePath: relativePath,
-        deviceId,
         safeName,
-        sanitizedDevice,
         sanitizedFile,
         restOfPath,
         filePath,
@@ -203,30 +201,28 @@ export function setupStaticFiles(app) {
     
     // КРИТИЧНО: Проверяем статус job через streamManager перед ожиданием
     // Если job не существует или остановлен - сразу возвращаем 404
-    // КРИТИЧНО: Используем уже декодированные части пути
+    // КРИТИЧНО: Путь теперь: safeName/index.m3u8 (без deviceId)
     let shouldWait = false;
-    if (decodedParts && decodedParts.length >= 2) {
+    if (decodedParts && decodedParts.length >= 1) {
       try {
-        const deviceId = decodedParts[0];
-        const safeName = decodedParts[1];
+        const safeName = decodedParts[0];
         const streamManager = getStreamManager();
         
         if (streamManager) {
-          const status = streamManager.getStatus(deviceId, safeName);
-          // КРИТИЧНО: Ждем только если job существует и в статусе starting или running
-          if (status && (status.status === 'starting' || status.status === 'running')) {
+          // КРИТИЧНО: Используем публичный метод для проверки статуса по safeName
+          const jobStatus = streamManager.getJobStatusBySafeName(safeName);
+          
+          if (jobStatus && (jobStatus.status === 'starting' || jobStatus.status === 'running')) {
             shouldWait = true;
             logger.debug('[Express] Stream job is active, waiting for file', {
-              deviceId,
               safeName,
-              status: status.status
+              status: jobStatus.status
             });
-          } else if (!status) {
+          } else if (!jobStatus) {
             // КРИТИЧНО: Job не существует - НЕ запускаем автоматически (lazy loading отключен)
             // Стрим должен быть запущен явно через control/play, а не автоматически при запросе плейлиста
             // Это предотвращает нежелательный запуск FFmpeg при простом просмотре списка стримов
             logger.debug('[Express] Stream job not found, not starting automatically (lazy loading disabled)', {
-              deviceId,
               safeName,
               message: 'Stream must be started explicitly via control/play'
             });
@@ -234,9 +230,8 @@ export function setupStaticFiles(app) {
           } else {
             // Job существует, но в другом статусе - не ждем
             logger.debug('[Express] Stream job not active, not waiting', {
-              deviceId,
               safeName,
-              status: status?.status || 'not_found'
+              status: jobStatus?.status || 'not_found'
             });
           }
         }
@@ -246,7 +241,7 @@ export function setupStaticFiles(app) {
         shouldWait = true;
       }
     } else {
-      // Не можем определить deviceId/safeName - ждем (fallback)
+      // Не можем определить safeName - ждем (fallback)
       shouldWait = true;
     }
     
@@ -290,19 +285,17 @@ export function setupStaticFiles(app) {
         }
         
         // КРИТИЧНО: Периодически проверяем статус job, чтобы убедиться, что он все еще запускается
-        if (waitedTime > 5000 && decodedParts && decodedParts.length >= 2) {
+        if (waitedTime > 5000 && decodedParts && decodedParts.length >= 1) {
           try {
-            const deviceId = decodedParts[0];
-            const safeName = decodedParts[1];
+            const safeName = decodedParts[0];
             const streamManager = getStreamManager();
             if (streamManager) {
-              const status = streamManager.getStatus(deviceId, safeName);
+              const jobStatus = streamManager.getJobStatusBySafeName(safeName);
               // Если job остановился или не существует - прекращаем ожидание
-              if (!status || (status.status !== 'starting' && status.status !== 'running')) {
+              if (!jobStatus || (jobStatus.status !== 'starting' && jobStatus.status !== 'running')) {
                 logger.warn('[Express] Stream job stopped or not found during wait, stopping wait', {
-                  deviceId,
                   safeName,
-                  status: status?.status || 'not_found',
+                  status: jobStatus?.status || 'not_found',
                   waitedTime,
                   checkCount
                 });
@@ -338,33 +331,33 @@ export function setupStaticFiles(app) {
         shouldWait
       };
       
-      if (decodedParts && decodedParts.length >= 2) {
+      if (decodedParts && decodedParts.length >= 1) {
         // КРИТИЧНО: Применяем sanitizePathFragment для совпадения с путями из stream-manager.js
-        const sanitizedDevice = sanitizePathFragment(decodedParts[0]);
-        const sanitizedFile = sanitizePathFragment(decodedParts[1]);
-        const deviceFolder = path.join(getStreamsOutputDir(), sanitizedDevice);
-        const streamFolder = path.join(deviceFolder, sanitizedFile);
-        diagnosticInfo.deviceFolderExists = fs.existsSync(deviceFolder);
+        const safeName = decodedParts[0];
+        const sanitizedFile = sanitizePathFragment(safeName);
+        const streamFolder = path.join(getStreamsOutputDir(), sanitizedFile);
         diagnosticInfo.streamFolderExists = fs.existsSync(streamFolder);
         
-        if (fs.existsSync(deviceFolder)) {
+        if (fs.existsSync(streamFolder)) {
           try {
-            diagnosticInfo.deviceFolderContents = fs.readdirSync(deviceFolder);
+            diagnosticInfo.streamFolderContents = fs.readdirSync(streamFolder);
           } catch (e) {
-            diagnosticInfo.deviceFolderReadError = e.message;
+            diagnosticInfo.streamFolderReadError = e.message;
           }
         }
         
         // КРИТИЧНО: Добавляем информацию о статусе job
         try {
-          const deviceId = decodedParts[0];
-          const safeName = decodedParts[1];
           const streamManager = getStreamManager();
           if (streamManager) {
-            const status = streamManager.getStatus(deviceId, safeName);
-            diagnosticInfo.streamStatus = status?.status || 'not_found';
-            diagnosticInfo.streamRestarts = status?.restarts;
-            diagnosticInfo.streamLastError = status?.lastError;
+            const jobStatus = streamManager.getJobStatusBySafeName(safeName);
+            if (jobStatus) {
+              diagnosticInfo.streamStatus = jobStatus.status || 'not_found';
+              diagnosticInfo.streamRestarts = jobStatus.restarts;
+              diagnosticInfo.streamLastError = jobStatus.lastError;
+            } else {
+              diagnosticInfo.streamStatus = 'not_found';
+            }
           }
         } catch (e) {
           diagnosticInfo.streamStatusCheckError = e.message;
@@ -398,12 +391,12 @@ export function setupStaticFiles(app) {
     if (/\.m3u8$/i.test(filePath)) {
       // КРИТИЧНО: Обновляем время последнего доступа при каждом запросе плейлиста
       // Это позволяет отслеживать активность стрима для автоматической остановки FFmpeg
-      if (decodedParts && decodedParts.length >= 2) {
-        const deviceId = decodedParts[0];
-        const safeName = decodedParts[1];
+      // КРИТИЧНО: Путь теперь safeName/index.m3u8 (без deviceId)
+      if (decodedParts && decodedParts.length >= 1) {
+        const safeName = decodedParts[0];
         const streamManager = getStreamManager();
         if (streamManager) {
-          streamManager.updateLastAccess(deviceId, safeName);
+          streamManager.updateLastAccessBySafeName(safeName);
         }
       }
       
@@ -426,12 +419,12 @@ export function setupStaticFiles(app) {
     if (/\.ts$/i.test(filePath)) {
       // КРИТИЧНО: Обновляем время последнего доступа при каждом запросе сегмента
       // Это позволяет отслеживать активность стрима для автоматической остановки FFmpeg
-      if (decodedParts && decodedParts.length >= 2) {
-        const deviceId = decodedParts[0];
-        const safeName = decodedParts[1];
+      // КРИТИЧНО: Путь теперь safeName/segment_00001.ts (без deviceId)
+      if (decodedParts && decodedParts.length >= 1) {
+        const safeName = decodedParts[0];
         const streamManager = getStreamManager();
         if (streamManager) {
-          streamManager.updateLastAccess(deviceId, safeName);
+          streamManager.updateLastAccessBySafeName(safeName);
         }
       }
       
