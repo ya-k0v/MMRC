@@ -1750,6 +1750,13 @@ class StreamManager extends EventEmitter {
       if (job.process) {
         try {
           const cleanupOnExit = () => {
+            // Отменяем таймауты принудительной очистки, так как процесс завершился нормально
+            if (job._cleanupTimeouts) {
+              clearTimeout(job._cleanupTimeouts.forceKillTimeout);
+              clearTimeout(job._cleanupTimeouts.forceCleanupTimeout);
+              delete job._cleanupTimeouts;
+            }
+            
             if (job.process) {
               job.process.removeAllListeners('exit');
               job.process.removeAllListeners('error');
@@ -1779,7 +1786,8 @@ class StreamManager extends EventEmitter {
           
           job.process.kill('SIGTERM');
           
-          setTimeout(() => {
+          // Таймаут для принудительного завершения
+          const forceKillTimeout = setTimeout(() => {
               if (job.process && !job.process.killed) {
               logger.warn('[StreamManager] Force killing FFmpeg', {
                 safeName: safeNameSanitized,
@@ -1788,15 +1796,86 @@ class StreamManager extends EventEmitter {
                 job.process.kill('SIGKILL');
             }
           }, 5000);
+          
+          // Таймаут для принудительной очистки джоба, даже если процесс не завершился
+          const forceCleanupTimeout = setTimeout(() => {
+            // Проверяем, не завершился ли процесс
+            const isProcessAlive = job.process && !job.process.killed && this._checkProcessAlive(job.process);
+            
+            if (isProcessAlive) {
+              logger.warn('[StreamManager] Process still alive after kill, attempting final SIGKILL and force cleaning up job', {
+                safeName: safeNameSanitized,
+                pid: job.process?.pid
+              });
+              // Последняя попытка убить процесс
+              try {
+                if (job.process && !job.process.killed) {
+                  job.process.kill('SIGKILL');
+                }
+              } catch (killErr) {
+                logger.error('[StreamManager] Error in final SIGKILL attempt', {
+                  safeName: safeNameSanitized,
+                  pid: job.process?.pid,
+                  error: killErr.message
+                });
+              }
+            } else {
+              logger.info('[StreamManager] Process already dead, force cleaning up job', {
+                safeName: safeNameSanitized,
+                pid: job.process?.pid
+              });
+            }
+            
+            // Принудительно очищаем джоб
+            clearTimeout(forceKillTimeout);
+            if (job.process) {
+              try {
+                job.process.removeAllListeners('exit');
+                job.process.removeAllListeners('error');
+                if (job.process.stderr) {
+                  job.process.stderr.removeAllListeners('data');
+                }
+              } catch (e) {
+                // Игнорируем ошибки при удалении слушателей
+              }
+            }
+            
+            // Удаляем все записи
+            this.jobs.delete(safeNameSanitized);
+            this.nameToJobMap.delete(safeNameSanitized);
+            
+            // Очищаем файлы
+            this._cleanupFolder(folderPathToClean);
+            
+            this.emit('stream:stopped', { deviceId, safeName: safeNameSanitized, reason });
+            logger.info('[StreamManager] Job force cleaned after timeout', {
+              safeName: safeNameSanitized,
+              reason,
+              folderPath: folderPathToClean,
+              processWasAlive: isProcessAlive
+            });
+          }, 10000); // 10 секунд на полную очистку
+          
+          // Сохраняем ссылку на таймауты для отмены при нормальном завершении
+          job._cleanupTimeouts = { forceKillTimeout, forceCleanupTimeout };
         } catch (err) {
           logger.error('[StreamManager] Error stopping FFmpeg', {
             safeName: safeNameSanitized,
             error: err.message
           });
+          
+          // Отменяем таймауты при ошибке
+          if (job._cleanupTimeouts) {
+            clearTimeout(job._cleanupTimeouts.forceKillTimeout);
+            clearTimeout(job._cleanupTimeouts.forceCleanupTimeout);
+            delete job._cleanupTimeouts;
+          }
+          
           // Очищаем даже при ошибке
           this.jobs.delete(safeNameSanitized);
           this.nameToJobMap.delete(safeNameSanitized);
           this._cleanupFolder(folderPathToClean);
+          this.emit('stream:stopped', { deviceId, safeName: safeNameSanitized, reason });
         }
       } else {
         // Если процесса нет, сразу очищаем
