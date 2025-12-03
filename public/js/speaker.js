@@ -24,9 +24,9 @@ async function clearPwaCachesOnLaunch() {
     console.log('[Speaker] PWA cache cleared on launch', result);
 
     // После очистки кэша перезагружаем страницу, чтобы все ресурсы подтянулись заново
-    setTimeout(() => {
+          setTimeout(() => {
       window.location.reload();
-    }, 150);
+}, 150);
   } catch (err) {
     sessionStorage.removeItem(SPEAKER_CACHE_SESSION_FLAG);
     console.warn('[Speaker] Не удалось очистить PWA-кэш при запуске:', err);
@@ -54,7 +54,7 @@ function sendMessageToServiceWorker(worker, message, timeoutMs = 5000) {
 
     try {
       worker.postMessage(message, [channel.port2]);
-    } catch (err) {
+  } catch (err) {
       clearTimeout(timer);
       reject(err);
     }
@@ -428,6 +428,17 @@ const VOLUME_SOCKET_WAIT_MS = 1500;
 const volumeFallbackTimers = new Map();
 let isVideoSeeking = false;
 let videoProgressTooltip = null;
+
+// Получение размера страницы с учетом мобильных устройств
+// На мобильных (≤767px) всегда возвращает 5, на десктопе - динамический расчет
+function getMobilePageSize(itemType = null) {
+  // На мобильных используем фиксированное значение 5
+  if (window.innerWidth <= 767) {
+    return 5;
+  }
+  // На десктопе используем динамический расчет
+  return getPageSize(itemType);
+}
 
 function clearVolumeFallback(deviceId) {
   if (!deviceId) return;
@@ -1412,7 +1423,7 @@ async function loadDevices() {
         });
       }
     });
-    const pageSize = getPageSize(); // Динамическое значение на основе высоты экрана
+    const pageSize = getMobilePageSize(); // Фиксированное значение 5 на мобильных
     const totalPages = Math.max(1, Math.ceil(devices.length / pageSize));
     if (tvPage >= totalPages) tvPage = totalPages - 1;
     updateDevicesCount();
@@ -1469,10 +1480,11 @@ function renderTvTile(device) {
   `;
 }
 
+
 function renderTVList() {
   // Сортируем устройства перед отображением (на случай если список обновился)
   const sortedDevices = sortDevices(devices);
-  const pageSize = getPageSize(); // Динамическое значение на основе высоты экрана
+  const pageSize = getMobilePageSize(); // Фиксированное значение 5 на мобильных
   const totalPages = Math.max(1, Math.ceil(sortedDevices.length / pageSize));
   if (tvPage >= totalPages) tvPage = totalPages - 1;
   const start = tvPage * pageSize;
@@ -1694,8 +1706,8 @@ async function loadFiles() {
   // Обновляем отображение прогресса из кэша (если есть)
   updatePlaybackInfoUI();
 
-  // Пагинация файлов (используем меньшую высоту для файлов)
-  const pageSize = getPageSize('file'); // Динамическое значение на основе высоты экрана (60px для файлов)
+  // Пагинация файлов (фиксированное значение 5 на мобильных)
+  const pageSize = getMobilePageSize('file'); // Фиксированное значение 5 на мобильных
   const totalPages = Math.max(1, Math.ceil(allFiles.length / pageSize));
   if (filePage >= totalPages) filePage = totalPages - 1;
   const start = filePage * pageSize;
@@ -1930,6 +1942,10 @@ async function loadFiles() {
           setTimeout(loadPreview, 0);
         }
       } else {
+        // На мобильных отключаем превью для видео и изображений (только папки/PPTX/PDF)
+        if (window.innerWidth <= 767) {
+          return; // Не показываем превью для видео/изображений на мобильных
+        }
         // Для видео и обычных изображений показываем в iframe - быстрая операция
         
         // КРИТИЧНО: Останавливаем отслеживание превью стрима если было активно
@@ -3507,5 +3523,205 @@ function attachTouchGestures() {
       else socket.emit('control/pdfPrev', { device_id: currentDevice });
     }
   }, { passive: true });
+}
+
+// Мобильные табы
+function initMobileTabs() {
+  const mobileTabs = document.getElementById('mobileTabs');
+  if (!mobileTabs) return;
+  
+  // Показываем табы только на мобильных
+  const checkMobile = () => {
+    const isMobile = window.innerWidth <= 767;
+    mobileTabs.style.display = isMobile ? 'flex' : 'none';
+    
+    if (isMobile) {
+      // По умолчанию показываем устройства
+      if (!document.querySelector('.active-tab')) {
+        showTab('devices');
+      }
+    } else {
+      // На десктопе показываем все панели
+      document.querySelectorAll('.devices-panel, .files-panel, .preview-panel').forEach(panel => {
+        panel.style.display = '';
+        panel.classList.add('active-tab');
+      });
+    }
+  };
+  
+  // Обработчики кликов по табам
+  mobileTabs.querySelectorAll('.mobile-tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.getAttribute('data-tab');
+      showTab(tab);
+    });
+  });
+  
+  // Функция переключения таба
+  window.showTab = (tabName) => {
+    // Убираем активный класс со всех кнопок
+    mobileTabs.querySelectorAll('.mobile-tab-btn').forEach(btn => {
+      btn.classList.remove('active');
+    });
+    
+    // Убираем активный класс со всех панелей
+    document.querySelectorAll('.devices-panel, .files-panel, .preview-panel').forEach(panel => {
+      panel.classList.remove('active-tab');
+    });
+    
+    // Активируем выбранную кнопку
+    const activeBtn = mobileTabs.querySelector(`[data-tab="${tabName}"]`);
+    if (activeBtn) {
+      activeBtn.classList.add('active');
+    }
+    
+    // Показываем выбранную панель
+    let activePanel = null;
+    if (tabName === 'devices') {
+      activePanel = document.querySelector('.devices-panel');
+    } else if (tabName === 'files') {
+      activePanel = document.querySelector('.files-panel');
+    } else if (tabName === 'preview') {
+      activePanel = document.querySelector('.preview-panel');
+    }
+    
+    if (activePanel) {
+      activePanel.classList.add('active-tab');
+    }
+  };
+  
+  // Проверяем при загрузке и изменении размера
+  checkMobile();
+  window.addEventListener('resize', debounce(checkMobile, 250));
+  
+  // Автоматическое переключение на файлы при выборе устройства
+  const originalOpenDevice = window.openDevice;
+  if (typeof originalOpenDevice === 'function') {
+    window.openDevice = function(...args) {
+      originalOpenDevice.apply(this, args);
+      if (window.innerWidth <= 767) {
+        setTimeout(() => showTab('files'), 100);
+      }
+    };
+  }
+  
+  // Автоматическое переключение на превью при выборе файла (только если не видео)
+  // Это нужно добавить в функцию, которая обрабатывает клик по файлу
+}
+
+// Инициализация мобильных табов при загрузке
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initMobileTabs);
+} else {
+  initMobileTabs();
+}
+
+// Мобильный аккордеон
+function initMobileAccordion() {
+  const isMobile = () => window.innerWidth <= 767;
+  
+  // Функция переключения панели
+  const togglePanel = (panelName) => {
+    if (!isMobile()) return;
+    
+    const header = document.querySelector(`.accordion-header[data-panel="${panelName}"]`);
+    const panel = document.querySelector(`.${panelName}-panel`);
+    
+    if (!header || !panel) return;
+    
+    const isExpanded = panel.classList.contains('expanded');
+    
+    // Закрываем все панели
+    document.querySelectorAll('.devices-panel, .files-panel, .preview-panel').forEach(p => {
+      p.classList.remove('expanded');
+    });
+    document.querySelectorAll('.accordion-header').forEach(h => {
+      h.classList.remove('expanded', 'active');
+    });
+    
+    // Если панель была закрыта - открываем её
+    if (!isExpanded) {
+      panel.classList.add('expanded');
+      header.classList.add('expanded', 'active');
+    }
+  };
+  
+  // Обработчики кликов по заголовкам
+  document.querySelectorAll('.accordion-header').forEach(header => {
+    header.addEventListener('click', () => {
+      const panelName = header.getAttribute('data-panel');
+      togglePanel(panelName);
+    });
+  });
+  
+  // Инициализация: открываем первую панель (Устройства) на мобильных
+  const initAccordion = () => {
+    if (isMobile()) {
+      // По умолчанию открываем устройства
+      if (!document.querySelector('.expanded')) {
+        togglePanel('devices');
+      }
+    } else {
+      // На десктопе показываем все панели
+      document.querySelectorAll('.devices-panel, .files-panel, .preview-panel').forEach(panel => {
+        panel.classList.add('expanded');
+      });
+    }
+  };
+  
+  // Синхронизация счетчиков между мобильным и десктопным заголовками
+  const syncCounters = () => {
+    const devicesMeta = document.getElementById('devicesMeta');
+    const devicesMetaMobile = document.getElementById('devicesMetaMobile');
+    if (devicesMeta && devicesMetaMobile) {
+      devicesMetaMobile.textContent = devicesMeta.textContent;
+    }
+    
+    const filesMeta = document.getElementById('filesPaneMeta');
+    const filesMetaMobile = document.getElementById('filesPaneMetaMobile');
+    if (filesMeta && filesMetaMobile) {
+      filesMetaMobile.textContent = filesMeta.textContent;
+    }
+    
+    const filesTitle = document.getElementById('filesPaneTitle');
+    const filesTitleMobile = document.getElementById('filesPaneTitleMobile');
+    if (filesTitle && filesTitleMobile) {
+      filesTitleMobile.textContent = filesTitle.textContent;
+    }
+  };
+  
+  // Обсервер для синхронизации счетчиков
+  const observer = new MutationObserver(syncCounters);
+  const devicesMeta = document.getElementById('devicesMeta');
+  const filesMeta = document.getElementById('filesPaneMeta');
+  const filesTitle = document.getElementById('filesPaneTitle');
+  
+  if (devicesMeta) observer.observe(devicesMeta, { childList: true, characterData: true, subtree: true });
+  if (filesMeta) observer.observe(filesMeta, { childList: true, characterData: true, subtree: true });
+  if (filesTitle) observer.observe(filesTitle, { childList: true, characterData: true, subtree: true });
+  
+  // Автоматическое переключение на файлы при выборе устройства
+  const originalSelectDevice = window.selectDevice || (async () => {});
+  window.selectDevice = async function(...args) {
+    await originalSelectDevice.apply(this, args);
+    if (isMobile()) {
+      setTimeout(() => togglePanel('files'), 100);
+    }
+  };
+  
+  // Проверяем при загрузке и изменении размера
+  initAccordion();
+  syncCounters();
+  window.addEventListener('resize', debounce(() => {
+    initAccordion();
+    syncCounters();
+  }, 250));
+}
+
+// Инициализация мобильного аккордеона
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initMobileAccordion);
+} else {
+  initMobileAccordion();
 }
 

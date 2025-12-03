@@ -50,16 +50,17 @@
     
     /* Минимальные высоты для вертикального режима */
     .sidebar {
-      min-height: 280px;
-      max-height: 400px;
+      min-height: auto;
+      max-height: none;
       display: flex;
       flex-direction: column;
     }
     
     #tvList {
-      overflow-y: auto;
-      max-height: 320px;
-      min-height: 220px;
+      overflow-y: visible;
+      overflow-x: hidden;
+      max-height: none;
+      min-height: auto;
     }
     
     .speaker-main > .panel:first-child {
@@ -94,6 +95,12 @@
       .speaker-main > .panel:first-child #fileList {
         min-height: 0;
         max-height: none;
+      }
+      
+      /* Убираем скролл у списка устройств на десктопе */
+      #tvList {
+        overflow-y: visible;
+        overflow-x: hidden;
       }
     }
     
@@ -171,6 +178,83 @@
       opacity: 0.6;
     }
     
+    /* ===== Мобильная версия ===== */
+    @media (max-width: 767px) {
+      /* Увеличиваем высоту плиток устройств на мобильных */
+      .speaker-layout .tvTile {
+        height: 90px !important;
+        min-height: 90px !important;
+      }
+      
+      /* Скрываем видео превью на мобильных */
+      .speaker-layout .preview-panel #filePreview > iframe,
+      .speaker-layout .preview-panel #filePreview > video {
+        display: none !important;
+      }
+      
+      /* Отключаем клики по превью на мобильных (кроме папок/PPTX/PDF) */
+      /* Миниатюры (thumbnail-preview) остаются кликабельными */
+      .speaker-layout .preview-panel #filePreview:has(> iframe) {
+        pointer-events: none !important;
+      }
+      
+      .speaker-layout .preview-panel #filePreview:has(> video) {
+        pointer-events: none !important;
+      }
+      
+      /* Разрешаем клики по миниатюрам папок/PPTX/PDF */
+      .speaker-layout .preview-panel #filePreview:has(.thumbnail-preview),
+      .speaker-layout .preview-panel #filePreview:has(.static-preview-layout) {
+        pointer-events: auto !important;
+      }
+      
+      /* Скрываем весь контейнер превью, если внутри только iframe (видео превью) */
+      .speaker-layout .preview-panel #filePreview:has(> iframe:only-child),
+      .speaker-layout .preview-panel #filePreview:has(> video:only-child) {
+        display: none !important;
+      }
+      
+      /* Показываем превью папок (миниатюры) */
+      .speaker-layout .preview-panel #filePreview:has(.thumbnail-preview),
+      .speaker-layout .preview-panel #filePreview:has(.static-preview-layout) {
+        display: flex !important;
+      }
+      
+      /* Убираем скролл у списка устройств на мобильных */
+      .speaker-layout #tvList {
+        overflow-y: visible !important;
+        overflow-x: hidden !important;
+        max-height: none !important;
+        min-height: auto !important;
+      }
+      
+      /* Убираем фиксированные высоты у панели устройств на мобильных */
+      .speaker-layout .sidebar.devices-panel {
+        min-height: auto !important;
+        max-height: none !important;
+      }
+      
+      /* Превью папок на мобильных: показываем только 6 картинок с фиксированной высотой и скроллом */
+      .speaker-layout .preview-panel #filePreview .static-preview-layout {
+        display: flex !important;
+        flex-direction: column !important;
+      }
+      
+      .speaker-layout .preview-panel #filePreview .static-preview-scroll {
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        /* Фиксированная высота для показа ровно 3 рядов (6 картинок по 2 в ряду) */
+        /* Картинки с aspect-ratio 16/9, на мобильных в 2 колонки */
+        /* Примерная высота: (ширина/2 * 9/16) * 3 ряда + gap * 2 = ~300px */
+        max-height: 300px !important;
+        min-height: 300px !important;
+      }
+      
+      /* На мобильных 2 колонки для миниатюр */
+      .speaker-layout .preview-panel #filePreview .thumbnail-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+      }
+    }
   </style>
   <script src="/socket.io/socket.io.js"></script>
   <script type="module" src="/js/speaker.js"></script>
@@ -196,7 +280,7 @@
         <div class="meta" id="devicesMeta" style="margin:0; white-space:nowrap">0</div>
       </div>
       <div style="display:flex; flex-direction:column; gap:var(--space-md); flex:1 1 auto; min-height:0">
-        <ul id="tvList" class="list" style="flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; display:flex; flex-direction:column; gap:var(--space-sm)"></ul>
+        <ul id="tvList" class="list" style="flex:1 1 auto; min-height:0; overflow-y:visible; overflow-x:hidden; display:flex; flex-direction:column; gap:var(--space-sm)"></ul>
         <div id="tvPager" class="meta" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); flex-wrap:wrap"></div>
       </div>
     </aside>
