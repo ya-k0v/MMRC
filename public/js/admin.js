@@ -13,6 +13,7 @@ import { renderDeviceCard as renderDeviceCardModule } from './admin/device-card.
 import { setupUploadUI as setupUploadUIModule } from './admin/upload-ui.js';
 import { showDevicesModal, showUsersModal, showSettingsModal } from './admin/modal.js';
 import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon } from './shared/svg-icons.js';
+import { escapeHtml } from './shared/utils.js';
 import { initNotifications } from './admin/notifications.js';
 import { showNotificationsModal } from './admin/notifications-modal.js';
 
@@ -134,24 +135,36 @@ setupSocketListeners(socket, {
           const metaEl = pane.querySelector('.meta');
           if (metaEl) {
             // Обновляем строку с IP адресом в карточке устройства
-            const metaHTML = metaEl.innerHTML;
-            const ipRegex = /<span>• IP: [^<]+<\/span>/;
-            if (device.ipAddress) {
-              if (ipRegex.test(metaHTML)) {
-                // IP адрес уже отображается - обновляем его
-                metaEl.innerHTML = metaHTML.replace(ipRegex, `<span>• IP: ${device.ipAddress}</span>`);
+            // Используем DOM методы для безопасного обновления
+            const safeIp = device.ipAddress ? escapeHtml(device.ipAddress) : null;
+            
+            // Ищем существующий span с IP адресом
+            const existingIpSpan = Array.from(metaEl.querySelectorAll('span')).find(
+              span => span.textContent && span.textContent.includes('IP:')
+            );
+            
+            if (safeIp) {
+              if (existingIpSpan) {
+                // Обновляем существующий span через textContent (безопасно)
+                existingIpSpan.textContent = `• IP: ${safeIp}`;
               } else {
-                // IP адрес еще не был отображен - добавляем его перед ID
-                const idIndex = metaHTML.indexOf('<span>• ID:');
-                if (idIndex !== -1) {
-                  metaEl.innerHTML = metaHTML.slice(0, idIndex) + 
-                    `<span>• IP: ${device.ipAddress}</span> ` + 
-                    metaHTML.slice(idIndex);
+                // Создаем новый span для IP адреса
+                const ipSpan = document.createElement('span');
+                ipSpan.textContent = `• IP: ${safeIp}`;
+                
+                // Находим span с ID и вставляем IP перед ним
+                const idSpan = Array.from(metaEl.querySelectorAll('span')).find(
+                  span => span.textContent && span.textContent.includes('ID:')
+                );
+                if (idSpan && idSpan.parentNode) {
+                  idSpan.parentNode.insertBefore(ipSpan, idSpan);
+                } else {
+                  metaEl.appendChild(ipSpan);
                 }
               }
-            } else {
-              // IP адрес был удален - убираем его
-              metaEl.innerHTML = metaHTML.replace(ipRegex, '').replace(/\s+/g, ' ').trim();
+            } else if (existingIpSpan) {
+              // Удаляем IP span если IP адрес отсутствует
+              existingIpSpan.remove();
             }
           }
         }
@@ -307,7 +320,7 @@ function renderLayout() {
         <div class="title" style="margin:0; font-size:var(--font-size-base)">Устройства</div>
         <div style="display:flex; align-items:center; gap:var(--space-sm);">
           <div class="meta" id="devicesMeta" style="margin:0; white-space:nowrap">0</div>
-          <button id="devicesBtn" class="meta-lg" type="button" style="padding:6px; display:flex; align-items:center; justify-content:center; min-width:28px; height:28px;" title="Добавить устройство">
+          <button id="devicesBtn" class="meta-lg" type="button" style="padding:6px; display:flex; align-items:center; justify-content:center; min-width:28px; height:28px; border:none; background:transparent;" title="Добавить устройство">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
               <line x1="12" y1="5" x2="12" y2="19"></line>
               <line x1="5" y1="12" x2="19" y2="12"></line>

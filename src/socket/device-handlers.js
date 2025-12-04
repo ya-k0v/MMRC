@@ -553,8 +553,9 @@ export function handleDisconnect(socket, deps) {
       }
       
       const did = socket.data?.device_id;
-      
-      if (did && activeConnections.get(socket.id) === did) {
+      const trackedDeviceId = activeConnections.get(socket.id);
+
+      if (did) {
         const sockets = deviceSockets.get(did);
         if (sockets) {
           sockets.delete(socket.id);
@@ -564,6 +565,9 @@ export function handleDisconnect(socket, deps) {
             logSocket('info', `Device went offline: ${did}`, { socketId: socket.id, reason });
           }
         }
+      }
+
+      if (trackedDeviceId) {
         activeConnections.delete(socket.id);
         recordSocketEvent('disconnect');
       }

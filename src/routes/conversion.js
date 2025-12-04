@@ -139,6 +139,35 @@ export function createConversionRouter(deps) {
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       
       const stream = fs.createReadStream(imagePath);
+      
+      // КРИТИЧНО: Обрабатываем закрытие соединения клиентом
+      let isAborted = false;
+      const cleanup = () => {
+        isAborted = true;
+        if (stream && !stream.destroyed) {
+          stream.destroy();
+        }
+      };
+      
+      req.on('close', cleanup);
+      req.on('aborted', cleanup);
+      res.on('close', cleanup);
+      
+      stream.on('error', (err) => {
+        if (!isAborted) {
+          logger.error('[Conversion] Stream error', { 
+            error: err.message, 
+            imagePath 
+          });
+          if (!res.headersSent) {
+            res.status(500).end();
+          } else {
+            res.end();
+          }
+        }
+        cleanup();
+      });
+      
       stream.pipe(res);
       
     } catch (error) {

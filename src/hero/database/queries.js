@@ -173,32 +173,71 @@ export const heroQueries = {
       throw new Error('Type and media_base64 are required');
     }
     
+    // Белый список разрешенных колонок для безопасности
+    const ALLOWED_COLUMNS = ['hero_id', 'type', 'media_base64', 'caption', 'order_index', 'media_type', 'url'];
+    
     // Проверяем, какие колонки существуют в таблице
     const tableInfo = heroDb.prepare('PRAGMA table_info(hero_media)').all();
-    const columns = tableInfo.map(col => col.name);
-    const hasOldMediaType = columns.includes('media_type');
-    const hasOldUrl = columns.includes('url');
+    const existingColumns = new Set(tableInfo.map(col => col.name));
+    
+    // Функция для безопасной проверки существования колонки
+    const columnExists = (colName) => {
+      return ALLOWED_COLUMNS.includes(colName) && existingColumns.has(colName);
+    };
     
     // Преобразуем тип из новой схемы (photo/video) в старую (image/video)
     const oldMediaType = media.type === 'photo' ? 'image' : media.type;
     
-    // Строим запрос с учетом существующих колонок
-    let insertColumns = ['hero_id', 'type', 'media_base64', 'caption', 'order_index'];
-    let insertValues = [heroId, media.type, media.media_base64, media.caption || null, media.order_index || 0];
+    // Строим запрос с учетом существующих колонок (только из белого списка)
+    const insertColumns = [];
+    const insertValues = [];
+    
+    // Базовые колонки (проверяем существование)
+    if (columnExists('hero_id')) {
+      insertColumns.push('hero_id');
+      insertValues.push(heroId);
+    }
+    if (columnExists('type')) {
+      insertColumns.push('type');
+      insertValues.push(media.type);
+    }
+    if (columnExists('media_base64')) {
+      insertColumns.push('media_base64');
+      insertValues.push(media.media_base64);
+    }
+    if (columnExists('caption')) {
+      insertColumns.push('caption');
+      insertValues.push(media.caption || null);
+    }
+    if (columnExists('order_index')) {
+      insertColumns.push('order_index');
+      insertValues.push(media.order_index || 0);
+    }
     
     // Если есть старая колонка media_type, добавляем её для совместимости
-    if (hasOldMediaType) {
+    if (columnExists('media_type')) {
       insertColumns.push('media_type');
       insertValues.push(oldMediaType);
     }
     
     // Если есть старая колонка url, тоже заполняем её
-    if (hasOldUrl) {
+    if (columnExists('url')) {
       insertColumns.push('url');
       insertValues.push(media.media_base64); // Используем media_base64 как url
     }
     
+    // Финальная валидация: все имена колонок должны быть в белом списке
+    const invalidColumns = insertColumns.filter(col => !ALLOWED_COLUMNS.includes(col));
+    if (invalidColumns.length > 0) {
+      throw new Error(`Invalid column names detected: ${invalidColumns.join(', ')}`);
+    }
+    
+    if (insertColumns.length === 0) {
+      throw new Error('No valid columns found for insert');
+    }
+    
     const placeholders = insertColumns.map(() => '?').join(', ');
+    // Используем только валидированные имена колонок
     const stmt = heroDb.prepare(`
       INSERT INTO hero_media (${insertColumns.join(', ')})
       VALUES (${placeholders})

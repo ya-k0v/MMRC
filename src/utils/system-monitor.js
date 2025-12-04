@@ -17,6 +17,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
+import { timerRegistry } from './timer-registry.js';
 
 const execAsync = promisify(exec);
 
@@ -38,14 +39,14 @@ class SystemMonitor {
     const CHECK_INTERVAL = 5 * 60 * 1000;
     
     // Первая проверка через 30 секунд после запуска
-    setTimeout(() => {
+    timerRegistry.setTimeout(() => {
       this.checkAll();
-    }, 30000);
+    }, 30000, 'SystemMonitor initial check');
     
     // Потом каждые 5 минут
-    this.monitoringInterval = setInterval(() => {
+    this.monitoringInterval = timerRegistry.setInterval(() => {
       this.checkAll();
-    }, CHECK_INTERVAL);
+    }, CHECK_INTERVAL, 'SystemMonitor periodic check');
     
     logger.info('[SystemMonitor] Monitoring started', {
       interval: CHECK_INTERVAL
@@ -57,7 +58,7 @@ class SystemMonitor {
    */
   stop() {
     if (this.monitoringInterval) {
-      clearInterval(this.monitoringInterval);
+      timerRegistry.clear(this.monitoringInterval);
       this.monitoringInterval = null;
       logger.info('[SystemMonitor] Monitoring stopped');
     }

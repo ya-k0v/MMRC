@@ -81,8 +81,25 @@ router.get('/resolve/:deviceId/:fileName(*)', (req, res) => {
     });
   }
   
+  // КРИТИЧНО: Обрабатываем закрытие соединения клиентом
+  let isAborted = false;
+  const cleanup = () => {
+    isAborted = true;
+  };
+  
+  req.on('close', cleanup);
+  req.on('aborted', cleanup);
+  
   // Отправляем файл (Express автоматически обрабатывает Range requests)
   res.sendFile(metadata.file_path, options, (err) => {
+    req.removeListener('close', cleanup);
+    req.removeListener('aborted', cleanup);
+    
+    if (isAborted) {
+      // Клиент отменил запрос - это нормально, не логируем как ошибку
+      return;
+    }
+    
     if (err) {
       // ИСПРАВЛЕНО: Правильно обрабатываем ошибку Range Not Satisfiable
       if (err.message === 'Range Not Satisfiable') {
@@ -201,8 +218,25 @@ router.get('/preview/:deviceId/:fileName(*)', (req, res) => {
       }
     };
     
+    // КРИТИЧНО: Обрабатываем закрытие соединения клиентом
+    let isAborted = false;
+    const cleanup = () => {
+      isAborted = true;
+    };
+    
+    req.on('close', cleanup);
+    req.on('aborted', cleanup);
+    
     // Express автоматически обрабатывает Range requests
     res.sendFile(metadata.file_path, options, (err) => {
+      req.removeListener('close', cleanup);
+      req.removeListener('aborted', cleanup);
+      
+      if (isAborted) {
+        // Клиент отменил запрос - это нормально
+        return;
+      }
+      
       if (err) {
         if (err.message === 'Range Not Satisfiable') {
           logger.warn('[Preview] Range not satisfiable', { 
@@ -268,6 +302,35 @@ router.get('/preview/:deviceId/:fileName(*)', (req, res) => {
   
   const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
   
+  // КРИТИЧНО: Обрабатываем закрытие соединения клиентом
+  let isAborted = false;
+  const cleanup = () => {
+    isAborted = true;
+    // Убиваем процесс FFmpeg при отмене запроса
+    try {
+      if (ff && !ff.killed) {
+        ff.kill('SIGKILL');
+      }
+    } catch (killErr) {
+      // Игнорируем ошибки при убийстве процесса
+    }
+  };
+  
+  req.on('close', cleanup);
+  req.on('aborted', cleanup);
+  res.on('close', cleanup);
+  
+  // Обрабатываем ошибки потока
+  ff.stdout.on('error', (err) => {
+    if (!isAborted) {
+      logger.error('[Preview] FFmpeg stdout error', { error: err.message, streamUrl });
+      if (!res.headersSent) {
+        res.status(500).end('Preview generation failed');
+      }
+    }
+    cleanup();
+  });
+  
   ff.stdout.pipe(res);
   
   ff.stderr.on('data', (d) => {
@@ -275,13 +338,19 @@ router.get('/preview/:deviceId/:fileName(*)', (req, res) => {
   });
   
   ff.on('error', (err) => {
-    logger.error('[Preview] ffmpeg spawn error', { error: err.message, streamUrl });
-    if (!res.headersSent) res.status(500).end('Preview generation failed');
-    try { ff.kill('SIGKILL'); } catch {}
+    if (!isAborted) {
+      logger.error('[Preview] ffmpeg spawn error', { error: err.message, streamUrl });
+      if (!res.headersSent) res.status(500).end('Preview generation failed');
+    }
+    cleanup();
   });
   
   ff.on('close', (code) => {
-    if (code !== 0) {
+    req.removeListener('close', cleanup);
+    req.removeListener('aborted', cleanup);
+    res.removeListener('close', cleanup);
+    
+    if (!isAborted && code !== 0) {
       logger.warn('[Preview] ffmpeg exited with code', { code, streamUrl });
       if (!res.headersSent) res.status(500).end('Preview generation failed');
     }

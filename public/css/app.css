@@ -28,6 +28,13 @@
   --success: #10b981;
   --warning: #f59e0b;
   
+  /* Дополнительные переменные для совместимости */
+  --text-primary: var(--text);
+  --text-secondary: var(--muted);
+  --card-bg: var(--panel);
+  --bg-secondary: var(--panel-2);
+  --error: var(--danger);
+  
   --border: 1px solid rgba(255, 255, 255, 0.08);
   --border-2: 1px solid rgba(255, 255, 255, 0.12);
   --border-hover: 1px solid rgba(255, 255, 255, 0.18);
@@ -90,6 +97,13 @@ body.light {
   --text-2: #1f2937;
   --muted: #4b5563;
   --muted-2: #6b7280;
+  
+  /* Дополнительные переменные для совместимости (light theme) */
+  --text-primary: var(--text);
+  --text-secondary: var(--muted);
+  --card-bg: #fff;
+  --bg-secondary: #f4f6fb;
+  --error: var(--danger);
   
   --border: 1px solid rgba(15, 23, 42, 0.4);
   --border-2: 1px solid rgba(15, 23, 42, 0.45);
@@ -474,8 +488,9 @@ body.light button.danger:hover:not(:disabled) {
 }
 
 body.light .input {
-  background: #fff;
+  background: var(--card-bg);
   border-color: var(--border);
+  color: var(--text);
 }
 
 /* ===== Cards & Panels - Стандартизированные ===== */
@@ -902,7 +917,7 @@ body.light .resolution-badge {
 .previewHolder {
   width: 100%;
   height: 100%;
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--panel-2);
   border-radius: var(--radius-md);
   overflow: hidden;
 }

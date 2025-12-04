@@ -61,6 +61,7 @@ import { cleanupResolutionCache, getResolutionCacheSize } from './src/video/reso
 import { circuitBreakers } from './src/utils/circuit-breaker.js';
 import { getSettings, updateContentRootPath, getDataRoot, getDevicesPath, getStreamsOutputDir, getConvertedCache, getLogsDir, getTempDir } from './src/config/settings-manager.js';
 import { getMetrics } from './src/utils/metrics.js';
+import { timerRegistry } from './src/utils/timer-registry.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -795,7 +796,7 @@ server.listen(PORT, HOST, () => {
 
 // Очистка кэша разрешений видео (каждые 30 минут)
 // Удаляет записи для несуществующих файлов
-const cleanupInterval = setInterval(() => {
+const cleanupInterval = timerRegistry.setInterval(() => {
   const removed = cleanupResolutionCache();
   if (removed > 0) {
     logger.info('Resolution cache cleanup completed', { 
@@ -803,7 +804,7 @@ const cleanupInterval = setInterval(() => {
       cacheSize: getResolutionCacheSize() 
     });
   }
-}, 30 * 60 * 1000); // 30 минут
+}, 30 * 60 * 1000, 'Resolution cache cleanup'); // 30 минут
 
 // ========================================
 // GRACEFUL SHUTDOWN
@@ -834,9 +835,9 @@ async function gracefulShutdown(signal) {
     stopSystemMonitor();
     logger.info('✅ System monitor stopped');
     
-    // 4. Очищаем интервалы
-    clearInterval(cleanupInterval);
-    logger.info('✅ Cleanup intervals stopped');
+    // 4. Очищаем все таймеры через реестр
+    timerRegistry.clearAll('graceful_shutdown');
+    logger.info('✅ All timers cleared');
     
     // Останавливаем WAL checkpoint
     stopWalCheckpointInterval();
@@ -867,7 +868,18 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Обработка необработанных ошибок
-// КРИТИЧНО: НЕ завершаем процесс, а отправляем уведомление админу
+// КРИТИЧНО: Разделяем ошибки на критичные и некритичные
+let criticalErrorCount = 0;
+const MAX_CRITICAL_ERRORS = 5; // Максимум критических ошибок перед shutdown
+const CRITICAL_ERROR_RESET_TIME = 60000; // Сброс счетчика через 1 минуту
+
+// Сбрасываем счетчик критических ошибок периодически
+timerRegistry.setInterval(() => {
+  if (criticalErrorCount > 0) {
+    criticalErrorCount = Math.max(0, criticalErrorCount - 1);
+  }
+}, CRITICAL_ERROR_RESET_TIME, 'Critical error counter reset');
+
 process.on('uncaughtException', (err) => {
   logger.error('💥 Uncaught Exception:', {
     message: err.message,
@@ -875,19 +887,61 @@ process.on('uncaughtException', (err) => {
     name: err.name
   });
   
-  // Отправляем уведомление админу вместо падения сервиса
+  // Определяем, является ли ошибка критичной
+  const isCritical = 
+    err.message?.includes('database') ||
+    err.message?.includes('ENOMEM') ||
+    err.message?.includes('out of memory') ||
+    err.message?.includes('SQLITE') ||
+    err.name === 'DatabaseError' ||
+    err.code === 'ENOMEM';
+  
+  // Отправляем уведомление админу
   notifyCriticalError({
     type: 'uncaught_exception',
+    severity: isCritical ? 'critical' : 'warning',
     error: {
       message: err.message,
       stack: err.stack?.split('\n').slice(0, 10).join('\n'), // Первые 10 строк стека
-      name: err.name
+      name: err.name,
+      code: err.code
     },
-    recommendation: 'Проверьте логи сервера для деталей. Сервис продолжает работу.'
+    isCritical,
+    recommendation: isCritical 
+      ? 'Критическая ошибка обнаружена. Сервис может быть нестабилен. Проверьте логи и рассмотрите перезапуск.'
+      : 'Проверьте логи сервера для деталей. Сервис продолжает работу.'
   });
   
+  // Для критических ошибок увеличиваем счетчик
+  if (isCritical) {
+    criticalErrorCount++;
+    
+    // Если слишком много критических ошибок - выполняем graceful shutdown
+    if (criticalErrorCount >= MAX_CRITICAL_ERRORS) {
+      logger.error('💥 Too many critical errors, initiating graceful shutdown', {
+        count: criticalErrorCount
+      });
+      notifyCriticalError({
+        type: 'too_many_critical_errors',
+        error: {
+          message: `Обнаружено ${criticalErrorCount} критических ошибок подряд`,
+          recommendation: 'Выполняется graceful shutdown для предотвращения дальнейших проблем'
+        },
+        recommendation: 'Сервис будет перезапущен. Проверьте логи для выявления причины.'
+      });
+      
+      // Даем время на отправку уведомления
+      setTimeout(() => {
+        gracefulShutdown('too_many_critical_errors').catch(() => {
+          process.exit(1);
+        });
+      }, 2000);
+      return;
+    }
+  }
+  
+  // Для некритичных ошибок продолжаем работу
   // НЕ завершаем процесс - сервис должен продолжать работать
-  // gracefulShutdown('uncaughtException'); // Убрали автоматическое завершение
 });
 
 process.on('unhandledRejection', (reason, promise) => {
@@ -899,16 +953,56 @@ process.on('unhandledRejection', (reason, promise) => {
     promise: promise?.toString?.() || String(promise)
   });
   
-  // Отправляем уведомление админу вместо падения сервиса
+  // Определяем, является ли ошибка критичной
+  const errorMessage = reason instanceof Error ? reason.message : String(reason);
+  const isCritical = 
+    errorMessage?.includes('database') ||
+    errorMessage?.includes('ENOMEM') ||
+    errorMessage?.includes('out of memory') ||
+    errorMessage?.includes('SQLITE');
+  
+  // Отправляем уведомление админу
   notifyCriticalError({
     type: 'unhandled_rejection',
+    severity: isCritical ? 'critical' : 'warning',
     error: reason instanceof Error ? {
       message: reason.message,
       stack: reason.stack?.split('\n').slice(0, 10).join('\n'),
-      name: reason.name
+      name: reason.name,
+      code: reason.code
     } : { reason: String(reason) },
-    recommendation: 'Проверьте логи сервера для деталей. Сервис продолжает работу.'
+    isCritical,
+    recommendation: isCritical
+      ? 'Критическая ошибка в промисах обнаружена. Проверьте логи.'
+      : 'Проверьте логи сервера для деталей. Сервис продолжает работу.'
   });
+  
+  // Для критических ошибок увеличиваем счетчик
+  if (isCritical) {
+    criticalErrorCount++;
+    
+    // Если слишком много критических ошибок - выполняем graceful shutdown
+    if (criticalErrorCount >= MAX_CRITICAL_ERRORS) {
+      logger.error('💥 Too many critical errors from rejections, initiating graceful shutdown', {
+        count: criticalErrorCount
+      });
+      notifyCriticalError({
+        type: 'too_many_critical_errors',
+        error: {
+          message: `Обнаружено ${criticalErrorCount} критических ошибок в промисах подряд`,
+          recommendation: 'Выполняется graceful shutdown для предотвращения дальнейших проблем'
+        },
+        recommendation: 'Сервис будет перезапущен. Проверьте логи для выявления причины.'
+      });
+      
+      setTimeout(() => {
+        gracefulShutdown('too_many_critical_errors').catch(() => {
+          process.exit(1);
+        });
+      }, 2000);
+      return;
+    }
+  }
   
   // НЕ завершаем процесс - сервис должен продолжать работать
   // В production больше не завершаем процесс автоматически

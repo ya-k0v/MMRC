@@ -10,6 +10,7 @@ import { withRetrySync, isRetryableDatabaseError } from '../utils/retry.js';
 import { circuitBreakers } from '../utils/circuit-breaker.js';
 import logger from '../utils/logger.js';
 import { notifyDbError } from '../utils/notifications.js';
+import { timerRegistry } from '../utils/timer-registry.js';
 
 let db = null;
 let dbPath = null;
@@ -532,7 +533,7 @@ export function startWalCheckpointInterval(intervalMs = 60 * 1000) {
     thresholdMB: process.env.WAL_CHECKPOINT_THRESHOLD_MB || '100'
   });
 
-  walCheckpointInterval = setInterval(() => {
+  walCheckpointInterval = timerRegistry.setInterval(() => {
     try {
       const result = performWalCheckpoint(false);
       if (result.success && result.reduced && result.reduced > 0) {
@@ -547,10 +548,7 @@ export function startWalCheckpointInterval(intervalMs = 60 * 1000) {
         error: error.message
       });
     }
-  }, intervalMs);
-
-  // Используем unref() чтобы интервал не блокировал завершение процесса
-  walCheckpointInterval.unref();
+  }, intervalMs, 'WAL checkpoint interval');
 }
 
 /**
@@ -558,7 +556,7 @@ export function startWalCheckpointInterval(intervalMs = 60 * 1000) {
  */
 export function stopWalCheckpointInterval() {
   if (walCheckpointInterval) {
-    clearInterval(walCheckpointInterval);
+    timerRegistry.clear(walCheckpointInterval);
     walCheckpointInterval = null;
     logger.info('[DB] WAL checkpoint interval stopped');
   }
@@ -751,14 +749,30 @@ export function getAllFileNames() {
  * @param {string} originalName 
  */
 export function saveFileName(deviceId, safeName, originalName) {
-  const stmt = db.prepare(`
-    INSERT INTO file_names (device_id, safe_name, original_name)
-    VALUES (?, ?, ?)
-    ON CONFLICT(device_id, safe_name) DO UPDATE SET
-      original_name = excluded.original_name
-  `);
-  
-  stmt.run(deviceId, safeName, originalName);
+  // КРИТИЧНО: Используем retry для критических операций записи
+  return withRetrySync(() => {
+    const stmt = db.prepare(`
+      INSERT INTO file_names (device_id, safe_name, original_name)
+      VALUES (?, ?, ?)
+      ON CONFLICT(device_id, safe_name) DO UPDATE SET
+        original_name = excluded.original_name
+    `);
+    
+    stmt.run(deviceId, safeName, originalName);
+  }, {
+    maxRetries: 3,
+    delay: 100,
+    shouldRetry: isRetryableDatabaseError,
+    onRetry: (error, attempt, maxRetries) => {
+      logger.warn('Retrying saveFileName', {
+        deviceId,
+        safeName,
+        attempt,
+        maxRetries,
+        error: error.message
+      });
+    }
+  });
 }
 
 /**
@@ -973,16 +987,31 @@ export function getDeviceVolumeState(deviceId) {
 }
 
 export function saveDeviceVolumeState(deviceId, { volumeLevel, isMuted }) {
-  const stmt = db.prepare(`
-    INSERT INTO device_volume (device_id, volume_level, is_muted)
-    VALUES (?, ?, ?)
-    ON CONFLICT(device_id) DO UPDATE SET
-      volume_level = excluded.volume_level,
-      is_muted = excluded.is_muted,
-      updated_at = CURRENT_TIMESTAMP
-  `);
-  
-  stmt.run(deviceId, Number(volumeLevel), isMuted ? 1 : 0);
+  // КРИТИЧНО: Используем retry для критических операций записи
+  return withRetrySync(() => {
+    const stmt = db.prepare(`
+      INSERT INTO device_volume (device_id, volume_level, is_muted)
+      VALUES (?, ?, ?)
+      ON CONFLICT(device_id) DO UPDATE SET
+        volume_level = excluded.volume_level,
+        is_muted = excluded.is_muted,
+        updated_at = CURRENT_TIMESTAMP
+    `);
+    
+    stmt.run(deviceId, Number(volumeLevel), isMuted ? 1 : 0);
+  }, {
+    maxRetries: 3,
+    delay: 100,
+    shouldRetry: isRetryableDatabaseError,
+    onRetry: (error, attempt, maxRetries) => {
+      logger.warn('Retrying saveDeviceVolumeState', {
+        deviceId,
+        attempt,
+        maxRetries,
+        error: error.message
+      });
+    }
+  });
 }
 
 // ========================================

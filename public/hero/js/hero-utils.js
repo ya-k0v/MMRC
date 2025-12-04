@@ -75,31 +75,56 @@ export function renderMediaThumbnail(media, index) {
 
 /**
  * Безопасная установка innerHTML с санитизацией
- * Использует DocumentFragment для лучшей производительности
+ * Использует DOMParser для безопасного парсинга HTML
+ * Примечание: вызывающий код должен экранировать пользовательские данные через escapeHtml
  */
 export function setHTML(element, html) {
   if (!element) return;
   
-  // Создаем временный контейнер для парсинга HTML
-  const temp = document.createElement('div');
-  temp.innerHTML = html;
+  if (!html || typeof html !== 'string') {
+    element.innerHTML = '';
+    return;
+  }
+  
+  // Используем DOMParser для безопасного парсинга HTML
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
   
   // Очищаем элемент и добавляем содержимое через DocumentFragment
   const fragment = document.createDocumentFragment();
-  while (temp.firstChild) {
-    fragment.appendChild(temp.firstChild);
+  const bodyNodes = doc.body.childNodes;
+  for (let i = 0; i < bodyNodes.length; i++) {
+    fragment.appendChild(bodyNodes[i].cloneNode(true));
   }
   
   element.replaceChildren(fragment);
 }
 
 /**
- * Создание элемента из HTML строки с использованием DocumentFragment
+ * Создание элемента из HTML строки с использованием DOMParser для безопасности
+ * Примечание: вызывающий код должен экранировать пользовательские данные через escapeHtml
  */
 export function createElementFromHTML(htmlString) {
-  const temp = document.createElement('div');
-  temp.innerHTML = htmlString.trim();
-  return temp.firstElementChild || temp;
+  if (!htmlString || typeof htmlString !== 'string') {
+    return document.createElement('div');
+  }
+  
+  // Используем DOMParser для безопасного парсинга HTML
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(htmlString.trim(), 'text/html');
+  
+  // Возвращаем первый элемент из body или создаем пустой div
+  const firstElement = doc.body.firstElementChild;
+  if (firstElement) {
+    return firstElement;
+  }
+  
+  // Если нет элементов, возвращаем контейнер с текстовым содержимым
+  const container = document.createElement('div');
+  if (doc.body.textContent) {
+    container.textContent = doc.body.textContent;
+  }
+  return container;
 }
 
 /**

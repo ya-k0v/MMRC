@@ -77,6 +77,31 @@ export function createHeroRouter({ requireHeroAdmin }) {
       }
 
       const fileStream = fs.createReadStream(resolved.path);
+      
+      // КРИТИЧНО: Обрабатываем закрытие соединения клиентом
+      let isAborted = false;
+      const cleanup = () => {
+        isAborted = true;
+        if (fileStream && !fileStream.destroyed) {
+          fileStream.destroy();
+        }
+      };
+      
+      req.on('close', cleanup);
+      req.on('aborted', cleanup);
+      res.on('close', cleanup);
+      
+      fileStream.on('error', (err) => {
+        if (!isAborted) {
+          if (!res.headersSent) {
+            res.status(500).end();
+          } else {
+            res.end();
+          }
+        }
+        cleanup();
+      });
+      
       fileStream.pipe(res);
     } catch (error) {
       res.status(500).json({ error: error.message });

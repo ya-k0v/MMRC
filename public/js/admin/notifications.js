@@ -86,8 +86,8 @@ function createBellElement() {
     position: absolute;
     top: 4px;
     right: 4px;
-    background: var(--error, #ef4444);
-    color: white;
+    background: var(--error);
+    color: var(--panel);
     border-radius: 10px;
     padding: 2px 6px;
     font-size: 11px;
@@ -200,8 +200,8 @@ function showToastNotification(notification) {
     position: fixed;
     top: 80px;
     right: 20px;
-    background: var(--card-bg, white);
-    border: 1px solid var(--border, #e5e7eb);
+    background: var(--card-bg);
+    border: 1px solid var(--border);
     border-left: 4px solid ${severityColor};
     padding: 16px;
     border-radius: 8px;
@@ -215,30 +215,45 @@ function showToastNotification(notification) {
   
   const timeAgo = formatTimeAgo(new Date(notification.timestamp));
   
-  toast.innerHTML = `
-    <div style="display: flex; align-items: start; gap: 12px;">
-      <div style="flex: 1; min-width: 0;">
-        <div style="font-weight: bold; margin-bottom: 4px; color: var(--text, #1f2937);">
-          ${escapeHtml(notification.title)}
-        </div>
-        <div style="color: var(--text-secondary, #6b7280); font-size: 14px; margin-bottom: 8px;">
-          ${escapeHtml(notification.message)}
-        </div>
-        <div style="font-size: 12px; color: var(--muted, #9ca3af);">
-          ${timeAgo}
-        </div>
-      </div>
-      <button style="
-        background: transparent;
-        border: none;
-        cursor: pointer;
-        padding: 4px;
-        color: var(--muted, #9ca3af);
-        font-size: 18px;
-        line-height: 1;
-      " onclick="this.closest('.notification-toast').remove()">×</button>
-    </div>
+  // Используем DOM методы вместо innerHTML для безопасности
+  const container = document.createElement('div');
+  container.style.cssText = 'display: flex; align-items: start; gap: 12px;';
+  
+  const contentDiv = document.createElement('div');
+  contentDiv.style.cssText = 'flex: 1; min-width: 0;';
+  
+  const titleDiv = document.createElement('div');
+  titleDiv.style.cssText = 'font-weight: bold; margin-bottom: 4px; color: var(--text);';
+  titleDiv.textContent = notification.title || '';
+  
+  const messageDiv = document.createElement('div');
+  messageDiv.style.cssText = 'color: var(--text-secondary); font-size: 14px; margin-bottom: 8px;';
+  messageDiv.textContent = notification.message || '';
+  
+  const timeDiv = document.createElement('div');
+  timeDiv.style.cssText = 'font-size: 12px; color: var(--muted);';
+  timeDiv.textContent = timeAgo;
+  
+  contentDiv.appendChild(titleDiv);
+  contentDiv.appendChild(messageDiv);
+  contentDiv.appendChild(timeDiv);
+  
+  const closeButton = document.createElement('button');
+  closeButton.style.cssText = `
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+    color: var(--muted);
+    font-size: 18px;
+    line-height: 1;
   `;
+  closeButton.textContent = '×';
+  closeButton.onclick = () => toast.remove();
+  
+  container.appendChild(contentDiv);
+  container.appendChild(closeButton);
+  toast.appendChild(container);
   
   // Клик на уведомление открывает модальное окно
   toast.onclick = (e) => {

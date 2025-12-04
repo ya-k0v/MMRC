@@ -2,6 +2,7 @@
 import { adminFetch } from './auth.js';
 import { getCheckIcon, getCrossIcon, getClockIcon } from '../shared/svg-icons.js';
 import { formatTime } from '../shared/formatters.js';
+import { escapeHtml } from '../shared/utils.js';
 
 /**
  * Универсальная функция для показа модального окна стрима (добавление/редактирование)
@@ -24,12 +25,12 @@ export async function showStreamModal({ deviceId, mode = 'add', safeName = null,
     <div style="display:flex; flex-direction:column; gap:var(--space-md);">
       <div>
         <label style="display:block; margin-bottom:4px; font-weight:500;">Название стрима</label>
-        <input id="streamModalName" class="input" value="${(originalName || '').replace(/"/g, '&quot;')}" placeholder="Название стрима" />
+        <input id="streamModalName" class="input" value="${escapeHtml(originalName || '')}" placeholder="Название стрима" />
       </div>
       
       <div>
         <label style="display:block; margin-bottom:4px; font-weight:500;">URL стрима</label>
-        <input id="streamModalUrl" class="input" value="${(streamUrl || '').replace(/"/g, '&quot;')}" placeholder="https://example.com/stream.m3u8" spellcheck="false" />
+        <input id="streamModalUrl" class="input" value="${escapeHtml(streamUrl || '')}" placeholder="https://example.com/stream.m3u8" spellcheck="false" />
         <div class="meta" style="margin-top:4px; font-size:0.85rem; color:var(--text-secondary);">
           Поддерживаются HTTP/HTTPS стримы (HLS, DASH, MPEG-TS)
         </div>
@@ -222,11 +223,13 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
   });
   
   if (!allFiles || allFiles.length === 0) {
-    panelEl.innerHTML = `
-      <div class="meta" style="text-align:center; padding:var(--space-xl)">
-        Нет файлов. Загрузите файлы через панель слева.
-      </div>
-    `;
+    // Используем DOM методы вместо innerHTML
+    panelEl.innerHTML = '';
+    const emptyDiv = document.createElement('div');
+    emptyDiv.className = 'meta';
+    emptyDiv.style.cssText = 'text-align:center; padding:var(--space-xl)';
+    emptyDiv.textContent = 'Нет файлов. Загрузите файлы через панель слева.';
+    panelEl.appendChild(emptyDiv);
     // Очистить пейджер файлов если есть (теперь находится в filesPane, а не в panelEl)
     const filesPane = document.getElementById('filesPane');
     const pager = filesPane ? filesPane.querySelector('#filePagerAdmin') : null;
@@ -242,9 +245,13 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
   const end = Math.min(start + pageSize, allFiles.length);
   const files = allFiles.slice(start, end);
   
-  panelEl.innerHTML = `
-    <ul class="list" style="display:grid; gap:var(--space-sm)">
-      ${files.map(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, streamUrl, streamProtocol }) => {
+  // Используем DOM методы вместо innerHTML для безопасности
+  panelEl.innerHTML = '';
+  const fileList = document.createElement('ul');
+  fileList.className = 'list';
+  fileList.style.cssText = 'display:grid; gap:var(--space-sm)';
+  
+  files.forEach(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, streamUrl, streamProtocol }) => {
         // placeholders allowed only for image/video (no pdf/pptx/folders)
         const isStreaming = contentType === 'streaming';
         const isEligible = !isStreaming && /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp)$/i.test(safeName);
@@ -329,42 +336,145 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         }
         const typeBadge = `${typeLabel}${metaBadges.length ? ` · ${metaBadges.join(' · ')}` : ''}`;
         
-        return `
-          <li class="file-item" 
-              draggable="${canPlay ? 'true' : 'false'}" 
-              data-device-id="${deviceId}"
-              data-file-name="${encodeURIComponent(safeName)}"
-              data-content-type="${contentType || ''}"
-              data-stream-protocol="${streamProtocol || ''}"
-              style="border:var(--border); background:${isPlaceholder ? 'rgba(59, 130, 246, 0.1)' : 'var(--panel-2)'}; ${isPlaceholder ? 'border-left: 3px solid rgba(59, 130, 246, 0.6);' : ''} ${isProcessing ? 'opacity:0.7;' : ''} ${canPlay ? 'cursor:move;' : ''}">
-            <div class="file-item-header">
-              <div style="flex:1; display:flex; align-items:stretch; gap:var(--space-xs); min-width:0;">
-                ${isPlaceholder ? '<span style="background:rgba(59, 130, 246, 0.8); color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:600; align-self:center; flex-shrink:0;">📌 ЗАГЛУШКА</span>' : ''}
-                <span class="file-item-name fileName-editable" data-safe="${encodeURIComponent(safeName)}" data-original-full="${encodeURIComponent(originalName)}" style="cursor:pointer; padding:var(--space-xs) var(--space-sm); border-radius:var(--radius-sm); transition:all 0.2s; flex:1; min-width:0;" contenteditable="false">${displayName}</span>
-                <button class="primary fileRenameSaveBtn" style="display:none; min-width:28px; width:28px; height:28px; padding:0; border-radius:var(--radius-sm); flex-shrink:0" title="Сохранить">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:block">
-                    <polyline points="20 6 9 17 4 12"></polyline>
-                  </svg>
-                </button>
-              </div>
-              <div style="display:flex; align-items:center; gap:var(--space-sm);">
-                ${statusText ? `<span style="font-size:var(--font-size-sm); color:${statusColor}; white-space:nowrap; display:flex; align-items:center; gap:var(--space-xs);">${statusIcon} ${statusText}</span>` : ''}
-                <div style="display:flex; align-items:center; gap:4px; flex-wrap:wrap;">
-                  ${resolutionLabel ? `<span style="font-size:10px; opacity:0.7;">${resolutionLabel}</span>` : ''}
-                  <span class="file-item-type">${typeBadge}</span>
-                </div>
-              </div>
-            </div>
-            <div class="file-item-actions">
-              ${isStreaming ? `<button class="meta-lg editStreamBtn" data-safe="${encodeURIComponent(safeName)}" data-original="${encodeURIComponent(originalName)}" data-stream-url="${encodeURIComponent(streamUrl || '')}" data-stream-protocol="${encodeURIComponent(streamProtocol || '')}" data-content-type="${contentType || ''}" title="Изменить стрим">Изменить</button>` : `<button class="meta-lg previewFileBtn" data-safe="${encodeURIComponent(safeName)}" data-original="${encodeURIComponent(originalName)}" data-stream-protocol="${streamProtocol || ''}" data-content-type="${contentType || ''}" title="Предпросмотр" ${!canPlay ? 'disabled' : ''}>Превью</button>`}
-              ${isEligible ? `<button class="meta-lg makeDefaultBtn" data-safe="${encodeURIComponent(safeName)}" data-original="${encodeURIComponent(originalName)}" title="Сделать заглушкой" ${!canPlay ? 'disabled' : ''}>Заглушка</button>` : ``}
-              <button class="danger meta-lg delFileBtn" data-safe="${encodeURIComponent(safeName)}" data-original="${encodeURIComponent(originalName)}" title="Удалить">Удалить</button>
-            </div>
-          </li>
-        `;
-      }).join('')}
-    </ul>
-  `;
+        // Создаем элементы через DOM API для безопасности
+        const li = document.createElement('li');
+        li.className = 'file-item';
+        li.draggable = canPlay;
+        li.setAttribute('data-device-id', deviceId || '');
+        li.setAttribute('data-file-name', encodeURIComponent(safeName));
+        li.setAttribute('data-content-type', contentType || '');
+        li.setAttribute('data-stream-protocol', streamProtocol || '');
+        
+        let bgColor = isPlaceholder ? 'rgba(59, 130, 246, 0.1)' : 'var(--panel-2)';
+        let borderLeft = isPlaceholder ? 'border-left: 3px solid rgba(59, 130, 246, 0.6);' : '';
+        let opacity = isProcessing ? 'opacity:0.7;' : '';
+        let cursor = canPlay ? 'cursor:move;' : '';
+        li.style.cssText = `border:var(--border); background:${bgColor}; ${borderLeft} ${opacity} ${cursor}`;
+        
+        const header = document.createElement('div');
+        header.className = 'file-item-header';
+        
+        const headerLeft = document.createElement('div');
+        headerLeft.style.cssText = 'flex:1; display:flex; align-items:stretch; gap:var(--space-xs); min-width:0;';
+        
+        if (isPlaceholder) {
+          const placeholderSpan = document.createElement('span');
+          placeholderSpan.style.cssText = 'background:rgba(59, 130, 246, 0.8); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:600; align-self:center; flex-shrink:0;';
+          placeholderSpan.textContent = '📌 ЗАГЛУШКА';
+          headerLeft.appendChild(placeholderSpan);
+        }
+        
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'file-item-name fileName-editable';
+        nameSpan.setAttribute('data-safe', encodeURIComponent(safeName));
+        nameSpan.setAttribute('data-original-full', encodeURIComponent(originalName));
+        nameSpan.style.cssText = 'cursor:pointer; padding:var(--space-xs) var(--space-sm); border-radius:var(--radius-sm); transition:all 0.2s; flex:1; min-width:0;';
+        nameSpan.contentEditable = 'false';
+        nameSpan.textContent = displayName; // Используем textContent для безопасности
+        
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'primary fileRenameSaveBtn';
+        saveBtn.style.cssText = 'display:none; min-width:28px; width:28px; height:28px; padding:0; border-radius:var(--radius-sm); flex-shrink:0';
+        saveBtn.title = 'Сохранить';
+        const saveSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        saveSvg.setAttribute('width', '14');
+        saveSvg.setAttribute('height', '14');
+        saveSvg.setAttribute('viewBox', '0 0 24 24');
+        saveSvg.setAttribute('fill', 'none');
+        saveSvg.setAttribute('stroke', 'currentColor');
+        saveSvg.setAttribute('stroke-width', '2.5');
+        saveSvg.setAttribute('stroke-linecap', 'round');
+        saveSvg.setAttribute('stroke-linejoin', 'round');
+        saveSvg.style.display = 'block';
+        const savePolyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+        savePolyline.setAttribute('points', '20 6 9 17 4 12');
+        saveSvg.appendChild(savePolyline);
+        saveBtn.appendChild(saveSvg);
+        
+        headerLeft.appendChild(nameSpan);
+        headerLeft.appendChild(saveBtn);
+        
+        const headerRight = document.createElement('div');
+        headerRight.style.cssText = 'display:flex; align-items:center; gap:var(--space-sm);';
+        
+        if (statusText) {
+          const statusSpan = document.createElement('span');
+          statusSpan.style.cssText = `font-size:var(--font-size-sm); color:${statusColor}; white-space:nowrap; display:flex; align-items:center; gap:var(--space-xs);`;
+          statusSpan.innerHTML = `${statusIcon} ${escapeHtml(statusText)}`;
+          headerRight.appendChild(statusSpan);
+        }
+        
+        const metaDiv = document.createElement('div');
+        metaDiv.style.cssText = 'display:flex; align-items:center; gap:4px; flex-wrap:wrap;';
+        
+        if (resolutionLabel) {
+          const resSpan = document.createElement('span');
+          resSpan.style.cssText = 'font-size:10px; opacity:0.7;';
+          resSpan.textContent = resolutionLabel;
+          metaDiv.appendChild(resSpan);
+        }
+        
+        const typeSpan = document.createElement('span');
+        typeSpan.className = 'file-item-type';
+        typeSpan.textContent = typeBadge; // Используем textContent для безопасности
+        metaDiv.appendChild(typeSpan);
+        
+        headerRight.appendChild(metaDiv);
+        header.appendChild(headerLeft);
+        header.appendChild(headerRight);
+        
+        const actions = document.createElement('div');
+        actions.className = 'file-item-actions';
+        
+        if (isStreaming) {
+          const editBtn = document.createElement('button');
+          editBtn.className = 'meta-lg editStreamBtn';
+          editBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+          editBtn.setAttribute('data-original', encodeURIComponent(originalName));
+          editBtn.setAttribute('data-stream-url', encodeURIComponent(streamUrl || ''));
+          editBtn.setAttribute('data-stream-protocol', encodeURIComponent(streamProtocol || ''));
+          editBtn.setAttribute('data-content-type', contentType || '');
+          editBtn.title = 'Изменить стрим';
+          editBtn.textContent = 'Изменить';
+          actions.appendChild(editBtn);
+        } else {
+          const previewBtn = document.createElement('button');
+          previewBtn.className = 'meta-lg previewFileBtn';
+          previewBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+          previewBtn.setAttribute('data-original', encodeURIComponent(originalName));
+          previewBtn.setAttribute('data-stream-protocol', streamProtocol || '');
+          previewBtn.setAttribute('data-content-type', contentType || '');
+          previewBtn.title = 'Предпросмотр';
+          previewBtn.disabled = !canPlay;
+          previewBtn.textContent = 'Превью';
+          actions.appendChild(previewBtn);
+        }
+        
+        if (isEligible) {
+          const makeDefaultBtn = document.createElement('button');
+          makeDefaultBtn.className = 'meta-lg makeDefaultBtn';
+          makeDefaultBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+          makeDefaultBtn.setAttribute('data-original', encodeURIComponent(originalName));
+          makeDefaultBtn.title = 'Сделать заглушкой';
+          makeDefaultBtn.disabled = !canPlay;
+          makeDefaultBtn.textContent = 'Заглушка';
+          actions.appendChild(makeDefaultBtn);
+        }
+        
+        const delBtn = document.createElement('button');
+        delBtn.className = 'danger meta-lg delFileBtn';
+        delBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+        delBtn.setAttribute('data-original', encodeURIComponent(originalName));
+        delBtn.title = 'Удалить';
+        delBtn.textContent = 'Удалить';
+        actions.appendChild(delBtn);
+        
+        li.appendChild(header);
+        li.appendChild(actions);
+        fileList.appendChild(li);
+  });
+  
+  panelEl.appendChild(fileList);
   
   // Рендер пейджера файлов (теперь находится вне panelEl, в filesPane)
   const filesPane = document.getElementById('filesPane');
@@ -377,11 +487,19 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
     }
     
     if (filePagerAdmin) {
-      filePagerAdmin.innerHTML = `
-        <button class="secondary" id="filePrevAdmin" ${filePage<=0?'disabled':''} style="min-width:80px">Назад</button>
-        <span style="white-space:nowrap">Стр. ${filePage+1} из ${totalPages}</span>
-        <button class="secondary" id="fileNextAdmin" ${filePage>=totalPages-1?'disabled':''} style="min-width:80px">Вперёд</button>
-      `;
+      filePagerAdmin.innerHTML = '';
+      const prevBtn = document.createElement('button');
+      prevBtn.className = 'secondary';
+      prevBtn.id = 'filePrevAdmin';
+      prevBtn.disabled = filePage <= 0;
+      prevBtn.style.cssText = 'min-width:80px';
+      prevBtn.textContent = 'Назад';
+      filePagerAdmin.appendChild(prevBtn);
+      const pageSpan = document.createElement('span');
+      pageSpan.style.cssText = 'white-space:nowrap';
+      pageSpan.textContent = `Стр. ${filePage+1} из ${totalPages}`;
+      filePagerAdmin.appendChild(pageSpan);
+      const nextBtn = document.createElement('button');
       const prev = filePagerAdmin.querySelector('#filePrevAdmin');
       const next = filePagerAdmin.querySelector('#fileNextAdmin');
       if (prev) prev.onclick = () => { if (filePage>0) { refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, filePage-1, socket); } };
@@ -425,7 +543,11 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       if (contentType === 'streaming') {
         const protocol = btn.getAttribute('data-stream-protocol') || '';
         const protocolParam = protocol ? `&protocol=${encodeURIComponent(protocol)}` : '';
-        previewContainer.innerHTML = `<iframe src="/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&type=streaming&file=${encodeURIComponent(safeName)}${protocolParam}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
+        const iframe = document.createElement('iframe');
+        iframe.src = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&type=streaming&file=${encodeURIComponent(safeName)}${protocolParam}`;
+        iframe.style.cssText = 'width:100%;height:100%;border:0';
+        iframe.allow = 'autoplay; fullscreen';
+        previewContainer.appendChild(iframe);
         return;
       }
       
@@ -469,24 +591,51 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         
         // Показываем сетку миниатюр (только для просмотра, без кликов)
         if (images.length > 0) {
-          previewContainer.innerHTML = `
-            <div style="width:100%; height:100%; overflow-y:auto; padding:var(--space-md); background:var(--panel)">
-              <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:var(--space-sm)">
-                ${images.map((url, idx) => `
-                  <div style="aspect-ratio:16/9; background:var(--panel-2); border-radius:var(--radius-sm); overflow:hidden; position:relative">
-                    <img src="${url}" 
-                         alt="${idx + 1}" 
-                         loading="lazy"
-                         style="width:100%; height:100%; object-fit:contain; display:block"
-                         onerror="this.parentElement.innerHTML='<div style=\\'display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);font-size:10px\\'>Ошибка</div>'">
-                    <div style="position:absolute; bottom:2px; right:4px; background:rgba(0,0,0,0.7); color:#fff; padding:2px 4px; border-radius:3px; font-size:10px">${idx + 1}</div>
-                  </div>
-                `).join('')}
-              </div>
-            </div>
-          `;
+          // Используем DOM методы вместо innerHTML для безопасности
+          const outerDiv = document.createElement('div');
+          outerDiv.style.cssText = 'width:100%; height:100%; overflow-y:auto; padding:var(--space-md); background:var(--panel)';
+          
+          const gridDiv = document.createElement('div');
+          gridDiv.style.cssText = 'display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:var(--space-sm)';
+          
+          images.forEach((url, idx) => {
+            const itemDiv = document.createElement('div');
+            itemDiv.style.cssText = 'aspect-ratio:16/9; background:var(--panel-2); border-radius:var(--radius-sm); overflow:hidden; position:relative';
+            
+            const img = document.createElement('img');
+            img.src = url; // URL безопасен, так как создается на сервере
+            img.alt = String(idx + 1);
+            img.loading = 'lazy';
+            img.style.cssText = 'width:100%; height:100%; object-fit:contain; display:block';
+            img.onerror = function() {
+              // Используем DOM методы для обработки ошибки
+              const parent = this.parentElement;
+              parent.innerHTML = '';
+              const errorDiv = document.createElement('div');
+              errorDiv.style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);font-size:10px';
+              errorDiv.textContent = 'Ошибка';
+              parent.appendChild(errorDiv);
+            };
+            
+            const indexDiv = document.createElement('div');
+            indexDiv.style.cssText = 'position:absolute; bottom:2px; right:4px; background:rgba(0,0,0,0.7); color:var(--text); padding:2px 4px; border-radius:3px; font-size:10px';
+            indexDiv.textContent = String(idx + 1);
+            
+            itemDiv.appendChild(img);
+            itemDiv.appendChild(indexDiv);
+            gridDiv.appendChild(itemDiv);
+          });
+          
+          outerDiv.appendChild(gridDiv);
+          previewContainer.innerHTML = '';
+          previewContainer.appendChild(outerDiv);
         } else {
-          previewContainer.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary)">Нет изображений для превью</div>`;
+          // Используем DOM методы вместо innerHTML
+          previewContainer.innerHTML = '';
+          const emptyDiv = document.createElement('div');
+          emptyDiv.style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary)';
+          emptyDiv.textContent = 'Нет изображений для превью';
+          previewContainer.appendChild(emptyDiv);
         }
       } else {
         // Для видео и обычных изображений показываем в iframe

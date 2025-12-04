@@ -3,10 +3,12 @@
  * @module socket/index
  */
 
-import { getOnlineDevices } from './connection-manager.js';
+import { getOnlineDevices, startConnectionCleanup } from './connection-manager.js';
 import { setupDeviceHandlers, handleDisconnect } from './device-handlers.js';
 import { setupControlHandlers } from './control-handlers.js';
 import logger from '../utils/logger.js';
+
+let cleanupStarted = false;
 
 /**
  * Настраивает все Socket.IO обработчики
@@ -67,5 +69,10 @@ export function setupSocketHandlers(io, deps) {
     setupControlHandlers(socket, { devices, io, getPageSlideCount, applyVolumeCommand, getVolumeState });
     handleDisconnect(socket, { io });
   });
+
+  if (!cleanupStarted) {
+    startConnectionCleanup(io);
+    cleanupStarted = true;
+  }
 }
 

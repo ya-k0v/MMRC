@@ -15,6 +15,9 @@ import {
   getDownloadIcon, 
   getCloseIcon 
 } from '../shared/svg-icons.js';
+import { escapeHtml } from '../shared/utils.js';
+
+const escapeJsStringForAttr = (value) => escapeHtml(JSON.stringify(value ?? ''));
 
 export function showModal(title, content) {
   const overlay = document.getElementById('modalOverlay');
@@ -22,15 +25,72 @@ export function showModal(title, content) {
   
   if (!overlay || !modalContent) return;
   
-  modalContent.innerHTML = `
-    <div class="header" style="display:flex; justify-content:space-between; align-items:center;">
-      <div class="title" style="font-weight:600; font-size:1.1rem; color:var(--text-primary, #fff);">${title}</div>
-      <button class="secondary" onclick="closeModal()" style="min-width:auto; padding:8px; display:flex; align-items:center; justify-content:center;">${getCloseIcon(18)}</button>
-    </div>
-    <div style="margin-top:var(--space-md);">
-      ${content}
-    </div>
-  `;
+  // Очищаем содержимое модального окна безопасным способом
+  modalContent.innerHTML = '';
+  
+  const header = document.createElement('div');
+  header.className = 'header';
+  header.style.cssText = 'display:flex; justify-content:space-between; align-items:center;';
+  
+  const titleEl = document.createElement('div');
+  titleEl.className = 'title';
+  titleEl.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary); display:flex; align-items:center; gap:8px;';
+  
+  // Проверяем, есть ли в заголовке SVG иконка
+  const svgMatch = title.match(/<svg[^>]*>[\s\S]*?<\/svg>/i);
+  const emojiMatch = title.match(/^[🔔⚙️📱👥🔑✅❌🗑️🔒🔓]/);
+  
+  if (svgMatch) {
+    // Если есть SVG иконка, используем её
+    titleEl.insertAdjacentHTML('beforeend', svgMatch[0]);
+    // Убираем SVG из заголовка для получения чистого текста
+    let cleanTitle = title.replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, '').trim();
+    const titleText = document.createTextNode(cleanTitle);
+    titleEl.appendChild(titleText);
+  } else if (emojiMatch) {
+    // Если есть эмодзи, оставляем его как есть (он будет отображаться как текст)
+    const titleText = document.createTextNode(title);
+    titleEl.appendChild(titleText);
+  } else {
+    // Если иконки нет, добавляем иконку настроек по умолчанию
+    titleEl.insertAdjacentHTML('beforeend', getSettingsIcon(18));
+    const titleText = document.createTextNode(title);
+    titleEl.appendChild(titleText);
+  }
+  
+  header.appendChild(titleEl);
+  
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'secondary';
+  closeBtn.onclick = closeModal;
+  closeBtn.style.cssText = 'min-width:auto; padding:8px; display:flex; align-items:center; justify-content:center;';
+  // getCloseIcon возвращает безопасную SVG иконку из константы
+  closeBtn.insertAdjacentHTML('beforeend', getCloseIcon(18));
+  
+  header.appendChild(closeBtn);
+  modalContent.appendChild(header);
+  
+  const contentDiv = document.createElement('div');
+  contentDiv.style.cssText = 'margin-top:var(--space-md);';
+  
+  // Используем временный контейнер для безопасного парсинга HTML
+  // Примечание: вызывающий код должен экранировать пользовательские данные через escapeHtml
+  if (content && typeof content === 'string') {
+    // Создаем временный контейнер вне DOM для парсинга
+    const tempContainer = document.createElement('div');
+    // Используем insertAdjacentHTML вместо innerHTML для лучшей безопасности
+    // Это все еще требует, чтобы вызывающий код экранировал пользовательские данные
+    tempContainer.insertAdjacentHTML('beforeend', content);
+    // Перемещаем узлы из временного контейнера
+    while (tempContainer.firstChild) {
+      contentDiv.appendChild(tempContainer.firstChild);
+    }
+  } else {
+    // Если content не строка, используем textContent
+    contentDiv.textContent = content || '';
+  }
+  
+  modalContent.appendChild(contentDiv);
   
   overlay.style.display = 'flex';
   
@@ -427,31 +487,39 @@ function filterAndRenderUsers(adminFetch) {
     return;
   }
   
-  container.innerHTML = pageUsers.map(u => `
-    <div class="item" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm);">
-      <div style="flex:1; min-width:0;">
-        <div style="display:flex; align-items:center; gap:var(--space-xs); flex-wrap:wrap;">
-          <strong>${u.username}</strong>
-          ${u.role === 'admin' ? '<span style="background:var(--brand); color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem;">ADMIN</span>' : ''}
-          ${u.role === 'speaker' ? '<span style="background:var(--success); color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem;">SPEAKER</span>' : ''}
-          ${u.role === 'hero_admin' ? '<span style="background:var(--warning); color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem;">HERO ADMIN</span>' : ''}
-          ${!u.is_active ? '<span style="background:var(--danger); color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem;">OFF</span>' : ''}
+  container.innerHTML = pageUsers.map(u => {
+    const safeUsername = escapeHtml(u.username || '');
+    const safeFullName = escapeHtml(u.full_name || '');
+    const deviceCountLabel = Number.isFinite(Number(u.deviceCount)) ? Number(u.deviceCount) : 0;
+    const safeUserId = Number.isFinite(Number(u.id)) ? Number(u.id) : 0;
+    const usernameArg = escapeJsStringForAttr(u.username || '');
+    const roleArg = escapeJsStringForAttr(u.role || '');
+    return `
+      <div class="item" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm);">
+        <div style="flex:1; min-width:0;">
+          <div style="display:flex; align-items:center; gap:var(--space-xs); flex-wrap:wrap;">
+            <strong>${safeUsername}</strong>
+            ${u.role === 'admin' ? '<span style="background:var(--brand); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">ADMIN</span>' : ''}
+            ${u.role === 'speaker' ? '<span style="background:var(--success); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">SPEAKER</span>' : ''}
+            ${u.role === 'hero_admin' ? '<span style="background:var(--warning); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">HERO ADMIN</span>' : ''}
+            ${!u.is_active ? '<span style="background:var(--danger); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">OFF</span>' : ''}
+          </div>
+          <div class="meta">${safeFullName}</div>
+          ${u.role === 'speaker' ? `<div class="meta" style="font-size:0.75rem; color:var(--text-secondary);">Устройств: ${deviceCountLabel}</div>` : ''}
         </div>
-        <div class="meta">${u.full_name}</div>
-        ${u.role === 'speaker' ? `<div class="meta" style="font-size:0.75rem; color:var(--text-secondary);">Устройств: ${u.deviceCount || 0}</div>` : ''}
+        <div style="display:flex; gap:4px; flex-shrink:0;">
+          ${u.role === 'speaker' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})" title="Управление устройствами">${getSettingsIcon(16)}</button>` : ''}
+          ${u.role === 'admin' || u.role === 'hero_admin' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})" title="Информация об устройствах">${getSettingsIcon(16)}</button>` : ''}
+          <button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="resetUserPasswordInModal(${safeUserId}, ${usernameArg})" title="Сбросить пароль">${getKeyIcon(16)}</button>
+          ${u.is_active 
+            ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="toggleUserInModal(${safeUserId}, false)" title="Отключить">${getLockIcon(16)}</button>`
+            : `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="toggleUserInModal(${safeUserId}, true)" title="Включить">${getUnlockIcon(16)}</button>`
+          }
+          ${u.id !== 1 ? `<button class="danger meta-lg" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="deleteUserInModal(${safeUserId}, ${usernameArg})" title="Удалить">${getTrashIcon(16)}</button>` : ''}
+        </div>
       </div>
-      <div style="display:flex; gap:4px; flex-shrink:0;">
-        ${u.role === 'speaker' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="showUserDevicesModalInModal(${u.id}, '${u.username.replace(/'/g, "\\'")}', '${u.role}')" title="Управление устройствами">${getSettingsIcon(16)}</button>` : ''}
-        ${u.role === 'admin' || u.role === 'hero_admin' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="showUserDevicesModalInModal(${u.id}, '${u.username.replace(/'/g, "\\'")}', '${u.role}')" title="Информация об устройствах">${getSettingsIcon(16)}</button>` : ''}
-        <button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="resetUserPasswordInModal(${u.id}, '${u.username.replace(/'/g, "\\'")}')" title="Сбросить пароль">${getKeyIcon(16)}</button>
-        ${u.is_active 
-          ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="toggleUserInModal(${u.id}, false)" title="Отключить">${getLockIcon(16)}</button>`
-          : `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="toggleUserInModal(${u.id}, true)" title="Включить">${getUnlockIcon(16)}</button>`
-        }
-        ${u.id !== 1 ? `<button class="danger meta-lg" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="deleteUserInModal(${u.id}, '${u.username.replace(/'/g, "\\'")}')" title="Удалить">${getTrashIcon(16)}</button>` : ''}
-      </div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
     
   // Регистрируем глобальные функции для onclick (если еще не зарегистрированы)
   if (!window.toggleUserInModal) {
@@ -500,10 +568,11 @@ function filterAndRenderUsers(adminFetch) {
   
   if (!window.resetUserPasswordInModal) {
     window.resetUserPasswordInModal = async (userId, username) => {
+      const safeUsername = escapeHtml(username || '');
       const passwordResetContent = `
         <div style="display:flex; flex-direction:column; gap:var(--space-md);">
           <div style="color:var(--text-secondary);">
-            Сброс пароля для пользователя: <strong>${username}</strong>
+            Сброс пароля для пользователя: <strong>${safeUsername}</strong>
           </div>
           <input id="newPassword1" class="input" type="password" placeholder="Новый пароль (мин. 8 символов)" />
           <input id="newPassword2" class="input" type="password" placeholder="Повторите новый пароль" />
@@ -556,7 +625,7 @@ function filterAndRenderUsers(adminFetch) {
               closeModal();
               showModal(`${getSuccessIcon(18)} Успешно`, `
                 <div style="text-align:center; padding:var(--space-lg);">
-                  Пароль для <strong>${username}</strong> успешно изменен
+                  Пароль для <strong>${safeUsername}</strong> успешно изменен
                 </div>
                 <button onclick="closeModal(); setTimeout(() => window.showUsersModal && window.showUsersModal(window.adminFetch), 100)" class="primary" style="width:100%;">OK</button>
               `);
@@ -586,13 +655,14 @@ function filterAndRenderUsers(adminFetch) {
 // Глобальная функция для открытия модального окна назначения устройств
 window.showUserDevicesModalInModal = async function(userId, username, userRole) {
   if (!window.adminFetch) return;
+  const safeUsername = escapeHtml(username || '');
   
   // Если admin, показываем сообщение что ему доступны все устройства
   if (userRole === 'admin') {
     showModal(`${getSettingsIcon(18)} Управление устройствами`, `
       <div style="text-align:center; padding:var(--space-lg);">
         <div class="meta" style="margin-bottom:var(--space-md);">
-          Пользователь <strong>${username}</strong> имеет роль <strong>ADMIN</strong>
+          Пользователь <strong>${safeUsername}</strong> имеет роль <strong>ADMIN</strong>
         </div>
         <div class="meta" style="color:var(--text-secondary);">
           Администраторам доступны все устройства автоматически
@@ -608,7 +678,7 @@ window.showUserDevicesModalInModal = async function(userId, username, userRole) 
     showModal(`${getSettingsIcon(18)} Управление устройствами`, `
       <div style="text-align:center; padding:var(--space-lg);">
         <div class="meta" style="margin-bottom:var(--space-md);">
-          Пользователь <strong>${username}</strong> имеет роль <strong>HERO ADMIN</strong>
+          Пользователь <strong>${safeUsername}</strong> имеет роль <strong>HERO ADMIN</strong>
         </div>
         <div class="meta" style="color:var(--text-secondary);">
           Hero Admin имеет свою панель управления и не имеет доступа к устройствам
@@ -634,7 +704,7 @@ window.showUserDevicesModalInModal = async function(userId, username, userRole) 
       <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm);">
         <div style="margin-bottom:var(--space-sm);">
           <div class="meta" style="color:var(--text-secondary);">Пользователь:</div>
-          <div style="font-weight:600; margin-top:4px;">${username}</div>
+          <div style="font-weight:600; margin-top:4px;">${safeUsername}</div>
         </div>
       </div>
       
@@ -740,6 +810,7 @@ function setupUserDevicesModalHandlers(adminFetch, userId, username) {
   const nextBtn = document.getElementById('modalDevicesNextPage');
   
   if (!searchInput || !selectAllBtn || !deselectAllBtn || !saveBtn) return;
+  const safeUsername = escapeHtml(username || '');
   
   // Обработчик поиска
   let searchTimeout;
@@ -784,7 +855,7 @@ function setupUserDevicesModalHandlers(adminFetch, userId, username) {
         closeModal();
         showModal(`${getSuccessIcon(18)} Успешно`, `
           <div style="text-align:center; padding:var(--space-lg);">
-            Устройства для <strong>${username}</strong> успешно обновлены
+            Устройства для <strong>${safeUsername}</strong> успешно обновлены
           </div>
           <button onclick="closeModal(); setTimeout(() => window.showUsersModal && window.showUsersModal(window.adminFetch), 100)" class="primary" style="width:100%;">OK</button>
         `);
@@ -884,17 +955,20 @@ function filterAndRenderDevices() {
   container.innerHTML = pageDevices.map(d => {
     const isSelected = state.userDeviceIds.includes(d.device_id);
     const deviceName = d.name || d.device_id;
+    const safeDeviceName = escapeHtml(deviceName || '');
+    const safeDeviceId = escapeHtml(d.device_id || '');
+    const deviceIdArg = escapeJsStringForAttr(d.device_id || '');
     return `
       <label style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm); border-radius:var(--radius-sm); cursor:pointer; transition:background 0.2s; ${isSelected ? 'background:var(--panel-2);' : ''}" onmouseover="this.style.background='var(--panel-2)'" onmouseout="this.style.background=${isSelected ? "'var(--panel-2)'" : "'transparent'"}">
         <input 
           type="checkbox" 
           ${isSelected ? 'checked' : ''} 
-          onchange="toggleDeviceSelection('${d.device_id}')"
+          onchange="toggleDeviceSelection(${deviceIdArg})"
           style="cursor:pointer;"
         />
         <div style="flex:1; min-width:0;">
-          <div style="font-weight:500;">${deviceName}</div>
-          <div class="meta" style="font-size:0.75rem;">ID: ${d.device_id}</div>
+          <div style="font-weight:500;">${safeDeviceName}</div>
+          <div class="meta" style="font-size:0.75rem;">ID: ${safeDeviceId}</div>
         </div>
       </label>
     `;
@@ -968,7 +1042,8 @@ async function loadSettingsContent(adminFetch) {
     }
     settingsData = await response.json();
   } catch (err) {
-    container.innerHTML = `<div class="meta" style="color:var(--danger); text-align:center;">${err.message}</div>`;
+    const safeError = escapeHtml(err.message || 'Ошибка загрузки настроек');
+    container.innerHTML = `<div class="meta" style="color:var(--danger); text-align:center;">${safeError}</div>`;
     return;
   }
   
@@ -978,73 +1053,161 @@ async function loadSettingsContent(adminFetch) {
   // defaults.contentRoot всегда содержит значение по умолчанию, вычисляемое сервером
   const defaultContentRoot = settingsData?.defaults?.contentRoot || '';
   
+  // Используем DOM методы вместо innerHTML для безопасности
+  const mainDiv = document.createElement('div');
+  mainDiv.style.cssText = 'padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm); display:flex; flex-direction:column; gap:0;';
   
-  container.innerHTML = `
-  <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm); display:flex; flex-direction:column; gap:0;">
-    <!-- Хранилище контента -->
-    <div style="padding-bottom:var(--space-md);">
-      <div style="font-weight:600; font-size:1.1rem; color:var(--text-primary, #fff); margin-bottom:var(--space-sm);">Хранилище контента</div>
-      <div style="display:flex; align-items:center; gap:var(--space-md);">
-        <div style="flex:1; display:flex; flex-direction:column; gap:var(--space-xs);">
-          <input id="contentRootInput" class="input" spellcheck="false" />
-          ${defaultContentRoot ? `<div class="meta" style="font-size:0.85rem; color:var(--text-secondary);">
-            По умолчанию: <code style="font-family:monospace;">${defaultContentRoot}</code>
-          </div>` : ''}
-          <div id="contentRootStatus" class="meta" style="min-height:1.2em; font-size:0.85rem;"></div>
-        </div>
-        <button id="contentRootSaveBtn" class="primary" style="flex-shrink:0;">Сохранить</button>
-      </div>
-    </div>
-    
-    <!-- Разделитель -->
-    <div style="border-top:1px solid var(--border-color, rgba(255,255,255,0.1)); margin:0;"></div>
-    
-    <!-- База данных -->
-    <div style="padding:var(--space-md) 0;">
-      <div style="font-weight:600; font-size:1.1rem; color:var(--text-primary, #fff); margin-bottom:var(--space-sm);">База данных</div>
-      <div style="display:flex; align-items:center; gap:var(--space-md);">
-        <div class="meta" style="flex:1; color:var(--text-secondary); line-height:1.4;">
-          Экспортируйте базу данных для резервного копирования или миграции.
-        </div>
-        <button id="exportDatabaseBtn" class="primary" style="flex-shrink:0;">
-          ${getDownloadIcon(16)} Экспорт
-        </button>
-      </div>
-    </div>
-    
-    <!-- Разделитель -->
-    <div style="border-top:1px solid var(--border-color, rgba(255,255,255,0.1)); margin:0;"></div>
-    
-    <!-- Очистка базы данных -->
-    <div style="padding-top:var(--space-md);">
-      <div style="font-weight:600; font-size:1.1rem; color:var(--text-primary, #fff); margin-bottom:var(--space-sm);">Очистка базы данных</div>
-      <div style="display:flex; align-items:center; gap:var(--space-md);">
-        <div style="flex:1; display:flex; flex-direction:column; gap:var(--space-xs);">
-          <div class="meta" style="color:var(--text-secondary); line-height:1.4;">
-            Проверьте файлы из базы данных на наличие на диске. Удалите записи о несуществующих файлах.
-          </div>
-          <div id="cleanupStatus" class="meta" style="min-height:1.2em; font-size:0.85rem;"></div>
-        </div>
-        <div style="flex-shrink:0; display:flex; gap:var(--space-xs);">
-          <button id="checkFilesBtn" class="secondary" style="width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center;" title="Проверить файлы">
-            🔍
-          </button>
-          <button id="cleanupFilesBtn" class="danger meta-lg" style="width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center;" disabled title="Очистить">
-            🗑️
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-  `;
+  // Хранилище контента
+  const storageSection = document.createElement('div');
+  storageSection.style.cssText = 'padding-bottom:var(--space-md);';
   
-  const inputEl = document.getElementById('contentRootInput');
-  const saveBtn = document.getElementById('contentRootSaveBtn');
-  const statusEl = document.getElementById('contentRootStatus');
-  const exportBtn = document.getElementById('exportDatabaseBtn');
-  const checkFilesBtn = document.getElementById('checkFilesBtn');
-  const cleanupFilesBtn = document.getElementById('cleanupFilesBtn');
-  const cleanupStatusEl = document.getElementById('cleanupStatus');
+  const storageTitle = document.createElement('div');
+  storageTitle.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary); margin-bottom:var(--space-sm);';
+  storageTitle.textContent = 'Хранилище контента';
+  
+  const storageContent = document.createElement('div');
+  storageContent.style.cssText = 'display:flex; align-items:center; gap:var(--space-md);';
+  
+  const storageInputContainer = document.createElement('div');
+  storageInputContainer.style.cssText = 'flex:1; display:flex; flex-direction:column; gap:var(--space-xs);';
+  
+  const contentRootInput = document.createElement('input');
+  contentRootInput.id = 'contentRootInput';
+  contentRootInput.className = 'input';
+  contentRootInput.spellcheck = false;
+  
+  if (defaultContentRoot) {
+    const defaultInfo = document.createElement('div');
+    defaultInfo.className = 'meta';
+    defaultInfo.style.cssText = 'font-size:0.85rem; color:var(--text-secondary);';
+    const defaultText = document.createTextNode('По умолчанию: ');
+    const codeEl = document.createElement('code');
+    codeEl.style.fontFamily = 'monospace';
+    codeEl.textContent = defaultContentRoot;
+    defaultInfo.appendChild(defaultText);
+    defaultInfo.appendChild(codeEl);
+    storageInputContainer.appendChild(defaultInfo);
+  }
+  
+  const contentRootStatus = document.createElement('div');
+  contentRootStatus.id = 'contentRootStatus';
+  contentRootStatus.className = 'meta';
+  contentRootStatus.style.cssText = 'min-height:1.2em; font-size:0.85rem;';
+  
+  storageInputContainer.appendChild(contentRootInput);
+  storageInputContainer.appendChild(contentRootStatus);
+  
+  const contentRootSaveBtn = document.createElement('button');
+  contentRootSaveBtn.id = 'contentRootSaveBtn';
+  contentRootSaveBtn.className = 'primary';
+  contentRootSaveBtn.style.cssText = 'flex-shrink:0;';
+  contentRootSaveBtn.textContent = 'Сохранить';
+  
+  storageContent.appendChild(storageInputContainer);
+  storageContent.appendChild(contentRootSaveBtn);
+  storageSection.appendChild(storageTitle);
+  storageSection.appendChild(storageContent);
+  
+  // Разделитель
+  const divider1 = document.createElement('div');
+  divider1.style.cssText = 'border-top:1px solid var(--border-color, rgba(255,255,255,0.1)); margin:0;';
+  
+  // База данных
+  const dbSection = document.createElement('div');
+  dbSection.style.cssText = 'padding:var(--space-md) 0;';
+  
+  const dbTitle = document.createElement('div');
+  dbTitle.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary); margin-bottom:var(--space-sm);';
+  dbTitle.textContent = 'База данных';
+  
+  const dbContent = document.createElement('div');
+  dbContent.style.cssText = 'display:flex; align-items:center; gap:var(--space-md);';
+  
+  const dbDescription = document.createElement('div');
+  dbDescription.className = 'meta';
+  dbDescription.style.cssText = 'flex:1; color:var(--text-secondary); line-height:1.4;';
+  dbDescription.textContent = 'Экспортируйте базу данных для резервного копирования или миграции.';
+  
+  const exportDatabaseBtn = document.createElement('button');
+  exportDatabaseBtn.id = 'exportDatabaseBtn';
+  exportDatabaseBtn.className = 'primary';
+  exportDatabaseBtn.style.cssText = 'flex-shrink:0;';
+  exportDatabaseBtn.innerHTML = `${getDownloadIcon(16)} Экспорт`;
+  
+  dbContent.appendChild(dbDescription);
+  dbContent.appendChild(exportDatabaseBtn);
+  dbSection.appendChild(dbTitle);
+  dbSection.appendChild(dbContent);
+  
+  // Разделитель 2
+  const divider2 = document.createElement('div');
+  divider2.style.cssText = 'border-top:1px solid var(--border-color, rgba(255,255,255,0.1)); margin:0;';
+  
+  // Очистка базы данных
+  const cleanupSection = document.createElement('div');
+  cleanupSection.style.cssText = 'padding-top:var(--space-md);';
+  
+  const cleanupTitle = document.createElement('div');
+  cleanupTitle.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary); margin-bottom:var(--space-sm);';
+  cleanupTitle.textContent = 'Очистка базы данных';
+  
+  const cleanupContent = document.createElement('div');
+  cleanupContent.style.cssText = 'display:flex; align-items:center; gap:var(--space-md);';
+  
+  const cleanupLeft = document.createElement('div');
+  cleanupLeft.style.cssText = 'flex:1; display:flex; flex-direction:column; gap:var(--space-xs);';
+  
+  const cleanupDescription = document.createElement('div');
+  cleanupDescription.className = 'meta';
+  cleanupDescription.style.cssText = 'color:var(--text-secondary); line-height:1.4;';
+  cleanupDescription.textContent = 'Проверьте файлы из базы данных на наличие на диске. Удалите записи о несуществующих файлах.';
+  
+  const cleanupStatus = document.createElement('div');
+  cleanupStatus.id = 'cleanupStatus';
+  cleanupStatus.className = 'meta';
+  cleanupStatus.style.cssText = 'min-height:1.2em; font-size:0.85rem;';
+  
+  cleanupLeft.appendChild(cleanupDescription);
+  cleanupLeft.appendChild(cleanupStatus);
+  
+  const cleanupButtons = document.createElement('div');
+  cleanupButtons.style.cssText = 'flex-shrink:0; display:flex; gap:var(--space-xs);';
+  
+  const checkFilesBtn = document.createElement('button');
+  checkFilesBtn.id = 'checkFilesBtn';
+  checkFilesBtn.className = 'secondary';
+  checkFilesBtn.style.cssText = 'width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center;';
+  checkFilesBtn.title = 'Проверить файлы';
+  checkFilesBtn.textContent = '🔍';
+  
+  const cleanupFilesBtn = document.createElement('button');
+  cleanupFilesBtn.id = 'cleanupFilesBtn';
+  cleanupFilesBtn.className = 'danger meta-lg';
+  cleanupFilesBtn.style.cssText = 'width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center;';
+  cleanupFilesBtn.disabled = true;
+  cleanupFilesBtn.title = 'Очистить';
+  cleanupFilesBtn.textContent = '🗑️';
+  
+  cleanupButtons.appendChild(checkFilesBtn);
+  cleanupButtons.appendChild(cleanupFilesBtn);
+  cleanupContent.appendChild(cleanupLeft);
+  cleanupContent.appendChild(cleanupButtons);
+  cleanupSection.appendChild(cleanupTitle);
+  cleanupSection.appendChild(cleanupContent);
+  
+  mainDiv.appendChild(storageSection);
+  mainDiv.appendChild(divider1);
+  mainDiv.appendChild(dbSection);
+  mainDiv.appendChild(divider2);
+  mainDiv.appendChild(cleanupSection);
+  container.appendChild(mainDiv);
+  
+  // Используем уже созданные элементы напрямую
+  const inputEl = contentRootInput;
+  const saveBtn = contentRootSaveBtn;
+  const statusEl = contentRootStatus;
+  const exportBtn = exportDatabaseBtn;
+  const cleanupStatusEl = cleanupStatus;
   
   if (!inputEl || !saveBtn || !statusEl || !exportBtn || !checkFilesBtn || !cleanupFilesBtn || !cleanupStatusEl) return;
   
@@ -1092,7 +1255,7 @@ async function loadSettingsContent(adminFetch) {
       lastSavedValue = data.contentRoot || newPath;
       inputEl.value = lastSavedValue;
       statusEl.textContent = 'Путь сохранён. Контент будет загружаться и читаться из новой папки.';
-      statusEl.style.color = 'var(--success, #22c55e)';
+      statusEl.style.color = 'var(--success)';
     } catch (err) {
       statusEl.textContent = err.message;
       statusEl.style.color = 'var(--danger)';
@@ -1173,9 +1336,9 @@ async function loadSettingsContent(adminFetch) {
       
       if (result.missingOnDisk === 0) {
         statusText = '✅ Все файлы на месте. Проблем не обнаружено.';
-        cleanupStatusEl.style.color = 'var(--success, #22c55e)';
+        cleanupStatusEl.style.color = 'var(--success)';
       } else if (result.missingOnDisk > 0) {
-        cleanupStatusEl.style.color = 'var(--warning, #f59e0b)';
+        cleanupStatusEl.style.color = 'var(--warning)';
       } else {
         cleanupStatusEl.style.color = 'var(--text-secondary)';
       }

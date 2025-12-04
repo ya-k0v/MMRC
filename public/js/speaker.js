@@ -1362,7 +1362,8 @@ async function showStreamingPreview(deviceId, safeName, streamProtocol = '') {
           console.log(`[Speaker] ⏳ Ошибка, повтор через ${retryDelay}ms (попытка ${retryCount}/${maxRetries})`);
           setTimeout(tryGetStreamUrl, retryDelay);
         } else {
-          filePreview.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary)">Ошибка: ${error.message}</div>`;
+          const safeError = escapeHtml(error?.message || 'Неизвестная ошибка');
+          filePreview.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary)">Ошибка: ${safeError}</div>`;
         }
       }
     };
@@ -1371,7 +1372,8 @@ async function showStreamingPreview(deviceId, safeName, streamProtocol = '') {
     tryGetStreamUrl();
   } catch (error) {
     console.error('[Speaker] ❌ Ошибка при запуске стрима для превью:', error);
-    filePreview.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary)">Ошибка: ${error.message}</div>`;
+    const safeError = escapeHtml(error?.message || 'Неизвестная ошибка');
+    filePreview.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary)">Ошибка: ${safeError}</div>`;
   }
 }
 

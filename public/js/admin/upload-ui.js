@@ -2,6 +2,7 @@
 import { setXhrAuth, adminFetch } from './auth.js';
 import { calculateFileMD5 } from './md5-helper.js';
 import { getFolderIcon, getWarningIcon, getSuccessIcon } from '../shared/svg-icons.js';
+import { escapeHtml } from '../shared/utils.js';
 
 export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, socket) {
   const dropZone = card.querySelector('.dropZone');
@@ -31,23 +32,68 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       return; 
     }
     
+    // Используем DOM методы вместо innerHTML для безопасности
+    queue.innerHTML = '';
+    
     // Если это папка с изображениями, показываем специальное сообщение
     if (folderName) {
       const imageCount = pending.filter(f => imageExtensions.test(f.name)).length;
       const totalSize = pending.reduce((sum, f) => sum + f.size, 0);
-      queue.innerHTML = `
-        <li style="display:flex; justify-content:space-between; align-items:center; padding:8px; background:var(--panel-2); border-radius:var(--radius-sm)">
-          <span style="display:flex; align-items:center; gap:4px;">${getFolderIcon(16)} <strong>${folderName}</strong> <span class="meta">(${imageCount} изображений, ${(totalSize/1024/1024).toFixed(2)} MB)</span></span>
-          <span class="meta" id="p_${deviceId}_folder">0%</span>
-        </li>
-      `;
+      
+      const li = document.createElement('li');
+      li.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:8px; background:var(--panel-2); border-radius:var(--radius-sm)';
+      
+      const leftSpan = document.createElement('span');
+      leftSpan.style.cssText = 'display:flex; align-items:center; gap:4px;';
+      // getFolderIcon возвращает безопасную SVG иконку из константы
+      // Используем временный контейнер для безопасного парсинга
+      const iconTemp = document.createElement('span');
+      iconTemp.insertAdjacentHTML('beforeend', getFolderIcon(16));
+      while (iconTemp.firstChild) {
+        leftSpan.appendChild(iconTemp.firstChild);
+      }
+      
+      const folderNameStrong = document.createElement('strong');
+      folderNameStrong.textContent = folderName; // Используем textContent для безопасности
+      leftSpan.appendChild(folderNameStrong);
+      
+      const metaSpan = document.createElement('span');
+      metaSpan.className = 'meta';
+      metaSpan.textContent = `(${imageCount} изображений, ${(totalSize/1024/1024).toFixed(2)} MB)`;
+      leftSpan.appendChild(metaSpan);
+      
+      const progressSpan = document.createElement('span');
+      progressSpan.className = 'meta';
+      progressSpan.id = `p_${deviceId}_folder`;
+      progressSpan.textContent = '0%';
+      
+      li.appendChild(leftSpan);
+      li.appendChild(progressSpan);
+      queue.appendChild(li);
     } else {
-      queue.innerHTML = pending.map((f,i) => `
-        <li style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border-2);">
-          <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${f.name} <span class="meta">(${(f.size/1024/1024).toFixed(2)} MB)</span></span>
-          <span class="meta" id="p_${deviceId}_${i}" style="flex-shrink:0; margin-left:var(--space-sm);">0%</span>
-        </li>
-      `).join('');
+      pending.forEach((f, i) => {
+        const li = document.createElement('li');
+        li.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border-2);';
+        
+        const nameSpan = document.createElement('span');
+        nameSpan.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+        nameSpan.textContent = f.name; // Используем textContent для безопасности
+        
+        const sizeMetaSpan = document.createElement('span');
+        sizeMetaSpan.className = 'meta';
+        sizeMetaSpan.textContent = `(${(f.size/1024/1024).toFixed(2)} MB)`;
+        nameSpan.appendChild(sizeMetaSpan);
+        
+        const progressSpan = document.createElement('span');
+        progressSpan.className = 'meta';
+        progressSpan.id = `p_${deviceId}_${i}`;
+        progressSpan.style.cssText = 'flex-shrink:0; margin-left:var(--space-sm);';
+        progressSpan.textContent = '0%';
+        
+        li.appendChild(nameSpan);
+        li.appendChild(progressSpan);
+        queue.appendChild(li);
+      });
     }
   }
 

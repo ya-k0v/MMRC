@@ -4,6 +4,21 @@
  */
 
 /**
+ * Блокирующий sleep без busy-wait (использует Atomics.wait)
+ * @param {number} ms - Количество миллисекунд
+ */
+function syncSleep(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) {
+    return;
+  }
+
+  // SharedArrayBuffer позволяет использовать Atomics.wait для блокирующей задержки
+  const sharedBuffer = new SharedArrayBuffer(4);
+  const int32 = new Int32Array(sharedBuffer);
+  Atomics.wait(int32, 0, 0, Math.floor(ms));
+}
+
+/**
  * Выполнить функцию с повторными попытками при ошибке
  * @param {Function} fn - Функция для выполнения
  * @param {Object} options - Опции retry
@@ -87,12 +102,8 @@ export function withRetrySync(fn, options = {}) {
         onRetry(error, attempt + 1, maxRetries);
       }
       
-      // Для синхронных операций используем busy wait (не идеально, но работает)
-      const start = Date.now();
-      const waitTime = delay * Math.pow(2, attempt);
-      while (Date.now() - start < waitTime) {
-        // Busy wait
-      }
+      const waitTime = Math.min(delay * Math.pow(2, attempt), 100);
+      syncSleep(waitTime);
     }
   }
   

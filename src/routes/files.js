@@ -662,24 +662,92 @@ export function createFilesRouter(deps) {
       return res.status(404).json({ error: 'device not found' });
     }
     
+    // КРИТИЧНО: Обрабатываем отмену загрузки клиентом
+    let isAborted = false;
+    const uploadedFiles = []; // Сохраняем список загруженных файлов для очистки при отмене
+    
+    const cleanupOnAbort = () => {
+      if (isAborted) return;
+      isAborted = true;
+      
+      logger.warn('[Upload] Upload aborted by client', {
+        deviceId: id,
+        uploadedFiles: uploadedFiles.length
+      });
+      
+      // Удаляем все частично загруженные файлы
+      if (req.files && req.files.length > 0) {
+        for (const file of req.files) {
+          try {
+            if (file.path && fs.existsSync(file.path)) {
+              fs.unlinkSync(file.path);
+              logger.debug('[Upload] Cleaned up aborted file', { path: file.path });
+            }
+          } catch (cleanupErr) {
+            logger.error('[Upload] Error cleaning up aborted file', {
+              path: file.path,
+              error: cleanupErr.message
+            });
+          }
+        }
+      }
+      
+      // Также удаляем файлы из uploadedFiles
+      for (const filePath of uploadedFiles) {
+        try {
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+          }
+        } catch (cleanupErr) {
+          logger.error('[Upload] Error cleaning up uploaded file', {
+            path: filePath,
+            error: cleanupErr.message
+          });
+        }
+      }
+    };
+    
+    req.on('close', cleanupOnAbort);
+    req.on('aborted', cleanupOnAbort);
+    
     upload.array('files', 50)(req, res, async (err) => {
+      // Удаляем обработчики при завершении (успешном или с ошибкой)
+      req.removeListener('close', cleanupOnAbort);
+      req.removeListener('aborted', cleanupOnAbort);
+      
+      if (isAborted) {
+        // Загрузка была отменена - не обрабатываем дальше
+        return;
+      }
+      
       if (err) {
         // ИСПРАВЛЕНО: Специфичная обработка ошибок загрузки
         if (err.code === 'ENOSPC') {
           logger.error('[Upload] No space left on device', { error: err.message });
+          // Очищаем загруженные файлы при ошибке диска
+          cleanupOnAbort();
           return res.status(507).json({ error: 'No space left on device' });
         } else if (err.code === 'LIMIT_FILE_SIZE') {
           logger.warn('[Upload] File size limit exceeded', { error: err.message });
+          cleanupOnAbort();
           return res.status(413).json({ error: 'File size limit exceeded' });
         } else if (err.message === 'unsupported type') {
+          cleanupOnAbort();
           return res.status(415).json({ error: 'Unsupported file type' });
         }
         
         logger.error('[Upload] Upload error', { error: err.message, code: err.code });
+        cleanupOnAbort();
         return res.status(400).json({ error: err.message });
       }
       
-      const uploaded = (req.files || []).map(f => f.filename);
+      const uploaded = (req.files || []).map(f => {
+        // Сохраняем пути для возможной очистки
+        if (f.path) {
+          uploadedFiles.push(f.path);
+        }
+        return f.filename;
+      });
       const folderName = req.body.folderName; // Имя папки если загружается через выбор папки
 
       // КРИТИЧНО: Сохраняем оригинальные имена ДО любых конвертаций (PDF/PPTX используют их сразу)
@@ -940,6 +1008,12 @@ export function createFilesRouter(deps) {
         }
       }
       
+      // КРИТИЧНО: Проверяем отмену перед обработкой файлов
+      if (isAborted) {
+        logger.warn('[Upload] Upload was aborted, skipping file processing', { deviceId: id });
+        return;
+      }
+      
       // Обрабатываем файлы ТОЛЬКО если это не прямая загрузка папки
       if (!folderName) {
         for (const fileName of uploaded) {
@@ -973,6 +1047,12 @@ export function createFilesRouter(deps) {
         }
           // УДАЛЕНО: Автоматическая оптимизация переносится ПОСЛЕ сохранения метаданных
         }
+      }
+      
+      // КРИТИЧНО: Проверяем отмену перед audit log
+      if (isAborted) {
+        logger.warn('[Upload] Upload was aborted, skipping audit log', { deviceId: id });
+        return;
       }
       
       // Audit log
@@ -1048,12 +1128,23 @@ export function createFilesRouter(deps) {
       }
       
       // НОВОЕ: Обновляем список файлов из БД (ПОСЛЕ обработки метаданных)
+      // КРИТИЧНО: Проверяем, не была ли загрузка отменена
+      if (isAborted) {
+        logger.warn('[Upload] Upload was aborted, skipping final processing', { deviceId: id });
+        return;
+      }
+      
       updateDeviceFilesFromDB(id, devices, fileNamesMap);
       
       const updatedFiles = devices[id].files || [];
       io.emit('devices/updated');
       
-      res.json({ ok: true, files: updatedFiles, uploaded });
+      // КРИТИЧНО: Проверяем еще раз перед отправкой ответа
+      if (!isAborted && !res.headersSent) {
+        res.json({ ok: true, files: updatedFiles, uploaded });
+      } else if (isAborted) {
+        logger.warn('[Upload] Response already sent or upload aborted', { deviceId: id });
+      }
     });
   });
   

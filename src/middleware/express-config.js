@@ -13,6 +13,7 @@ import { requestTimeout } from './timeout.js';
 import logger from '../utils/logger.js';
 import { getStreamManager } from '../streams/stream-manager.js';
 import { getFileMetadata } from '../database/files-metadata.js';
+import { validatePath } from '../utils/path-validator.js';
 
 /**
  * Санитизирует фрагмент пути (идентично stream-manager.js)
@@ -167,24 +168,60 @@ export function setupStaticFiles(app) {
     if (decodedParts.length >= 1) {
       const safeName = decodedParts[0];
       const sanitizedFile = sanitizePathFragment(safeName);
-      const restOfPath = decodedParts.slice(1).join('/'); // index.m3u8 или segment_00001.ts
+      
+      // КРИТИЧНО: Санитизируем каждую часть restOfPath для защиты от path traversal
+      const restParts = decodedParts.slice(1).map(part => sanitizePathFragment(part));
+      const sanitizedRestPath = restParts.join('/');
       
       // КРИТИЧНО: Формируем путь так же, как в stream-manager.js._getPaths()
       // КРИТИЧНО: Убрали deviceId из пути - стримы теперь идентифицируются только по safeName
       // Используем getStreamsOutputDir() из настроек (contentRoot/streams)
-      filePath = path.join(getStreamsOutputDir(), sanitizedFile, restOfPath);
+      const baseDir = getStreamsOutputDir();
+      // КРИТИЧНО: sanitizedFile и sanitizedRestPath уже санитизированы через sanitizePathFragment
+      // path.join безопасен здесь, так как все части пути санитизированы
+      // Далее путь будет дополнительно проверен через validatePath перед использованием в fs операциях
+      // eslint-disable-next-line security/detect-non-literal-fs-filename
+      const relativePath = path.join(sanitizedFile, sanitizedRestPath);
       
+      // КРИТИЧНО: Используем validatePath для защиты от path traversal атак
+      // validatePath проверяет, что путь находится внутри baseDir и выбрасывает ошибку при попытке path traversal
+      try {
+        filePath = validatePath(relativePath, baseDir);
+      } catch (error) {
+        logger.warn('[Express] Path traversal attempt detected', {
+          originalRelativePath: relativePath,
+          safeName,
+          sanitizedFile,
+          sanitizedRestPath,
+          error: error.message
+        });
+        return res.status(400).send('Invalid path');
+      }
+      
+      // КРИТИЧНО: filePath теперь валидирован и безопасен для использования в fs операциях
+      // eslint-disable-next-line security/detect-non-literal-fs-filename
       logger.debug('[Express] Stream file path constructed', {
         originalRelativePath: relativePath,
         safeName,
         sanitizedFile,
-        restOfPath,
+        sanitizedRestPath,
         filePath,
-        streamsOutputDir: getStreamsOutputDir()
+        streamsOutputDir: baseDir
       });
     } else {
-      // Fallback для некорректных путей
-      filePath = path.join(getStreamsOutputDir(), relativePath);
+      // Fallback для некорректных путей - также проверяем на path traversal
+      try {
+        filePath = validatePath(relativePath, getStreamsOutputDir());
+      } catch (error) {
+        logger.warn('[Express] Path traversal attempt in fallback path', {
+          relativePath,
+          decodedParts,
+          error: error.message
+        });
+        return res.status(400).send('Invalid path');
+      }
+      // КРИТИЧНО: filePath теперь валидирован и безопасен для использования в fs операциях
+      // eslint-disable-next-line security/detect-non-literal-fs-filename
       logger.warn('[Express] Invalid stream path format, using fallback', {
         relativePath,
         decodedParts,
@@ -192,6 +229,7 @@ export function setupStaticFiles(app) {
       });
     }
     
+    // КРИТИЧНО: filePath валидирован через validatePath выше, безопасен для всех fs операций
     // КРИТИЧНО: Возможна гонка между запуском FFmpeg и первым запросом плейлиста/сегмента.
     // Вместо немедленного 404 подождем немного появления файла, но только если FFmpeg запущен.
     // Увеличено до 15 секунд, так как ensureStreamRunning может занимать до 10-12 секунд
@@ -252,14 +290,18 @@ export function setupStaticFiles(app) {
       const maxChecks = 30; // Максимум 30 попыток (15 секунд при интервале 500мс)
       const improvedCheckInterval = 500; // Улучшенный интервал проверки: 500мс вместо 100мс
       
+      // КРИТИЧНО: filePath валидирован через validatePath, безопасен для fs операций
+      // eslint-disable-next-line security/detect-non-literal-fs-filename
       while (!fs.existsSync(filePath) && waitedTime < maxWaitMs && checkCount < maxChecks) {
         await new Promise(resolve => setTimeout(resolve, improvedCheckInterval));
         waitedTime = Date.now() - waitStart;
         checkCount++;
         
         // КРИТИЧНО: Проверяем не только существование, но и размер файла (минимум 100 байт)
+        // eslint-disable-next-line security/detect-non-literal-fs-filename
         if (fs.existsSync(filePath)) {
           try {
+            // eslint-disable-next-line security/detect-non-literal-fs-filename
             const stats = fs.statSync(filePath);
             if (stats.size >= 100) {
               // Файл существует и имеет достаточный размер
@@ -318,6 +360,8 @@ export function setupStaticFiles(app) {
     }
     
     // Повторная проверка после ожидания
+    // КРИТИЧНО: filePath валидирован через validatePath, безопасен для fs операций
+    // eslint-disable-next-line security/detect-non-literal-fs-filename
     if (!fs.existsSync(filePath)) {
       // КРИТИЧНО: Дополнительная диагностика - проверяем, существует ли папка устройства
       let diagnosticInfo = {
@@ -368,6 +412,8 @@ export function setupStaticFiles(app) {
       return res.status(404).send('File not found');
     }
     
+    // КРИТИЧНО: filePath валидирован через validatePath, безопасен для fs операций
+    // eslint-disable-next-line security/detect-non-literal-fs-filename
     const stats = fs.statSync(filePath);
     
     // КРИТИЧНО: Проверяем, что файл не пустой
@@ -411,6 +457,35 @@ export function setupStaticFiles(app) {
       
       // Читаем файл и отправляем без буферизации
       const stream = fs.createReadStream(filePath);
+      
+      // КРИТИЧНО: Обрабатываем закрытие соединения клиентом
+      let isAborted = false;
+      const cleanup = () => {
+        isAborted = true;
+        if (stream && !stream.destroyed) {
+          stream.destroy();
+        }
+      };
+      
+      req.on('close', cleanup);
+      req.on('aborted', cleanup);
+      res.on('close', cleanup);
+      
+      stream.on('error', (err) => {
+        if (!isAborted) {
+          logger.error('[Express] Stream error for m3u8', { 
+            error: err.message, 
+            filePath 
+          });
+          if (!res.headersSent) {
+            res.status(500).end();
+          } else {
+            res.end();
+          }
+        }
+        cleanup();
+      });
+      
       stream.pipe(res);
       return;
     }
@@ -443,6 +518,8 @@ export function setupStaticFiles(app) {
       // Вместо этого всегда отправляем полный файл через chunked transfer
       
       // Проверяем, является ли файл активным сегментом (недавно изменен)
+      // КРИТИЧНО: filePath валидирован через validatePath, безопасен для fs операций
+      // eslint-disable-next-line security/detect-non-literal-fs-filename
       const stats = fs.statSync(filePath);
       const fileAge = Date.now() - stats.mtimeMs;
       const isActiveSegment = fileAge < 10000; // Файл изменялся менее 10 секунд назад
@@ -476,13 +553,31 @@ export function setupStaticFiles(app) {
           // Используем Transfer-Encoding: chunked (по умолчанию в Node.js)
           
           const stream = fs.createReadStream(filePath, { start, end });
-          stream.on('error', (err) => {
-            if (!res.headersSent) {
-              res.status(500).end();
-            } else {
-              res.end();
+          
+          // КРИТИЧНО: Обрабатываем закрытие соединения клиентом
+          let isAborted = false;
+          const cleanup = () => {
+            isAborted = true;
+            if (stream && !stream.destroyed) {
+              stream.destroy();
             }
+          };
+          
+          req.on('close', cleanup);
+          req.on('aborted', cleanup);
+          res.on('close', cleanup);
+          
+          stream.on('error', (err) => {
+            if (!isAborted) {
+              if (!res.headersSent) {
+                res.status(500).end();
+              } else {
+                res.end();
+              }
+            }
+            cleanup();
           });
+          
           stream.pipe(res);
         } else {
           // Для старых сегментов (которые уже полностью записаны) используем обычную обработку
@@ -493,26 +588,62 @@ export function setupStaticFiles(app) {
           res.setHeader('Content-Length', chunksize);
           
           const stream = fs.createReadStream(filePath, { start, end });
-          stream.on('error', (err) => {
-            if (!res.headersSent) {
-              res.status(500).end();
-            } else {
-              res.end();
+          
+          // КРИТИЧНО: Обрабатываем закрытие соединения клиентом
+          let isAborted = false;
+          const cleanup = () => {
+            isAborted = true;
+            if (stream && !stream.destroyed) {
+              stream.destroy();
             }
+          };
+          
+          req.on('close', cleanup);
+          req.on('aborted', cleanup);
+          res.on('close', cleanup);
+          
+          stream.on('error', (err) => {
+            if (!isAborted) {
+              if (!res.headersSent) {
+                res.status(500).end();
+              } else {
+                res.end();
+              }
+            }
+            cleanup();
           });
+          
           stream.pipe(res);
         }
       } else {
         // Полный файл - используем chunked transfer (без Content-Length)
         // Это критично для активных сегментов, которые пишутся FFmpeg в реальном времени
         const stream = fs.createReadStream(filePath);
-        stream.on('error', (err) => {
-          if (!res.headersSent) {
-            res.status(500).end();
-          } else {
-            res.end();
+        
+        // КРИТИЧНО: Обрабатываем закрытие соединения клиентом
+        let isAborted = false;
+        const cleanup = () => {
+          isAborted = true;
+          if (stream && !stream.destroyed) {
+            stream.destroy();
           }
+        };
+        
+        req.on('close', cleanup);
+        req.on('aborted', cleanup);
+        res.on('close', cleanup);
+        
+        stream.on('error', (err) => {
+          if (!isAborted) {
+            if (!res.headersSent) {
+              res.status(500).end();
+            } else {
+              res.end();
+            }
+          }
+          cleanup();
         });
+        
         stream.pipe(res);
       }
       return;

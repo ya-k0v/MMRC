@@ -103,6 +103,8 @@ class StreamManager extends EventEmitter {
     //   pending: boolean             // Флаг pending операции
     // }>
     this.nameToJobMapPending = new Map(); // Map<safeName, Promise<Job>> - pending операции по имени
+    // КРИТИЧНО: Очередь операций для каждого стрима (мьютекс для предотвращения race conditions)
+    this.operationLocks = new Map(); // Map<safeName, Promise<void>> - последняя операция для каждого стрима
     // КРИТИЧНО: Кэш результатов определения кодеков для оптимизации
     this.codecCache = new Map(); // Map<streamUrl, {codecs: {videoCodec, audioCodec}, timestamp: number}>
     this.codecCacheMaxSize = 100; // Максимум 100 записей в кэше
@@ -131,6 +133,11 @@ class StreamManager extends EventEmitter {
     // Обновляем его при инициализации, чтобы использовать актуальный путь
     this.options.outputRoot = getStreamsOutputDir();
     ensureDir(this.options.outputRoot);
+    
+    // КРИТИЧНО: При старте сервиса очищаем все старые файлы стримов
+    // Это необходимо, так как процессы FFmpeg не запущены и старые файлы могут блокировать новые стримы
+    this._cleanupAllOldStreams();
+    
     logger.info('[StreamManager] Initialized', {
       outputRoot: this.options.outputRoot,
       publicBasePath: this.options.publicBasePath,
@@ -489,14 +496,18 @@ class StreamManager extends EventEmitter {
         }
       }
       
-      // Если все еще переполнен - удаляем самые старые записи
+      // КРИТИЧНО: LRU - удаляем самые старые записи при переполнении
       if (this.codecCache.size >= this.codecCacheMaxSize) {
         const entries = Array.from(this.codecCache.entries())
           .sort((a, b) => a[1].timestamp - b[1].timestamp);
-        const toDelete = Math.floor(this.codecCacheMaxSize * 0.2); // Удаляем 20% самых старых
+        const toDelete = Math.max(1, Math.floor(this.codecCacheMaxSize * 0.2)); // Удаляем 20% самых старых
         for (let i = 0; i < toDelete; i++) {
           this.codecCache.delete(entries[i][0]);
         }
+        logger.debug('[StreamManager] Codec cache LRU cleanup', {
+          removed: toDelete,
+          remaining: this.codecCache.size
+        });
       }
     }
     
@@ -646,6 +657,56 @@ class StreamManager extends EventEmitter {
         folderPath,
         error: error.message,
         stack: error.stack
+      });
+    }
+  }
+
+  /**
+   * Очищает все старые файлы стримов при старте сервиса
+   * Удаляет все папки в outputRoot, так как процессы FFmpeg не запущены
+   */
+  _cleanupAllOldStreams() {
+    try {
+      if (!fs.existsSync(this.options.outputRoot)) {
+        return;
+      }
+      
+      const entries = fs.readdirSync(this.options.outputRoot);
+      let cleaned = 0;
+      
+      for (const entry of entries) {
+        const entryPath = path.join(this.options.outputRoot, entry);
+        try {
+          const stats = fs.statSync(entryPath);
+          if (stats.isDirectory()) {
+            // Удаляем всю папку со стримом
+            fs.rmSync(entryPath, { recursive: true, force: true });
+            cleaned++;
+            logger.debug('[StreamManager] Cleaned up old stream folder on startup', {
+              folder: entry,
+              path: entryPath
+            });
+          }
+        } catch (err) {
+          logger.warn('[StreamManager] Failed to cleanup old stream folder', {
+            folder: entry,
+            path: entryPath,
+            error: err.message
+          });
+        }
+      }
+      
+      if (cleaned > 0) {
+        logger.info('[StreamManager] Cleaned up old stream files on startup', {
+          cleanedFolders: cleaned,
+          outputRoot: this.options.outputRoot
+        });
+      }
+    } catch (err) {
+      logger.error('[StreamManager] Error cleaning up old streams on startup', {
+        error: err.message,
+        stack: err.stack,
+        outputRoot: this.options.outputRoot
       });
     }
   }
@@ -833,7 +894,8 @@ class StreamManager extends EventEmitter {
         retry: retryCount + 1
       });
       
-      // Удаляем оставшиеся файлы вручную
+      // КРИТИЧНО: Удаляем оставшиеся файлы вручную (включая index.m3u8)
+      // Это важно, так как существующий index.m3u8 может блокировать запуск нового стрима
       for (const file of remainingFiles) {
         try {
           const filePath = path.join(paths.folderPath, file);
@@ -1508,6 +1570,20 @@ class StreamManager extends EventEmitter {
       lastSegmentWrite: job.lastSegmentWrite
     });
     
+    // КРИТИЧНО: Отправляем уведомление о зависшем процессе
+    try {
+      const { notifyFfmpegProcessHung } = await import('../utils/notifications.js');
+      notifyFfmpegProcessHung(job.deviceId, job.safeName, {
+        pid,
+        lastSegmentWrite: job.lastSegmentWrite,
+        action: 'restarting'
+      });
+    } catch (notifyErr) {
+      logger.error('[StreamManager] Failed to send notification about hung process', {
+        error: notifyErr.message
+      });
+    }
+    
     try {
       // КРИТИЧНО: Очищаем обработчики событий перед убийством процесса
       if (job.process.stderr) {
@@ -1780,7 +1856,9 @@ class StreamManager extends EventEmitter {
     const safeName = sanitizePathFragment(safe_name);
     const normalizedUrl = normalizeStreamUrl(stream_url);
     
-    logger.info('[StreamManager] upsertStream called', {
+    // КРИТИЧНО: Используем блокировку для предотвращения race conditions
+    return this._withLock(safeName, async () => {
+      logger.info('[StreamManager] upsertStream called', {
       deviceId: device_id,
       safeName,
       streamUrl: normalizedUrl
@@ -1973,17 +2051,53 @@ class StreamManager extends EventEmitter {
         });
       return null;
     }
+    });
+  }
+
+  /**
+   * Выполняет операцию с блокировкой для конкретного стрима
+   * Гарантирует последовательное выполнение операций над одним стримом
+   * @param {string} safeName - Имя стрима
+   * @param {Function} operation - Функция операции (async)
+   * @returns {Promise} Результат операции
+   */
+  async _withLock(safeName, operation) {
+    const previousLock = this.operationLocks.get(safeName) || Promise.resolve();
+    
+    // Создаем новую блокировку, которая ждет завершения предыдущей
+    const currentLock = previousLock
+      .then(() => operation())
+      .catch((err) => {
+        logger.error('[StreamManager] Error in locked operation', {
+          safeName,
+          error: err.message,
+          stack: err.stack
+        });
+        throw err;
+      })
+      .finally(() => {
+        // Удаляем блокировку после завершения
+        if (this.operationLocks.get(safeName) === currentLock) {
+          this.operationLocks.delete(safeName);
+        }
+      });
+    
+    this.operationLocks.set(safeName, currentLock);
+    return currentLock;
   }
 
   stopStream(deviceId, safeName, reason = 'manual') {
-    try {
-      const safeNameSanitized = sanitizePathFragment(safeName);
-      const nameEntry = this.nameToJobMap.get(safeNameSanitized);
-      
-      if (!nameEntry) {
-        logger.info('[StreamManager] Stream not found', { deviceId, safeName: safeNameSanitized, reason });
-        return;
-      }
+    const safeNameSanitized = sanitizePathFragment(safeName);
+    
+    // КРИТИЧНО: Используем блокировку для предотвращения race conditions
+    return this._withLock(safeNameSanitized, async () => {
+      try {
+        const nameEntry = this.nameToJobMap.get(safeNameSanitized);
+        
+        if (!nameEntry) {
+          logger.info('[StreamManager] Stream not found', { deviceId, safeName: safeNameSanitized, reason });
+          return;
+        }
       
       // Удаляем устройство из списка
       const hadDevice = nameEntry.devices.has(deviceId);
@@ -2084,6 +2198,23 @@ class StreamManager extends EventEmitter {
           job.process.removeAllListeners('error');
           job.process.once('exit', cleanupOnExit);
           
+          // Обработка ошибок процесса
+          job.process.once('error', (err) => {
+            logger.error('[StreamManager] FFmpeg process error', {
+              safeName: safeNameSanitized,
+              pid: job.process?.pid,
+              error: err.message
+            });
+            // Очищаем таймауты при ошибке
+            if (job._cleanupTimeouts) {
+              clearTimeout(job._cleanupTimeouts.forceKillTimeout);
+              clearTimeout(job._cleanupTimeouts.forceCleanupTimeout);
+              delete job._cleanupTimeouts;
+            }
+            // Вызываем cleanup вручную
+            cleanupOnExit();
+          });
+          
           job.process.kill('SIGTERM');
           
           // Таймаут для принудительного завершения
@@ -2093,7 +2224,15 @@ class StreamManager extends EventEmitter {
                 safeName: safeNameSanitized,
                 pid: job.process.pid
               });
-                job.process.kill('SIGKILL');
+                try {
+                  job.process.kill('SIGKILL');
+                } catch (killErr) {
+                  logger.error('[StreamManager] Error force killing process', {
+                    safeName: safeNameSanitized,
+                    pid: job.process?.pid,
+                    error: killErr.message
+                  });
+                }
             }
           }, 5000);
           
@@ -2107,6 +2246,18 @@ class StreamManager extends EventEmitter {
                 safeName: safeNameSanitized,
                 pid: job.process?.pid
               });
+              
+              // КРИТИЧНО: Отправляем уведомление о зависшем процессе (синхронно, без await)
+              import('../utils/notifications.js').then(({ notifyFfmpegProcessHung }) => {
+                notifyFfmpegProcessHung(deviceId, safeNameSanitized, {
+                  pid: job.process?.pid,
+                  timeout: '10s',
+                  action: 'force_cleanup'
+                });
+              }).catch((notifyErr) => {
+                logger.error('[StreamManager] Failed to send notification', { error: notifyErr.message });
+              });
+              
               // Последняя попытка убить процесс
               try {
                 if (job.process && !job.process.killed) {
@@ -2172,10 +2323,25 @@ class StreamManager extends EventEmitter {
           
           // Сохраняем ссылку на таймауты для отмены при нормальном завершении
           job._cleanupTimeouts = { forceKillTimeout, forceCleanupTimeout };
+          
+          // КРИТИЧНО: Гарантируем очистку таймаутов даже при неожиданных ошибках
+          // Используем finally-подобную логику через дополнительный обработчик
+          const ensureCleanup = () => {
+            if (job._cleanupTimeouts) {
+              clearTimeout(job._cleanupTimeouts.forceKillTimeout);
+              clearTimeout(job._cleanupTimeouts.forceCleanupTimeout);
+              delete job._cleanupTimeouts;
+            }
+          };
+          
+          // Сохраняем функцию очистки в job для доступа из других мест
+          job._ensureCleanup = ensureCleanup;
+          
         } catch (err) {
           logger.error('[StreamManager] Error stopping FFmpeg', {
             safeName: safeNameSanitized,
-            error: err.message
+            error: err.message,
+            stack: err.stack
           });
           
           // Отменяем таймауты при ошибке
@@ -2186,6 +2352,20 @@ class StreamManager extends EventEmitter {
           }
           
           // Очищаем даже при ошибке
+          try {
+            if (job.process) {
+              job.process.removeAllListeners('exit');
+              job.process.removeAllListeners('error');
+              if (job.process.stderr) {
+                job.process.stderr.removeAllListeners('data');
+              }
+            }
+          } catch (cleanupErr) {
+            logger.error('[StreamManager] Error cleaning up process listeners', {
+              error: cleanupErr.message
+            });
+          }
+          
           this.jobs.delete(safeNameSanitized);
           this.nameToJobMap.delete(safeNameSanitized);
           this._cleanupFolder(folderPathToClean);
@@ -2198,15 +2378,22 @@ class StreamManager extends EventEmitter {
         this._cleanupFolder(folderPathToClean);
         this.emit('stream:stopped', { deviceId, safeName: safeNameSanitized, reason });
       }
-    } catch (err) {
-      logger.error('[StreamManager] Error in stopStream', {
-        deviceId,
-        safeName,
-        reason,
-        error: err.message,
-        stack: err.stack
-      });
-    }
+      } catch (err) {
+        logger.error('[StreamManager] Error in stopStream (locked)', {
+          deviceId,
+          safeName: safeNameSanitized,
+          reason,
+          error: err.message,
+          stack: err.stack
+        });
+        // Очищаем даже при ошибке
+        this.jobs.delete(safeNameSanitized);
+        this.nameToJobMap.delete(safeNameSanitized);
+        if (job && job.paths) {
+          this._cleanupFolder(job.paths.folderPath);
+        }
+      }
+    });
   }
 
   /**
@@ -3765,6 +3952,7 @@ class StreamManager extends EventEmitter {
     this.jobs.clear();
     this.nameToJobMap.clear();
     this.nameToJobMapPending.clear(); // Очищаем pending операции
+    this.operationLocks.clear(); // Очищаем блокировки операций
     this.codecCache.clear(); // Очищаем кэш кодеков
     this.fileStatusCache.clear(); // Очищаем кэш статусов файлов
     

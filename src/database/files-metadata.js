@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import { getDatabase } from './database.js';
 import logger, { logFile } from '../utils/logger.js';
+import { withRetrySync, isRetryableDatabaseError } from '../utils/retry.js';
 
 /**
  * Вычислить MD5 хэш файла (полный или частичный)
@@ -78,46 +79,74 @@ export function saveFileMetadata({
   try {
     const db = getDatabase();
     
-    const stmt = db.prepare(`
-      INSERT OR REPLACE INTO files_metadata (
-        device_id, safe_name, original_name, file_path, file_size, md5_hash, partial_md5, mime_type,
-        video_width, video_height, video_duration, video_codec, video_profile, video_bitrate,
-        audio_codec, audio_bitrate, audio_channels, file_mtime, content_type, stream_url,
-        stream_protocol
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    
-    stmt.run(
-      deviceId,
-      safeName,
-      originalName,
-      filePath,
-      fileSize,
-      md5Hash,
-      partialMd5,
-      mimeType,
-      videoParams.width || null,
-      videoParams.height || null,
-      videoParams.duration || null,
-      videoParams.codec || null,
-      videoParams.profile || null,  // НОВОЕ: Сохраняем profile
-      videoParams.bitrate || null,
-      audioParams.codec || null,
-      audioParams.bitrate || null,
-      audioParams.channels || null,
-      fileMtime,
-      contentType,
-      streamUrl,
-      streamProtocol
-    );
+    // КРИТИЧНО: Используем retry для критических операций записи
+    withRetrySync(() => {
+      const stmt = db.prepare(`
+        INSERT OR REPLACE INTO files_metadata (
+          device_id, safe_name, original_name, file_path, file_size, md5_hash, partial_md5, mime_type,
+          video_width, video_height, video_duration, video_codec, video_profile, video_bitrate,
+          audio_codec, audio_bitrate, audio_channels, file_mtime, content_type, stream_url,
+          stream_protocol
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      
+      stmt.run(
+        deviceId,
+        safeName,
+        originalName,
+        filePath,
+        fileSize,
+        md5Hash,
+        partialMd5,
+        mimeType,
+        videoParams.width || null,
+        videoParams.height || null,
+        videoParams.duration || null,
+        videoParams.codec || null,
+        videoParams.profile || null,  // НОВОЕ: Сохраняем profile
+        videoParams.bitrate || null,
+        audioParams.codec || null,
+        audioParams.bitrate || null,
+        audioParams.channels || null,
+        fileMtime,
+        contentType,
+        streamUrl,
+        streamProtocol
+      );
+    }, {
+      maxRetries: 3,
+      delay: 100,
+      shouldRetry: isRetryableDatabaseError,
+      onRetry: (error, attempt, maxRetries) => {
+        logger.warn('Retrying saveFileMetadata', {
+          deviceId,
+          safeName,
+          attempt,
+          maxRetries,
+          error: error.message
+        });
+      }
+    });
     
     logFile('debug', 'File metadata saved', { deviceId, safeName, md5Hash });
     
   } catch (error) {
-    logger.error('Failed to save file metadata', { 
-      error: error.message, 
+    logger.error('Failed to save file metadata after retries', { 
+      error: error.message,
+      stack: error.stack,
       deviceId, 
       safeName 
+    });
+    // КРИТИЧНО: Отправляем уведомление о критической ошибке БД
+    import('../utils/notifications.js').then(({ notifyDbError }) => {
+      notifyDbError({
+        operation: 'saveFileMetadata',
+        deviceId,
+        safeName,
+        error: error.message
+      });
+    }).catch(() => {
+      // Игнорируем ошибки уведомлений
     });
   }
 }
@@ -249,16 +278,39 @@ export function findDuplicateFile(md5Hash, fileSize, excludeDeviceId = null, isP
 export function deleteFileMetadata(deviceId, safeName) {
   try {
     const db = getDatabase();
-    const stmt = db.prepare(`
-      DELETE FROM files_metadata 
-      WHERE device_id = ? AND safe_name = ?
-    `);
     
-    stmt.run(deviceId, safeName);
+    // КРИТИЧНО: Используем retry для критических операций удаления
+    withRetrySync(() => {
+      const stmt = db.prepare(`
+        DELETE FROM files_metadata 
+        WHERE device_id = ? AND safe_name = ?
+      `);
+      
+      stmt.run(deviceId, safeName);
+    }, {
+      maxRetries: 3,
+      delay: 100,
+      shouldRetry: isRetryableDatabaseError,
+      onRetry: (error, attempt, maxRetries) => {
+        logger.warn('Retrying deleteFileMetadata', {
+          deviceId,
+          safeName,
+          attempt,
+          maxRetries,
+          error: error.message
+        });
+      }
+    });
+    
     logFile('debug', 'File metadata deleted', { deviceId, safeName });
     
   } catch (error) {
-    logger.error('Failed to delete file metadata', { error: error.message, deviceId, safeName });
+    logger.error('Failed to delete file metadata after retries', { 
+      error: error.message,
+      stack: error.stack,
+      deviceId, 
+      safeName 
+    });
   }
 }
 
@@ -544,40 +596,63 @@ export function updateStreamMetadata(deviceId, safeName, newOriginalName, newStr
       mimeType = 'application/x-mpegURL';
     }
     
-    // Обновляем запись
-    const stmt = db.prepare(`
-      UPDATE files_metadata
-      SET original_name = ?,
-          stream_url = ?,
-          stream_protocol = ?,
-          file_path = ?,
-          mime_type = ?,
+    // КРИТИЧНО: Используем retry для критических операций обновления
+    return withRetrySync(() => {
+      const stmt = db.prepare(`
+        UPDATE files_metadata
+        SET original_name = ?,
+            stream_url = ?,
+            stream_protocol = ?,
+            file_path = ?,
+            mime_type = ?,
           md5_hash = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE device_id = ? AND safe_name = ?
     `);
     
-    const result = stmt.run(
-      newOriginalName,
-      newStreamUrl,
-      normalizedProtocol,
-      newStreamUrl, // file_path для стримов тоже содержит URL
-      mimeType,
-      md5Hash,
-      deviceId,
-      safeName
-    );
-    
-    if (result.changes > 0) {
-      logFile('info', 'Stream metadata updated', { deviceId, safeName, newOriginalName, newStreamUrl, newProtocol: normalizedProtocol });
-      return true;
-    } else {
-      logger.warn('No stream found to update', { deviceId, safeName });
-      return false;
-    }
+      const result = stmt.run(
+        newOriginalName,
+        newStreamUrl,
+        normalizedProtocol,
+        newStreamUrl, // file_path для стримов тоже содержит URL
+        mimeType,
+        md5Hash,
+        deviceId,
+        safeName
+      );
+      
+      if (result.changes > 0) {
+        logFile('info', 'Stream metadata updated', { deviceId, safeName, newOriginalName, newStreamUrl, newProtocol: normalizedProtocol });
+        return true;
+      } else {
+        logger.warn('No stream found to update', { deviceId, safeName });
+        return false;
+      }
+    }, {
+      maxRetries: 3,
+      delay: 100,
+      shouldRetry: isRetryableDatabaseError,
+      onRetry: (error, attempt, maxRetries) => {
+        logger.warn('Retrying updateStreamMetadata', {
+          deviceId,
+          safeName,
+          attempt,
+          maxRetries,
+          error: error.message
+        });
+      }
+    });
   } catch (error) {
-    logger.error('Failed to update stream metadata', { error: error.message, deviceId, safeName, newOriginalName, newStreamUrl, newProtocol });
-    throw error;
+    logger.error('Failed to update stream metadata after retries', { 
+      error: error.message,
+      stack: error.stack,
+      deviceId, 
+      safeName, 
+      newOriginalName, 
+      newStreamUrl, 
+      newProtocol 
+    });
+    return false;
   }
 }
 

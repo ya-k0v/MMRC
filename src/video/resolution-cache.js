@@ -7,8 +7,9 @@
 import fs from 'fs';
 import path from 'path';
 
-// In-memory кэш: { filePath: { width, height, duration, mtime } }
+// In-memory кэш: { filePath: { width, height, duration, mtime, lastAccess } }
 const resolutionCache = new Map();
+const MAX_CACHE_SIZE = 1000; // Максимум 1000 записей в кэше
 
 /**
  * Получить разрешение из кэша или вызвать FFmpeg
@@ -30,19 +31,33 @@ export async function getCachedResolution(filePath, checkVideoParameters) {
     // Проверяем кэш
     const cached = resolutionCache.get(filePath);
     if (cached && cached.mtime === mtime) {
-      // Файл не изменился - возвращаем из кэша
+      // Файл не изменился - обновляем lastAccess для LRU и возвращаем из кэша
+      cached.lastAccess = Date.now();
       return { width: cached.width, height: cached.height, duration: cached.duration ?? null };
     }
 
     // Файл изменился или еще не в кэше - вызываем FFmpeg
     const params = await checkVideoParameters(filePath);
     if (params && params.width && params.height) {
-      // Сохраняем в кэш
+      // КРИТИЧНО: LRU - удаляем самые старые записи при переполнении
+      if (resolutionCache.size >= MAX_CACHE_SIZE) {
+        const entries = Array.from(resolutionCache.entries());
+        entries.sort((a, b) => (a[1].lastAccess || 0) - (b[1].lastAccess || 0));
+        
+        // Удаляем 20% самых старых записей
+        const toRemove = Math.max(1, Math.ceil(MAX_CACHE_SIZE * 0.2));
+        for (let i = 0; i < toRemove; i++) {
+          resolutionCache.delete(entries[i][0]);
+        }
+      }
+      
+      // Сохраняем в кэш с lastAccess для LRU
       resolutionCache.set(filePath, {
         width: params.width,
         height: params.height,
         duration: params.duration ?? null,
-        mtime: mtime
+        mtime: mtime,
+        lastAccess: Date.now()
       });
       return { width: params.width, height: params.height, duration: params.duration ?? null };
     }
