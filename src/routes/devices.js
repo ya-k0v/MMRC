@@ -84,11 +84,18 @@ export function createDevicesRouter(deps) {
     const { device_id, name } = req.body;
     
     if (!device_id) {
-      return res.status(400).json({ error: 'device_id required' });
+      return res.status(400).json({ error: 'Требуется device_id' });
     }
     
     if (devices[device_id]) {
-      return res.status(409).json({ error: 'exists' });
+      return res.status(409).json({ error: 'Устройство уже существует' });
+    }
+    
+    // Проверяем уникальность имени устройства
+    const deviceName = name || device_id;
+    const existingDeviceWithSameName = Object.values(devices).find(d => d.name === deviceName);
+    if (existingDeviceWithSameName) {
+      return res.status(409).json({ error: 'Устройство с таким именем уже существует' });
     }
     
     // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
@@ -143,14 +150,24 @@ export function createDevicesRouter(deps) {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
-      return res.status(400).json({ error: 'invalid device id' });
+      return res.status(400).json({ error: 'Неверный ID устройства' });
     }
     
     if (!devices[id]) {
-      return res.status(404).json({ error: 'not found' });
+      return res.status(404).json({ error: 'Не найдено' });
     }
     
-    devices[id].name = req.body.name || id;
+    const newName = req.body.name || id;
+    
+    // Проверяем уникальность нового имени (исключая текущее устройство)
+    const existingDeviceWithSameName = Object.entries(devices).find(
+      ([deviceId, d]) => deviceId !== id && d.name === newName
+    );
+    if (existingDeviceWithSameName) {
+      return res.status(409).json({ error: 'Устройство с таким именем уже существует' });
+    }
+    
+    devices[id].name = newName;
     io.emit('devices/updated');
     saveDevicesJson(devices);
     res.json({ ok: true });
@@ -161,12 +178,12 @@ export function createDevicesRouter(deps) {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
-      return res.status(400).json({ error: 'invalid device id' });
+      return res.status(400).json({ error: 'Неверный ID устройства' });
     }
     
     const d = devices[id];
     if (!d) {
-      return res.status(404).json({ error: 'not found' });
+      return res.status(404).json({ error: 'Не найдено' });
     }
     
     logDevice('info', `Deleting device`, { deviceId: id, folder: d.folder });
@@ -194,8 +211,17 @@ export function createDevicesRouter(deps) {
     const devicesPath = getDevicesPath();
     const devicePath = path.join(devicesPath, d.folder);
     logDevice('info', `Deleting device folder`, { deviceId: id, path: devicePath });
-    fs.rmSync(devicePath, { recursive: true, force: true });
-    logDevice('info', `Device folder deleted`, { deviceId: id, path: devicePath });
+    try {
+      if (fs.existsSync(devicePath)) {
+        fs.rmSync(devicePath, { recursive: true, force: true });
+        logDevice('info', `Device folder deleted`, { deviceId: id, path: devicePath });
+      } else {
+        logDevice('warn', `Device folder does not exist, skipping`, { deviceId: id, path: devicePath });
+      }
+    } catch (err) {
+      logDevice('error', `Failed to delete device folder`, { deviceId: id, path: devicePath, error: err.message });
+      // Продолжаем удаление, даже если папка не удалилась
+    }
     
     // 3. Удаляем из devices (память)
     delete devices[id];

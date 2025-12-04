@@ -81,7 +81,7 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
   const targetPath = path.join(targetFolder, folderName);
   
   if (fs.existsSync(targetPath)) {
-    return res.status(409).json({ error: 'folder already exists on target' });
+    return res.status(409).json({ error: 'Папка уже существует в целевом устройстве' });
   }
   
   try {
@@ -132,7 +132,7 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
     
   } catch (e) {
     logger.error('[copy-folder] Error', { error: e.message, sourceId, targetId, folderName });
-    return res.status(500).json({ error: 'folder copy failed', detail: e.message });
+    return res.status(500).json({ error: 'Ошибка копирования папки', detail: e.message });
   }
 }
 
@@ -391,22 +391,22 @@ export function createFilesRouter(deps) {
   // POST /api/devices/:id/streams - Добавление стрима (только админ)
   router.post('/:id/streams', requireAdmin, jsonParser, async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
-    if (!id) return res.status(400).json({ error: 'invalid device id' });
+    if (!id) return res.status(400).json({ error: 'Неверный ID устройства' });
     const device = devices[id];
-    if (!device) return res.status(404).json({ error: 'device not found' });
+    if (!device) return res.status(404).json({ error: 'Устройство не найдено' });
 
     const { name, url, protocol } = req.body || {};
     if (!name || !url) {
-      return res.status(400).json({ error: 'name and url required' });
+      return res.status(400).json({ error: 'Требуются название и URL' });
     }
     let parsedUrl = null;
     try {
       parsedUrl = new URL(url);
       if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-        return res.status(400).json({ error: 'only http/https streams supported' });
+        return res.status(400).json({ error: 'Поддерживаются только HTTP/HTTPS стримы' });
       }
     } catch {
-      return res.status(400).json({ error: 'invalid url' });
+      return res.status(400).json({ error: 'Неверный URL' });
     }
 
     const baseSafe = makeSafeFolderName(name) || `stream_${Date.now()}`;
@@ -462,20 +462,20 @@ export function createFilesRouter(deps) {
       });
     } catch (error) {
       logger.error('[streams] Failed to create stream', { error: error.message, deviceId: id });
-      res.status(500).json({ error: 'failed to create stream' });
+      res.status(500).json({ error: 'Не удалось создать стрим' });
     }
   });
 
   // GET /api/devices/:id/streams/:safeName - Получить данные стрима (для плееров)
   router.get('/:id/streams/:safeName', async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
-    if (!id) return res.status(400).json({ error: 'invalid device id' });
+    if (!id) return res.status(400).json({ error: 'Неверный ID устройства' });
     const safeName = req.params.safeName;
-    if (!safeName) return res.status(400).json({ error: 'invalid stream name' });
+    if (!safeName) return res.status(400).json({ error: 'Неверное название стрима' });
 
     const metadata = getFileMetadata(id, safeName);
     if (!metadata || metadata.content_type !== 'streaming') {
-      return res.status(404).json({ error: 'stream not found' });
+      return res.status(404).json({ error: 'Стрим не найден' });
     }
 
     // КРИТИЧНО: Lazy loading - запускаем FFmpeg только когда стрим запрашивается для воспроизведения
@@ -504,22 +504,22 @@ export function createFilesRouter(deps) {
   // PUT /api/devices/:id/streams/:safeName - Обновление стрима (только админ)
   router.put('/:id/streams/:safeName', requireAdmin, jsonParser, async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
-    if (!id) return res.status(400).json({ error: 'invalid device id' });
+    if (!id) return res.status(400).json({ error: 'Неверный ID устройства' });
     const device = devices[id];
-    if (!device) return res.status(404).json({ error: 'device not found' });
+    if (!device) return res.status(404).json({ error: 'Устройство не найдено' });
 
     const safeName = req.params.safeName;
-    if (!safeName) return res.status(400).json({ error: 'invalid stream name' });
+    if (!safeName) return res.status(400).json({ error: 'Неверное название стрима' });
 
     const { name, url, protocol } = req.body || {};
     if (!name || !url) {
-      return res.status(400).json({ error: 'name and url required' });
+      return res.status(400).json({ error: 'Требуются название и URL' });
     }
 
     // Проверяем существование стрима
     const existingMetadata = getFileMetadata(id, safeName);
     if (!existingMetadata || existingMetadata.content_type !== 'streaming') {
-      return res.status(404).json({ error: 'stream not found' });
+      return res.status(404).json({ error: 'Стрим не найден' });
     }
 
     // Валидация URL
@@ -527,10 +527,10 @@ export function createFilesRouter(deps) {
     try {
       parsedUrl = new URL(url);
       if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-        return res.status(400).json({ error: 'only http/https streams supported' });
+        return res.status(400).json({ error: 'Поддерживаются только HTTP/HTTPS стримы' });
       }
     } catch {
-      return res.status(400).json({ error: 'invalid url' });
+      return res.status(400).json({ error: 'Неверный URL' });
     }
 
     const normalizedProtocol = normalizeStreamProtocol(protocol, parsedUrl.toString());
@@ -546,7 +546,7 @@ export function createFilesRouter(deps) {
       );
 
       if (!updated) {
-        return res.status(404).json({ error: 'stream not found' });
+        return res.status(404).json({ error: 'Стрим не найден' });
       }
 
       // Обновляем fileNamesMap
@@ -600,7 +600,7 @@ export function createFilesRouter(deps) {
       });
     } catch (error) {
       logger.error('[streams] Failed to update stream', { error: error.message, deviceId: id, safeName });
-      res.status(500).json({ error: 'failed to update stream' });
+      res.status(500).json({ error: 'Не удалось обновить стрим' });
     }
   });
 
@@ -609,18 +609,18 @@ export function createFilesRouter(deps) {
   // КРИТИЧНО: Теперь стримы общие, проверяем только наличие активных устройств
   router.post('/:id/streams/:safeName/stop-preview', requireSpeaker[0], requireSpeaker[1], jsonParser, async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
-    if (!id) return res.status(400).json({ error: 'invalid device id' });
+    if (!id) return res.status(400).json({ error: 'Неверный ID устройства' });
     const safeName = req.params.safeName;
-    if (!safeName) return res.status(400).json({ error: 'invalid stream name' });
+    if (!safeName) return res.status(400).json({ error: 'Неверное название стрима' });
 
     const device = devices[id];
     if (!device) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
 
     const metadata = getFileMetadata(id, safeName);
     if (!metadata || metadata.content_type !== 'streaming') {
-      return res.status(404).json({ error: 'stream not found' });
+      return res.status(404).json({ error: 'Стрим не найден' });
     }
 
     // КРИТИЧНО: Проверяем, используется ли стрим на любом устройстве
@@ -634,7 +634,7 @@ export function createFilesRouter(deps) {
     }
 
     if (isPlayingOnAnyDevice) {
-      return res.status(409).json({ error: 'stream currently in use by device' });
+      return res.status(409).json({ error: 'Стрим используется устройством' });
     }
 
     // КРИТИЧНО: Используем stopStream вместо removeStreamJob
@@ -652,30 +652,81 @@ export function createFilesRouter(deps) {
   
   // POST /api/devices/:id/upload - Загрузка файлов
   router.post('/:id/upload', uploadLimiter, validateUploadSize, async (req, res, next) => {
+    // КРИТИЧНО: Логируем САМОЕ НАЧАЛО обработки загрузки
+    console.error('========================================');
+    console.error('[UPLOAD ROUTE] ===== UPLOAD ROUTE CALLED =====');
+    console.error('[UPLOAD ROUTE] URL:', req.url);
+    console.error('[UPLOAD ROUTE] Method:', req.method);
+    console.error('[UPLOAD ROUTE] Content-Type:', req.headers['content-type']);
+    console.error('[UPLOAD ROUTE] Content-Length:', req.headers['content-length']);
+    console.error('[UPLOAD ROUTE] Params:', req.params);
+    logger.error('[UPLOAD ROUTE] ===== UPLOAD ROUTE CALLED =====', {
+      url: req.url,
+      method: req.method,
+      contentType: req.headers['content-type'],
+      contentLength: req.headers['content-length'],
+      params: req.params
+    });
+    
     const id = sanitizeDeviceId(req.params.id);
+    console.error('[UPLOAD ROUTE] Sanitized ID:', id);
     
     if (!id) {
-      return res.status(400).json({ error: 'invalid device id' });
+      console.error('[UPLOAD ROUTE] ❌ Invalid device ID');
+      return res.status(400).json({ error: 'Неверный ID устройства' });
     }
     
     if (!devices[id]) {
-      return res.status(404).json({ error: 'device not found' });
+      console.error('[UPLOAD ROUTE] ❌ Device not found:', id);
+      logger.error('[UPLOAD ROUTE] Device not found', { deviceId: id, availableDevices: Object.keys(devices) });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
+    
+    console.error('[UPLOAD ROUTE] ✅ Device found:', id, devices[id].name);
     
     // КРИТИЧНО: Обрабатываем отмену загрузки клиентом
     let isAborted = false;
     const uploadedFiles = []; // Сохраняем список загруженных файлов для очистки при отмене
     
+    // КРИТИЧНО: Флаг для отслеживания, были ли файлы уже сохранены multer
+    let filesSavedByMulter = false;
+    let multerStarted = false; // Флаг что multer начал обработку
+    
     const cleanupOnAbort = () => {
+      // КРИТИЧНО: Если multer уже начал обработку - НЕ удаляем файлы!
+      // Браузер может закрыть соединение во время загрузки - это нормально для больших файлов
+      // Multer продолжит сохранение файла в фоне
+      if (multerStarted) {
+        console.error('[Upload] ⚠️ Client closed connection but multer is processing, skipping cleanup');
+        logger.warn('[Upload] Client closed connection but multer is processing, skipping cleanup', {
+          deviceId: id,
+          multerStarted,
+          filesSavedByMulter
+        });
+        isAborted = true; // Помечаем как прерванное, но НЕ удаляем файлы
+        return; // НЕ удаляем файлы, multer их сохранит
+      }
+      
+      // КРИТИЧНО: Если файлы уже сохранены multer - НЕ удаляем их!
+      if (filesSavedByMulter) {
+        console.error('[Upload] ⚠️ Client closed connection but files are already saved, skipping cleanup');
+        logger.warn('[Upload] Client closed connection but files are already saved, skipping cleanup', {
+          deviceId: id,
+          uploadedFiles: uploadedFiles.length
+        });
+        return; // НЕ удаляем файлы, они уже сохранены и должны быть обработаны
+      }
+      
       if (isAborted) return;
       isAborted = true;
       
-      logger.warn('[Upload] Upload aborted by client', {
+      console.error('[Upload] ❌ Upload aborted BEFORE multer started');
+      logger.warn('[Upload] Upload aborted by client BEFORE multer started', {
         deviceId: id,
         uploadedFiles: uploadedFiles.length
       });
       
-      // Удаляем все частично загруженные файлы
+      // Удаляем все частично загруженные файлы (только если multer еще не начал)
       if (req.files && req.files.length > 0) {
         for (const file of req.files) {
           try {
@@ -707,33 +758,94 @@ export function createFilesRouter(deps) {
       }
     };
     
-    req.on('close', cleanupOnAbort);
-    req.on('aborted', cleanupOnAbort);
+    // КРИТИЧНО: НЕ устанавливаем обработчики до multer
+    // Multer сам обработает закрытие соединения и сохранит файл
+    // Обработчики установим ПОСЛЕ multer callback
+    
+    console.error('[UPLOAD ROUTE] Calling multer upload.array...');
+    
+    // КРИТИЧНО: Помечаем что multer начал обработку
+    // Это предотвратит удаление файлов если клиент закроет соединение во время загрузки
+    multerStarted = true;
+    console.error('[UPLOAD ROUTE] ✅ Multer started, setting multerStarted flag');
     
     upload.array('files', 50)(req, res, async (err) => {
-      // Удаляем обработчики при завершении (успешном или с ошибкой)
-      req.removeListener('close', cleanupOnAbort);
-      req.removeListener('aborted', cleanupOnAbort);
+      console.error('[UPLOAD ROUTE] ===== MULTER CALLBACK CALLED =====');
+      console.error('[UPLOAD ROUTE] Error:', err ? err.message : 'none');
+      console.error('[UPLOAD ROUTE] req.files:', req.files ? req.files.length : 'null');
+      console.error('[UPLOAD ROUTE] isAborted:', isAborted);
+      console.error('[UPLOAD ROUTE] req.aborted:', req.aborted);
+      console.error('[UPLOAD ROUTE] req.closed:', req.closed);
       
-      if (isAborted) {
-        // Загрузка была отменена - не обрабатываем дальше
+      // КРИТИЧНО: Помечаем что файлы сохранены multer
+      // После этого cleanupOnAbort не будет удалять файлы
+      if (req.files && req.files.length > 0) {
+        filesSavedByMulter = true;
+        console.error('[UPLOAD ROUTE] ✅ Files saved by multer, marking as saved');
+        
+        // Проверяем что файлы действительно существуют на диске
+        for (const file of req.files) {
+          if (file.path) {
+            const exists = fs.existsSync(file.path);
+            console.error('[UPLOAD ROUTE] File exists check:', file.filename, exists, file.path);
+            if (!exists) {
+              logger.error('[UPLOAD ROUTE] ⚠️ File path from multer does not exist!', {
+                filename: file.filename,
+                path: file.path
+              });
+            }
+          }
+        }
+      }
+      
+      // КРИТИЧНО: НЕ устанавливаем обработчики после multer
+      // Файлы уже сохранены, обработчики не нужны
+      // Если клиент закрыл соединение - это нормально, продолжаем обработку
+      
+      // КРИТИЧНО: Проверяем isAborted ПОСЛЕ multer, но НЕ прерываем обработку
+      // Клиент может закрыть соединение после получения ответа, это нормально
+      // Файлы уже сохранены multer, нужно их обработать
+      if (isAborted && (!req.files || req.files.length === 0)) {
+        console.error('[UPLOAD ROUTE] Upload was aborted BEFORE files were saved');
+        logger.warn('[UPLOAD ROUTE] Upload was aborted BEFORE files were saved', { deviceId: id });
+        // Загрузка была отменена ДО сохранения файлов - не обрабатываем
         return;
       }
       
+      // КРИТИЧНО: Если файлы сохранены, но клиент закрыл соединение - это нормально
+      // Продолжаем обработку в фоне НЕЗАВИСИМО от isAborted
+      if (isAborted && req.files && req.files.length > 0) {
+        console.error('[UPLOAD ROUTE] ⚠️ Client closed connection but files are saved, continuing processing...');
+        logger.warn('[UPLOAD ROUTE] Client closed connection but files are saved, continuing processing', {
+          deviceId: id,
+          filesCount: req.files.length
+        });
+      }
+      
+      // КРИТИЧНО: Сбрасываем isAborted если файлы сохранены
+      // Это позволит продолжить обработку
+      if (filesSavedByMulter) {
+        console.error('[UPLOAD ROUTE] ✅ Files saved, resetting isAborted to continue processing');
+        isAborted = false; // Сбрасываем флаг чтобы продолжить обработку
+      }
+      
+      console.error('[UPLOAD ROUTE] ✅ Continuing processing after multer, isAborted:', isAborted, 'filesSavedByMulter:', filesSavedByMulter);
+      
       if (err) {
+        console.error('[UPLOAD ROUTE] ❌ Multer error:', err.message, err.code);
         // ИСПРАВЛЕНО: Специфичная обработка ошибок загрузки
         if (err.code === 'ENOSPC') {
           logger.error('[Upload] No space left on device', { error: err.message });
           // Очищаем загруженные файлы при ошибке диска
           cleanupOnAbort();
-          return res.status(507).json({ error: 'No space left on device' });
+          return res.status(507).json({ error: 'Недостаточно места на устройстве' });
         } else if (err.code === 'LIMIT_FILE_SIZE') {
           logger.warn('[Upload] File size limit exceeded', { error: err.message });
           cleanupOnAbort();
-          return res.status(413).json({ error: 'File size limit exceeded' });
+          return res.status(413).json({ error: 'Превышен лимит размера файла' });
         } else if (err.message === 'unsupported type') {
           cleanupOnAbort();
-          return res.status(415).json({ error: 'Unsupported file type' });
+          return res.status(415).json({ error: 'Неподдерживаемый тип файла' });
         }
         
         logger.error('[Upload] Upload error', { error: err.message, code: err.code });
@@ -750,7 +862,63 @@ export function createFilesRouter(deps) {
       });
       const folderName = req.body.folderName; // Имя папки если загружается через выбор папки
 
-      // КРИТИЧНО: Сохраняем оригинальные имена ДО любых конвертаций (PDF/PPTX используют их сразу)
+      // КРИТИЧНО: Логируем сразу после получения файлов от multer
+      console.error('[Upload] ========== FILES UPLOADED ==========');
+      console.error('[Upload] Device ID:', id);
+      console.error('[Upload] Files count:', uploaded.length);
+      console.error('[Upload] Files:', uploaded);
+      console.error('[Upload] Folder name:', folderName || 'null');
+      console.error('[Upload] req.files:', req.files?.map(f => ({ filename: f.filename, path: f.path, size: f.size })));
+      console.error('[Upload] isAborted:', isAborted);
+      console.error('[Upload] res.headersSent:', res.headersSent);
+      
+      logger.error('[Upload] ========== FILES UPLOADED ==========', {
+        deviceId: id,
+        filesCount: uploaded.length,
+        uploaded,
+        folderName: folderName || null,
+        files: req.files?.map(f => ({ filename: f.filename, path: f.path, size: f.size })),
+        isAborted,
+        headersSent: res.headersSent
+      });
+
+      // КРИТИЧНО: Отправляем ответ СРАЗУ после сохранения файлов multer
+      // Все дальнейшие обработки выполняются в фоне
+      // НЕ прерываем обработку если клиент закрыл соединение - файлы уже сохранены!
+      
+      // Отправляем ответ СРАЗУ (не ждём обработки)
+      if (!res.headersSent) {
+        try {
+          res.json({ ok: true, files: [], uploaded });
+          console.error('[Upload] ✅ Response sent, files count:', uploaded.length);
+          logger.error('[Upload] Response sent immediately after file save (all processing in background)', { 
+            deviceId: id, 
+            filesCount: uploaded.length 
+          });
+        } catch (sendErr) {
+          // Если не удалось отправить ответ (клиент закрыл соединение) - это нормально
+          // Файлы уже сохранены, продолжаем обработку
+          console.error('[Upload] ⚠️ Failed to send response (client closed connection):', sendErr.message);
+          logger.warn('[Upload] Failed to send response (client closed connection), continuing processing', {
+            deviceId: id,
+            error: sendErr.message
+          });
+        }
+      } else {
+        console.error('[Upload] ⚠️ Response already sent, continuing processing...');
+      }
+      
+      // Обновляем список файлов в фоне (не блокирует ответ)
+      Promise.resolve().then(() => {
+        updateDeviceFilesFromDB(id, devices, fileNamesMap);
+        io.emit('devices/updated');
+      }).catch(err => {
+        logger.error('[Upload] Error updating device files in background', { error: err.message, deviceId: id });
+      });
+
+      // КРИТИЧНО: Все дальнейшие операции в фоне (не блокируют ответ)
+      
+      // Сохраняем оригинальные имена ДО любых конвертаций (PDF/PPTX используют их сразу)
       if (req.originalFileNames && req.originalFileNames.size > 0) {
         if (!fileNamesMap[id]) fileNamesMap[id] = {};
         for (const [safeName, originalName] of req.originalFileNames) {
@@ -803,192 +971,181 @@ export function createFilesRouter(deps) {
         }
       }
       
+      // КРИТИЧНО: Обработку папок переносим в фон, чтобы не блокировать ответ
       // Если это загрузка папки - создаем в /content/{device}/ (для изображений)
       if (folderName && req.files && req.files.length > 0) {
-        logger.info(`[upload] 📁 Обнаружена загрузка папки: ${folderName}`);
-        
-        // Создаем безопасное имя папки через транслитерацию
-        const safeFolderName = makeSafeFolderName(folderName);
-        // devicesPath уже объявлен выше для всего блока загрузки
-        const deviceFolder = path.join(devicesPath, devices[id].folder);
-        const targetFolder = path.join(deviceFolder, safeFolderName);
-        
-        logger.info(`[upload] 📝 Имя папки: "${folderName}" → "${safeFolderName}"`);
-        
-        if (!fs.existsSync(targetFolder)) {
-          fs.mkdirSync(targetFolder, { recursive: true });
-          fs.chmodSync(targetFolder, 0o755);
-        }
-        
-        // Перемещаем файлы из /content/ в /content/{device}/{folder}/
-        let movedCount = 0;
-        let errorCount = 0;
-        
-        for (const file of req.files) {
-          try {
-            // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
-            const devicesPath = getDevicesPath();
-            const sourcePath = path.join(devicesPath, file.filename);  // Из /content/
-            
-            // Получаем оригинальное имя файла из originalname
-            // originalname может содержать путь "folder/subfolder/file.jpg"
-            let targetFileName = file.originalname;
-            if (targetFileName.includes('/')) {
-              // Убираем путь папки, оставляем только имя файла
-              const parts = targetFileName.split('/');
-              targetFileName = parts[parts.length - 1];
-            }
-            
-            const targetPath = path.join(targetFolder, targetFileName);
-            
-            // КРИТИЧНО: Если файл уже существует в целевой папке - удаляем старый
-            if (fs.existsSync(targetPath)) {
-              logFile('info', `🔄 Файл уже существует, заменяем: ${targetFileName}`, { fileName: targetFileName, deviceId: id });
-              fs.unlinkSync(targetPath);
-            }
-            
-            // КРИТИЧНО: Проверяем существует ли исходный файл для перемещения
-            // Может не существовать если файл с таким именем уже был в shared storage
-            if (!fs.existsSync(sourcePath)) {
-              logFile('info', `⚠️ Исходный файл не найден: ${file.filename}`, { fileName: file.filename, deviceId: id });
-              
-              // Возможно файл с таким именем уже существует в shared storage (/content/)
-              // Для папок нужно СКОПИРОВАТЬ его, а не переместить
-              // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+        // Запускаем обработку папки в фоне (не блокирует ответ)
+        Promise.resolve().then(async () => {
+          logger.info(`[upload] 📁 Обнаружена загрузка папки: ${folderName}`);
+          
+          // Создаем безопасное имя папки через транслитерацию
+          const safeFolderName = makeSafeFolderName(folderName);
+          const devicesPath = getDevicesPath();
+          const deviceFolder = path.join(devicesPath, devices[id].folder);
+          const targetFolder = path.join(deviceFolder, safeFolderName);
+          
+          logger.info(`[upload] 📝 Имя папки: "${folderName}" → "${safeFolderName}"`);
+          
+          if (!fs.existsSync(targetFolder)) {
+            fs.mkdirSync(targetFolder, { recursive: true });
+            fs.chmodSync(targetFolder, 0o755);
+          }
+          
+          // Перемещаем файлы из /content/ в /content/{device}/{folder}/
+          let movedCount = 0;
+          let errorCount = 0;
+          
+          for (const file of req.files) {
+            try {
               const devicesPath = getDevicesPath();
-              const sharedFile = path.join(devicesPath, targetFileName);
-              if (fs.existsSync(sharedFile)) {
-                logFile('info', `🔄 Файл найден в shared storage, копируем: ${targetFileName}`, { fileName: targetFileName, deviceId: id });
+              const sourcePath = path.join(devicesPath, file.filename);  // Из /content/
+              
+              // Получаем оригинальное имя файла из originalname
+              let targetFileName = file.originalname;
+              if (targetFileName.includes('/')) {
+                const parts = targetFileName.split('/');
+                targetFileName = parts[parts.length - 1];
+              }
+              
+              const targetPath = path.join(targetFolder, targetFileName);
+              
+              if (fs.existsSync(targetPath)) {
+                logFile('info', `🔄 Файл уже существует, заменяем: ${targetFileName}`, { fileName: targetFileName, deviceId: id });
+                fs.unlinkSync(targetPath);
+              }
+              
+              if (!fs.existsSync(sourcePath)) {
+                logFile('info', `⚠️ Исходный файл не найден: ${file.filename}`, { fileName: file.filename, deviceId: id });
                 
-                // Копируем из shared storage в папку
-                fs.copyFileSync(sharedFile, targetPath);
-                fs.chmodSync(targetPath, 0o644);
-                logFile('info', `✅ Скопирован из shared: ${targetFileName} -> ${safeFolderName}/${targetFileName}`, { fileName: targetFileName, folderName: safeFolderName, deviceId: id });
-                movedCount++;
+                const devicesPath = getDevicesPath();
+                const sharedFile = path.join(devicesPath, targetFileName);
+                if (fs.existsSync(sharedFile)) {
+                  logFile('info', `🔄 Файл найден в shared storage, копируем: ${targetFileName}`, { fileName: targetFileName, deviceId: id });
+                  
+                  fs.copyFileSync(sharedFile, targetPath);
+                  fs.chmodSync(targetPath, 0o644);
+                  logFile('info', `✅ Скопирован из shared: ${targetFileName} -> ${safeFolderName}/${targetFileName}`, { fileName: targetFileName, folderName: safeFolderName, deviceId: id });
+                  movedCount++;
+                  continue;
+                }
+                
+                logFile('warn', `❌ Файл не найден ни в uploads, ни в shared: ${targetFileName}`, { fileName: targetFileName, deviceId: id });
+                errorCount++;
                 continue;
               }
               
-              // Файл не найден нигде - ошибка
-              logFile('warn', `❌ Файл не найден ни в uploads, ни в shared: ${targetFileName}`, { fileName: targetFileName, deviceId: id });
-              errorCount++;
-              continue;
-            }
-            
-            // Перемещаем файл
-            fs.renameSync(sourcePath, targetPath);
-            fs.chmodSync(targetPath, 0o644);
-            logFile('info', `✅ Перемещен: ${file.filename} -> ${safeFolderName}/${targetFileName}`, { fileName: file.filename, folderName: safeFolderName, deviceId: id });
-            movedCount++;
-          } catch (e) {
-            errorCount++;
-            logger.error('[upload] ❌ Ошибка перемещения файла в папку', { 
-              error: e.message, 
-              fileName: file.filename,
-              originalName: file.originalname,
-              deviceId: id,
-              folderName: safeFolderName,
-              stack: e.stack
-            });
-            
-            // КРИТИЧНО: Если не удалось переместить - НЕ оставляем файл в корне!
-            // Удаляем его чтобы не было "потерянных" файлов
-            try {
-              // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
-              const devicesPath = getDevicesPath();
-              const sourcePath = path.join(devicesPath, file.filename);
-              if (fs.existsSync(sourcePath)) {
-                fs.unlinkSync(sourcePath);
-                logFile('info', `🗑️ Удален файл который не удалось переместить: ${file.filename}`, { fileName: file.filename, deviceId: id });
-              }
-            } catch (cleanupErr) {
-              logger.error('[upload] Failed to cleanup unmoved file', { 
-                error: cleanupErr.message,
-                fileName: file.filename,
-                stack: cleanupErr.stack
-              });
-            }
-          }
-        }
-        
-        logFile('info', `📁 Папка создана: ${safeFolderName} (${movedCount}/${req.files.length} файлов перемещено${errorCount > 0 ? `, ${errorCount} ошибок` : ''})`, { folderName: safeFolderName, movedCount, totalFiles: req.files.length, errorCount, deviceId: id });
-        
-        if (errorCount > 0) {
-          logger.warn('[upload] Some files failed to move to folder', { 
-            deviceId: id,
-            folderName: safeFolderName,
-            totalFiles: req.files.length,
-            movedFiles: movedCount,
-            errorCount
-          });
-        }
-        
-        // КРИТИЧНО: Frontend передает ПОЛНЫЙ список файлов которые должны быть в папке
-        // (включая те что Multer НЕ получил, потому что они уже существуют в shared)
-        let allExpectedFiles = [];
-        if (req.body.expectedFiles) {
-          try {
-            allExpectedFiles = JSON.parse(req.body.expectedFiles);
-            logFile('info', `📋 Frontend передал список ожидаемых файлов: ${allExpectedFiles.length}`, { deviceId: id, folderName: safeFolderName, expectedFilesCount: allExpectedFiles.length });
-          } catch (e) {
-            logger.warn('[upload] ⚠️ Не удалось распарсить expectedFiles', { error: e.message, deviceId: id, stack: e.stack });
-          }
-        }
-        
-        // Если frontend НЕ передал список (старая версия) - используем req.files
-        if (allExpectedFiles.length === 0) {
-          logFile('info', '⚠️ Frontend не передал expectedFiles, используем req.files', { deviceId: id, folderName: safeFolderName });
-          allExpectedFiles = req.files.map(f => {
-            let fileName = f.originalname;
-            if (fileName.includes('/')) {
-              fileName = fileName.split('/').pop();
-            }
-            return fileName;
-          });
-        }
-        
-        // Проверяем какие файлы реально есть в папке
-        const filesInFolder = fs.readdirSync(targetFolder);
-        const missingFiles = allExpectedFiles.filter(f => !filesInFolder.includes(f));
-        
-        logFile('info', `🔍 Проверка папки: ожидалось ${allExpectedFiles.length}, найдено ${filesInFolder.length}, не хватает ${missingFiles.length}`, { deviceId: id, folderName: safeFolderName, expected: allExpectedFiles.length, found: filesInFolder.length, missing: missingFiles.length });
-        
-        // Копируем недостающие файлы из shared storage
-        // devicesPath уже объявлен выше для всего блока загрузки
-        let copiedFromShared = 0;
-        for (const missingFile of missingFiles) {
-          const sharedPath = path.join(devicesPath, missingFile);
-          if (fs.existsSync(sharedPath)) {
-            const targetPath = path.join(targetFolder, missingFile);
-            try {
-              fs.copyFileSync(sharedPath, targetPath);
+              fs.renameSync(sourcePath, targetPath);
               fs.chmodSync(targetPath, 0o644);
-              logFile('info', `✅ Скопирован из shared: ${missingFile}`, { fileName: missingFile, deviceId: id, folderName: safeFolderName });
-              copiedFromShared++;
+              logFile('info', `✅ Перемещен: ${file.filename} -> ${safeFolderName}/${targetFileName}`, { fileName: file.filename, folderName: safeFolderName, deviceId: id });
+              movedCount++;
             } catch (e) {
-              logger.error('[upload] Failed to copy from shared', { 
-                error: e.message,
-                fileName: missingFile,
+              errorCount++;
+              logger.error('[upload] ❌ Ошибка перемещения файла в папку', { 
+                error: e.message, 
+                fileName: file.filename,
+                originalName: file.originalname,
                 deviceId: id,
                 folderName: safeFolderName,
                 stack: e.stack
               });
+              
+              try {
+                const devicesPath = getDevicesPath();
+                const sourcePath = path.join(devicesPath, file.filename);
+                if (fs.existsSync(sourcePath)) {
+                  fs.unlinkSync(sourcePath);
+                  logFile('info', `🗑️ Удален файл который не удалось переместить: ${file.filename}`, { fileName: file.filename, deviceId: id });
+                }
+              } catch (cleanupErr) {
+                logger.error('[upload] Failed to cleanup unmoved file', { 
+                  error: cleanupErr.message,
+                  fileName: file.filename,
+                  stack: cleanupErr.stack
+                });
+              }
             }
-          } else {
-            logFile('warn', `⚠️ Файл не найден в shared storage: ${missingFile}`, { fileName: missingFile, deviceId: id, folderName: safeFolderName });
           }
-        }
-        
-        const finalCount = fs.readdirSync(targetFolder).length;
-        logFile('info', `📁 Папка готова: ${safeFolderName} (${finalCount} файлов${copiedFromShared > 0 ? `, ${copiedFromShared} скопировано из shared` : ''})`, { deviceId: id, folderName: safeFolderName, finalCount, copiedFromShared });
-        
-        // Сохраняем маппинг оригинального имени папки
-        if (!fileNamesMap[id]) fileNamesMap[id] = {};
-        fileNamesMap[id][safeFolderName] = folderName; // Оригинальное имя для отображения
-        saveFileNamesMap(fileNamesMap);
-        
-        // КРИТИЧНО: Обновляем список файлов после создания папки
-        updateDeviceFilesFromDB(id, devices, fileNamesMap);
-        io.emit('devices/updated');
+          
+          logFile('info', `📁 Папка создана: ${safeFolderName} (${movedCount}/${req.files.length} файлов перемещено${errorCount > 0 ? `, ${errorCount} ошибок` : ''})`, { folderName: safeFolderName, movedCount, totalFiles: req.files.length, errorCount, deviceId: id });
+          
+          if (errorCount > 0) {
+            logger.warn('[upload] Some files failed to move to folder', { 
+              deviceId: id,
+              folderName: safeFolderName,
+              totalFiles: req.files.length,
+              movedFiles: movedCount,
+              errorCount
+            });
+          }
+          
+          let allExpectedFiles = [];
+          if (req.body.expectedFiles) {
+            try {
+              allExpectedFiles = JSON.parse(req.body.expectedFiles);
+              logFile('info', `📋 Frontend передал список ожидаемых файлов: ${allExpectedFiles.length}`, { deviceId: id, folderName: safeFolderName, expectedFilesCount: allExpectedFiles.length });
+            } catch (e) {
+              logger.warn('[upload] ⚠️ Не удалось распарсить expectedFiles', { error: e.message, deviceId: id, stack: e.stack });
+            }
+          }
+          
+          if (allExpectedFiles.length === 0) {
+            logFile('info', '⚠️ Frontend не передал expectedFiles, используем req.files', { deviceId: id, folderName: safeFolderName });
+            allExpectedFiles = req.files.map(f => {
+              let fileName = f.originalname;
+              if (fileName.includes('/')) {
+                fileName = fileName.split('/').pop();
+              }
+              return fileName;
+            });
+          }
+          
+          const filesInFolder = fs.readdirSync(targetFolder);
+          const missingFiles = allExpectedFiles.filter(f => !filesInFolder.includes(f));
+          
+          logFile('info', `🔍 Проверка папки: ожидалось ${allExpectedFiles.length}, найдено ${filesInFolder.length}, не хватает ${missingFiles.length}`, { deviceId: id, folderName: safeFolderName, expected: allExpectedFiles.length, found: filesInFolder.length, missing: missingFiles.length });
+          
+          let copiedFromShared = 0;
+          const devicesPathForCopy = getDevicesPath();
+          for (const missingFile of missingFiles) {
+            const sharedPath = path.join(devicesPathForCopy, missingFile);
+            if (fs.existsSync(sharedPath)) {
+              const targetPath = path.join(targetFolder, missingFile);
+              try {
+                fs.copyFileSync(sharedPath, targetPath);
+                fs.chmodSync(targetPath, 0o644);
+                logFile('info', `✅ Скопирован из shared: ${missingFile}`, { fileName: missingFile, deviceId: id, folderName: safeFolderName });
+                copiedFromShared++;
+              } catch (e) {
+                logger.error('[upload] Failed to copy from shared', { 
+                  error: e.message,
+                  fileName: missingFile,
+                  deviceId: id,
+                  folderName: safeFolderName,
+                  stack: e.stack
+                });
+              }
+            } else {
+              logFile('warn', `⚠️ Файл не найден в shared storage: ${missingFile}`, { fileName: missingFile, deviceId: id, folderName: safeFolderName });
+            }
+          }
+          
+          const finalCount = fs.readdirSync(targetFolder).length;
+          logFile('info', `📁 Папка готова: ${safeFolderName} (${finalCount} файлов${copiedFromShared > 0 ? `, ${copiedFromShared} скопировано из shared` : ''})`, { deviceId: id, folderName: safeFolderName, finalCount, copiedFromShared });
+          
+          if (!fileNamesMap[id]) fileNamesMap[id] = {};
+          fileNamesMap[id][safeFolderName] = folderName;
+          saveFileNamesMap(fileNamesMap);
+          
+          updateDeviceFilesFromDB(id, devices, fileNamesMap);
+          io.emit('devices/updated');
+        }).catch(err => {
+          logger.error('[upload] ❌ Ошибка обработки папки в фоне', { 
+            error: err.message, 
+            deviceId: id, 
+            folderName,
+            stack: err.stack 
+          });
+        });
       } else {
         // КРИТИЧНО: Устанавливаем права 644 на загруженные файлы (кроме PDF/PPTX/ZIP - они уже перемещены)
         for (const file of (req.files || [])) {
@@ -1008,10 +1165,26 @@ export function createFilesRouter(deps) {
         }
       }
       
-      // КРИТИЧНО: Проверяем отмену перед обработкой файлов
-      if (isAborted) {
-        logger.warn('[Upload] Upload was aborted, skipping file processing', { deviceId: id });
+      // КРИТИЧНО: НЕ прерываем обработку если файлы уже сохранены multer
+      // Клиент может закрыть соединение после получения ответа - это нормально
+      // Файлы уже на диске, нужно их обработать и сохранить в БД
+      if (isAborted && (!req.files || req.files.length === 0)) {
+        console.error('[Upload] ⚠️ Upload was aborted BEFORE files were saved, skipping processing');
+        logger.warn('[Upload] Upload was aborted before files were saved, skipping file processing', { deviceId: id });
         return;
+      }
+      
+      // КРИТИЧНО: Если файлы сохранены, но клиент закрыл соединение - продолжаем обработку
+      // Сбрасываем isAborted чтобы код продолжил выполнение
+      if (isAborted && req.files && req.files.length > 0) {
+        console.error('[Upload] ⚠️ Client closed connection but files are saved, continuing processing...');
+        logger.warn('[Upload] Client closed connection but files are saved, continuing processing', {
+          deviceId: id,
+          filesCount: req.files.length
+        });
+        // Сбрасываем флаг чтобы продолжить обработку
+        isAborted = false;
+        console.error('[Upload] ✅ Reset isAborted flag, continuing processing');
       }
       
       // Обрабатываем файлы ТОЛЬКО если это не прямая загрузка папки
@@ -1049,15 +1222,11 @@ export function createFilesRouter(deps) {
         }
       }
       
-      // КРИТИЧНО: Проверяем отмену перед audit log
-      if (isAborted) {
-        logger.warn('[Upload] Upload was aborted, skipping audit log', { deviceId: id });
-        return;
-      }
-      
-      // Audit log
+      // ИСПРАВЛЕНО: Отправляем ответ СРАЗУ, обработку метаданных и audit log запускаем в фоне
+      // НЕ прерываем обработку если файлы уже сохранены
+      // Audit log в фоне (не блокирует ответ)
       if (uploaded.length > 0) {
-        await auditLog({
+        auditLog({
           userId: req.user?.id || null,
           action: AuditAction.FILE_UPLOAD,
           resource: `device:${id}`,
@@ -1071,7 +1240,10 @@ export function createFilesRouter(deps) {
           ipAddress: req.ip,
           userAgent: req.get('user-agent'),
           status: 'success'
+        }).catch(err => {
+          logger.error('[Upload] Audit log failed', { error: err.message, deviceId: id });
         });
+        
         logFile('info', 'Files uploaded', { 
           deviceId: id, 
           filesCount: uploaded.length, 
@@ -1079,8 +1251,11 @@ export function createFilesRouter(deps) {
           uploadedBy: req.user?.username || 'anonymous'
         });
         
-        // ИСПРАВЛЕНО: Обрабатываем метаданные и ЖДЕМ завершения перед обновлением списка
+        // ИСПРАВЛЕНО: Отправляем ответ СРАЗУ, обработку метаданных запускаем в фоне
         // Обрабатываем только обычные файлы (не папки, не PDF/PPTX/ZIP)
+        console.error('[Upload] Checking folderName:', folderName);
+        console.error('[Upload] req.files length:', (req.files || []).length);
+        
         if (!folderName) {
           // Фильтруем файлы: только видео/аудио/изображения (не PDF/PPTX/ZIP)
           const filesToProcess = (req.files || []).filter(file => {
@@ -1088,34 +1263,86 @@ export function createFilesRouter(deps) {
             return ext !== '.pdf' && ext !== '.pptx' && ext !== '.zip';
           });
           
-          if (filesToProcess.length > 0) {
-            try {
-              // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
-              const devicesPath = getDevicesPath();
-              await processUploadedFilesAsync(id, filesToProcess, devicesPath, fileNamesMap);
-              logFile('debug', 'File metadata processed successfully', { deviceId: id, filesCount: filesToProcess.length });
-            } catch (err) {
-              logger.error('Metadata processing failed', { 
-                error: err.message, 
-                deviceId: id 
-              });
-            }
+          console.error('[Upload] Files to process:', filesToProcess.length);
+          console.error('[Upload] Files to process details:', filesToProcess.map(f => ({ filename: f.filename, path: f.path })));
+          
+          // КРИТИЧНО: Логируем если файлов для обработки нет
+          if (filesToProcess.length === 0) {
+            console.error('[Upload] ⚠️ No files to process metadata');
+            logger.error('[Upload] ⚠️ No files to process metadata (all filtered out or folder upload)', {
+              deviceId: id,
+              totalFiles: (req.files || []).length,
+              folderName: folderName || null
+            });
           }
           
-          // НОВОЕ: Автоматическая оптимизация ПОСЛЕ сохранения метаданных
-          // Теперь оптимизатор может прочитать profile из БД!
+          // Запускаем обработку метаданных в ФОНОВОМ режиме (без await)
+          if (filesToProcess.length > 0) {
+            const devicesPath = getDevicesPath();
+            
+            console.error('[Upload] 🚀 CALLING processUploadedFilesAsync');
+            console.error('[Upload] Device ID:', id);
+            console.error('[Upload] Files count:', filesToProcess.length);
+            console.error('[Upload] Devices path:', devicesPath);
+            
+            // КРИТИЧНО: Логируем на уровне error чтобы точно было видно
+            logger.error('[Upload] 🚀 Starting metadata processing for uploaded files', {
+              deviceId: id,
+              filesCount: filesToProcess.length,
+              devicesPath,
+              files: filesToProcess.map(f => ({
+                filename: f.filename,
+                originalname: f.originalname,
+                path: f.path,
+                size: f.size,
+                hasPath: !!f.path
+              }))
+            });
+            
+            // Дополнительное логирование в файл
+            logFile('info', '🚀 Starting metadata processing for uploaded files', {
+              deviceId: id,
+              filesCount: filesToProcess.length,
+              devicesPath,
+              files: filesToProcess.map(f => ({
+                filename: f.filename,
+                originalname: f.originalname,
+                path: f.path,
+                size: f.size
+              }))
+            });
+            
+            processUploadedFilesAsync(id, filesToProcess, devicesPath, fileNamesMap)
+              .then(() => {
+                logger.warn('[Upload] ✅ File metadata processed successfully', { 
+                  deviceId: id, 
+                  filesCount: filesToProcess.length 
+                });
+                logFile('info', '✅ File metadata processed successfully', { 
+                  deviceId: id, 
+                  filesCount: filesToProcess.length 
+                });
+                // Обновляем список файлов после обработки метаданных
+                updateDeviceFilesFromDB(id, devices, fileNamesMap);
+                io.emit('devices/updated');
+                
+                // Автоматическая оптимизация видео в фоне (после обработки метаданных)
           for (const fileName of uploaded) {
             const ext = path.extname(fileName).toLowerCase();
             if (['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) {
-              autoOptimizeVideoWrapper(id, fileName).then(result => {
+                    autoOptimizeVideoWrapper(id, fileName)
+                      .then(result => {
                 if (result.success) {
                   logFile('info', 'Video processed', { 
                     deviceId: id, 
                     fileName, 
                     optimized: result.optimized 
                   });
+                          updateDeviceFilesFromDB(id, devices, fileNamesMap);
+                          io.emit('devices/updated');
                 }
-              }).catch(err => {
+                      })
+                      .catch(err => {
                 logger.error('Video optimization failed', { 
                   error: err.message, 
                   deviceId: id, 
@@ -1124,26 +1351,24 @@ export function createFilesRouter(deps) {
               });
             }
           }
+              })
+              .catch(err => {
+                logger.error('[Upload] ❌ Metadata processing failed', { 
+                  error: err.message,
+                  stack: err.stack,
+                  deviceId: id,
+                  filesCount: filesToProcess.length
+                });
+              });
+          }
         }
       }
       
-      // НОВОЕ: Обновляем список файлов из БД (ПОСЛЕ обработки метаданных)
-      // КРИТИЧНО: Проверяем, не была ли загрузка отменена
-      if (isAborted) {
-        logger.warn('[Upload] Upload was aborted, skipping final processing', { deviceId: id });
-        return;
-      }
-      
-      updateDeviceFilesFromDB(id, devices, fileNamesMap);
-      
-      const updatedFiles = devices[id].files || [];
-      io.emit('devices/updated');
-      
-      // КРИТИЧНО: Проверяем еще раз перед отправкой ответа
-      if (!isAborted && !res.headersSent) {
-        res.json({ ok: true, files: updatedFiles, uploaded });
-      } else if (isAborted) {
-        logger.warn('[Upload] Response already sent or upload aborted', { deviceId: id });
+      // КРИТИЧНО: Ответ уже отправлен на строке 751, все обработки выполняются в фоне
+      // Обновляем список файлов в фоне после обработки
+      if (!isAborted) {
+        updateDeviceFilesFromDB(id, devices, fileNamesMap);
+        io.emit('devices/updated');
       }
     });
   });
@@ -1156,15 +1381,15 @@ export function createFilesRouter(deps) {
     const sourceId = sanitizeDeviceId(sourceDeviceId);
     
     if (!targetId || !sourceId) {
-      return res.status(400).json({ error: 'invalid device ids' });
+      return res.status(400).json({ error: 'Неверные ID устройств' });
     }
     
     if (!devices[targetId] || !devices[sourceId]) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
     if (!fileName) {
-      return res.status(400).json({ error: 'fileName required' });
+      return res.status(400).json({ error: 'Требуется имя файла' });
     }
     
     try {
@@ -1183,7 +1408,7 @@ export function createFilesRouter(deps) {
       const sourceMetadata = getFileMetadata(sourceId, fileName);
       
       if (!sourceMetadata) {
-        return res.status(404).json({ error: 'source file not found in database' });
+        return res.status(404).json({ error: 'Исходный файл не найден в базе данных' });
     }
     
       if (sourceMetadata.content_type === 'streaming') {
@@ -1198,7 +1423,7 @@ export function createFilesRouter(deps) {
 
         const streamUrl = sourceMetadata.stream_url || sourceMetadata.file_path;
         if (!streamUrl) {
-          return res.status(400).json({ error: 'invalid stream metadata' });
+          return res.status(400).json({ error: 'Неверные метаданные стрима' });
         }
 
         const targetOriginalNameStreaming = sourceMetadata.original_name || fileNamesMap[sourceId]?.[fileName] || fileName;
@@ -1367,7 +1592,7 @@ export function createFilesRouter(deps) {
         targetId, 
         fileName 
       });
-      return res.status(500).json({ error: 'copy/move failed', detail: e.message });
+      return res.status(500).json({ error: 'Ошибка копирования/перемещения', detail: e.message });
     }
   });
   
@@ -1376,19 +1601,19 @@ export function createFilesRouter(deps) {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
-      return res.status(400).json({ error: 'invalid device id' });
+      return res.status(400).json({ error: 'Неверный ID устройства' });
     }
     
     const oldName = req.params.name;
     const { newName } = req.body;
     
     if (!newName) {
-      return res.status(400).json({ error: 'newName required' });
+      return res.status(400).json({ error: 'Требуется новое имя' });
     }
     
     const d = devices[id];
     if (!d) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
     // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
@@ -1452,7 +1677,7 @@ export function createFilesRouter(deps) {
     
     if (!fs.existsSync(oldPath)) {
       logFile('error', `❌ Не найден: ${oldPath}`, { deviceId: id, oldName, oldPath });
-      return res.status(404).json({ error: 'file not found', path: oldPath });
+      return res.status(404).json({ error: 'Файл не найден', path: oldPath });
     }
     
     // Определяем новый путь
@@ -1466,7 +1691,7 @@ export function createFilesRouter(deps) {
     }
     
     if (fs.existsSync(newPath) && oldPath !== newPath) {
-      return res.status(409).json({ error: 'file with this name already exists' });
+      return res.status(409).json({ error: 'Файл с таким именем уже существует' });
     }
     
     try {
@@ -1522,7 +1747,7 @@ export function createFilesRouter(deps) {
       res.json({ success: true, oldName: actualOldName, newName: finalName });
     } catch (e) {
       logger.error('[rename] Ошибка', { error: e.message, stack: e.stack, deviceId: id, oldName, newName, oldPath, newPath });
-      res.status(500).json({ error: 'rename failed', details: e.message });
+      res.status(500).json({ error: 'Ошибка переименования', details: e.message });
     }
   });
   
@@ -1531,14 +1756,14 @@ export function createFilesRouter(deps) {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
-      return res.status(400).json({ error: 'invalid device id' });
+      return res.status(400).json({ error: 'Неверный ID устройства' });
     }
     
     const name = req.params.name;
     const d = devices[id];
     
     if (!d) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
     // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
@@ -1562,7 +1787,7 @@ export function createFilesRouter(deps) {
         attemptedPath: name, 
         ip: req.ip 
       });
-      return res.status(400).json({ error: 'invalid file path' });
+      return res.status(400).json({ error: 'Неверный путь к файлу' });
     }
     
     const existingMetadata = getFileMetadata(id, name);
@@ -1588,7 +1813,7 @@ export function createFilesRouter(deps) {
           fileName: name, 
           error: err.message 
         });
-        return res.status(500).json({ error: 'failed to delete stream metadata' });
+        return res.status(500).json({ error: 'Не удалось удалить метаданные стрима' });
       }
       
       // Обновляем fileNamesMap
@@ -1642,7 +1867,7 @@ export function createFilesRouter(deps) {
         logFile('info', `Удалена папка PDF/PPTX: ${folderName}`, { deviceId: id, fileName: name, folderName });
       } catch (e) {
         logger.error(`[DELETE file] Ошибка удаления папки ${folderName}`, { error: e.message, stack: e.stack, deviceId: id, fileName: name, folderName });
-        return res.status(500).json({ error: 'failed to delete folder' });
+        return res.status(500).json({ error: 'Не удалось удалить папку' });
       }
     } 
     // Проверяем папку с изображениями (без расширения)
@@ -1656,7 +1881,7 @@ export function createFilesRouter(deps) {
           logFile('info', `Удалена папка с изображениями: ${name}`, { deviceId: id, fileName: name });
         } catch (e) {
           logger.error(`[DELETE file] Ошибка удаления папки ${name}`, { error: e.message, stack: e.stack, deviceId: id, fileName: name });
-          return res.status(500).json({ error: 'failed to delete image folder' });
+          return res.status(500).json({ error: 'Не удалось удалить папку с изображениями' });
         }
       }
     } else {
@@ -1667,7 +1892,7 @@ export function createFilesRouter(deps) {
       
       if (!metadata) {
         logFile('warn', 'File not found in DB', { deviceId: id, fileName: name });
-        return res.status(404).json({ error: 'file not found' });
+        return res.status(404).json({ error: 'Файл не найден' });
       }
       
       const physicalPath = metadata.file_path;
@@ -1764,12 +1989,12 @@ export function createFilesRouter(deps) {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
-      return res.status(400).json({ error: 'invalid device id' });
+      return res.status(400).json({ error: 'Неверный ID устройства' });
     }
     
     const d = devices[id];
     if (!d) {
-      return res.status(404).json({ error: 'not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
     const files = d.files || [];
@@ -1806,12 +2031,12 @@ export function createFilesRouter(deps) {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
-      return res.status(400).json({ error: 'invalid device id' });
+      return res.status(400).json({ error: 'Неверный ID устройства' });
     }
     
     const d = devices[id];
     if (!d) {
-      return res.status(404).json({ error: 'not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
     const files = d.files || [];
@@ -1983,7 +2208,7 @@ export function createFilesRouter(deps) {
       const { dryRun = false } = req.body || {};
       
       if (deviceId && !devices[deviceId]) {
-        return res.status(404).json({ error: 'device not found' });
+        return res.status(404).json({ error: 'Устройство не найдено' });
       }
       
       logger.info('[Cleanup] Starting cleanup missing files', {

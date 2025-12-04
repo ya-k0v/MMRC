@@ -31,11 +31,11 @@ export function createDeduplicationRouter(deps) {
     const { md5, size, filename } = req.body;
     
     if (!targetDeviceId || !md5 || !size) {
-      return res.status(400).json({ error: 'device_id, md5, and size required' });
+      return res.status(400).json({ error: 'Требуются device_id, md5 и size' });
     }
     
     if (!devices[targetDeviceId]) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
     // Определяем тип файла по расширению
@@ -106,7 +106,7 @@ export function createDeduplicationRouter(deps) {
     const { sourceDevice, sourceFile, targetFilename, originalName, md5, size } = req.body;
     
     if (!targetDeviceId || !sourceDevice || !sourceFile || !targetFilename) {
-      return res.status(400).json({ error: 'missing required parameters' });
+      return res.status(400).json({ error: 'Отсутствуют обязательные параметры' });
     }
     
     // Проверяем тип файла - дедупликация только для видео
@@ -120,14 +120,14 @@ export function createDeduplicationRouter(deps) {
         targetFilename,
         extension: ext
       });
-      return res.status(400).json({ error: 'Deduplication is only allowed for video files' });
+      return res.status(400).json({ error: 'Дедупликация разрешена только для видеофайлов' });
     }
     
     const targetDevice = devices[targetDeviceId];
     const srcDevice = devices[sourceDevice];
     
     if (!targetDevice || !srcDevice) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
     try {
@@ -135,7 +135,7 @@ export function createDeduplicationRouter(deps) {
       const sourceMetadata = getFileMetadata(sourceDevice, sourceFile);
       
       if (!sourceMetadata) {
-        return res.status(404).json({ error: 'source metadata not found' });
+        return res.status(404).json({ error: 'Метаданные исходного файла не найдены' });
       }
       
       // НОВОЕ: Проверяем существование физического файла
@@ -145,7 +145,7 @@ export function createDeduplicationRouter(deps) {
           sourceFile,
           expectedPath: sourceMetadata.file_path
         });
-        return res.status(404).json({ error: 'source file not found' });
+        return res.status(404).json({ error: 'Исходный файл не найден' });
       }
       
       const stats = fs.statSync(sourceMetadata.file_path);
@@ -237,7 +237,7 @@ export function createDeduplicationRouter(deps) {
         sourceFile,
         targetDevice: targetDeviceId
       });
-      res.status(500).json({ error: 'failed to copy file' });
+      res.status(500).json({ error: 'Не удалось скопировать файл' });
     }
   });
   
@@ -253,7 +253,7 @@ export function createDeduplicationRouter(deps) {
       res.json(duplicates);
     } catch (error) {
       logger.error('Failed to get duplicates list', { error: error.message });
-      res.status(500).json({ error: 'failed to get duplicates' });
+      res.status(500).json({ error: 'Не удалось получить дубликаты' });
     }
   });
   

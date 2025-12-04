@@ -3186,6 +3186,21 @@ socket.on('playlist/state', ({ device_id, active, file, intervalSeconds }) => {
 });
 
 socket.on('devices/updated', onDevicesUpdated);
+
+// Обработчик обновления устройств пользователя (для спикеров)
+socket.on('user/devices/updated', async ({ userId }) => {
+  // Проверяем, что это обновление для текущего пользователя
+  try {
+    const user = JSON.parse(localStorage.getItem('user') || '{}');
+    if (user.id && user.id === userId) {
+      // Обновляем список устройств для текущего пользователя
+      console.log('[Speaker] User devices updated, refreshing device list...');
+      await loadDevices();
+    }
+  } catch (err) {
+    console.error('[Speaker] Error handling user/devices/updated:', err);
+  }
+});
 const onPreviewRefresh = debounce(async ({ device_id }) => {
   // Сохраняем состояние плейлиста перед загрузкой устройств
   const playlistStates = {};

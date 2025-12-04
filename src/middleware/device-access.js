@@ -16,7 +16,7 @@ import logger from '../utils/logger.js';
 export function checkDeviceAccess(req, res, next) {
   // Если пользователь не аутентифицирован, requireAuth уже вернул ошибку
   if (!req.user) {
-    return res.status(401).json({ error: 'Not authenticated' });
+    return res.status(401).json({ error: 'Не аутентифицирован' });
   }
 
   // Hero Admin не имеет доступа к устройствам

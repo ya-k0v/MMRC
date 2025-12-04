@@ -85,7 +85,7 @@ export function createNotificationsRouter() {
       if (acknowledged) {
         res.json({ success: true });
       } else {
-        res.status(404).json({ error: 'Notification not found' });
+        res.status(404).json({ error: 'Уведомление не найдено' });
       }
     } catch (error) {
       logger.error('[Notifications API] Error acknowledging notification:', {
@@ -105,7 +105,7 @@ export function createNotificationsRouter() {
       if (deleted) {
         res.json({ success: true });
       } else {
-        res.status(404).json({ error: 'Notification not found' });
+        res.status(404).json({ error: 'Уведомление не найдено' });
       }
     } catch (error) {
       logger.error('[Notifications API] Error deleting notification:', {

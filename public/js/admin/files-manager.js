@@ -186,7 +186,7 @@ export async function loadFilesWithStatus(deviceId) {
   return await res.json();
 }
 
-export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, filePage, socket) {
+export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, filePage, socket, onPageUpdate = null) {
   // НОВОЕ: Используем API с статусами файлов
   const res = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/files-with-status`);
   const filesData = await res.json();
@@ -240,8 +240,11 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
   // Пагинация файлов
   const pageSize = getPageSize();
   const totalPages = Math.max(1, Math.ceil(allFiles.length / pageSize));
-  if (filePage >= totalPages) filePage = totalPages - 1;
-  const start = filePage * pageSize;
+  // ИСПРАВЛЕНО: Корректируем страницу если она выходит за пределы
+  let currentPage = filePage;
+  if (currentPage >= totalPages) currentPage = Math.max(0, totalPages - 1);
+  if (currentPage < 0) currentPage = 0;
+  const start = currentPage * pageSize;
   const end = Math.min(start + pageSize, allFiles.length);
   const files = allFiles.slice(start, end);
   
@@ -491,19 +494,39 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       const prevBtn = document.createElement('button');
       prevBtn.className = 'secondary';
       prevBtn.id = 'filePrevAdmin';
-      prevBtn.disabled = filePage <= 0;
+      prevBtn.disabled = currentPage <= 0;
       prevBtn.style.cssText = 'min-width:80px';
       prevBtn.textContent = 'Назад';
       filePagerAdmin.appendChild(prevBtn);
       const pageSpan = document.createElement('span');
       pageSpan.style.cssText = 'white-space:nowrap';
-      pageSpan.textContent = `Стр. ${filePage+1} из ${totalPages}`;
+      pageSpan.textContent = `Стр. ${currentPage+1} из ${totalPages}`;
       filePagerAdmin.appendChild(pageSpan);
       const nextBtn = document.createElement('button');
+      nextBtn.className = 'secondary';
+      nextBtn.id = 'fileNextAdmin';
+      nextBtn.disabled = currentPage >= totalPages - 1;
+      nextBtn.style.cssText = 'min-width:80px';
+      nextBtn.textContent = 'Вперед';
+      filePagerAdmin.appendChild(nextBtn);
       const prev = filePagerAdmin.querySelector('#filePrevAdmin');
       const next = filePagerAdmin.querySelector('#fileNextAdmin');
-      if (prev) prev.onclick = () => { if (filePage>0) { refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, filePage-1, socket); } };
-      if (next) next.onclick = () => { if (filePage<totalPages-1) { refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, filePage+1, socket); } };
+      if (prev) prev.onclick = async () => { 
+        if (currentPage > 0) { 
+          const updatedPage = await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage - 1, socket, onPageUpdate);
+          if (updatedPage !== undefined && onPageUpdate) {
+            onPageUpdate(updatedPage);
+          }
+        }
+      };
+      if (next) next.onclick = async () => { 
+        if (currentPage < totalPages - 1) { 
+          const updatedPage = await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage + 1, socket, onPageUpdate);
+          if (updatedPage !== undefined && onPageUpdate) {
+            onPageUpdate(updatedPage);
+          }
+        }
+      };
     }
   } else if (filePagerAdmin) {
     filePagerAdmin.innerHTML = '';
@@ -525,7 +548,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         streamUrl: currentStreamUrl,
         streamProtocol: currentProtocol,
         onSuccess: async () => {
-          await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, filePage, socket);
+          await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
           socket.emit('devices/updated');
         }
       });
@@ -675,7 +698,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         // Preview iframe обновится через событие placeholder/refresh от сервера
         await new Promise(resolve => setTimeout(resolve, 600));
         
-        await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, filePage, socket);
+        await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
         socket.emit('devices/updated');
       } catch (e) { console.error(e); }
     };
@@ -687,7 +710,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       const originalName = decodeURIComponent(btn.getAttribute('data-original'));
       if (!confirm(`Удалить файл ${originalName}?`)) return;
       await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(safeName)}`, { method: 'DELETE' });
-      await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, filePage, socket);
+      await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
       socket.emit('devices/updated');
     };
   });
@@ -797,7 +820,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
             previewContainer.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary)">Выберите файл для превью</div>';
           }
           
-          await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, filePage, socket);
+          await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
           socket.emit('devices/updated');
         } else {
           alert(`Ошибка переименования: ${data.error || 'Неизвестная ошибка'}`);
@@ -833,6 +856,9 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       });
     }
   });
+  
+  // ИСПРАВЛЕНО: Возвращаем текущую страницу для сохранения
+  return currentPage;
 }
 
 // setupUploadUI перенесена в upload-ui.js

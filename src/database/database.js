@@ -481,8 +481,15 @@ export function performWalCheckpoint(force = false) {
     }
 
     // Выполняем checkpoint
-    // RESTART - объединяет WAL в основной файл БД и перезапускает WAL
-    db.pragma('wal_checkpoint(RESTART)');
+    // PASSIVE - не блокирует операции записи, только если возможно
+    // Это безопаснее для активных операций загрузки файлов
+    try {
+      db.pragma('wal_checkpoint(PASSIVE)');
+    } catch (e) {
+      // Если PASSIVE не сработал - пробуем TRUNCATE (более мягкий чем RESTART)
+      logger.debug('[DB] PASSIVE checkpoint did not checkpoint, trying TRUNCATE', { error: e.message });
+      db.pragma('wal_checkpoint(TRUNCATE)');
+    }
     
     // Проверяем новый размер WAL файла
     let newWalSizeMB = 0;

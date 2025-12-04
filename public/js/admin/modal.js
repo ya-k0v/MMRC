@@ -695,7 +695,7 @@ window.showUserDevicesModalInModal = async function(userId, username, userRole) 
     filteredDevices: [],
     userDeviceIds: [],
     currentPage: 1,
-    itemsPerPage: 5,
+    itemsPerPage: 9,  // 3 колонки × 3 ряда = 9 устройств на страницу
     searchQuery: ''
   };
   
@@ -729,8 +729,8 @@ window.showUserDevicesModalInModal = async function(userId, username, userRole) 
         </div>
         
         <!-- Список устройств -->
-        <div id="modalDevicesList" style="display:flex; flex-direction:column; gap:var(--space-xs); min-height:200px; max-height:400px; overflow-y:auto;">
-          <div class="meta" style="text-align:center; padding:var(--space-lg);">Загрузка...</div>
+        <div id="modalDevicesList" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:var(--space-sm); min-height:200px; max-height:400px; overflow-y:auto; padding:var(--space-xs);">
+          <div class="meta" style="text-align:center; padding:var(--space-lg); grid-column:1/-1;">Загрузка...</div>
         </div>
         
         <!-- Информация о выборе -->
@@ -947,8 +947,8 @@ function filterAndRenderDevices() {
   // Рендерим устройства
   if (pageDevices.length === 0) {
     container.innerHTML = state.searchQuery 
-      ? '<div class="meta" style="text-align:center; padding:var(--space-lg);">Ничего не найдено</div>'
-      : '<div class="meta" style="text-align:center; padding:var(--space-lg);">Нет устройств</div>';
+      ? '<div class="meta" style="text-align:center; padding:var(--space-lg); grid-column:1/-1;">Ничего не найдено</div>'
+      : '<div class="meta" style="text-align:center; padding:var(--space-lg); grid-column:1/-1;">Нет устройств</div>';
     return;
   }
   
@@ -959,17 +959,17 @@ function filterAndRenderDevices() {
     const safeDeviceId = escapeHtml(d.device_id || '');
     const deviceIdArg = escapeJsStringForAttr(d.device_id || '');
     return `
-      <label style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm); border-radius:var(--radius-sm); cursor:pointer; transition:background 0.2s; ${isSelected ? 'background:var(--panel-2);' : ''}" onmouseover="this.style.background='var(--panel-2)'" onmouseout="this.style.background=${isSelected ? "'var(--panel-2)'" : "'transparent'"}">
-        <input 
-          type="checkbox" 
-          ${isSelected ? 'checked' : ''} 
-          onchange="toggleDeviceSelection(${deviceIdArg})"
-          style="cursor:pointer;"
-        />
-        <div style="flex:1; min-width:0;">
-          <div style="font-weight:500;">${safeDeviceName}</div>
-          <div class="meta" style="font-size:0.75rem;">ID: ${safeDeviceId}</div>
+      <label style="display:flex; flex-direction:column; gap:var(--space-xs); padding:var(--space-sm); border:1px solid var(--border); border-radius:var(--radius-sm); cursor:pointer; transition:all 0.2s; ${isSelected ? 'background:var(--panel-2); border-color:var(--brand);' : 'background:var(--panel);'}" onmouseover="this.style.background='var(--panel-hover)'; this.style.borderColor='var(--border-hover)'" onmouseout="this.style.background=${isSelected ? "'var(--panel-2)'" : "'var(--panel)'"}; this.style.borderColor=${isSelected ? "'var(--brand)'" : "'var(--border)'"}">
+        <div style="display:flex; align-items:center; gap:var(--space-xs);">
+          <input 
+            type="checkbox" 
+            ${isSelected ? 'checked' : ''} 
+            onchange="toggleDeviceSelection(${deviceIdArg})"
+            style="cursor:pointer; flex-shrink:0;"
+          />
+          <div style="flex:1; min-width:0; font-weight:500; font-size:var(--font-size-sm);">${safeDeviceName}</div>
         </div>
+        <div class="meta" style="font-size:0.7rem; padding-left:calc(var(--space-xs) + 16px); color:var(--muted);">${safeDeviceId}</div>
       </label>
     `;
   }).join('');

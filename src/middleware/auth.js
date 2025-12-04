@@ -48,7 +48,7 @@ export function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization;
   
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'No token provided' });
+    return res.status(401).json({ error: 'Токен не предоставлен' });
   }
 
   const token = authHeader.substring(7);
@@ -57,16 +57,16 @@ export function requireAuth(req, res, next) {
     const decoded = jwt.verify(token, JWT_SECRET);
     
     if (decoded.type !== 'access') {
-      return res.status(401).json({ error: 'Invalid token type' });
+      return res.status(401).json({ error: 'Неверный тип токена' });
     }
     
     req.user = decoded;
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Token expired' });
+      return res.status(401).json({ error: 'Токен истек' });
     }
-    return res.status(401).json({ error: 'Invalid token' });
+    return res.status(401).json({ error: 'Неверный токен' });
   }
 }
 
@@ -78,11 +78,11 @@ export function requireRole(...roles) {
   // Функция проверки роли
   const checkRole = (req, res, next) => {
     if (!req.user) {
-      return res.status(401).json({ error: 'Not authenticated' });
+      return res.status(401).json({ error: 'Не аутентифицирован' });
     }
     
     if (!roles.includes(req.user.role)) {
-      return res.status(403).json({ error: 'Insufficient permissions' });
+      return res.status(403).json({ error: 'Недостаточно прав' });
     }
     
     next();

@@ -163,7 +163,7 @@ export function validateUploadedFiles(req, res, next) {
     })
     .catch((err) => {
       logger.error('[File Validation] Middleware error', { error: err.message, stack: err.stack });
-      res.status(500).json({ error: 'File validation failed' });
+      res.status(500).json({ error: 'Ошибка валидации файла' });
     });
 }
 

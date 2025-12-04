@@ -25,6 +25,8 @@ let devicesCache = [];
 let currentDeviceId = null;
 let tvPage = 0;
 let filePage = 0;
+// ИСПРАВЛЕНО: Сохраняем пагинацию для каждого устройства отдельно
+const filePageByDevice = new Map();
 let nodeNames = {};
 let user = null;
 const volumeStateByDevice = new Map();
@@ -72,14 +74,30 @@ setupSocketListeners(socket, {
     if (currentDeviceId === device_id) {
       const panel = document.getElementById('filesPanel');
       // ИСПРАВЛЕНО: Обновляем панель с сохранением текущей страницы
-      if (panel) refreshFilesPanel(device_id, panel);
+      if (panel) {
+        const savedPage = filePageByDevice.get(device_id) || 0;
+        refreshFilesPanel(device_id, panel).then(updatedPage => {
+          if (updatedPage !== undefined) {
+            filePageByDevice.set(device_id, updatedPage);
+            filePage = updatedPage;
+          }
+        });
+      }
     }
   },
   onFileError: (device_id, file, error) => {
     if (currentDeviceId === device_id) {
       const panel = document.getElementById('filesPanel');
       // ИСПРАВЛЕНО: Обновляем панель с сохранением текущей страницы
-      if (panel) refreshFilesPanel(device_id, panel);
+      if (panel) {
+        const savedPage = filePageByDevice.get(device_id) || 0;
+        refreshFilesPanel(device_id, panel).then(updatedPage => {
+          if (updatedPage !== undefined) {
+            filePageByDevice.set(device_id, updatedPage);
+            filePage = updatedPage;
+          }
+        });
+      }
     }
   },
   onPreviewRefresh: async () => {
@@ -401,7 +419,8 @@ function initSelectionFromUrl() {
 // ------ Открыть выбранную ноду ------
 function openDevice(id) {
   currentDeviceId = id;
-  filePage = 0; // Сброс пагинации файлов при смене устройства
+  // ИСПРАВЛЕНО: Восстанавливаем сохраненную страницу для устройства или сбрасываем на 0
+  filePage = filePageByDevice.get(id) || 0;
   
   // Обновляем URL при переключении устройства
   openDeviceHelper(id);
@@ -437,7 +456,14 @@ async function renderFilesPane(deviceId) {
   if (meta) meta.textContent = `${filesCount} файл${filesCount === 1 ? '' : filesCount > 1 && filesCount < 5 ? 'а' : 'ов'}`;
   
   panel.innerHTML = `<div class="meta">Загрузка списка...</div>`;
-  await refreshFilesPanel(deviceId, panel);
+  // ИСПРАВЛЕНО: Восстанавливаем сохраненную страницу для устройства
+  const savedPage = filePageByDevice.get(deviceId) || 0;
+  filePage = savedPage;
+  const updatedPage = await refreshFilesPanel(deviceId, panel);
+  if (updatedPage !== undefined) {
+    filePageByDevice.set(deviceId, updatedPage);
+    filePage = updatedPage;
+  }
   
   // Обновляем счетчик файлов после загрузки
   const updatedDevice = devicesCache.find(d => d.device_id === deviceId);
@@ -448,8 +474,20 @@ async function renderFilesPane(deviceId) {
 
 // refreshFilesPanel перенесена в files-manager.js
 async function refreshFilesPanel(deviceId, panelEl) {
-  // ИСПРАВЛЕНО: Передаем текущее значение filePage
-  return await refreshFilesPanelModule(deviceId, panelEl, adminFetch, getPageSize, filePage, socket);
+  // ИСПРАВЛЕНО: Используем сохраненную страницу для устройства или текущую глобальную
+  const savedPage = filePageByDevice.get(deviceId) ?? filePage;
+  // ИСПРАВЛЕНО: Передаем callback для обновления страницы при пагинации
+  const onPageUpdate = (updatedPage) => {
+    filePageByDevice.set(deviceId, updatedPage);
+    filePage = updatedPage;
+  };
+  const updatedPage = await refreshFilesPanelModule(deviceId, panelEl, adminFetch, getPageSize, savedPage, socket, onPageUpdate);
+  // ИСПРАВЛЕНО: Сохраняем обновленную страницу для устройства
+  if (updatedPage !== undefined) {
+    filePageByDevice.set(deviceId, updatedPage);
+    filePage = updatedPage;
+  }
+  return updatedPage;
 }
 
 // НОВАЯ: Функция для обновления только прогресса файла без перерисовки всей панели
@@ -704,7 +742,11 @@ setInterval(async () => {
     if (hasProcessing) {
       const panel = document.getElementById('filesPanel');
       if (panel) {
-        await refreshFilesPanel(currentDeviceId, panel);
+        const updatedPage = await refreshFilesPanel(currentDeviceId, panel);
+        if (updatedPage !== undefined) {
+          filePageByDevice.set(currentDeviceId, updatedPage);
+          filePage = updatedPage;
+        }
       }
     }
   } catch (e) {

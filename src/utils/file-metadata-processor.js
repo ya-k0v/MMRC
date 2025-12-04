@@ -235,27 +235,73 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
     }
     
     // Сохраняем метаданные в БД
-    saveFileMetadata({
-      deviceId,
-      safeName,
-      originalName,
-      filePath,
-      fileSize,
-      md5Hash,
-      partialMd5,
-      mimeType,
-      videoParams,
-      audioParams,
-      fileMtime
-    });
-    
-    logFile('info', 'File metadata saved to database', { 
-      deviceId, 
-      safeName, 
-      md5: md5Hash.substring(0, 12),
-      deduplicated: deduplicationApplied,
-      resolution: videoParams.width ? `${videoParams.width}x${videoParams.height}` : null
-    });
+    try {
+      // КРИТИЧНО: Логируем перед сохранением на уровне warn для видимости в production
+      logger.warn('[FileMetadata] 💾 Saving file metadata to database', {
+        deviceId,
+        safeName,
+        originalName,
+        filePath,
+        fileSize,
+        hasMd5: !!md5Hash
+      });
+      
+      saveFileMetadata({
+        deviceId,
+        safeName,
+        originalName,
+        filePath,
+        fileSize,
+        md5Hash,
+        partialMd5,
+        mimeType,
+        videoParams,
+        audioParams,
+        fileMtime
+      });
+      
+      logger.warn('[FileMetadata] ✅ File metadata saved successfully', { 
+        deviceId, 
+        safeName,
+        originalName,
+        filePath,
+        fileSize,
+        md5: md5Hash ? md5Hash.substring(0, 12) : null,
+        deduplicated: deduplicationApplied,
+        resolution: videoParams.width ? `${videoParams.width}x${videoParams.height}` : null,
+        mimeType
+      });
+      
+      logFile('info', '✅ File metadata saved to database', { 
+        deviceId, 
+        safeName,
+        originalName,
+        filePath,
+        fileSize,
+        md5: md5Hash ? md5Hash.substring(0, 12) : null,
+        deduplicated: deduplicationApplied,
+        resolution: videoParams.width ? `${videoParams.width}x${videoParams.height}` : null,
+        mimeType
+      });
+    } catch (saveError) {
+      logger.error('[FileMetadata] ❌ Failed to save file metadata', {
+        deviceId,
+        safeName,
+        originalName,
+        filePath,
+        error: saveError.message,
+        stack: saveError.stack
+      });
+      logFile('error', '❌ Failed to save file metadata', {
+        deviceId,
+        safeName,
+        originalName,
+        filePath,
+        error: saveError.message,
+        stack: saveError.stack
+      });
+      throw saveError; // Пробрасываем ошибку дальше для обработки в processUploadedFilesAsync
+    }
     
     // КРИТИЧНО: Faststart обработка уже выполнена ДО дедупликации (см. выше в коде)
     // Для дедуплицированных файлов проверяем нужна ли обработка существующего файла в фоне
@@ -315,42 +361,153 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
 /**
  * Обработать массив загруженных файлов асинхронно
  * @param {string} deviceId
- * @param {Array} files - Массив { filename, originalname }
- * @param {string} folder - Папка устройства
+ * @param {Array} files - Массив { filename, originalname, path? } от multer
+ * @param {string} devicesPath - Корневой путь к хранилищу файлов (getDevicesPath())
  * @param {Object} fileNamesMap - Маппинг имен
  */
-export async function processUploadedFilesAsync(deviceId, files, folder, fileNamesMap) {
+export async function processUploadedFilesAsync(deviceId, files, devicesPath, fileNamesMap) {
+  // КРИТИЧНО: Логируем начало обработки на уровне error чтобы точно было видно
+  console.error('[FileMetadata] ========== processUploadedFilesAsync CALLED ==========');
+  console.error('[FileMetadata] Device ID:', deviceId);
+  console.error('[FileMetadata] Files count:', files.length);
+  console.error('[FileMetadata] Devices path:', devicesPath);
+  
+  logger.error('[FileMetadata] 📦 Starting batch metadata processing', {
+    deviceId,
+    filesCount: files.length,
+    devicesPath,
+    files: files.map(f => ({ filename: f.filename, path: f.path }))
+  });
+  
   const promises = files.map(file => {
     const safeName = file.filename;
     const originalName = fileNamesMap[deviceId]?.[safeName] || file.originalname || safeName;
-    const filePath = path.join(folder, safeName);
     
-    return processUploadedFile(deviceId, safeName, originalName, filePath, folder);
+    // КРИТИЧНО: Multer уже сохраняет файлы и устанавливает file.path с полным путем
+    // Используем file.path если он есть, иначе строим путь из devicesPath
+    let filePath;
+    if (file.path && fs.existsSync(file.path)) {
+      filePath = file.path;
+      logFile('debug', 'Using file.path from multer', { deviceId, safeName, filePath });
+    } else {
+      // Fallback: строим путь вручную
+      filePath = path.join(devicesPath, safeName);
+      logger.warn('[FileMetadata] ⚠️ Building file path manually (file.path not available)', {
+        deviceId,
+        safeName,
+        filePath,
+        hasFilePath: !!file.path,
+        filePathFromMulter: file.path
+      });
+      logFile('debug', 'Building file path manually', { deviceId, safeName, filePath });
+    }
+    
+    // Проверяем существование файла перед обработкой
+    if (!fs.existsSync(filePath)) {
+      logger.error('[FileMetadata] ❌ File not found for metadata processing', { 
+        deviceId, 
+        safeName, 
+        filePath,
+        hasFilePath: !!file.path,
+        filePathFromMulter: file.path
+      });
+      logFile('error', 'File not found for metadata processing', { 
+        deviceId, 
+        safeName, 
+        filePath,
+        hasFilePath: !!file.path,
+        filePathFromMulter: file.path
+      });
+      return Promise.resolve({
+        deduplicated: false,
+        error: `File not found: ${filePath}`
+      });
+    }
+    
+    return processUploadedFile(deviceId, safeName, originalName, filePath, devicesPath);
   });
   
   // Обрабатываем все файлы параллельно
   const results = await Promise.allSettled(promises);
   
-  // Собираем статистику дедупликации
+  // Собираем статистику дедупликации и ошибок
   let deduplicatedCount = 0;
-  for (const result of results) {
-    if (result.status === 'fulfilled' && result.value?.deduplicated) {
-      deduplicatedCount++;
+  let errorCount = 0;
+  const errors = [];
+  
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    const file = files[i];
+    
+    if (result.status === 'fulfilled') {
+      if (result.value?.deduplicated) {
+        deduplicatedCount++;
+      }
+      if (result.value?.error) {
+        errorCount++;
+        errors.push({
+          filename: file.filename,
+          error: result.value.error
+        });
+        logFile('error', 'File metadata processing error', {
+          deviceId,
+          filename: file.filename,
+          error: result.value.error
+        });
+      }
+    } else {
+      errorCount++;
+      errors.push({
+        filename: file.filename,
+        error: result.reason?.message || String(result.reason)
+      });
+      logFile('error', 'File metadata processing failed', {
+        deviceId,
+        filename: file.filename,
+        error: result.reason?.message || String(result.reason),
+        stack: result.reason?.stack
+      });
     }
   }
+  
+  // КРИТИЧНО: Логируем результат на уровне warn для видимости в production
+  logger.warn('[FileMetadata] ✅ Batch file metadata processing completed', { 
+    deviceId, 
+    filesCount: files.length,
+    deduplicatedCount,
+    newFilesCount: files.length - deduplicatedCount,
+    errorCount,
+    errors: errors.length > 0 ? errors : undefined
+  });
   
   logFile('info', 'Batch file metadata processing completed', { 
     deviceId, 
     filesCount: files.length,
     deduplicatedCount,
-    newFilesCount: files.length - deduplicatedCount
+    newFilesCount: files.length - deduplicatedCount,
+    errorCount,
+    errors: errors.length > 0 ? errors : undefined
   });
   
   if (deduplicatedCount > 0) {
+    logger.warn(`[FileMetadata] 🎯 Deduplication saved ${deduplicatedCount} file upload(s)`, {
+      deviceId,
+      deduplicatedCount,
+      totalFiles: files.length
+    });
     logFile('info', `🎯 Deduplication saved ${deduplicatedCount} file upload(s)`, {
       deviceId,
       deduplicatedCount,
       totalFiles: files.length
+    });
+  }
+  
+  if (errorCount > 0) {
+    logger.error('[FileMetadata] ❌ Some files failed metadata processing', {
+      deviceId,
+      errorCount,
+      totalFiles: files.length,
+      errors
     });
   }
 }

@@ -27,18 +27,18 @@ export function createConversionRouter(deps) {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
-      return res.status(400).json({ error: 'invalid device id' });
+      return res.status(400).json({ error: 'Неверный ID устройства' });
     }
     
     const fileName = req.query.file;
     
     if (!fileName) {
-      return res.status(400).json({ error: 'file query parameter required' });
+      return res.status(400).json({ error: 'Требуется параметр file' });
     }
     
     const device = devices[id];
     if (!device) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
     // Сначала пробуем взять количество кадров из текущего состояния устройства
@@ -78,7 +78,7 @@ export function createConversionRouter(deps) {
       res.json({ count });
     } catch (error) {
       logger.error(`[slides-count] ❌ Ошибка`, { error: error.message, stack: error.stack, deviceId: id, fileName });
-      res.status(500).json({ error: 'failed to get slide count' });
+      res.status(500).json({ error: 'Не удалось получить количество слайдов' });
     }
   });
   
@@ -87,7 +87,7 @@ export function createConversionRouter(deps) {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
-      return res.status(400).json({ error: 'invalid device id' });
+      return res.status(400).json({ error: 'Неверный ID устройства' });
     }
     
     const fileName = decodeURIComponent(req.params.file);
@@ -95,11 +95,11 @@ export function createConversionRouter(deps) {
     const num = parseInt(req.params.num);
     
     if (!devices[id]) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
     if (isNaN(num) || num < 1) {
-      return res.status(400).json({ error: 'invalid page number' });
+      return res.status(400).json({ error: 'Неверный номер страницы' });
     }
     
     // КРИТИЧНО: Используем devices[id].folder для получения правильного пути
@@ -114,12 +114,12 @@ export function createConversionRouter(deps) {
       if (fs.existsSync(filePath)) {
         const count = await autoConvertFileWrapper(id, fileName);
         if (count === 0) {
-          return res.status(500).json({ error: 'Conversion failed or in progress' });
+          return res.status(500).json({ error: 'Конвертация не удалась или выполняется' });
         }
         convertedDir = findFileFolder(deviceFolder, fileName);
       }
       if (!convertedDir) {
-        return res.status(404).json({ error: 'file not found' });
+        return res.status(404).json({ error: 'Файл не найден' });
       }
     }
     
@@ -129,7 +129,7 @@ export function createConversionRouter(deps) {
         .sort();
       
       if (num > pngFiles.length) {
-        return res.status(404).json({ error: 'page not found' });
+        return res.status(404).json({ error: 'Страница не найдена' });
       }
       
       const imagePath = path.join(convertedDir, pngFiles[num - 1]);
@@ -172,7 +172,7 @@ export function createConversionRouter(deps) {
       
     } catch (error) {
       logger.error(`[converted] ❌ Ошибка`, { error: error.message, stack: error.stack, deviceId: id, fileName, type, num });
-      res.status(500).json({ error: 'failed to serve converted file' });
+      res.status(500).json({ error: 'Не удалось отдать конвертированный файл' });
     }
   });
   

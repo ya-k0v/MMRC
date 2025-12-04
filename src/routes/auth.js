@@ -620,6 +620,20 @@ router.post('/users/:id/devices',
         status: 'success'
       });
 
+      // Отправляем Socket.IO событие для обновления панели спикера в реальном времени
+      if (router.io) {
+        try {
+          // Отправляем событие всем подключениям (панель спикера обновит список через API)
+          router.io.emit('user/devices/updated', { userId });
+          logger.info('User devices updated event sent', { userId, deviceCount: deviceIds.length });
+        } catch (socketErr) {
+          logger.error('Failed to send user devices updated event', { 
+            error: socketErr.message, 
+            userId 
+          });
+        }
+      }
+
       res.json({ 
         success: true,
         deviceCount: deviceIds.length
@@ -631,7 +645,16 @@ router.post('/users/:id/devices',
   }
 );
 
-export function createAuthRouter() {
+/**
+ * Создает роутер аутентификации
+ * @param {Server} io - Socket.IO сервер (опционально)
+ * @returns {express.Router}
+ */
+export function createAuthRouter(io = null) {
+  // Сохраняем io для использования в роутерах
+  if (io) {
+    router.io = io;
+  }
   return router;
 }
 

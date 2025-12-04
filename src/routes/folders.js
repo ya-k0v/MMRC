@@ -27,11 +27,11 @@ export function createFoldersRouter(deps) {
     const folderName = req.params.folderName;
     
     if (!id || !devices[id]) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
     if (!folderName) {
-      return res.status(400).json({ error: 'folder name required' });
+      return res.status(400).json({ error: 'Требуется имя папки' });
     }
     
     try {
@@ -39,7 +39,7 @@ export function createFoldersRouter(deps) {
       res.json({ images, count: images.length });
     } catch (error) {
       logger.error('[folders] Error getting folder images', { error: error.message, stack: error.stack, deviceId: id, folderName });
-      res.status(500).json({ error: 'failed to get folder images' });
+      res.status(500).json({ error: 'Не удалось получить изображения папки' });
     }
   });
   
@@ -49,11 +49,11 @@ export function createFoldersRouter(deps) {
     const folderName = req.params.folderName;
     
     if (!id || !devices[id]) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
     if (!folderName) {
-      return res.status(400).json({ error: 'folder name required' });
+      return res.status(400).json({ error: 'Требуется имя папки' });
     }
     
     try {
@@ -61,7 +61,7 @@ export function createFoldersRouter(deps) {
       res.json({ count });
     } catch (error) {
       logger.error('[folders] Error getting folder count', { error: error.message, stack: error.stack, deviceId: id, folderName });
-      res.status(500).json({ error: 'failed to get folder count' });
+      res.status(500).json({ error: 'Не удалось получить количество файлов в папке' });
     }
   });
   
@@ -72,18 +72,18 @@ export function createFoldersRouter(deps) {
     const index = parseInt(req.params.index, 10);
     
     if (!id || !devices[id]) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
     if (!folderName || isNaN(index) || index < 1) {
-      return res.status(400).json({ error: 'invalid parameters' });
+      return res.status(400).json({ error: 'Неверные параметры' });
     }
     
     try {
       const images = await getFolderImages(id, folderName);
       
       if (index > images.length) {
-        return res.status(404).json({ error: 'image not found' });
+        return res.status(404).json({ error: 'Изображение не найдено' });
       }
       
       // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
@@ -92,7 +92,7 @@ export function createFoldersRouter(deps) {
       const imagePath = path.join(devicesPath, id, folderName, imageName);
       
       if (!fs.existsSync(imagePath)) {
-        return res.status(404).json({ error: 'image file not found' });
+        return res.status(404).json({ error: 'Файл изображения не найден' });
       }
       
       // Отправляем изображение
@@ -100,13 +100,13 @@ export function createFoldersRouter(deps) {
         if (err) {
           logger.error('[folders] Error sending image', { error: err.message, stack: err.stack, deviceId: id, folderName, index, imagePath });
           if (!res.headersSent) {
-            res.status(500).json({ error: 'failed to send image' });
+            res.status(500).json({ error: 'Не удалось отправить изображение' });
           }
         }
       });
     } catch (error) {
       logger.error('[folders] Error getting folder image', { error: error.message, stack: error.stack, deviceId: id, folderName, index });
-      res.status(500).json({ error: 'failed to get folder image' });
+      res.status(500).json({ error: 'Не удалось получить изображение из папки' });
     }
   });
   

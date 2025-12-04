@@ -25,7 +25,7 @@ export function createSystemInfoRouter() {
       res.json(systemInfo);
     } catch (error) {
       logger.error('Error getting system info', { error: error.message, stack: error.stack });
-      res.status(500).json({ error: 'Failed to get system info' });
+      res.status(500).json({ error: 'Не удалось получить системную информацию' });
     }
   });
 

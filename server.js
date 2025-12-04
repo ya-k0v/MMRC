@@ -378,7 +378,7 @@ const upload = createUploadMiddleware(devices);
 app.use('/api/files', fileResolverRouter);
 
 // Auth router (БЕЗ защиты - для login)
-const authRouter = createAuthRouter();
+const authRouter = createAuthRouter(io);
 app.use('/api/auth', authRouter);
 
 // Подключаем роутеры с зависимостями

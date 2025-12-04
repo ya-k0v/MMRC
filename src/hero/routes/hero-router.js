@@ -29,7 +29,7 @@ export function createHeroRouter({ requireHeroAdmin }) {
     try {
       res.json(heroQueries.getAll());
     } catch (error) {
-      res.status(500).json({ error: 'Internal server error' });
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
     }
   });
 
@@ -38,7 +38,7 @@ export function createHeroRouter({ requireHeroAdmin }) {
       const query = req.query.q || '';
       res.json(heroQueries.search(query));
     } catch (error) {
-      res.status(500).json({ error: 'Internal server error' });
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
     }
   });
 
@@ -57,7 +57,7 @@ export function createHeroRouter({ requireHeroAdmin }) {
     try {
       const resolved = resolveDbFilePath();
       if (!resolved) {
-        return res.status(404).json({ error: 'Database file not found' });
+        return res.status(404).json({ error: 'Файл базы данных не найден' });
       }
 
       if (resolved.legacy) {
@@ -112,11 +112,11 @@ export function createHeroRouter({ requireHeroAdmin }) {
     try {
       const hero = heroQueries.getById(req.params.id);
       if (!hero) {
-        return res.status(404).json({ error: 'Hero not found' });
+        return res.status(404).json({ error: 'Герой не найден' });
       }
       res.json(hero);
     } catch (error) {
-      res.status(500).json({ error: 'Internal server error' });
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
     }
   });
 

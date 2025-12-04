@@ -602,7 +602,6 @@ if (!device_id || !device_id.trim()) {
             const bufferedInfo = buffered.length > 0 
               ? `${buffered.end(buffered.length - 1).toFixed(2)}s` 
               : '0s';
-            console.log(`[Player] ✅ canplay - достаточно данных для воспроизведения (buffered=${bufferedInfo}, duration=${duration > 0 ? duration.toFixed(2) : '?'}s)`);
           });
           
           vjsPlayer.on('canplaythrough', () => {

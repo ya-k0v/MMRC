@@ -23,10 +23,10 @@ export function createVolumeRouter(deps) {
   router.get('/:id/volume', requireSpeaker, (req, res) => {
     const deviceId = sanitizeDeviceId(req.params.id);
     if (!deviceId) {
-      return res.status(400).json({ error: 'invalid device id' });
+      return res.status(400).json({ error: 'Неверный ID устройства' });
     }
     if (!devices[deviceId]) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
     const state = getVolumeState(deviceId);
@@ -41,10 +41,10 @@ export function createVolumeRouter(deps) {
   router.post('/:id/volume', requireSpeaker, (req, res) => {
     const deviceId = sanitizeDeviceId(req.params.id);
     if (!deviceId) {
-      return res.status(400).json({ error: 'invalid device id' });
+      return res.status(400).json({ error: 'Неверный ID устройства' });
     }
     if (!devices[deviceId]) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
     const { level, delta, muted } = req.body || {};
@@ -53,7 +53,7 @@ export function createVolumeRouter(deps) {
       typeof delta === 'undefined' &&
       typeof muted === 'undefined'
     ) {
-      return res.status(400).json({ error: 'level, delta or muted required' });
+      return res.status(400).json({ error: 'Требуется level, delta или muted' });
     }
     
     try {
@@ -74,7 +74,7 @@ export function createVolumeRouter(deps) {
         updated_at: result.updatedAt
       });
     } catch (error) {
-      return res.status(400).json({ error: error.message || 'failed to update volume' });
+      return res.status(400).json({ error: error.message || 'Не удалось обновить громкость' });
     }
   });
   
