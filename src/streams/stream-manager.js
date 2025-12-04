@@ -7,6 +7,11 @@ import https from 'https';
 import http from 'http';
 import logger from '../utils/logger.js';
 import { getStreamsOutputDir } from '../config/settings-manager.js';
+import { 
+  notifyDiskFull, 
+  notifyStreamStartFailed,
+  notifyStreamSourceUnavailable 
+} from '../utils/notifications.js';
 
 const execAsync = promisify(exec);
 
@@ -34,7 +39,7 @@ const DEFAULT_OPTIONS = {
   maxFolderSizeMB: Number(process.env.STREAM_MAX_FOLDER_SIZE_MB || 500),
   playlistMaxAge: Number(process.env.STREAM_PLAYLIST_MAX_AGE || 30000), // 30 секунд
   sourceCheckEnabled: process.env.STREAM_SOURCE_CHECK_ENABLED !== 'false', // По умолчанию включено
-  sourceCheckTimeout: Number(process.env.STREAM_SOURCE_CHECK_TIMEOUT || 5000),
+  sourceCheckTimeout: Number(process.env.STREAM_SOURCE_CHECK_TIMEOUT || 3000), // Уменьшено с 5000 до 3000 для ускорения
   maxJobs: Number(process.env.STREAM_MAX_JOBS || 100), // Максимальное количество одновременных стримов
   hungProcessTimeout: Number(process.env.STREAM_HUNG_PROCESS_TIMEOUT || 60000), // 60 секунд без активности = зависший процесс
 };
@@ -408,7 +413,10 @@ class StreamManager extends EventEmitter {
     // КРИТИЧНО: Для DASH стримов (.mpd) требуется больше времени на инициализацию
     // FFprobe должен прочитать манифест и выбрать представление для анализа
     const isDash = streamProtocol === 'dash' || streamUrl.toLowerCase().includes('.mpd');
-    const timeout = isDash ? 15000 : 5000; // 15 секунд для DASH, 5 для остальных
+    // Оптимизация: уменьшаем таймаут для всех стримов для ускорения запуска
+    // Но внутри _detectStreamCodecs будет еще более короткий таймаут через Promise.race
+    const timeout = isDash ? 10000 : 2000; // 10 секунд для DASH, 2 для остальных (было 15 и 5)
+    // ПРИМЕЧАНИЕ: Этот таймаут может не использоваться, если вызван с Promise.race с более коротким таймаутом
     
     try {
       logger.info('[StreamManager] Detecting stream codecs', {
@@ -515,6 +523,130 @@ class StreamManager extends EventEmitter {
       return !supportedAudioCodecs.includes(codec?.toLowerCase());
     }
     return true; // По умолчанию перекодируем
+  }
+
+  /**
+   * Экстренная очистка всех стримов при переполнении диска
+   */
+  _emergencyCleanupAllStreams() {
+    logger.warn('[StreamManager] 🚨 Starting emergency cleanup of ALL streams due to disk full');
+    
+    let cleanedCount = 0;
+    for (const [key, job] of this.jobs.entries()) {
+      if (!job.paths || !job.paths.folderPath) continue;
+      
+      try {
+        this._emergencyCleanupOnDiskFull(job.paths.folderPath);
+        cleanedCount++;
+      } catch (error) {
+        logger.error('[StreamManager] Failed to emergency cleanup stream', {
+          deviceId: job.deviceId,
+          safeName: job.safeName,
+          error: error.message
+        });
+      }
+    }
+    
+    logger.warn('[StreamManager] ✅ Emergency cleanup of all streams completed', {
+      cleanedCount,
+      totalStreams: this.jobs.size
+    });
+  }
+
+  /**
+   * Экстренная очистка при переполнении диска: удаляет все файлы кроме m3u8 и последних 3 ts файлов
+   * @param {string} folderPath - Путь к папке стрима
+   */
+  _emergencyCleanupOnDiskFull(folderPath) {
+    try {
+      if (!fs.existsSync(folderPath)) {
+        logger.debug('[StreamManager] Folder does not exist for emergency cleanup', { folderPath });
+        return;
+      }
+
+      logger.warn('[StreamManager] 🚨 EMERGENCY CLEANUP: Removing all files except m3u8 and last 3 ts files', { folderPath });
+
+      const files = fs.readdirSync(folderPath);
+      
+      // Собираем все .ts файлы с информацией о времени модификации
+      const tsFiles = files
+        .filter(f => f.endsWith('.ts'))
+        .map(f => {
+          try {
+            const filePath = path.join(folderPath, f);
+            const stats = fs.statSync(filePath);
+            return {
+              name: f,
+              path: filePath,
+              size: stats.size,
+              mtime: stats.mtimeMs
+            };
+          } catch (err) {
+            return null;
+          }
+        })
+        .filter(f => f !== null)
+        .sort((a, b) => b.mtime - a.mtime); // Сортируем по времени (новые первыми)
+
+      let deletedCount = 0;
+      let freedBytes = 0;
+
+      // Удаляем все .ts файлы кроме последних 3
+      const toDelete = tsFiles.slice(3); // Все файлы после первых 3
+      for (const file of toDelete) {
+        try {
+          fs.unlinkSync(file.path);
+          deletedCount++;
+          freedBytes += file.size;
+        } catch (err) {
+          logger.warn('[StreamManager] Failed to delete file during emergency cleanup', {
+            file: file.path,
+            error: err.message
+          });
+        }
+      }
+
+      // Удаляем все остальные файлы (кроме m3u8)
+      for (const file of files) {
+        if (file.endsWith('.ts') || file.endsWith('.m3u8')) {
+          continue; // Пропускаем .ts (уже обработали) и .m3u8 (сохраняем)
+        }
+
+        const filePath = path.join(folderPath, file);
+        try {
+          const stats = fs.lstatSync(filePath);
+          if (stats.isDirectory()) {
+            fs.rmSync(filePath, { recursive: true, force: true });
+          } else if (stats.isSymbolicLink()) {
+            fs.unlinkSync(filePath);
+          } else {
+            fs.unlinkSync(filePath);
+          }
+          deletedCount++;
+          if (stats.isFile()) {
+            freedBytes += stats.size;
+          }
+        } catch (err) {
+          logger.warn('[StreamManager] Failed to delete non-ts file during emergency cleanup', {
+            file: filePath,
+            error: err.message
+          });
+        }
+      }
+
+      logger.warn('[StreamManager] ✅ Emergency cleanup completed', {
+        folderPath,
+        deletedCount,
+        freedMB: Math.round(freedBytes / 1024 / 1024),
+        remainingTsFiles: Math.min(tsFiles.length, 3)
+      });
+    } catch (error) {
+      logger.error('[StreamManager] ❌ Failed to perform emergency cleanup', {
+        folderPath,
+        error: error.message,
+        stack: error.stack
+      });
+    }
   }
 
   _cleanupFolder(folderPath) {
@@ -742,14 +874,56 @@ class StreamManager extends EventEmitter {
         isEmpty: fs.existsSync(paths.folderPath) ? fs.readdirSync(paths.folderPath).length === 0 : true
       });
     } catch (err) {
-      logger.error('[StreamManager] Failed to create stream folder', {
-        deviceId: device_id,
-        safeName: safe_name,
-        folderPath: paths.folderPath,
-        error: err.message,
-        errorCode: err.code
-      });
-      throw err; // Не продолжаем, если не можем создать папку
+      // КРИТИЧНО: Обрабатываем ошибки переполнения диска
+      if (err.code === 'ENOSPC' || err.message.includes('No space left on device')) {
+        logger.error('[StreamManager] 🚨 DISK FULL ERROR while creating stream folder, triggering emergency cleanup', {
+          deviceId: device_id,
+          safeName: safe_name,
+          folderPath: paths.folderPath,
+          error: err.message,
+          errorCode: err.code
+        });
+        
+        // Отправляем уведомление админу
+        notifyDiskFull({
+          deviceId: device_id,
+          safeName: safe_name,
+          folderPath: paths.folderPath,
+          error: err.message,
+          errorCode: err.code
+        });
+        
+        // Экстренная очистка всех стримов для освобождения места
+        this._emergencyCleanupAllStreams();
+        
+        // Пробуем создать папку еще раз после очистки
+        try {
+          ensureDir(paths.folderPath);
+          logger.info('[StreamManager] Stream folder created after emergency cleanup', {
+            deviceId: device_id,
+            safeName: safe_name,
+            folderPath: paths.folderPath
+          });
+        } catch (retryErr) {
+          logger.error('[StreamManager] Failed to create stream folder even after emergency cleanup', {
+            deviceId: device_id,
+            safeName: safe_name,
+            folderPath: paths.folderPath,
+            error: retryErr.message,
+            errorCode: retryErr.code
+          });
+          throw retryErr;
+        }
+      } else {
+        logger.error('[StreamManager] Failed to create stream folder', {
+          deviceId: device_id,
+          safeName: safe_name,
+          folderPath: paths.folderPath,
+          error: err.message,
+          errorCode: err.code
+        });
+        throw err; // Не продолжаем, если не можем создать папку
+      }
     }
 
     // КРИТИЧНО: Для DASH стримов определение кодеков может быть проблематичным
@@ -762,10 +936,18 @@ class StreamManager extends EventEmitter {
     let needsVideoTranscode = true; // По умолчанию перекодируем
     let needsAudioTranscode = true;
     
-    // Для DASH стримов пробуем определить кодеки с увеличенным таймаутом
-    // Если не удалось - перекодируем (fallback)
+    // Оптимизация: Определяем кодеки с коротким таймаутом для ускорения запуска
+    // Если определение не успело - просто перекодируем (это fallback, и это быстрее чем ждать)
+    const codecDetectionTimeout = isDash ? 3000 : 1500; // 3 сек для DASH, 1.5 сек для остальных (было 10 и 2)
+    
     try {
-      const codecs = await this._detectStreamCodecs(stream_url, stream_protocol);
+      const codecs = await Promise.race([
+        this._detectStreamCodecs(stream_url, stream_protocol),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Codec detection timeout')), codecDetectionTimeout)
+        )
+      ]);
+      
       videoCodec = codecs.videoCodec;
       audioCodec = codecs.audioCodec;
       
@@ -784,13 +966,14 @@ class StreamManager extends EventEmitter {
         needsAudioTranscode = this._needsTranscoding(audioCodec, 'audio');
       }
     } catch (err) {
-      logger.warn('[StreamManager] Codec detection failed, will transcode', {
+      // Определение кодеков не успело или упало - перекодируем (быстрее чем ждать)
+      logger.info('[StreamManager] Codec detection timeout/failed, will transcode for faster startup', {
         deviceId: device_id,
         safeName: safe_name,
         isDash,
         error: err.message
       });
-      // Продолжаем с перекодированием
+      // needsVideoTranscode и needsAudioTranscode уже = true по умолчанию - перекодируем
     }
 
     logger.info('[StreamManager] Stream codecs detected', {
@@ -920,7 +1103,8 @@ class StreamManager extends EventEmitter {
       lastSegmentWrite: null, // КРИТИЧНО: Время последней записи сегмента (heartbeat для детекции зависаний)
       circuitBreakerState: 'closed', // КРИТИЧНО: Состояние circuit breaker: 'closed' | 'open' | 'halfOpen'
       circuitBreakerOpenTime: null, // Время открытия circuit breaker
-      consecutiveFailures: 0 // Количество последовательных неудач
+      consecutiveFailures: 0, // Количество последовательных неудач
+      emergencyCleanupTriggered: false // Флаг экстренной очистки при переполнении диска
     };
 
       // КРИТИЧНО: Обрабатываем stderr для отслеживания статуса и сбора ошибок
@@ -931,6 +1115,40 @@ class StreamManager extends EventEmitter {
       child.stderr.on('data', (data) => {
         const chunk = data.toString();
         stderrBuffer += chunk;
+        
+        // КРИТИЧНО: Отслеживаем ошибки переполнения диска (ENOSPC)
+        const chunkLower = chunk.toLowerCase();
+        const isDiskFullError = chunkLower.includes('no space left on device') || 
+                               chunkLower.includes('enospc') ||
+                               chunkLower.includes('disk full') ||
+                               chunkLower.includes('недостаточно места') ||
+                               chunkLower.includes('недостаточно места на диске');
+        
+        if (isDiskFullError && !job.emergencyCleanupTriggered) {
+          job.emergencyCleanupTriggered = true;
+          logger.error('[StreamManager] 🚨 DISK FULL ERROR detected in FFmpeg stderr, triggering emergency cleanup', {
+            deviceId: device_id,
+            safeName: safe_name,
+            chunk: chunk.substring(0, 500)
+          });
+          
+          // Отправляем уведомление админу
+          notifyDiskFull({
+            deviceId: device_id,
+            safeName: safe_name,
+            streamUrl: stream_url,
+            error: 'Переполнение диска обнаружено в stderr FFmpeg',
+            chunk: chunk.substring(0, 500)
+          });
+          
+          // Экстренная очистка всех стримов для освобождения места
+          this._emergencyCleanupAllStreams();
+          
+          // Экстренная очистка текущего стрима
+          if (job.paths && job.paths.folderPath) {
+            this._emergencyCleanupOnDiskFull(job.paths.folderPath);
+          }
+        }
         
         // КРИТИЧНО: Ограничиваем размер буфера для предотвращения утечек памяти
         // Периодически очищаем старые данные, оставляя только последние 10KB
@@ -953,6 +1171,7 @@ class StreamManager extends EventEmitter {
         job.lastPlaylistUpdate = Date.now();
         // КРИТИЧНО: При успешном запуске сбрасываем счетчики и очищаем stderr буфер
         job.consecutiveFailures = 0;
+        job.emergencyCleanupTriggered = false; // Сбрасываем флаг экстренной очистки
         stderrBuffer = ''; // Очищаем буфер при успешном запуске для предотвращения утечек памяти
         if (job.circuitBreakerState !== 'closed') {
           const previousState = job.circuitBreakerState;
@@ -1005,6 +1224,34 @@ class StreamManager extends EventEmitter {
 
     child.on('error', (err) => {
       job.lastError = err.message;
+      
+      // КРИТИЧНО: Обрабатываем ошибки переполнения диска
+      if (err.code === 'ENOSPC' || err.message.includes('No space left on device')) {
+        logger.error('[StreamManager] 🚨 DISK FULL ERROR in FFmpeg spawn, triggering emergency cleanup', {
+          deviceId: device_id,
+          safeName: safe_name,
+          error: err.message,
+          errorCode: err.code
+        });
+        
+        // Отправляем уведомление админу
+        notifyDiskFull({
+          deviceId: device_id,
+          safeName: safe_name,
+          streamUrl: stream_url,
+          error: err.message,
+          errorCode: err.code
+        });
+        
+        // Экстренная очистка всех стримов для освобождения места
+        this._emergencyCleanupAllStreams();
+        
+        // Экстренная очистка текущего стрима
+        if (job.paths && job.paths.folderPath) {
+          this._emergencyCleanupOnDiskFull(job.paths.folderPath);
+        }
+      }
+      
       logger.error('[StreamManager] ffmpeg spawn error', {
         deviceId: device_id,
         safeName: safe_name,
@@ -2220,50 +2467,49 @@ class StreamManager extends EventEmitter {
         return null;
       }
       
-      // КРИТИЧНО: Улучшенная проверка источника перед запуском FFmpeg
-      // Это предотвращает запуск FFmpeg для недоступных источников
-      // ВАЖНО: Проверка неблокирующая - если она не удалась, все равно пытаемся запустить FFmpeg
+      // КРИТИЧНО: Проверка источника перед запуском FFmpeg
+      // Оптимизация: Для не-HLS стримов проверку можно отключить для ускорения запуска
+      // Проверка неблокирующая - если она не удалась, все равно пытаемся запустить FFmpeg
       // (источник может быть медленным или требовать времени на инициализацию)
       if (this.options.sourceCheckEnabled) {
-        logger.info('[StreamManager] Pre-checking source before start', {
-          deviceId,
-          safeName,
-          streamUrl: streamMetadata.stream_url
-        });
-        
-        try {
-          // НОВОЕ: Более агрессивная проверка источника с таймаутом
-          const sourceAvailable = await Promise.race([
-            this._checkSourceAvailable(streamMetadata.stream_url),
-            new Promise((_, reject) => 
-              setTimeout(() => reject(new Error('Source check timeout')), 8000)
-            )
-          ]);
-          
-          if (!sourceAvailable) {
-            logger.warn('[StreamManager] Source check failed, but will attempt to start FFmpeg anyway', {
+        // Оптимизация: Быстрая проверка источника с коротким таймаутом
+        // Если проверка не успела - просто пропускаем её и запускаем FFmpeg
+        const sourceCheckPromise = (async () => {
+          try {
+            const sourceAvailable = await Promise.race([
+              this._checkSourceAvailable(streamMetadata.stream_url),
+              new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Source check timeout')), 2000) // Уменьшено до 2 сек
+              )
+            ]);
+            
+            if (sourceAvailable) {
+              logger.info('[StreamManager] Source is available', {
+                deviceId,
+                safeName,
+                streamUrl: streamMetadata.stream_url
+              });
+            }
+            return sourceAvailable;
+          } catch (checkErr) {
+            logger.debug('[StreamManager] Source check timeout/error, proceeding anyway', {
               deviceId,
               safeName,
               streamUrl: streamMetadata.stream_url,
-              reason: 'Source may be slow or require initialization time'
+              error: checkErr.message
             });
-            // НЕ блокируем запуск - FFmpeg может справиться с медленными источниками
-            // Просто логируем предупреждение
-          } else {
-            logger.info('[StreamManager] Source is available, proceeding with stream start', {
-              deviceId,
-              safeName,
-              streamUrl: streamMetadata.stream_url
-            });
+            return false;
           }
-        } catch (checkErr) {
-          logger.warn('[StreamManager] Source check error, proceeding anyway', {
-            deviceId,
-            safeName,
-            streamUrl: streamMetadata.stream_url,
-            error: checkErr.message
-          });
-          // Продолжаем запуск - источник может быть медленным
+        })();
+        
+        // Ждем проверку источника, но не более 2 секунд - потом запускаем FFmpeg
+        try {
+          await Promise.race([
+            sourceCheckPromise,
+            new Promise((resolve) => setTimeout(() => resolve(false), 2000))
+          ]);
+        } catch (err) {
+          // Игнорируем ошибки - запускаем FFmpeg в любом случае
         }
       }
       
@@ -2336,6 +2582,15 @@ class StreamManager extends EventEmitter {
           stack: err.stack,
           retryCount
         });
+        
+        // Отправляем уведомление о неудачном запуске стрима после всех попыток
+        notifyStreamStartFailed(deviceId, safeName, {
+          error: err.message,
+          retryCount,
+          streamUrl: streamMetadata.stream_url,
+          recommendation: 'Проверьте конфигурацию стрима, источник и логи сервера'
+        });
+        
         return null;
       }
       
@@ -2345,7 +2600,8 @@ class StreamManager extends EventEmitter {
       const safeNameSanitized = sanitizePathFragment(safeName);
       const paths = this._getPaths(safeNameSanitized);
       const isDash = streamMetadata.stream_protocol === 'dash' || (streamMetadata.stream_url?.toLowerCase().includes('.mpd'));
-      const maxWaitTime = isDash ? 20000 : 12000; // 20 секунд для DASH, 12 для остальных (увеличено для надежности)
+      // Оптимизация: уменьшаем время ожидания плейлиста для ускорения запуска
+      const maxWaitTime = isDash ? 15000 : 6000; // 15 секунд для DASH, 6 для остальных (было 20 и 12)
       const checkInterval = 200; // Проверяем каждые 200мс
       const startTime = Date.now();
       let lastJobStatus = null;
@@ -3192,11 +3448,33 @@ class StreamManager extends EventEmitter {
               const stats = fs.statSync(filePath);
               folderSize += stats.size;
             } catch (err) {
-              // Игнорируем ошибки отдельных файлов
+              // КРИТИЧНО: Обрабатываем ошибки переполнения диска
+              if (err.code === 'ENOSPC') {
+                logger.error('[StreamManager] 🚨 DISK FULL ERROR while reading file stats for size calculation', {
+                  deviceId: job.deviceId,
+                  safeName: job.safeName,
+                  file: file,
+                  error: err.message
+                });
+                // Не запускаем экстренную очистку здесь, т.к. это сбор информации
+                // Экстренная очистка будет запущена в других местах
+              }
+              // Игнорируем другие ошибки отдельных файлов
             }
           }
         } catch (err) {
-          // Игнорируем ошибки чтения директории
+          // КРИТИЧНО: Обрабатываем ошибки переполнения диска при чтении директории
+          if (err.code === 'ENOSPC') {
+            logger.error('[StreamManager] 🚨 DISK FULL ERROR while reading directory for size calculation', {
+              deviceId: job.deviceId,
+              safeName: job.safeName,
+              folderPath,
+              error: err.message
+            });
+            // Не запускаем экстренную очистку здесь, т.к. это сбор информации
+            // Экстренная очистка будет запущена в других местах
+          }
+          // Игнорируем другие ошибки чтения директории
         }
         
         streamsToClean.push({
@@ -3253,102 +3531,130 @@ class StreamManager extends EventEmitter {
           ? Math.max(safeAgeThreshold, timeSinceLastWrite + (this.options.segmentDuration * 1000))
           : safeAgeThreshold;
         
-        const files = fs.readdirSync(folderPath);
-        let folderSize = 0;
-        let deletedCount = 0;
-        
-        for (const file of files) {
-          const filePath = path.join(folderPath, file);
+        try {
+          const files = fs.readdirSync(folderPath);
+          const MAX_TS_FILES = 30; // Максимум 30 .ts файлов в папке стрима
+          let deletedCount = 0;
+          let freedBytes = 0;
           
-          try {
-            const stats = fs.statSync(filePath);
-            folderSize += stats.size;
-            
-            // Удаляем старые .ts файлы
-            if (file.endsWith('.ts')) {
-              // КРИТИЧНО: НЕ удаляем сегменты, которые упомянуты в плейлисте
-              if (playlistSegments.has(file)) {
-                // Сегмент в плейлисте - не удаляем, даже если старый
-                continue;
-              }
-              
-              const fileAge = now - stats.mtimeMs;
-              
-              // КРИТИЧНО: Не удаляем сегменты, созданные после последней записи FFmpeg
-              // Это предотвращает удаление активных сегментов, даже если они не в плейлисте
-              const fileCreatedAfterLastWrite = stats.mtimeMs > lastSegmentWrite;
-              if (fileCreatedAfterLastWrite && isRecentlyActive) {
-                // Сегмент создан после последней записи FFmpeg - не удаляем
-                continue;
-              }
-              
-              // КРИТИЧНО: Используем minAgeForDeletion вместо safeAgeThreshold
-              if (fileAge > minAgeForDeletion) {
-                fs.unlinkSync(filePath);
-                deletedCount++;
-                totalFreed += stats.size;
-              }
-            }
-          } catch (err) {
-            // Игнорируем ошибки отдельных файлов
-          }
-        }
-        
-        // Если папка слишком большая - принудительно удаляем старые файлы
-        if (folderSize > maxSizeBytes) {
-          logger.warn('[StreamManager] Folder too large, forcing cleanup', {
-            deviceId: job.deviceId,
-            safeName: job.safeName,
-            folderSizeMB: Math.round(folderSize / 1024 / 1024),
-            maxSizeMB: this.options.maxFolderSizeMB
-          });
-          
-          // Сортируем файлы по времени модификации и удаляем самые старые
-          // КРИТИЧНО: Исключаем сегменты из плейлиста
+          // Собираем все .ts файлы с информацией о времени модификации
           const tsFiles = files
-            .filter(f => f.endsWith('.ts') && !playlistSegments.has(f))
+            .filter(f => f.endsWith('.ts'))
             .map(f => {
               try {
+                const filePath = path.join(folderPath, f);
+                const stats = fs.statSync(filePath);
                 return {
                   name: f,
-                  path: path.join(folderPath, f),
-                  mtime: fs.statSync(path.join(folderPath, f)).mtimeMs
+                  path: filePath,
+                  size: stats.size,
+                  mtime: stats.mtimeMs
                 };
               } catch (err) {
+                // КРИТИЧНО: Обрабатываем ошибки переполнения диска при чтении файлов
+                if (err.code === 'ENOSPC') {
+                  logger.error('[StreamManager] 🚨 DISK FULL ERROR while reading file stats, triggering emergency cleanup', {
+                    deviceId: job.deviceId,
+                    safeName: job.safeName,
+                    file: f,
+                    error: err.message
+                  });
+                  this._emergencyCleanupAllStreams();
+                }
                 return null;
               }
             })
             .filter(f => f !== null)
-            .sort((a, b) => a.mtime - b.mtime);
+            .sort((a, b) => b.mtime - a.mtime); // Сортируем по времени (новые первыми)
           
-          // КРИТИЧНО: Удаляем максимум 50% самых старых файлов (которые не в плейлисте)
-          const toDelete = Math.floor(tsFiles.length / 2);
-          const maxToDelete = Math.min(toDelete, Math.floor(tsFiles.length * 0.5)); // Максимум 50%
-          for (let i = 0; i < maxToDelete; i++) {
-            try {
-              const stats = fs.statSync(tsFiles[i].path);
-              fs.unlinkSync(tsFiles[i].path);
-              deletedCount++;
-              totalFreed += stats.size;
-            } catch (err) {
-              // Игнорируем ошибки (например, файл уже удален)
-              logger.debug('[StreamManager] Error deleting file during forced cleanup', {
-                file: tsFiles[i].path,
-                error: err.message
+          // Если файлов больше 30 - удаляем самые старые
+          if (tsFiles.length > MAX_TS_FILES) {
+            const toDelete = tsFiles.slice(MAX_TS_FILES); // Все файлы после первых 30
+            
+            for (const file of toDelete) {
+              try {
+                fs.unlinkSync(file.path);
+                deletedCount++;
+                freedBytes += file.size;
+              } catch (err) {
+                // КРИТИЧНО: Обрабатываем ошибки переполнения диска при удалении файлов
+                if (err.code === 'ENOSPC') {
+                  logger.error('[StreamManager] 🚨 DISK FULL ERROR while deleting file, triggering emergency cleanup', {
+                    deviceId: job.deviceId,
+                    safeName: job.safeName,
+                    file: file.path,
+                    error: err.message
+                  });
+                  this._emergencyCleanupAllStreams();
+                  // Экстренная очистка текущего стрима
+                  this._emergencyCleanupOnDiskFull(folderPath);
+                } else {
+                  logger.debug('[StreamManager] Error deleting old segment file', {
+                    file: file.path,
+                    error: err.message
+                  });
+                }
+              }
+            }
+            
+            if (deletedCount > 0) {
+              logger.info('[StreamManager] Cleaned up old segments, keeping max 30 files', {
+                deviceId: job.deviceId,
+                safeName: job.safeName,
+                totalFiles: tsFiles.length,
+                deletedCount,
+                remainingFiles: MAX_TS_FILES,
+                freedMB: Math.round(freedBytes / 1024 / 1024)
               });
             }
           }
-        }
-        
-        if (deletedCount > 0) {
-          cleanedCount++;
+          
+          if (deletedCount > 0) {
+            cleanedCount++;
+            totalFreed += freedBytes;
+          }
+        } catch (readError) {
+          // КРИТИЧНО: Обрабатываем ошибки переполнения диска при чтении директории
+          if (readError.code === 'ENOSPC') {
+            logger.error('[StreamManager] 🚨 DISK FULL ERROR while reading directory, triggering emergency cleanup', {
+              deviceId: job.deviceId,
+              safeName: job.safeName,
+              folderPath,
+              error: readError.message
+            });
+            this._emergencyCleanupAllStreams();
+            // Экстренная очистка текущего стрима
+            this._emergencyCleanupOnDiskFull(folderPath);
+          } else {
+            logger.warn('[StreamManager] Error reading directory during segment cleanup', {
+              deviceId: job.deviceId,
+              safeName: job.safeName,
+              folderPath,
+              error: readError.message
+            });
+          }
         }
       } catch (error) {
-        logger.warn('[StreamManager] Error during segment cleanup', {
-          deviceId: job.deviceId,
-          safeName: job.safeName,
-          error: error.message
-        });
+        // КРИТИЧНО: Обрабатываем ошибки переполнения диска
+        if (error.code === 'ENOSPC' || error.message.includes('No space left on device')) {
+          logger.error('[StreamManager] 🚨 DISK FULL ERROR during segment cleanup, triggering emergency cleanup', {
+            deviceId: job.deviceId,
+            safeName: job.safeName,
+            error: error.message,
+            errorCode: error.code
+          });
+          this._emergencyCleanupAllStreams();
+          // Экстренная очистка текущего стрима
+          if (job.paths && job.paths.folderPath) {
+            this._emergencyCleanupOnDiskFull(job.paths.folderPath);
+          }
+        } else {
+          logger.warn('[StreamManager] Error during segment cleanup', {
+            deviceId: job.deviceId,
+            safeName: job.safeName,
+            error: error.message
+          });
+        }
       }
     }
     

@@ -35,11 +35,15 @@ import { createDeduplicationRouter } from './src/routes/deduplication.js';
 import { createHeroRouter } from './src/hero/index.js';
 import { createVolumeRouter } from './src/routes/volume.js';
 import fileResolverRouter from './src/routes/file-resolver.js';
+import { createNotificationsRouter } from './src/routes/notifications.js';
 import { createUploadMiddleware } from './src/middleware/multer-config.js';
 import { requireAuth, requireAdmin, requireHeroAdmin, requireSpeaker } from './src/middleware/auth.js';
 import { globalLimiter, apiSpeedLimiter } from './src/middleware/rate-limit.js';
 import { setupExpressMiddleware, setupStaticFiles } from './src/middleware/express-config.js';
 import { setupSocketHandlers } from './src/socket/index.js';
+import { setupNotificationsHandler } from './src/socket/notifications-handler.js';
+import { notifyCriticalError } from './src/utils/notifications.js';
+import { initSystemMonitor, stopSystemMonitor } from './src/utils/system-monitor.js';
 import logger, { httpLoggerMiddleware } from './src/utils/logger.js';
 import { cleanupResolutionCache, getResolutionCacheSize } from './src/video/resolution-cache.js';
 import { circuitBreakers } from './src/utils/circuit-breaker.js';
@@ -432,12 +436,15 @@ const volumeRouter = createVolumeRouter({
   requireSpeaker
 });
 
+const notificationsRouter = createNotificationsRouter();
+
 // Роутеры с избирательной защитой (применяют requireAuth внутри себя)
 app.use('/api/devices', conversionRouter);  
 app.use('/api/devices', foldersRouter);
 app.use('/api/devices', deduplicationRouter);  // Дедупликация (check-duplicate, copy-from-duplicate)
 app.use('/api/devices', volumeRouter);
 app.use('/api/hero', heroRouter);
+app.use('/api/notifications', notificationsRouter);  // Роутер уведомлений
 
 // ВАЖНО: devicesRouter, placeholderRouter, filesRouter, videoInfoRouter
 // используются устройствами (плеерами) БЕЗ JWT токенов!
@@ -1016,6 +1023,12 @@ setupSocketHandlers(io, {
   deviceVolumeState
 });
 
+// Настраиваем Socket.IO обработчики для уведомлений
+setupNotificationsHandler(io);
+
+// Запускаем системный мониторинг (проверка диска, БД, процессов и т.д.)
+initSystemMonitor(streamManager, devices);
+
 // Запуск сервера
 server.listen(PORT, HOST, () => {
   logger.info(`Server started on ${HOST}:${PORT} (accessible only through Nginx)`, { 
@@ -1066,7 +1079,11 @@ async function gracefulShutdown(signal) {
       });
     }
     
-    // 3. Очищаем интервалы
+    // 3. Останавливаем системный мониторинг
+    stopSystemMonitor();
+    logger.info('✅ System monitor stopped');
+    
+    // 4. Очищаем интервалы
     clearInterval(cleanupInterval);
     logger.info('✅ Cleanup intervals stopped');
     
@@ -1095,9 +1112,27 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Обработка необработанных ошибок
+// КРИТИЧНО: НЕ завершаем процесс, а отправляем уведомление админу
 process.on('uncaughtException', (err) => {
-  logger.error('💥 Uncaught Exception:', err);
-  gracefulShutdown('uncaughtException');
+  logger.error('💥 Uncaught Exception:', {
+    message: err.message,
+    stack: err.stack,
+    name: err.name
+  });
+  
+  // Отправляем уведомление админу вместо падения сервиса
+  notifyCriticalError({
+    type: 'uncaught_exception',
+    error: {
+      message: err.message,
+      stack: err.stack?.split('\n').slice(0, 10).join('\n'), // Первые 10 строк стека
+      name: err.name
+    },
+    recommendation: 'Проверьте логи сервера для деталей. Сервис продолжает работу.'
+  });
+  
+  // НЕ завершаем процесс - сервис должен продолжать работать
+  // gracefulShutdown('uncaughtException'); // Убрали автоматическое завершение
 });
 
 process.on('unhandledRejection', (reason, promise) => {
@@ -1109,11 +1144,17 @@ process.on('unhandledRejection', (reason, promise) => {
     promise: promise?.toString?.() || String(promise)
   });
   
-  // В production завершаем процесс через 5 секунд (даем время на логирование)
-  if (process.env.NODE_ENV === 'production') {
-    logger.error('🛑 Server will exit in 5 seconds due to unhandled rejection');
-    setTimeout(() => {
-      process.exit(1);
-    }, 5000);
-  }
+  // Отправляем уведомление админу вместо падения сервиса
+  notifyCriticalError({
+    type: 'unhandled_rejection',
+    error: reason instanceof Error ? {
+      message: reason.message,
+      stack: reason.stack?.split('\n').slice(0, 10).join('\n'),
+      name: reason.name
+    } : { reason: String(reason) },
+    recommendation: 'Проверьте логи сервера для деталей. Сервис продолжает работу.'
+  });
+  
+  // НЕ завершаем процесс - сервис должен продолжать работать
+  // В production больше не завершаем процесс автоматически
 });

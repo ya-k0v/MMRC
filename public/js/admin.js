@@ -13,6 +13,8 @@ import { renderDeviceCard as renderDeviceCardModule } from './admin/device-card.
 import { setupUploadUI as setupUploadUIModule } from './admin/upload-ui.js';
 import { showDevicesModal, showUsersModal, showSettingsModal } from './admin/modal.js';
 import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon } from './shared/svg-icons.js';
+import { initNotifications } from './admin/notifications.js';
+import { showNotificationsModal } from './admin/notifications-modal.js';
 
 const socket = io();
 const grid = document.getElementById('grid');
@@ -247,6 +249,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderLayout();
   updateDevicesCount(); // Обновляем счетчик после создания layout
   initSelectionFromUrl();
+  
+  // Инициализируем систему уведомлений (только для админов)
+  if (user.role === 'admin' || user.role === 'hero_admin') {
+    window.user = user; // Сохраняем user в window для доступа из notifications.js
+    initNotifications(socket);
+  }
   
   // Системный монитор теперь отображается в модальном окне настроек
 });

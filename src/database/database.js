@@ -9,6 +9,7 @@ import path from 'path';
 import { withRetrySync, isRetryableDatabaseError } from '../utils/retry.js';
 import { circuitBreakers } from '../utils/circuit-breaker.js';
 import logger from '../utils/logger.js';
+import { notifyDbError } from '../utils/notifications.js';
 
 let db = null;
 let dbPath = null;
@@ -528,6 +529,15 @@ export function getAllDevices() {
       return devices;
     } catch (fallbackError) {
       logger.error('[DB] Fallback also failed:', fallbackError);
+      
+      // Отправляем уведомление админу о критической ошибке БД
+      notifyDbError({
+        error: fallbackError.message,
+        errorCode: fallbackError.code,
+        operation: 'getAllDevices',
+        recommendation: 'База данных недоступна. Проверьте целостность БД и перезапустите сервис.'
+      });
+      
       return {};
     }
   }
