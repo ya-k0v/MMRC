@@ -184,6 +184,8 @@ class SystemMonitor {
 
   /**
    * Проверить зависшие FFmpeg процессы
+   * Уведомления отправляются ТОЛЬКО если процесс мертв И нет свежих файлов
+   * Если процесс жив ИЛИ создаются свежие файлы - стрим работает нормально
    */
   async checkFfmpegProcesses() {
     if (!this.streamManager || !this.streamManager.jobs) {
@@ -192,37 +194,93 @@ class SystemMonitor {
     
     try {
       const now = Date.now();
-      const HUNG_THRESHOLD = 5 * 60 * 1000; // 5 минут без активности
       
       for (const [safeName, job] of this.streamManager.jobs.entries()) {
         if (!job || job.status !== 'running' || !job.process) {
           continue;
         }
         
-        // Проверяем heartbeat
-        const lastActivity = job.lastSegmentWrite || job.lastPlaylistUpdate || job.startedAt;
-        const timeSinceActivity = now - lastActivity;
+        // Проверяем, жив ли процесс
+        const isProcessAlive = !job.process.killed && 
+                              this.streamManager._checkProcessAlive(job.process);
         
-        if (timeSinceActivity > HUNG_THRESHOLD) {
-          const lastNotification = this.lastFfmpegCheck[safeName];
-          const shouldNotify = !lastNotification || (now - lastNotification) > 60 * 60 * 1000; // Раз в час
+        // Проверяем наличие свежих файлов (сегментов или плейлиста)
+        let hasFreshActivity = false;
+        
+        try {
+          // Получаем пути к файлам стрима
+          const paths = this.streamManager._getPaths(safeName);
+          const folderPath = paths.folderPath;
+          const playlistPath = paths.playlistPath;
           
-          if (shouldNotify) {
-            this.lastFfmpegCheck[safeName] = now;
-            
-            notifyFfmpegProcessHung(job.deviceId, job.safeName, {
-              timeSinceActivity: Math.round(timeSinceActivity / 1000 / 60),
-              streamUrl: job.sourceUrl,
-              processPid: job.process.pid
-            });
-            
-            logger.warn('[SystemMonitor] Hung FFmpeg process detected', {
-              deviceId: job.deviceId,
-              safeName: job.safeName,
-              timeSinceActivity: Math.round(timeSinceActivity / 1000 / 60),
-              minutes: 'minutes'
-            });
+          // Проверка 1: Плейлист обновлялся недавно (менее 30 секунд)
+          if (fs.existsSync(playlistPath)) {
+            const playlistStats = fs.statSync(playlistPath);
+            const playlistAge = now - playlistStats.mtimeMs;
+            if (playlistAge < 30 * 1000) { // 30 секунд
+              hasFreshActivity = true;
+            }
           }
+          
+          // Проверка 2: Есть свежие .ts сегменты (моложе 2 минут)
+          if (!hasFreshActivity && fs.existsSync(folderPath)) {
+            const files = fs.readdirSync(folderPath);
+            const tsFiles = files.filter(f => f.endsWith('.ts'));
+            
+            for (const tsFile of tsFiles) {
+              const tsPath = path.join(folderPath, tsFile);
+              try {
+                const tsStats = fs.statSync(tsPath);
+                const tsAge = now - tsStats.mtimeMs;
+                
+                // Если есть сегмент, созданный менее 2 минут назад - стрим активен
+                if (tsAge < 2 * 60 * 1000) { // 2 минуты
+                  hasFreshActivity = true;
+                  break;
+                }
+              } catch (err) {
+                // Игнорируем ошибки чтения отдельных файлов
+                continue;
+              }
+            }
+          }
+        } catch (err) {
+          // Если не удалось проверить файлы - считаем, что активности нет
+          logger.debug('[SystemMonitor] Error checking stream files', {
+            safeName,
+            error: err.message
+          });
+        }
+        
+        // Если процесс жив ИЛИ есть свежая активность - все в порядке
+        if (isProcessAlive || hasFreshActivity) {
+          continue; // Стрим работает нормально
+        }
+        
+        // Процесс мертв И нет свежих файлов - это реальная проблема
+        const lastNotification = this.lastFfmpegCheck[safeName];
+        const shouldNotify = !lastNotification || (now - lastNotification) > 60 * 60 * 1000; // Раз в час
+        
+        if (shouldNotify) {
+          this.lastFfmpegCheck[safeName] = now;
+          
+          notifyFfmpegProcessHung(job.deviceId, job.safeName, {
+            timeSinceActivity: job.process.killed ? 'process_killed' : 'process_dead',
+            streamUrl: job.sourceUrl,
+            processPid: job.process.pid,
+            reason: job.process.killed 
+              ? 'Процесс был завершен и нет свежих файлов' 
+              : 'Процесс завершился и нет свежих файлов'
+          });
+          
+          logger.warn('[SystemMonitor] Dead FFmpeg process with no fresh activity', {
+            deviceId: job.deviceId,
+            safeName: job.safeName,
+            killed: job.process.killed,
+            pid: job.process.pid,
+            isProcessAlive,
+            hasFreshActivity
+          });
         }
       }
     } catch (error) {

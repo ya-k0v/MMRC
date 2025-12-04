@@ -1,10 +1,12 @@
 # VideoControl MPV Client - Dependencies
 
 # Socket.IO client for real-time communication
-python-socketio[client]==5.10.0
+# Updated to 5.14.0 to fix CVE-2025-61765 (unsafe pickle deserialization)
+python-socketio[client]==5.14.0
 
 # HTTP requests
-requests==2.31.0
+# Updated to 2.32.4 to fix CVE-2024-47081 (.netrc credential leakage)
+requests==2.32.4
 
 # Note: MPV binary should be installed via system package manager
 # Ubuntu/Debian: sudo apt install mpv

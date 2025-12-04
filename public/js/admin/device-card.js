@@ -22,7 +22,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
     <div class="header" style="margin-bottom:0">
       <div style="flex:1; display:flex; align-items:stretch; gap:var(--space-sm)">
         <div class="title" id="deviceName" style="flex:1; ${isAdmin ? 'cursor:pointer;' : ''} padding:var(--space-sm) var(--space-md); border-radius:var(--radius-sm); transition:all 0.2s; display:flex; align-items:center; min-height:36px; font-size:var(--font-size-base); margin:0" contenteditable="false">${name}</div>
-        ${isAdmin ? `<button class="meta-lg" id="renameSaveBtn" style="display:none; min-width:36px; width:36px; height:36px; padding:0; border-radius:var(--radius-sm); flex-shrink:0; align-items:center; justify-content:center; font-size:var(--font-size-lg); line-height:1; transition:all 0.2s; box-shadow:var(--shadow-sm)" title="Сохранить">
+        ${isAdmin ? `<button class="primary meta-lg" id="renameSaveBtn" style="display:none; min-width:36px; width:36px; height:36px; padding:0; border-radius:var(--radius-sm); flex-shrink:0; align-items:center; justify-content:center; font-size:var(--font-size-lg); line-height:1; transition:all 0.2s; box-shadow:var(--shadow-sm)" title="Сохранить">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:block">
             <polyline points="20 6 9 17 4 12"></polyline>
           </svg>

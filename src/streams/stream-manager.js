@@ -28,6 +28,7 @@ const DEFAULT_OPTIONS = {
   ffmpegPath: process.env.FFMPEG_PATH || 'ffmpeg',
   segmentDuration: Number(process.env.RESTREAM_SEGMENT_DURATION || 3), // 3 секунды для более частого обновления
   playlistSize: Number(process.env.RESTREAM_PLAYLIST_SIZE || 10), // Увеличено до 10 для лучшей буферизации
+  hlsDeleteThreshold: Number(process.env.RESTREAM_HLS_DELETE_THRESHOLD || 5), // Буфер сегментов сверх playlistSize перед удалением
   restartDelayMs: Number(process.env.RESTREAM_RESTART_DELAY_MS || 5000),
   // Критичные настройки для стабильности
   restartMaxAttempts: Number(process.env.STREAM_RESTART_MAX_ATTEMPTS || 5),
@@ -1059,6 +1060,7 @@ class StreamManager extends EventEmitter {
       '-f', 'hls',
       '-hls_time', String(this.options.segmentDuration),
       '-hls_list_size', String(this.options.playlistSize),
+      '-hls_delete_threshold', String(this.options.hlsDeleteThreshold), // Буфер сегментов сверх playlistSize перед удалением
       '-hls_flags', hlsFlags.join('+'),
       '-hls_segment_filename', paths.segmentPattern,
       '-hls_playlist_type', 'event', // КРИТИЧНО: Указываем тип плейлиста как EVENT для live стримов

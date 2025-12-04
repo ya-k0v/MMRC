@@ -45,6 +45,16 @@ dependencies {
     // Socket.IO клиент для Kotlin
     implementation 'io.socket:socket.io-client:2.1.0'
 
+    // Security fix: Force okhttp to secure version (overrides transitive dependency)
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    
+    // Security fix: Force okio to secure version (overrides transitive dependency)
+    implementation 'com.squareup.okio:okio:3.6.0'
+    
+    // Security fix: Force org.json to secure version (overrides transitive dependency)
+    // Updated to 20231013 to fix CVE-2023-5072 (DoS vulnerability)
+    implementation 'org.json:json:20231013'
+
     // ExoPlayer для стабильного воспроизведения
     implementation 'com.google.android.exoplayer:exoplayer:2.19.1'
     // ExoPlayer HLS для поддержки стримов

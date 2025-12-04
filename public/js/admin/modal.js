@@ -24,7 +24,7 @@ export function showModal(title, content) {
   
   modalContent.innerHTML = `
     <div class="header" style="display:flex; justify-content:space-between; align-items:center;">
-      <div class="title">${title}</div>
+      <div class="title" style="font-weight:600; font-size:1.1rem; color:var(--text-primary, #fff);">${title}</div>
       <button class="secondary" onclick="closeModal()" style="min-width:auto; padding:8px; display:flex; align-items:center; justify-content:center;">${getCloseIcon(18)}</button>
     </div>
     <div style="margin-top:var(--space-md);">
@@ -980,46 +980,62 @@ async function loadSettingsContent(adminFetch) {
   
   
   container.innerHTML = `
-  <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm); display:flex; flex-direction:column; gap:var(--space-sm);">
-    <div style="font-weight:600;">Хранилище контента</div>
-    <div class="meta" style="color:var(--text-secondary); line-height:1.4;">
-      Укажите абсолютный путь до корневой директории данных. Поддиректории (content/, streams/, converted/, logs/, temp/) создаются автоматически. Папка должна быть доступна для записи пользователю, от которого запущен сервис.
+  <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm); display:flex; flex-direction:column; gap:0;">
+    <!-- Хранилище контента -->
+    <div style="padding-bottom:var(--space-md);">
+      <div style="font-weight:600; font-size:1.1rem; color:var(--text-primary, #fff); margin-bottom:var(--space-sm);">Хранилище контента</div>
+      <div style="display:flex; align-items:center; gap:var(--space-md);">
+        <div style="flex:1; display:flex; flex-direction:column; gap:var(--space-xs);">
+          <input id="contentRootInput" class="input" spellcheck="false" />
+          ${defaultContentRoot ? `<div class="meta" style="font-size:0.85rem; color:var(--text-secondary);">
+            По умолчанию: <code style="font-family:monospace;">${defaultContentRoot}</code>
+          </div>` : ''}
+          <div id="contentRootStatus" class="meta" style="min-height:1.2em; font-size:0.85rem;"></div>
+        </div>
+        <button id="contentRootSaveBtn" class="primary" style="flex-shrink:0;">Сохранить</button>
+      </div>
     </div>
-    <input id="contentRootInput" class="input" spellcheck="false" />
-    ${defaultContentRoot ? `<div class="meta" style="font-size:0.85rem; color:var(--text-secondary);">
-      По умолчанию: <code style="font-family:monospace;">${defaultContentRoot}</code>
-    </div>` : ''}
-      <div id="contentRootStatus" class="meta" style="min-height:1.2em;"></div>
-      <button id="contentRootSaveBtn" class="primary" style="align-self:flex-start;">Сохранить путь</button>
-    </div>
-    <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm);">
-      <div style="margin-bottom:var(--space-md); font-weight:600;">База данных</div>
-      <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
-        <div class="meta" style="color:var(--text-secondary);">
+    
+    <!-- Разделитель -->
+    <div style="border-top:1px solid var(--border-color, rgba(255,255,255,0.1)); margin:0;"></div>
+    
+    <!-- База данных -->
+    <div style="padding:var(--space-md) 0;">
+      <div style="font-weight:600; font-size:1.1rem; color:var(--text-primary, #fff); margin-bottom:var(--space-sm);">База данных</div>
+      <div style="display:flex; align-items:center; gap:var(--space-md);">
+        <div class="meta" style="flex:1; color:var(--text-secondary); line-height:1.4;">
           Экспортируйте базу данных для резервного копирования или миграции.
         </div>
-        <button id="exportDatabaseBtn" class="primary" style="width:100%;">
-          ${getDownloadIcon(16)} Экспорт базы данных
+        <button id="exportDatabaseBtn" class="primary" style="flex-shrink:0;">
+          ${getDownloadIcon(16)} Экспорт
         </button>
       </div>
     </div>
-    <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm);">
-      <div style="margin-bottom:var(--space-md); font-weight:600;">Очистка базы данных</div>
-      <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
-        <div class="meta" style="color:var(--text-secondary); line-height:1.4;">
-          Проверьте соответствие файлов в базе данных и на диске. Удалите записи о несуществующих файлах.
+    
+    <!-- Разделитель -->
+    <div style="border-top:1px solid var(--border-color, rgba(255,255,255,0.1)); margin:0;"></div>
+    
+    <!-- Очистка базы данных -->
+    <div style="padding-top:var(--space-md);">
+      <div style="font-weight:600; font-size:1.1rem; color:var(--text-primary, #fff); margin-bottom:var(--space-sm);">Очистка базы данных</div>
+      <div style="display:flex; align-items:center; gap:var(--space-md);">
+        <div style="flex:1; display:flex; flex-direction:column; gap:var(--space-xs);">
+          <div class="meta" style="color:var(--text-secondary); line-height:1.4;">
+            Проверьте файлы из базы данных на наличие на диске. Удалите записи о несуществующих файлах.
+          </div>
+          <div id="cleanupStatus" class="meta" style="min-height:1.2em; font-size:0.85rem;"></div>
         </div>
-        <div id="cleanupStatus" class="meta" style="min-height:1.2em;"></div>
-        <div style="display:flex; gap:var(--space-sm);">
-          <button id="checkFilesBtn" class="secondary" style="flex:1;">
-            🔍 Проверить файлы
+        <div style="flex-shrink:0; display:flex; gap:var(--space-xs);">
+          <button id="checkFilesBtn" class="secondary" style="width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center;" title="Проверить файлы">
+            🔍
           </button>
-          <button id="cleanupFilesBtn" class="danger meta-lg" style="flex:1;" disabled>
-            🗑️ Очистить
+          <button id="cleanupFilesBtn" class="danger meta-lg" style="width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center;" disabled title="Очистить">
+            🗑️
           </button>
         </div>
       </div>
     </div>
+  </div>
   `;
   
   const inputEl = document.getElementById('contentRootInput');
@@ -1113,14 +1129,14 @@ async function loadSettingsContent(adminFetch) {
         }, 100);
         
         exportBtn.disabled = false;
-        exportBtn.textContent = 'Экспортировано';
+        exportBtn.innerHTML = `${getDownloadIcon(16)} Экспортировано`;
         setTimeout(() => {
-          exportBtn.textContent = 'Экспорт базы данных';
+          exportBtn.innerHTML = `${getDownloadIcon(16)} Экспорт`;
         }, 2000);
       } catch (err) {
         alert(`Ошибка экспорта: ${err.message}`);
         exportBtn.disabled = false;
-        exportBtn.textContent = 'Экспорт базы данных';
+        exportBtn.innerHTML = `${getDownloadIcon(16)} Экспорт`;
       }
     };
 
@@ -1129,7 +1145,7 @@ async function loadSettingsContent(adminFetch) {
 
   checkFilesBtn.onclick = async () => {
     checkFilesBtn.disabled = true;
-    checkFilesBtn.textContent = 'Проверка...';
+    checkFilesBtn.innerHTML = '⏳';
     cleanupStatusEl.textContent = '';
     cleanupStatusEl.style.color = 'var(--text-secondary)';
     cleanupFilesBtn.disabled = true;
@@ -1147,21 +1163,18 @@ async function loadSettingsContent(adminFetch) {
 
       let statusText = `Проверено: ${result.checked} файлов. `;
       if (result.missingOnDisk > 0) {
-        statusText += `Отсутствует на диске (в БД есть): ${result.missingOnDisk}. `;
-      }
-      if (result.missingInDB > 0) {
-        statusText += `Отсутствует в БД (на диске есть): ${result.missingInDB}.`;
+        statusText += `Отсутствует на диске (в БД есть): ${result.missingOnDisk}.`;
       }
       
       // Активируем кнопку, если есть что удалять
-      if (result.missingOnDisk > 0 || result.missingInDB > 0) {
+      if (result.missingOnDisk > 0) {
         cleanupFilesBtn.disabled = false;
       }
       
-      if (result.missingOnDisk === 0 && result.missingInDB === 0) {
+      if (result.missingOnDisk === 0) {
         statusText = '✅ Все файлы на месте. Проблем не обнаружено.';
         cleanupStatusEl.style.color = 'var(--success, #22c55e)';
-      } else if (result.missingOnDisk > 0 || result.missingInDB > 0) {
+      } else if (result.missingOnDisk > 0) {
         cleanupStatusEl.style.color = 'var(--warning, #f59e0b)';
       } else {
         cleanupStatusEl.style.color = 'var(--text-secondary)';
@@ -1173,31 +1186,24 @@ async function loadSettingsContent(adminFetch) {
       cleanupStatusEl.style.color = 'var(--danger)';
     } finally {
       checkFilesBtn.disabled = false;
-      checkFilesBtn.textContent = '🔍 Проверить файлы';
+      checkFilesBtn.innerHTML = '🔍';
     }
   };
 
   cleanupFilesBtn.onclick = async () => {
-    if (!lastCheckResult || (lastCheckResult.missingOnDisk === 0 && lastCheckResult.missingInDB === 0)) {
+    if (!lastCheckResult || lastCheckResult.missingOnDisk === 0) {
       alert('Сначала выполните проверку файлов');
       return;
     }
 
-    let confirmMessage = '';
-    if (lastCheckResult.missingOnDisk > 0 && lastCheckResult.missingInDB > 0) {
-      confirmMessage = `Удалить:\n- ${lastCheckResult.missingOnDisk} записей из БД (файлов нет на диске)\n- ${lastCheckResult.missingInDB} файлов с диска (записей нет в БД)?`;
-    } else if (lastCheckResult.missingOnDisk > 0) {
-      confirmMessage = `Удалить ${lastCheckResult.missingOnDisk} записей из БД (файлов нет на диске)?`;
-    } else if (lastCheckResult.missingInDB > 0) {
-      confirmMessage = `Удалить ${lastCheckResult.missingInDB} файлов с диска (записей нет в БД)?`;
-    }
+    const confirmMessage = `Удалить ${lastCheckResult.missingOnDisk} записей из БД (файлов нет на диске)?`;
 
     if (!confirm(confirmMessage)) {
       return;
     }
 
     cleanupFilesBtn.disabled = true;
-    cleanupFilesBtn.textContent = 'Очистка...';
+    cleanupFilesBtn.innerHTML = '⏳';
     cleanupStatusEl.textContent = 'Удаление...';
     cleanupStatusEl.style.color = 'var(--text-secondary)';
 
@@ -1216,12 +1222,8 @@ async function loadSettingsContent(adminFetch) {
       const result = await response.json();
       
       let resultText = '';
-      if (result.deletedFromDB > 0 && result.deletedFromDisk > 0) {
-        resultText = `✅ Удалено: ${result.deletedFromDB} записей из БД, ${result.deletedFromDisk} файлов с диска.`;
-      } else if (result.deletedFromDB > 0) {
+      if (result.deletedFromDB > 0) {
         resultText = `✅ Удалено ${result.deletedFromDB} записей из базы данных.`;
-      } else if (result.deletedFromDisk > 0) {
-        resultText = `✅ Удалено ${result.deletedFromDisk} файлов с диска.`;
       } else {
         resultText = '✅ Очистка завершена.';
       }
@@ -1229,6 +1231,7 @@ async function loadSettingsContent(adminFetch) {
       cleanupStatusEl.textContent = resultText;
       cleanupStatusEl.style.color = 'var(--success, #22c55e)';
       cleanupFilesBtn.disabled = true;
+      cleanupFilesBtn.innerHTML = '🗑️';
       lastCheckResult = null;
 
       // Обновляем данные после очистки
@@ -1240,7 +1243,7 @@ async function loadSettingsContent(adminFetch) {
       cleanupStatusEl.style.color = 'var(--danger)';
       cleanupFilesBtn.disabled = false;
     } finally {
-      cleanupFilesBtn.textContent = '🗑️ Очистить';
+      cleanupFilesBtn.innerHTML = '🗑️';
     }
   };
 }
