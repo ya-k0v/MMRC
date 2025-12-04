@@ -23,7 +23,7 @@ sudo bash scripts/quick-install.sh
 # 1. Установите зависимости
 npm install
 
-# 2. Создайте конфигурацию
+# 2. Создайте конфигурацию .env
 cp .env.example .env
 nano .env  # Настройте переменные окружения
 
@@ -33,6 +33,8 @@ mkdir -p config config/hero data/{content,streams,converted,logs,temp}
 # 4. Запустите сервер
 node server.js
 ```
+
+**Важно:** Проект использует `dotenv` для загрузки переменных окружения из `.env` файла. Все настройки (JWT_SECRET, PORT, LOG_LEVEL и т.д.) должны быть указаны в `.env`.
 
 **По умолчанию:**
 - Сервер: `http://localhost:3000`
@@ -73,16 +75,20 @@ node server.js
 
 ## 🎯 Основные возможности
 
-- ✅ **SQLite** — быстрая БД с WAL mode
-- ✅ **JWT Auth** — безопасная аутентификация
+- ✅ **SQLite** — быстрая БД с WAL mode и автоматическими checkpoint
+- ✅ **JWT Auth** — безопасная аутентификация с refresh tokens
 - ✅ **MD5 Deduplication** — экономия места на диске
-- ✅ **FFmpeg** — автооптимизация видео
+- ✅ **FFmpeg** — автооптимизация видео и HLS стриминг
 - ✅ **PDF/PPTX → изображения** — автоконвертация
-- ✅ **Graceful Shutdown** — корректное завершение
-- ✅ **Winston Logging** — структурированные логи
+- ✅ **Graceful Shutdown** — корректное завершение с очисткой ресурсов
+- ✅ **Winston Logging** — структурированные логи с ротацией
 - ✅ **Rate Limiting** — защита от brute-force
 - ✅ **Health Check** — мониторинг состояния
 - ✅ **Metrics** — отслеживание производительности
+- ✅ **Environment Variables** — конфигурация через `.env` файл
+- ✅ **Error Handling** — обработка критических ошибок с уведомлениями
+- ✅ **Resource Management** — автоматическая очистка таймеров, потоков и процессов
+- ✅ **Theme Support** — поддержка темной и светлой темы в админ-панели
 
 ---
 
@@ -119,9 +125,19 @@ videocontrol/
 
 После установки:
 1. **Измените пароль администратора** (по умолчанию: `admin / admin123`)
-2. **Настройте JWT_SECRET** в `.env` файле
+2. **Настройте JWT_SECRET** в `.env` файле (генерируется автоматически при установке)
 3. **Настройте файрвол** (используйте только Nginx)
 4. **Настройте SSL/TLS** (через Nginx)
+5. **Проверьте права доступа** на `.env` файл (должен быть `600`)
+
+**Переменные окружения в `.env`:**
+- `JWT_SECRET` — секретный ключ для JWT токенов (обязательно)
+- `PORT` — порт сервера (по умолчанию: 3000)
+- `HOST` — хост сервера (по умолчанию: 127.0.0.1)
+- `LOG_LEVEL` — уровень логирования (info, warn, error, debug)
+- `SILENT_CONSOLE` — отключить вывод в консоль (false/true)
+- `WAL_CHECKPOINT_INTERVAL_MS` — интервал checkpoint для SQLite WAL
+- И другие настройки (см. `.env.example`)
 
 ---
 
@@ -140,8 +156,21 @@ cd /vid/videocontrol
 sudo systemctl stop videocontrol
 git pull origin main
 npm install
+
+# Проверяем, что .env файл существует и содержит все необходимые переменные
+if [ ! -f .env ]; then
+    cp .env.example .env
+    # Генерируем JWT_SECRET если его нет
+    if ! grep -q "^JWT_SECRET=" .env; then
+        JWT_SECRET=$(openssl rand -hex 64)
+        echo "JWT_SECRET=$JWT_SECRET" >> .env
+    fi
+fi
+
 sudo systemctl start videocontrol
 ```
+
+**Важно:** После обновления проверьте, что `.env` файл содержит все необходимые переменные. Новые переменные могут быть добавлены в `.env.example`.
 
 ---
 

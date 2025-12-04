@@ -375,7 +375,7 @@ if [ -d "temp" ] && [ ! -d "temp/nginx_upload" ]; then
     chmod 755 temp/nginx_upload
 fi
 
-# Создаем .env с JWT secret
+# Создаем .env с настройками окружения
 echo "  Creating .env configuration..."
 if [ ! -f .env ]; then
     JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(64).toString('hex'))")
@@ -389,12 +389,20 @@ JWT_SECRET=$JWT_SECRET
 JWT_ACCESS_EXPIRES_IN=12h
 JWT_REFRESH_EXPIRES_IN=30d
 
-# Logging level (info, warn, error, debug)
+# Logging
 LOG_LEVEL=info
+SILENT_CONSOLE=false
+
+# SQLite WAL Checkpoint
+WAL_CHECKPOINT_INTERVAL_MS=60000
+WAL_CHECKPOINT_THRESHOLD_MB=100
+
+# File Management
+AUTO_CLEANUP_MISSING_FILES=false
 EOF
     # Права будут установлены на vcuser в PHASE 7
     chown $CURRENT_USER:$CURRENT_USER .env 2>/dev/null || true
-    echo -e "  ${GREEN}✅ .env created with secure JWT secret${NC}"
+    echo -e "  ${GREEN}✅ .env created with secure JWT secret and default settings${NC}"
 fi
 
 # Инициализируем БД и применяем миграции

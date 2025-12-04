@@ -65,13 +65,13 @@ node server.js
 
 ### Настройка системы
 - ✅ Создаёт структуру `/vid/videocontrol` (config, data/*)
-- ✅ Генерирует `.env` c JWT secret (access 12h, refresh 30d)
+- ✅ Генерирует `.env` с настройками окружения (JWT secret, PORT, LOG_LEVEL и др.)
 - ✅ Инициализирует `config/main.db` (admin/admin123) и `config/video-optimization.json`
 - ✅ Добавляет пользователя в `vcgroup`
 - ✅ Запускает `scripts/optimize-network.sh` (TCP буферы 16 MB)
 - ✅ Разворачивает `nginx/videocontrol-secure.conf` и включает Nginx
-- ✅ Создаёт и активирует `videocontrol.service` (systemd)
-- ✅ Настраивает права для данных
+- ✅ Создаёт и активирует `videocontrol.service` (systemd) с загрузкой `.env`
+- ✅ Настраивает права для данных и `.env` файла (600)
 
 ### Режимы хранения данных
 - `local` — все данные в `data/*` (content, streams, converted, logs, temp)
@@ -297,6 +297,16 @@ cp config/main.db config/main.db.backup
 # Pull + deps
 git pull origin main
 npm install
+
+# Проверяем, что .env файл существует и содержит все необходимые переменные
+if [ ! -f .env ]; then
+    cp .env.example .env
+    # Генерируем JWT_SECRET если его нет
+    if ! grep -q "^JWT_SECRET=" .env; then
+        JWT_SECRET=$(openssl rand -hex 64)
+        echo "JWT_SECRET=$JWT_SECRET" >> .env
+    fi
+fi
 
 # Применить схему (идемпотентно)
 sqlite3 config/main.db < src/database/init.sql

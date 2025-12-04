@@ -87,6 +87,34 @@ mkdir -p config/hero
 sqlite3 config/hero/heroes.db < src/hero/database/schema.sql
 ```
 
+### Шаг 6.5: Настройка переменных окружения
+
+```bash
+# Создаем .env файл из примера
+cp .env.example .env
+
+# Генерируем JWT_SECRET
+JWT_SECRET=$(openssl rand -hex 64)
+echo "JWT_SECRET=$JWT_SECRET" >> .env
+
+# Редактируем .env для настройки других параметров
+nano .env
+```
+
+**Минимальная конфигурация `.env`:**
+```env
+NODE_ENV=production
+PORT=3000
+HOST=127.0.0.1
+JWT_SECRET=<сгенерированный_ключ>
+JWT_ACCESS_EXPIRES_IN=12h
+JWT_REFRESH_EXPIRES_IN=30d
+LOG_LEVEL=info
+SILENT_CONSOLE=false
+```
+
+**Важно:** Проект использует `dotenv` для автоматической загрузки переменных из `.env` файла при запуске.
+
 ### Шаг 7: Запуск сервера
 
 ```bash
@@ -95,6 +123,7 @@ npm start
 
 # Или через systemd (production)
 sudo cp videocontrol.service /etc/systemd/system/
+# Убедитесь, что в systemd unit указан EnvironmentFile для .env
 sudo systemctl enable videocontrol
 sudo systemctl start videocontrol
 ```
