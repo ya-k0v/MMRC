@@ -8,7 +8,16 @@ import {
   ROOT, PUBLIC, MAX_FILE_SIZE, ALLOWED_EXT, PORT, HOST
 } from './src/config/constants.js';
 import { createSocketServer } from './src/config/socket-config.js';
-import { initDatabase, closeDatabase, getDatabase, getAllDeviceVolumeStates, saveDeviceVolumeState } from './src/database/database.js';
+import { 
+  initDatabase, 
+  closeDatabase, 
+  getDatabase, 
+  getAllDeviceVolumeStates, 
+  saveDeviceVolumeState,
+  startWalCheckpointInterval,
+  stopWalCheckpointInterval,
+  performWalCheckpoint
+} from './src/database/database.js';
 import { 
   loadDevicesFromDB, 
   saveDevicesToDB, 
@@ -100,6 +109,16 @@ app.use('/api/', apiSpeedLimiter);
 // ========================================
 const DB_PATH = path.join(ROOT, 'config', 'main.db');
 initDatabase(DB_PATH);
+
+// Запускаем периодический WAL checkpoint для стабильности БД
+// Проверяет размер WAL файла каждую минуту и выполняет checkpoint если > 100MB
+const WAL_CHECKPOINT_INTERVAL_MS = parseInt(process.env.WAL_CHECKPOINT_INTERVAL_MS || '60000', 10); // 60 секунд по умолчанию
+startWalCheckpointInterval(WAL_CHECKPOINT_INTERVAL_MS);
+logger.info('[Server] WAL checkpoint interval started', {
+  intervalMs: WAL_CHECKPOINT_INTERVAL_MS,
+  intervalMinutes: WAL_CHECKPOINT_INTERVAL_MS / 60000,
+  thresholdMB: process.env.WAL_CHECKPOINT_THRESHOLD_MB || '100'
+});
 
 // КРИТИЧНО: Завершаем инициализацию настроек с миграцией путей после инициализации БД
 import('./src/config/settings-manager.js').then(module => {
@@ -571,6 +590,39 @@ app.get('/api/admin/database/check-files', requireAuth, requireAdmin, async (req
   }
 });
 
+// POST /api/admin/database/wal-checkpoint - Выполнить WAL checkpoint вручную
+app.post('/api/admin/database/wal-checkpoint', requireAuth, requireAdmin, (req, res) => {
+  try {
+    const { force } = req.body || {};
+    
+    logger.info('[Admin] Manual WAL checkpoint requested', { 
+      forced: Boolean(force),
+      userId: req.user.userId,
+      username: req.user.username 
+    });
+    
+    const result = performWalCheckpoint(Boolean(force));
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message,
+        walSizeMB: result.walSize,
+        oldSizeMB: result.oldSize,
+        reducedMB: result.reduced
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.message || 'WAL checkpoint failed'
+      });
+    }
+  } catch (error) {
+    logger.error('[Admin] Failed to perform WAL checkpoint:', error);
+    res.status(500).json({ error: error.message || 'Не удалось выполнить WAL checkpoint' });
+  }
+});
+
 // POST /api/admin/database/cleanup-missing-files - Удалить записи о несуществующих файлах из БД
 app.post('/api/admin/database/cleanup-missing-files', requireAuth, requireAdmin, async (req, res) => {
   try {
@@ -782,6 +834,10 @@ async function gracefulShutdown(signal) {
     // 4. Очищаем интервалы
     clearInterval(cleanupInterval);
     logger.info('✅ Cleanup intervals stopped');
+    
+    // Останавливаем WAL checkpoint
+    stopWalCheckpointInterval();
+    logger.info('✅ WAL checkpoint interval stopped');
     
     // 4. Останавливаем StreamManager
     if (streamManager && typeof streamManager.stop === 'function') {

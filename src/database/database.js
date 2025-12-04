@@ -440,6 +440,131 @@ export function closeDatabase() {
 }
 
 // ========================================
+// WAL CHECKPOINT
+// ========================================
+
+let walCheckpointInterval = null;
+
+/**
+ * Выполнить WAL checkpoint для уменьшения размера WAL файла
+ * @param {boolean} force - Принудительный checkpoint даже если WAL маленький
+ * @returns {Object} Результат операции {success: boolean, walSize?: number, message?: string}
+ */
+export function performWalCheckpoint(force = false) {
+  if (!db || !dbPath) {
+    return { success: false, message: 'Database not initialized' };
+  }
+
+  try {
+    const walPath = dbPath + '-wal';
+    const walExists = fs.existsSync(walPath);
+    
+    if (!walExists) {
+      // WAL файл не существует - это нормально, если БД не в WAL mode или нет активных транзакций
+      return { success: true, message: 'WAL file does not exist (normal if no active transactions)' };
+    }
+
+    const stats = fs.statSync(walPath);
+    const walSizeMB = stats.size / (1024 * 1024);
+    
+    // Проверяем размер WAL файла (100MB по умолчанию)
+    const WAL_SIZE_THRESHOLD_MB = parseInt(process.env.WAL_CHECKPOINT_THRESHOLD_MB || '100', 10);
+    
+    if (!force && stats.size < WAL_SIZE_THRESHOLD_MB * 1024 * 1024) {
+      // WAL файл меньше порога - не выполняем checkpoint
+      return { 
+        success: true, 
+        walSize: walSizeMB, 
+        message: `WAL size (${walSizeMB.toFixed(2)}MB) below threshold (${WAL_SIZE_THRESHOLD_MB}MB), skipping checkpoint` 
+      };
+    }
+
+    // Выполняем checkpoint
+    // RESTART - объединяет WAL в основной файл БД и перезапускает WAL
+    db.pragma('wal_checkpoint(RESTART)');
+    
+    // Проверяем новый размер WAL файла
+    let newWalSizeMB = 0;
+    if (fs.existsSync(walPath)) {
+      const newStats = fs.statSync(walPath);
+      newWalSizeMB = newStats.size / (1024 * 1024);
+    }
+    
+    logger.info('[DB] WAL checkpoint completed', {
+      oldSizeMB: walSizeMB.toFixed(2),
+      newSizeMB: newWalSizeMB.toFixed(2),
+      reducedMB: (walSizeMB - newWalSizeMB).toFixed(2),
+      forced: force
+    });
+    
+    return {
+      success: true,
+      walSize: newWalSizeMB,
+      oldSize: walSizeMB,
+      reduced: walSizeMB - newWalSizeMB,
+      message: `Checkpoint completed: ${walSizeMB.toFixed(2)}MB → ${newWalSizeMB.toFixed(2)}MB`
+    };
+  } catch (error) {
+    logger.error('[DB] WAL checkpoint failed', {
+      error: error.message,
+      stack: error.stack
+    });
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+}
+
+/**
+ * Запустить периодический WAL checkpoint
+ * @param {number} intervalMs - Интервал проверки в миллисекундах (по умолчанию: 60 секунд)
+ */
+export function startWalCheckpointInterval(intervalMs = 60 * 1000) {
+  if (walCheckpointInterval) {
+    logger.warn('[DB] WAL checkpoint interval already running');
+    return;
+  }
+
+  logger.info('[DB] Starting periodic WAL checkpoint', {
+    intervalMs,
+    intervalMinutes: intervalMs / 60000,
+    thresholdMB: process.env.WAL_CHECKPOINT_THRESHOLD_MB || '100'
+  });
+
+  walCheckpointInterval = setInterval(() => {
+    try {
+      const result = performWalCheckpoint(false);
+      if (result.success && result.reduced && result.reduced > 0) {
+        // Логируем только если checkpoint действительно уменьшил размер WAL
+        logger.debug('[DB] Periodic WAL checkpoint', {
+          reducedMB: result.reduced.toFixed(2),
+          newSizeMB: result.walSize?.toFixed(2)
+        });
+      }
+    } catch (error) {
+      logger.error('[DB] Error in periodic WAL checkpoint', {
+        error: error.message
+      });
+    }
+  }, intervalMs);
+
+  // Используем unref() чтобы интервал не блокировал завершение процесса
+  walCheckpointInterval.unref();
+}
+
+/**
+ * Остановить периодический WAL checkpoint
+ */
+export function stopWalCheckpointInterval() {
+  if (walCheckpointInterval) {
+    clearInterval(walCheckpointInterval);
+    walCheckpointInterval = null;
+    logger.info('[DB] WAL checkpoint interval stopped');
+  }
+}
+
+// ========================================
 // DEVICES
 // ========================================
 
