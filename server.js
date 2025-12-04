@@ -1,3 +1,6 @@
+// Загружаем переменные окружения из .env файла
+import 'dotenv/config';
+
 import express from 'express';
 import http from 'http';
 import fs from 'fs';
