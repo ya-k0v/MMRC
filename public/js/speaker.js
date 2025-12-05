@@ -2308,6 +2308,12 @@ function buildPreviewPlaybackInfo(device) {
     return null;
   }
 
+  // КРИТИЧНО: Для idle/placeholder - не показываем статус вообще
+  // Статусы должны браться ТОЛЬКО с плеера, а при idle/placeholder плеер не показывает статус
+  if (device.current.type === 'idle' || device.current.type === 'placeholder') {
+    return null;
+  }
+
   if (device.current.type === 'streaming') {
     const { displayName } = resolveFileDisplayData(device.device_id, device.current.file);
     const protocolLabel = device.current.streamProtocol ? device.current.streamProtocol.toUpperCase() : 'онлайн';
@@ -2368,23 +2374,15 @@ function buildPreviewPlaybackInfo(device) {
     return null;
   }
 
-  // КРИТИЧНО: Для видео показываем информацию даже если нет прогресса (для старых клипов без duration)
+  // КРИТИЧНО: Для видео статусы должны браться ТОЛЬКО из playbackProgressByDevice (данные от плеера)
+  // Если плеер не отправил прогресс - не показываем статус вообще
   const prog = playbackProgressByDevice.get(device.device_id);
   
-  // Если нет прогресса или файл не совпадает - все равно показываем информацию о файле
+  // Если нет прогресса от плеера - не показываем статус
+  // Статусы должны браться ТОЛЬКО с плеера, а не генерироваться на сервере
   if (!prog || !prog.file || prog.file !== device.current.file) {
-    // Показываем информацию о файле без прогресса (для старых клипов без duration)
-    const { displayName, fileInfo } = resolveFileDisplayData(device.device_id, device.current.file);
-    if (fileInfo && fileInfo.isPlaceholder) {
-      return null;
-    }
-    const safeName = escapeHtml(truncateText(displayName, 50)) || '—';
-    return {
-      title: safeName,
-      value: 'Беферизаиця...',
-      mode: 'video',
-      progress: null
-    };
+    // НЕ показываем "Буферизация..." - если плеер не отправил прогресс, значит статуса нет
+    return null;
   }
 
   const { displayName, fileInfo } = resolveFileDisplayData(device.device_id, prog.file);

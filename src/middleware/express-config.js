@@ -27,6 +27,29 @@ function sanitizePathFragment(value = '') {
 }
 
 /**
+ * Генерирует уникальный ID сессии зрителя на основе IP и User-Agent
+ * @param {Object} req - Express request объект
+ * @returns {string} Уникальный ID сессии
+ */
+function getViewerSessionId(req) {
+  // Получаем IP адрес клиента
+  const ip = req.ip || 
+             req.connection?.remoteAddress || 
+             req.socket?.remoteAddress ||
+             req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+             'unknown';
+  
+  // Получаем User-Agent
+  const ua = req.get('user-agent') || 'unknown';
+  
+  // Создаем уникальный ID из IP и первых 50 символов User-Agent
+  const sessionKey = `${ip}:${ua.substring(0, 50)}`;
+  
+  // Простой hash для сокращения размера (опционально, можно использовать crypto)
+  return sessionKey;
+}
+
+/**
  * Настраивает базовые Express middleware
  * @param {express.Application} app - Express приложение
  */
@@ -435,14 +458,28 @@ export function setupStaticFiles(app) {
     
     // Для HLS плейлистов (.m3u8)
     if (/\.m3u8$/i.test(filePath)) {
-      // КРИТИЧНО: Обновляем время последнего доступа при каждом запросе плейлиста
+      // КРИТИЧНО: Обновляем время последнего доступа и отслеживаем сессию зрителя
       // Это позволяет отслеживать активность стрима для автоматической остановки FFmpeg
       // КРИТИЧНО: Путь теперь safeName/index.m3u8 (без deviceId)
+      let viewerSessionId = null;
       if (decodedParts && decodedParts.length >= 1) {
         const safeName = decodedParts[0];
         const streamManager = getStreamManager();
         if (streamManager) {
+          // Генерируем уникальный ID сессии для отслеживания активных зрителей
+          viewerSessionId = getViewerSessionId(req);
+          
+          // Регистрируем сессию зрителя
+          streamManager.registerViewerSession(safeName, viewerSessionId);
+          
+          // Обновляем время последнего доступа
           streamManager.updateLastAccessBySafeName(safeName);
+          
+          logger.debug('[Express] Playlist requested, viewer session registered', {
+            safeName,
+            sessionId: viewerSessionId?.substring(0, 50),
+            viewerCount: streamManager.getActiveViewerCount(safeName)
+          });
         }
       }
       
@@ -458,12 +495,26 @@ export function setupStaticFiles(app) {
       // Читаем файл и отправляем без буферизации
       const stream = fs.createReadStream(filePath);
       
-      // КРИТИЧНО: Обрабатываем закрытие соединения клиентом
+      // КРИТИЧНО: Обрабатываем закрытие соединения клиентом и отменяем регистрацию сессии
       let isAborted = false;
       const cleanup = () => {
         isAborted = true;
         if (stream && !stream.destroyed) {
           stream.destroy();
+        }
+        
+        // Отменяем регистрацию сессии зрителя при закрытии соединения
+        if (decodedParts && decodedParts.length >= 1 && viewerSessionId) {
+          const safeName = decodedParts[0];
+          const streamManager = getStreamManager();
+          if (streamManager) {
+            streamManager.unregisterViewerSession(safeName, viewerSessionId);
+            logger.debug('[Express] Viewer session unregistered (connection closed)', {
+              safeName,
+              sessionId: viewerSessionId?.substring(0, 50),
+              remainingViewers: streamManager.getActiveViewerCount(safeName)
+            });
+          }
         }
       };
       
@@ -492,13 +543,21 @@ export function setupStaticFiles(app) {
     
     // Для HLS сегментов (.ts)
     if (/\.ts$/i.test(filePath)) {
-      // КРИТИЧНО: Обновляем время последнего доступа при каждом запросе сегмента
+      // КРИТИЧНО: Обновляем время последнего доступа и отслеживаем сессию зрителя
       // Это позволяет отслеживать активность стрима для автоматической остановки FFmpeg
       // КРИТИЧНО: Путь теперь safeName/segment_00001.ts (без deviceId)
+      let viewerSessionId = null;
       if (decodedParts && decodedParts.length >= 1) {
         const safeName = decodedParts[0];
         const streamManager = getStreamManager();
         if (streamManager) {
+          // Генерируем уникальный ID сессии для отслеживания активных зрителей
+          viewerSessionId = getViewerSessionId(req);
+          
+          // Регистрируем сессию зрителя (если еще не зарегистрирована)
+          streamManager.registerViewerSession(safeName, viewerSessionId);
+          
+          // Обновляем время последнего доступа
           streamManager.updateLastAccessBySafeName(safeName);
         }
       }

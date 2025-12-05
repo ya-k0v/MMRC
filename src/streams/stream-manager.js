@@ -21,9 +21,10 @@ const STREAM_KEY_SEPARATOR = '::';
 const MAX_STDERR_BUFFER_SIZE = 10 * 1024; // 10KB
 
 // КРИТИЧНО: outputRoot теперь вычисляется динамически из настроек БД
-// Используем функцию getStreamsOutputDir() вместо константы
+// НЕ вычисляем outputRoot здесь, так как настройки могут быть еще не загружены
+// outputRoot будет установлен в конструкторе после загрузки настроек
 const DEFAULT_OPTIONS = {
-  outputRoot: getStreamsOutputDir(), // Вычисляется из contentRoot в настройках
+  outputRoot: null, // Будет установлен в конструкторе из getStreamsOutputDir()
   publicBasePath: '/streams',
   ffmpegPath: process.env.FFMPEG_PATH || 'ffmpeg',
   segmentDuration: Number(process.env.RESTREAM_SEGMENT_DURATION || 3), // 3 секунды для более частого обновления
@@ -100,6 +101,7 @@ class StreamManager extends EventEmitter {
     //   job: Job,                    // Основной job стрима
     //   devices: Set<deviceId>,      // Устройства, использующие стрим
     //   lastAccess: Map<deviceId, timestamp>, // Время последнего доступа для каждого устройства
+    //   activeViewers: Set<viewerId>, // Активные HTTP-сессии зрителей (IP:UA)
     //   pending: boolean             // Флаг pending операции
     // }>
     this.nameToJobMapPending = new Map(); // Map<safeName, Promise<Job>> - pending операции по имени
@@ -113,8 +115,10 @@ class StreamManager extends EventEmitter {
     // Стримы работают пока есть активные запросы от плееров (через lastAccess)
     // Останавливаются только если нет запросов больше минуты
     // Это позволяет стримам работать без ограничений по времени, пока их смотрят
-    this.idleTimeout = Number(process.env.STREAM_IDLE_TIMEOUT_MS || 60000); // 60 секунд - только для проверки активности
-    this.previewIdleTimeout = Number(process.env.PREVIEW_STREAM_IDLE_TIMEOUT_MS || 60000); // 60 секунд - одинаково для всех
+    // ИСПРАВЛЕНО: Таймаут увеличен до 3 минут (180000 мс) согласно ТЗ
+    // Стрим закрывается только если никто не смотрит более 3 минут
+    this.idleTimeout = Number(process.env.STREAM_IDLE_TIMEOUT_MS || 180000); // 3 минуты - стрим закрывается если нет запросов
+    this.previewIdleTimeout = Number(process.env.PREVIEW_STREAM_IDLE_TIMEOUT_MS || 180000); // 3 минуты - одинаково для всех
     
     // Интервалы для очистки при shutdown
     this.idleCleanupInterval = null;
@@ -130,8 +134,11 @@ class StreamManager extends EventEmitter {
     this.fileStatusCacheTTL = 2000; // 2 секунды
     
     // КРИТИЧНО: outputRoot теперь вычисляется динамически из настроек БД
-    // Обновляем его при инициализации, чтобы использовать актуальный путь
-    this.options.outputRoot = getStreamsOutputDir();
+    // Обновляем его при инициализации, чтобы использовать актуальный путь из app-settings.json
+    // Если outputRoot не передан явно в options, используем значение из настроек
+    if (!this.options.outputRoot) {
+      this.options.outputRoot = getStreamsOutputDir();
+    }
     ensureDir(this.options.outputRoot);
     
     // КРИТИЧНО: При старте сервиса очищаем все старые файлы стримов
@@ -148,7 +155,8 @@ class StreamManager extends EventEmitter {
     // Запускаем периодическую проверку неиспользуемых стримов
     this._startIdleCleanup();
     
-    // Запускаем периодическую очистку сегментов
+    // КРИТИЧНО: Отключена периодическая очистка сегментов - FFmpeg сам управляет через delete_segments
+    // Метод _startSegmentCleanup() остается для инициализации, но периодическая очистка отключена
     this._startSegmentCleanup();
     
     // Запускаем периодическую проверку circuit breaker
@@ -198,19 +206,26 @@ class StreamManager extends EventEmitter {
           }
         }
         
-        // КРИТИЧНО: Проверяем только активность плееров через lastAccess
-        // НЕ используем таймауты - стрим работает пока есть активные запросы
-        // Останавливаем только если нет запросов вообще (lastAccess отсутствует или очень старый)
+        // КРИТИЧНО: Проверяем активность через несколько источников
+        // 1. Количество активных зрителей (HTTP-сессии)
+        // 2. Активность запросов через lastAccess
+        // 3. Количество зарегистрированных устройств
+        const MAX_IDLE_TIME = this.idleTimeout; // 3 минуты
+        
+        // Подсчитываем активных зрителей (HTTP-сессии)
+        const hasActiveViewers = nameEntry.activeViewers && nameEntry.activeViewers.size > 0;
+        const viewerCount = nameEntry.activeViewers?.size || 0;
+        
+        // Проверяем активность запросов через lastAccess
         let hasActiveRequests = false;
         let mostRecentAccess = 0;
-        const MAX_IDLE_TIME = 60000; // 60 секунд - если нет запросов больше минуты, считаем стрим неактивным
         
         if (nameEntry.lastAccess && nameEntry.lastAccess.size > 0) {
           for (const [deviceId, lastAccess] of nameEntry.lastAccess.entries()) {
             mostRecentAccess = Math.max(mostRecentAccess, lastAccess);
             const idleTime = now - lastAccess;
             
-            // Если был запрос за последнюю минуту - стрим активен
+            // Если был запрос за последние 3 минуты - стрим активен
             if (idleTime <= MAX_IDLE_TIME) {
               hasActiveRequests = true;
               break; // Достаточно одного активного запроса
@@ -218,28 +233,44 @@ class StreamManager extends EventEmitter {
           }
         }
         
-        // КРИТИЧНО: Останавливаем стрим только если нет активных запросов больше минуты
-        // Это означает, что плееры не запрашивают плейлист/сегменты
-        if (!hasActiveRequests && nameEntry.devices.size > 0) {
-          const timeSinceLastAccess = mostRecentAccess > 0 ? now - mostRecentAccess : Infinity;
-          
-          // Останавливаем только если нет запросов больше минуты
-          if (timeSinceLastAccess > MAX_IDLE_TIME) {
-            logger.info('[StreamManager] 🕐 Stopping stream (no active requests)', {
-              safeName,
-              devices: Array.from(nameEntry.devices),
-              timeSinceLastAccess,
-              hasLastAccess: mostRecentAccess > 0
-            });
-            
-            // Останавливаем стрим (будет проверка количества устройств в stopStream)
-            this.stopStream(Array.from(nameEntry.devices)[0], safeName, 'no_active_requests');
-          }
-        } else if (hasActiveRequests) {
-          // Логируем для отладки активных стримов
-          logger.debug('[StreamManager] Stream is active (has requests)', {
+        const timeSinceLastAccess = mostRecentAccess > 0 ? now - mostRecentAccess : Infinity;
+        
+        // КРИТИЧНО: Останавливаем стрим только если:
+        // 1. Нет активных зрителей (нет HTTP-сессий)
+        // 2. Нет активных запросов (таймаут превышен)
+        // 3. Нет зарегистрированных устройств
+        const shouldStop = !hasActiveViewers && 
+                           !hasActiveRequests && 
+                           nameEntry.devices.size === 0 &&
+                           timeSinceLastAccess > MAX_IDLE_TIME;
+        
+        if (shouldStop) {
+          logger.info('[StreamManager] 🕐 Stopping stream (no active viewers/requests)', {
             safeName,
-            mostRecentAccess: mostRecentAccess > 0 ? now - mostRecentAccess : null,
+            activeViewers: viewerCount,
+            activeRequests: hasActiveRequests,
+            devices: nameEntry.devices.size,
+            timeSinceLastAccess: timeSinceLastAccess > 0 ? Math.round(timeSinceLastAccess / 1000) : null,
+            hasLastAccess: mostRecentAccess > 0
+          });
+          
+          // Останавливаем стрим (будет проверка количества устройств в stopStream)
+          if (nameEntry.devices.size > 0) {
+            this.stopStream(Array.from(nameEntry.devices)[0], safeName, 'no_active_viewers');
+          } else {
+            // Нет устройств, но есть job - останавливаем напрямую
+            const job = nameEntry.job;
+            if (job) {
+              this.stopStream(job.deviceId || null, safeName, 'no_active_viewers');
+            }
+          }
+        } else if (hasActiveViewers || hasActiveRequests) {
+          // Логируем для отладки активных стримов
+          logger.debug('[StreamManager] Stream is active', {
+            safeName,
+            activeViewers: viewerCount,
+            activeRequests: hasActiveRequests,
+            mostRecentAccess: mostRecentAccess > 0 ? Math.round((now - mostRecentAccess) / 1000) : null,
             devices: Array.from(nameEntry.devices)
           });
         }
@@ -1351,8 +1382,8 @@ class StreamManager extends EventEmitter {
       
       // КРИТИЧНО: Проверяем, используется ли стрим перед удалением
       const now = Date.now();
-      // КРИТИЧНО: Проверяем активность через lastAccess (60 секунд)
-      const MAX_IDLE_TIME = 60000; // 60 секунд
+      // КРИТИЧНО: Проверяем активность через lastAccess (3 минуты согласно ТЗ)
+      const MAX_IDLE_TIME = this.idleTimeout; // 3 минуты - согласно ТЗ
       const isStreamInUse = nameEntry && (
         nameEntry.devices.size > 0 || 
         (nameEntry.lastAccess && nameEntry.lastAccess.has('_direct') && 
@@ -1477,8 +1508,8 @@ class StreamManager extends EventEmitter {
         
         const current = nameEntry.job;
         
-        // КРИТИЧНО: Проверяем активность через lastAccess (60 секунд)
-        const MAX_IDLE_TIME = 60000; // 60 секунд
+        // КРИТИЧНО: Проверяем активность через lastAccess (3 минуты согласно ТЗ)
+        const MAX_IDLE_TIME = this.idleTimeout; // 3 минуты - согласно ТЗ
         const isStreamInUse = nameEntry.devices.size > 0 || 
                               (nameEntry.lastAccess && nameEntry.lastAccess.has('_direct') && 
                                (Date.now() - nameEntry.lastAccess.get('_direct')) < MAX_IDLE_TIME);
@@ -1938,6 +1969,7 @@ class StreamManager extends EventEmitter {
     this.nameToJobMap.set(safeName, {
       devices: new Set([device_id]),
       lastAccess: new Map([[device_id, Date.now()]]),
+      activeViewers: new Set(), // Инициализируем пустой Set для активных зрителей
       pending: true
     });
     
@@ -1985,6 +2017,7 @@ class StreamManager extends EventEmitter {
             job,
             devices: new Set([device_id]),
             lastAccess: new Map([[device_id, Date.now()]]),
+            activeViewers: new Set(), // Инициализируем пустой Set для активных зрителей
             pending: false
           };
           this.nameToJobMap.set(safeName, nameEntry);
@@ -2118,12 +2151,29 @@ class StreamManager extends EventEmitter {
         allDevices: Array.from(nameEntry.devices)
       });
       
-      // Если остались другие устройства - НЕ останавливаем стрим
-      if (remainingDevices > 0) {
-        logger.info('[StreamManager] Stream still in use by other devices', {
+      // ИСПРАВЛЕНО: Проверяем активность через lastAccess, а не только количество устройств
+      // Стрим работает пока его кто-то смотрит (есть активные запросы)
+      const now = Date.now();
+      const MAX_IDLE_TIME = this.idleTimeout; // 3 минуты
+      let hasActiveRequests = false;
+      
+      if (nameEntry.lastAccess && nameEntry.lastAccess.size > 0) {
+        for (const [deviceId, lastAccess] of nameEntry.lastAccess.entries()) {
+          if ((now - lastAccess) <= MAX_IDLE_TIME) {
+            hasActiveRequests = true;
+            break;
+          }
+        }
+      }
+      
+      // Если остались другие устройства ИЛИ есть активные запросы - НЕ останавливаем стрим
+      if (remainingDevices > 0 || hasActiveRequests) {
+        logger.info('[StreamManager] Stream still in use', {
           safeName: safeNameSanitized,
           remainingDevices,
-          remainingDeviceIds: Array.from(nameEntry.devices)
+          remainingDeviceIds: Array.from(nameEntry.devices),
+          hasActiveRequests,
+          reason
         });
         return;
       }
@@ -2453,6 +2503,111 @@ class StreamManager extends EventEmitter {
     }
   }
 
+  /**
+   * Регистрирует активную сессию зрителя (HTTP-сессию)
+   * @param {string} safeName - Имя стрима
+   * @param {string} sessionId - Уникальный ID сессии (IP:UserAgent)
+   */
+  registerViewerSession(safeName, sessionId) {
+    const safeNameSanitized = sanitizePathFragment(safeName);
+    const nameEntry = this.nameToJobMap.get(safeNameSanitized);
+    
+    if (nameEntry) {
+      if (!nameEntry.activeViewers) {
+        nameEntry.activeViewers = new Set();
+      }
+      nameEntry.activeViewers.add(sessionId);
+      
+      logger.debug('[StreamManager] Viewer session registered', {
+        safeName: safeNameSanitized,
+        sessionId,
+        totalViewers: nameEntry.activeViewers.size,
+        totalDevices: nameEntry.devices.size
+      });
+    }
+  }
+
+  /**
+   * Отменяет регистрацию сессии зрителя
+   * @param {string} safeName - Имя стрима
+   * @param {string} sessionId - Уникальный ID сессии
+   */
+  unregisterViewerSession(safeName, sessionId) {
+    const safeNameSanitized = sanitizePathFragment(safeName);
+    const nameEntry = this.nameToJobMap.get(safeNameSanitized);
+    
+    if (nameEntry && nameEntry.activeViewers) {
+      const hadSession = nameEntry.activeViewers.has(sessionId);
+      nameEntry.activeViewers.delete(sessionId);
+      
+      if (hadSession) {
+        logger.debug('[StreamManager] Viewer session unregistered', {
+          safeName: safeNameSanitized,
+          sessionId,
+          remainingViewers: nameEntry.activeViewers.size,
+          totalDevices: nameEntry.devices.size
+        });
+      }
+    }
+  }
+
+  /**
+   * Возвращает количество активных зрителей для стрима
+   * @param {string} safeName - Имя стрима
+   * @returns {number} Количество активных сессий
+   */
+  getActiveViewerCount(safeName) {
+    const safeNameSanitized = sanitizePathFragment(safeName);
+    const nameEntry = this.nameToJobMap.get(safeNameSanitized);
+    return nameEntry?.activeViewers?.size || 0;
+  }
+
+  /**
+   * Возвращает метрики по всем стримам
+   * @returns {Object} Метрики стримов
+   */
+  getStreamMetrics() {
+    const metrics = {
+      totalStreams: this.jobs.size,
+      activeStreams: 0,
+      totalViewers: 0,
+      streamsByStatus: {},
+      streams: []
+    };
+    
+    for (const [safeName, nameEntry] of this.nameToJobMap.entries()) {
+      const job = nameEntry?.job;
+      const status = job?.status || 'unknown';
+      
+      if (!metrics.streamsByStatus[status]) {
+        metrics.streamsByStatus[status] = 0;
+      }
+      metrics.streamsByStatus[status]++;
+      
+      if (status === 'running') {
+        metrics.activeStreams++;
+      }
+      
+      const viewerCount = nameEntry?.activeViewers?.size || 0;
+      metrics.totalViewers += viewerCount;
+      
+      const deviceCount = nameEntry?.devices?.size || 0;
+      const uptime = job && job.startedAt ? Date.now() - job.startedAt : 0;
+      
+      metrics.streams.push({
+        safeName,
+        status,
+        viewerCount,
+        deviceCount,
+        uptime,
+        restarts: job?.restarts || 0,
+        hasActiveViewers: viewerCount > 0
+      });
+    }
+    
+    return metrics;
+  }
+
   getPlaybackUrl(deviceId, safeName) {
     const safeNameSanitized = sanitizePathFragment(safeName);
     const job = this.jobs.get(safeNameSanitized);
@@ -2590,6 +2745,7 @@ class StreamManager extends EventEmitter {
                 this.nameToJobMap.set(safeNameSanitized, {
                   devices: new Set([deviceId]),
                   lastAccess: new Map([[deviceId, Date.now()]]),
+                  activeViewers: new Set(), // Инициализируем пустой Set для активных зрителей
                   pending: false
                 });
               } else {
@@ -3521,15 +3677,25 @@ class StreamManager extends EventEmitter {
 
   /**
    * Запускает периодическую очистку сегментов
+   * КРИТИЧНО: Отключено - FFmpeg сам удаляет старые сегменты через delete_segments флаг
+   * Очистка сегментов теперь полностью выполняется FFmpeg
+   * Метод _cleanupSegments() остается только для экстренной очистки при переполнении диска
    */
   _startSegmentCleanup() {
-    this.segmentCleanupInterval = setInterval(() => {
-      this._cleanupSegments();
-    }, this.options.cleanupInterval);
-    
-    logger.info('[StreamManager] Segment cleanup started', {
-      interval: this.options.cleanupInterval
+    // КРИТИЧНО: Периодическая очистка отключена - FFmpeg управляет сегментами сам
+    // Параметры FFmpeg: hls_flags=delete_segments, hls_list_size=10, hls_delete_threshold=5
+    logger.info('[StreamManager] Segment cleanup disabled - FFmpeg manages segments via delete_segments flag', {
+      hlsListSize: this.options.playlistSize,
+      hlsDeleteThreshold: this.options.hlsDeleteThreshold,
+      segmentDuration: this.options.segmentDuration,
+      note: 'FFmpeg automatically deletes old segments. Server cleanup only runs during disk full emergencies.'
     });
+    
+    // Периодическая очистка отключена - FFmpeg управляет файлами сам через delete_segments
+    // Метод _cleanupSegments() используется только для экстренной очистки при переполнении диска
+    // this.segmentCleanupInterval = setInterval(() => {
+    //   this._cleanupSegments();
+    // }, this.options.cleanupInterval);
   }
 
   /**
@@ -3609,7 +3775,9 @@ class StreamManager extends EventEmitter {
    */
   _cleanupSegments() {
     const now = Date.now();
-    const maxAge = (this.options.segmentDuration * this.options.playlistSize * 2) * 1000; // В миллисекундах
+    // ИСПРАВЛЕНО: Очистка сегментов на 20 минут согласно ТЗ (1200 секунд = 20 минут)
+    // Это обеспечивает запас для буферизации, но не забивает диск
+    const maxAge = 20 * 60 * 1000; // 20 минут в миллисекундах (1200000 мс)
     const maxSizeBytes = this.options.maxFolderSizeMB * 1024 * 1024;
     const maxCleanupTime = 30000; // Максимум 30 секунд на очистку
     const cleanupStartTime = Date.now();
@@ -3710,10 +3878,9 @@ class StreamManager extends EventEmitter {
         const timeSinceLastWrite = now - lastSegmentWrite;
         const isRecentlyActive = isProcessActive && timeSinceLastWrite < (this.options.segmentDuration * 2 * 1000);
         
-        // Если процесс активен, добавляем запас времени для безопасности
-        const safeAgeThreshold = isProcessActive 
-          ? Math.max(maxAge, (this.options.segmentDuration * this.options.playlistSize * 3) * 1000)
-          : maxAge;
+        // Если процесс активен, используем maxAge (20 минут) для безопасности
+        // ИСПРАВЛЕНО: Не уменьшаем запас времени - используем фиксированные 20 минут согласно ТЗ
+        const safeAgeThreshold = maxAge; // Всегда 20 минут
         
         // КРИТИЧНО: Минимальный возраст для удаления - не удаляем сегменты, созданные после последней записи
         const minAgeForDeletion = isRecentlyActive 
