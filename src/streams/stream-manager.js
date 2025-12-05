@@ -343,7 +343,7 @@ class StreamManager extends EventEmitter {
     const safeFile = sanitizePathFragment(safeName);
     const folderPath = path.join(this.options.outputRoot, safeFile);
     const playlistPath = path.join(folderPath, 'index.m3u8');
-    const segmentPattern = path.join(folderPath, 'segment_%05d.ts');
+    const segmentPattern = path.join(folderPath, 'segment_%10d.ts');
     const publicUrl = `${this.options.publicBasePath}/${encodeURIComponent(safeFile)}/index.m3u8`;
     return { folderPath, playlistPath, segmentPattern, publicUrl };
   }
@@ -1156,9 +1156,14 @@ class StreamManager extends EventEmitter {
       '-hls_delete_threshold', String(this.options.hlsDeleteThreshold), // Буфер сегментов сверх playlistSize перед удалением
       '-hls_flags', hlsFlags.join('+'),
       '-hls_segment_filename', paths.segmentPattern,
-      '-hls_playlist_type', 'event', // КРИТИЧНО: Указываем тип плейлиста как EVENT для live стримов
+      // ИСПРАВЛЕНО: Убрали hls_playlist_type event - он НЕ поддерживает delete_segments и hls_list_size!
+      // Для live стримов достаточно флага omit_endlist (уже есть в hlsFlags)
+      // '-hls_playlist_type', 'event', // УБРАНО - конфликтует с delete_segments
       '-hls_allow_cache', '0', // КРИТИЧНО: Отключаем кеширование для live стримов
-      '-hls_start_number_source', 'epoch', // КРИТИЧНО: Используем epoch для уникальной нумерации при каждом запуске
+      // ИСПРАВЛЕНО: Используем generic (простую нумерацию) вместо epoch
+      // generic создает последовательные номера: segment_0000000000.ts, segment_0000000001.ts и т.д.
+      // Паттерн %10d обеспечивает правильное сопоставление файлов для delete_segments
+      '-hls_start_number_source', 'generic', // generic = простые последовательные номера (0, 1, 2...)
       '-hls_segment_type', 'mpegts', // Явно указываем тип сегментов
       '-hls_base_url', '', // Пустой base URL для относительных путей
       paths.playlistPath
