@@ -613,12 +613,26 @@ export function setupStaticFiles(app) {
           
           const stream = fs.createReadStream(filePath, { start, end });
           
-          // КРИТИЧНО: Обрабатываем закрытие соединения клиентом
+          // КРИТИЧНО: Обрабатываем закрытие соединения клиентом и отменяем регистрацию сессии
           let isAborted = false;
           const cleanup = () => {
             isAborted = true;
             if (stream && !stream.destroyed) {
               stream.destroy();
+            }
+            
+            // Отменяем регистрацию сессии зрителя при закрытии соединения
+            if (decodedParts && decodedParts.length >= 1 && viewerSessionId) {
+              const safeName = decodedParts[0];
+              const streamManager = getStreamManager();
+              if (streamManager) {
+                streamManager.unregisterViewerSession(safeName, viewerSessionId);
+                logger.debug('[Express] Viewer session unregistered (TS segment connection closed)', {
+                  safeName,
+                  sessionId: viewerSessionId?.substring(0, 50),
+                  remainingViewers: streamManager.getActiveViewerCount(safeName)
+                });
+              }
             }
           };
           
@@ -648,12 +662,26 @@ export function setupStaticFiles(app) {
           
           const stream = fs.createReadStream(filePath, { start, end });
           
-          // КРИТИЧНО: Обрабатываем закрытие соединения клиентом
+          // КРИТИЧНО: Обрабатываем закрытие соединения клиентом и отменяем регистрацию сессии
           let isAborted = false;
           const cleanup = () => {
             isAborted = true;
             if (stream && !stream.destroyed) {
               stream.destroy();
+            }
+            
+            // Отменяем регистрацию сессии зрителя при закрытии соединения
+            if (decodedParts && decodedParts.length >= 1 && viewerSessionId) {
+              const safeName = decodedParts[0];
+              const streamManager = getStreamManager();
+              if (streamManager) {
+                streamManager.unregisterViewerSession(safeName, viewerSessionId);
+                logger.debug('[Express] Viewer session unregistered (TS segment connection closed)', {
+                  safeName,
+                  sessionId: viewerSessionId?.substring(0, 50),
+                  remainingViewers: streamManager.getActiveViewerCount(safeName)
+                });
+              }
             }
           };
           
@@ -679,12 +707,26 @@ export function setupStaticFiles(app) {
         // Это критично для активных сегментов, которые пишутся FFmpeg в реальном времени
         const stream = fs.createReadStream(filePath);
         
-        // КРИТИЧНО: Обрабатываем закрытие соединения клиентом
+        // КРИТИЧНО: Обрабатываем закрытие соединения клиентом и отменяем регистрацию сессии
         let isAborted = false;
         const cleanup = () => {
           isAborted = true;
           if (stream && !stream.destroyed) {
             stream.destroy();
+          }
+          
+          // Отменяем регистрацию сессии зрителя при закрытии соединения
+          if (decodedParts && decodedParts.length >= 1 && viewerSessionId) {
+            const safeName = decodedParts[0];
+            const streamManager = getStreamManager();
+            if (streamManager) {
+              streamManager.unregisterViewerSession(safeName, viewerSessionId);
+              logger.debug('[Express] Viewer session unregistered (TS segment connection closed)', {
+                safeName,
+                sessionId: viewerSessionId?.substring(0, 50),
+                remainingViewers: streamManager.getActiveViewerCount(safeName)
+              });
+            }
           }
         };
         

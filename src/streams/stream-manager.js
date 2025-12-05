@@ -238,10 +238,10 @@ class StreamManager extends EventEmitter {
         // КРИТИЧНО: Останавливаем стрим только если:
         // 1. Нет активных зрителей (нет HTTP-сессий)
         // 2. Нет активных запросов (таймаут превышен)
-        // 3. Нет зарегистрированных устройств
+        // ВАЖНО: Не проверяем devices.size, так как устройства могут остаться в списке
+        // даже после завершения просмотра. Главное - активность запросов и зрителей.
         const shouldStop = !hasActiveViewers && 
                            !hasActiveRequests && 
-                           nameEntry.devices.size === 0 &&
                            timeSinceLastAccess > MAX_IDLE_TIME;
         
         if (shouldStop) {
@@ -2171,13 +2171,20 @@ class StreamManager extends EventEmitter {
         }
       }
       
-      // Если остались другие устройства ИЛИ есть активные запросы - НЕ останавливаем стрим
-      if (remainingDevices > 0 || hasActiveRequests) {
+      // КРИТИЧНО: Проверяем активность через lastAccess и activeViewers, а не только количество устройств
+      // Устройства могут остаться в списке даже после завершения просмотра
+      // Проверяем также активных зрителей (HTTP-сессии)
+      const hasActiveViewers = nameEntry.activeViewers && nameEntry.activeViewers.size > 0;
+      
+      // Если остались другие устройства ИЛИ есть активные запросы ИЛИ есть активные зрители - НЕ останавливаем стрим
+      if (remainingDevices > 0 || hasActiveRequests || hasActiveViewers) {
         logger.info('[StreamManager] Stream still in use', {
           safeName: safeNameSanitized,
           remainingDevices,
           remainingDeviceIds: Array.from(nameEntry.devices),
           hasActiveRequests,
+          hasActiveViewers,
+          activeViewerCount: nameEntry.activeViewers?.size || 0,
           reason
         });
         return;
