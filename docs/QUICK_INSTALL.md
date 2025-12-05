@@ -6,13 +6,13 @@
 
 ```bash
 # На новом сервере (Ubuntu/Debian)
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/ya-k0v/VideoControl/dev300/scripts/quick-install.sh)" /vid/videocontrol
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/ya-k0v/VideoControl/main/scripts/quick-install.sh)" /vid/videocontrol
 ```
 
 Или если уже клонировали репозиторий:
 
 ```bash
-git clone -b dev300 https://github.com/ya-k0v/VideoControl.git /vid/videocontrol
+git clone https://github.com/ya-k0v/VideoControl.git /vid/videocontrol
 cd /vid/videocontrol
 sudo bash scripts/quick-install.sh /vid/videocontrol
 ```
@@ -34,7 +34,7 @@ sudo bash scripts/quick-install.sh /vid/videocontrol
 
 ```bash
 # Клонируем репозиторий
-git clone -b dev300 https://github.com/ya-k0v/VideoControl.git /vid/videocontrol
+git clone https://github.com/ya-k0v/VideoControl.git /vid/videocontrol
 cd /vid/videocontrol
 ```
 
@@ -223,6 +223,5 @@ sudo journalctl -u videocontrol -f
 
 ---
 
-**Версия:** 3.0.0  
-**Ветка:** dev300
+**Версия:** 3.0.0
 

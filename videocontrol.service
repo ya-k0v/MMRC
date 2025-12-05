@@ -1,10 +1,10 @@
 [Unit]
-Description=VCServer
+Description=VideoControl Server v3.0.0
 After=network.target
 
 [Service]
 Type=simple
-User=YOUR_USERNAME
+User=vcuser
 Group=vcgroup
 WorkingDirectory=/vid/videocontrol
 ExecStart=/usr/bin/node /vid/videocontrol/server.js
@@ -17,10 +17,15 @@ StandardError=journal
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/mnt/videocontrol-data /vid/videocontrol/data /vid/videocontrol/config
+# ReadWritePaths настраиваются динамически в зависимости от contentRoot из настроек
+# По умолчанию: /vid/videocontrol/data и /vid/videocontrol/config
+# Если используется внешний диск, добавьте его путь сюда
+ReadWritePaths=/vid/videocontrol/data /vid/videocontrol/config
 
 # Environment
 Environment=NODE_ENV=production
+# Загружаем переменные из .env файла
+EnvironmentFile=/vid/videocontrol/.env
 
 [Install]
 WantedBy=multi-user.target
