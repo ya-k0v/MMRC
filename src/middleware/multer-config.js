@@ -22,53 +22,37 @@ import logger from '../utils/logger.js';
 export function createUploadMiddleware(devices) {
   const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-      console.error('[MULTER] ===== DESTINATION CALLED =====');
-      console.error('[MULTER] Original filename:', file.originalname);
-      console.error('[MULTER] MIME type:', file.mimetype);
-      console.error('[MULTER] Field name:', file.fieldname);
-      
       const id = sanitizeDeviceId(req.params.id);
-      console.error('[MULTER] Device ID:', id);
       
       if (!id) {
-        console.error('[MULTER] ❌ Invalid device ID');
         return cb(new Error('invalid device id'));
       }
       
       const d = devices[id];
       if (!d) {
-        console.error('[MULTER] ❌ Device not found:', id);
         return cb(new Error('device not found'));
       }
       
       // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
       // Это важно, так как contentRoot может измениться через настройки
       const folder = getDevicesPath();  // Динамический путь из настроек
-      console.error('[MULTER] Destination folder:', folder);
       
       if (!fs.existsSync(folder)) {
-        console.error('[MULTER] Creating folder:', folder);
         fs.mkdirSync(folder, { recursive: true });
       }
       
-      console.error('[MULTER] ✅ Destination set:', folder);
-      logger.error(`[Multer] 📂 Upload destination: ${folder} (shared storage)`, { folder, deviceId: id, filename: file.originalname });
+      logger.debug(`[Multer] Upload destination: ${folder}`, { folder, deviceId: id, filename: file.originalname });
       cb(null, folder);
     },
     
     filename: (req, file, cb) => {
-      console.error('[MULTER] ===== FILENAME CALLED =====');
-      console.error('[MULTER] Original filename:', file.originalname);
-      
       // Запрещаем загрузку файлов с зарезервированными именами
       if (file.originalname.toLowerCase() === 'default.mp4') {
-        console.error('[MULTER] ❌ Reserved filename rejected');
         return cb(new Error('reserved filename'));
       }
       
       const id = sanitizeDeviceId(req.params.id);
       if (!id || !devices[id]) {
-        console.error('[MULTER] ❌ Device not found:', id);
         return cb(new Error('device not found'));
       }
       
@@ -87,14 +71,12 @@ export function createUploadMiddleware(devices) {
       }
       
       const base = path.basename(originalName);
-      console.error('[MULTER] Base filename:', base);
       
       // Сохраняем маппинг оригинального имени
       req.originalFileNames = req.originalFileNames || new Map();
       
       // Создаем безопасное имя файла через транслитерацию
       const safe = makeSafeFilename(base);
-      console.error('[MULTER] Safe filename:', safe);
       
       // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
       const devicesPath = getDevicesPath();
@@ -108,14 +90,11 @@ export function createUploadMiddleware(devices) {
         const name = path.basename(safe, ext);
         const suffix = '_' + crypto.randomBytes(3).toString('hex');
         finalSafeName = `${name}${suffix}${ext}`;
-        console.error('[MULTER] ⚠️ File exists, using suffix:', finalSafeName);
-        logger.error(`[Multer] ⚠️ Файл существует, добавлен суффикс: ${safe} → ${finalSafeName}`, { safe, finalSafeName, deviceId: id });
+        logger.debug(`[Multer] Файл существует, добавлен суффикс: ${safe} → ${finalSafeName}`, { safe, finalSafeName, deviceId: id });
       }
       
       req.originalFileNames.set(finalSafeName, base);
-      console.error('[MULTER] ✅ Final safe name:', finalSafeName);
-      console.error('[MULTER] Full path will be:', path.join(devicesPath, finalSafeName));
-      logger.error(`[Multer] 📝 "${base}" → "${finalSafeName}"`, { originalName: base, safeName: finalSafeName, deviceId: id });
+      logger.debug(`[Multer] "${base}" → "${finalSafeName}"`, { originalName: base, safeName: finalSafeName, deviceId: id });
       cb(null, finalSafeName);
     }
   });

@@ -366,11 +366,6 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
  * @param {Object} fileNamesMap - Маппинг имен
  */
 export async function processUploadedFilesAsync(deviceId, files, devicesPath, fileNamesMap) {
-  // КРИТИЧНО: Логируем начало обработки на уровне error чтобы точно было видно
-  console.error('[FileMetadata] ========== processUploadedFilesAsync CALLED ==========');
-  console.error('[FileMetadata] Device ID:', deviceId);
-  console.error('[FileMetadata] Files count:', files.length);
-  console.error('[FileMetadata] Devices path:', devicesPath);
   
   logger.error('[FileMetadata] 📦 Starting batch metadata processing', {
     deviceId,

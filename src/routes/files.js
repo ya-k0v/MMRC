@@ -652,15 +652,7 @@ export function createFilesRouter(deps) {
   
   // POST /api/devices/:id/upload - Загрузка файлов
   router.post('/:id/upload', uploadLimiter, validateUploadSize, async (req, res, next) => {
-    // КРИТИЧНО: Логируем САМОЕ НАЧАЛО обработки загрузки
-    console.error('========================================');
-    console.error('[UPLOAD ROUTE] ===== UPLOAD ROUTE CALLED =====');
-    console.error('[UPLOAD ROUTE] URL:', req.url);
-    console.error('[UPLOAD ROUTE] Method:', req.method);
-    console.error('[UPLOAD ROUTE] Content-Type:', req.headers['content-type']);
-    console.error('[UPLOAD ROUTE] Content-Length:', req.headers['content-length']);
-    console.error('[UPLOAD ROUTE] Params:', req.params);
-    logger.error('[UPLOAD ROUTE] ===== UPLOAD ROUTE CALLED =====', {
+    logger.debug('[UPLOAD ROUTE] Upload request received', {
       url: req.url,
       method: req.method,
       contentType: req.headers['content-type'],
@@ -669,20 +661,15 @@ export function createFilesRouter(deps) {
     });
     
     const id = sanitizeDeviceId(req.params.id);
-    console.error('[UPLOAD ROUTE] Sanitized ID:', id);
     
     if (!id) {
-      console.error('[UPLOAD ROUTE] ❌ Invalid device ID');
       return res.status(400).json({ error: 'Неверный ID устройства' });
     }
     
     if (!devices[id]) {
-      console.error('[UPLOAD ROUTE] ❌ Device not found:', id);
-      logger.error('[UPLOAD ROUTE] Device not found', { deviceId: id, availableDevices: Object.keys(devices) });
+      logger.warn('[UPLOAD ROUTE] Device not found', { deviceId: id, availableDevices: Object.keys(devices) });
       return res.status(404).json({ error: 'Устройство не найдено' });
     }
-    
-    console.error('[UPLOAD ROUTE] ✅ Device found:', id, devices[id].name);
     
     // КРИТИЧНО: Обрабатываем отмену загрузки клиентом
     let isAborted = false;
@@ -697,7 +684,6 @@ export function createFilesRouter(deps) {
       // Браузер может закрыть соединение во время загрузки - это нормально для больших файлов
       // Multer продолжит сохранение файла в фоне
       if (multerStarted) {
-        console.error('[Upload] ⚠️ Client closed connection but multer is processing, skipping cleanup');
         logger.warn('[Upload] Client closed connection but multer is processing, skipping cleanup', {
           deviceId: id,
           multerStarted,
@@ -709,7 +695,6 @@ export function createFilesRouter(deps) {
       
       // КРИТИЧНО: Если файлы уже сохранены multer - НЕ удаляем их!
       if (filesSavedByMulter) {
-        console.error('[Upload] ⚠️ Client closed connection but files are already saved, skipping cleanup');
         logger.warn('[Upload] Client closed connection but files are already saved, skipping cleanup', {
           deviceId: id,
           uploadedFiles: uploadedFiles.length
@@ -720,7 +705,6 @@ export function createFilesRouter(deps) {
       if (isAborted) return;
       isAborted = true;
       
-      console.error('[Upload] ❌ Upload aborted BEFORE multer started');
       logger.warn('[Upload] Upload aborted by client BEFORE multer started', {
         deviceId: id,
         uploadedFiles: uploadedFiles.length
@@ -762,38 +746,23 @@ export function createFilesRouter(deps) {
     // Multer сам обработает закрытие соединения и сохранит файл
     // Обработчики установим ПОСЛЕ multer callback
     
-    console.error('[UPLOAD ROUTE] Calling multer upload.array...');
-    
     // КРИТИЧНО: Помечаем что multer начал обработку
     // Это предотвратит удаление файлов если клиент закроет соединение во время загрузки
     multerStarted = true;
-    console.error('[UPLOAD ROUTE] ✅ Multer started, setting multerStarted flag');
     
     upload.array('files', 50)(req, res, async (err) => {
-      console.error('[UPLOAD ROUTE] ===== MULTER CALLBACK CALLED =====');
-      console.error('[UPLOAD ROUTE] Error:', err ? err.message : 'none');
-      console.error('[UPLOAD ROUTE] req.files:', req.files ? req.files.length : 'null');
-      console.error('[UPLOAD ROUTE] isAborted:', isAborted);
-      console.error('[UPLOAD ROUTE] req.aborted:', req.aborted);
-      console.error('[UPLOAD ROUTE] req.closed:', req.closed);
-      
       // КРИТИЧНО: Помечаем что файлы сохранены multer
       // После этого cleanupOnAbort не будет удалять файлы
       if (req.files && req.files.length > 0) {
         filesSavedByMulter = true;
-        console.error('[UPLOAD ROUTE] ✅ Files saved by multer, marking as saved');
         
         // Проверяем что файлы действительно существуют на диске
         for (const file of req.files) {
-          if (file.path) {
-            const exists = fs.existsSync(file.path);
-            console.error('[UPLOAD ROUTE] File exists check:', file.filename, exists, file.path);
-            if (!exists) {
-              logger.error('[UPLOAD ROUTE] ⚠️ File path from multer does not exist!', {
-                filename: file.filename,
-                path: file.path
-              });
-            }
+          if (file.path && !fs.existsSync(file.path)) {
+            logger.error('[UPLOAD ROUTE] ⚠️ File path from multer does not exist!', {
+              filename: file.filename,
+              path: file.path
+            });
           }
         }
       }
@@ -806,7 +775,6 @@ export function createFilesRouter(deps) {
       // Клиент может закрыть соединение после получения ответа, это нормально
       // Файлы уже сохранены multer, нужно их обработать
       if (isAborted && (!req.files || req.files.length === 0)) {
-        console.error('[UPLOAD ROUTE] Upload was aborted BEFORE files were saved');
         logger.warn('[UPLOAD ROUTE] Upload was aborted BEFORE files were saved', { deviceId: id });
         // Загрузка была отменена ДО сохранения файлов - не обрабатываем
         return;
@@ -815,7 +783,6 @@ export function createFilesRouter(deps) {
       // КРИТИЧНО: Если файлы сохранены, но клиент закрыл соединение - это нормально
       // Продолжаем обработку в фоне НЕЗАВИСИМО от isAborted
       if (isAborted && req.files && req.files.length > 0) {
-        console.error('[UPLOAD ROUTE] ⚠️ Client closed connection but files are saved, continuing processing...');
         logger.warn('[UPLOAD ROUTE] Client closed connection but files are saved, continuing processing', {
           deviceId: id,
           filesCount: req.files.length
@@ -825,14 +792,10 @@ export function createFilesRouter(deps) {
       // КРИТИЧНО: Сбрасываем isAborted если файлы сохранены
       // Это позволит продолжить обработку
       if (filesSavedByMulter) {
-        console.error('[UPLOAD ROUTE] ✅ Files saved, resetting isAborted to continue processing');
         isAborted = false; // Сбрасываем флаг чтобы продолжить обработку
       }
       
-      console.error('[UPLOAD ROUTE] ✅ Continuing processing after multer, isAborted:', isAborted, 'filesSavedByMulter:', filesSavedByMulter);
-      
       if (err) {
-        console.error('[UPLOAD ROUTE] ❌ Multer error:', err.message, err.code);
         // ИСПРАВЛЕНО: Специфичная обработка ошибок загрузки
         if (err.code === 'ENOSPC') {
           logger.error('[Upload] No space left on device', { error: err.message });
@@ -862,24 +825,11 @@ export function createFilesRouter(deps) {
       });
       const folderName = req.body.folderName; // Имя папки если загружается через выбор папки
 
-      // КРИТИЧНО: Логируем сразу после получения файлов от multer
-      console.error('[Upload] ========== FILES UPLOADED ==========');
-      console.error('[Upload] Device ID:', id);
-      console.error('[Upload] Files count:', uploaded.length);
-      console.error('[Upload] Files:', uploaded);
-      console.error('[Upload] Folder name:', folderName || 'null');
-      console.error('[Upload] req.files:', req.files?.map(f => ({ filename: f.filename, path: f.path, size: f.size })));
-      console.error('[Upload] isAborted:', isAborted);
-      console.error('[Upload] res.headersSent:', res.headersSent);
-      
-      logger.error('[Upload] ========== FILES UPLOADED ==========', {
+      logger.debug('[Upload] Files uploaded', {
         deviceId: id,
         filesCount: uploaded.length,
         uploaded,
-        folderName: folderName || null,
-        files: req.files?.map(f => ({ filename: f.filename, path: f.path, size: f.size })),
-        isAborted,
-        headersSent: res.headersSent
+        folderName: folderName || null
       });
 
       // КРИТИЧНО: Отправляем ответ СРАЗУ после сохранения файлов multer
@@ -890,22 +840,18 @@ export function createFilesRouter(deps) {
       if (!res.headersSent) {
         try {
           res.json({ ok: true, files: [], uploaded });
-          console.error('[Upload] ✅ Response sent, files count:', uploaded.length);
-          logger.error('[Upload] Response sent immediately after file save (all processing in background)', { 
+          logger.debug('[Upload] Response sent immediately after file save (all processing in background)', { 
             deviceId: id, 
             filesCount: uploaded.length 
           });
         } catch (sendErr) {
           // Если не удалось отправить ответ (клиент закрыл соединение) - это нормально
           // Файлы уже сохранены, продолжаем обработку
-          console.error('[Upload] ⚠️ Failed to send response (client closed connection):', sendErr.message);
           logger.warn('[Upload] Failed to send response (client closed connection), continuing processing', {
             deviceId: id,
             error: sendErr.message
           });
         }
-      } else {
-        console.error('[Upload] ⚠️ Response already sent, continuing processing...');
       }
       
       // Обновляем список файлов в фоне (не блокирует ответ)
@@ -1169,7 +1115,6 @@ export function createFilesRouter(deps) {
       // Клиент может закрыть соединение после получения ответа - это нормально
       // Файлы уже на диске, нужно их обработать и сохранить в БД
       if (isAborted && (!req.files || req.files.length === 0)) {
-        console.error('[Upload] ⚠️ Upload was aborted BEFORE files were saved, skipping processing');
         logger.warn('[Upload] Upload was aborted before files were saved, skipping file processing', { deviceId: id });
         return;
       }
@@ -1177,14 +1122,12 @@ export function createFilesRouter(deps) {
       // КРИТИЧНО: Если файлы сохранены, но клиент закрыл соединение - продолжаем обработку
       // Сбрасываем isAborted чтобы код продолжил выполнение
       if (isAborted && req.files && req.files.length > 0) {
-        console.error('[Upload] ⚠️ Client closed connection but files are saved, continuing processing...');
         logger.warn('[Upload] Client closed connection but files are saved, continuing processing', {
           deviceId: id,
           filesCount: req.files.length
         });
         // Сбрасываем флаг чтобы продолжить обработку
         isAborted = false;
-        console.error('[Upload] ✅ Reset isAborted flag, continuing processing');
       }
       
       // Обрабатываем файлы ТОЛЬКО если это не прямая загрузка папки
@@ -1253,9 +1196,6 @@ export function createFilesRouter(deps) {
         
         // ИСПРАВЛЕНО: Отправляем ответ СРАЗУ, обработку метаданных запускаем в фоне
         // Обрабатываем только обычные файлы (не папки, не PDF/PPTX/ZIP)
-        console.error('[Upload] Checking folderName:', folderName);
-        console.error('[Upload] req.files length:', (req.files || []).length);
-        
         if (!folderName) {
           // Фильтруем файлы: только видео/аудио/изображения (не PDF/PPTX/ZIP)
           const filesToProcess = (req.files || []).filter(file => {
@@ -1263,13 +1203,9 @@ export function createFilesRouter(deps) {
             return ext !== '.pdf' && ext !== '.pptx' && ext !== '.zip';
           });
           
-          console.error('[Upload] Files to process:', filesToProcess.length);
-          console.error('[Upload] Files to process details:', filesToProcess.map(f => ({ filename: f.filename, path: f.path })));
-          
           // КРИТИЧНО: Логируем если файлов для обработки нет
           if (filesToProcess.length === 0) {
-            console.error('[Upload] ⚠️ No files to process metadata');
-            logger.error('[Upload] ⚠️ No files to process metadata (all filtered out or folder upload)', {
+            logger.debug('[Upload] No files to process metadata (all filtered out or folder upload)', {
               deviceId: id,
               totalFiles: (req.files || []).length,
               folderName: folderName || null
@@ -1280,13 +1216,7 @@ export function createFilesRouter(deps) {
           if (filesToProcess.length > 0) {
             const devicesPath = getDevicesPath();
             
-            console.error('[Upload] 🚀 CALLING processUploadedFilesAsync');
-            console.error('[Upload] Device ID:', id);
-            console.error('[Upload] Files count:', filesToProcess.length);
-            console.error('[Upload] Devices path:', devicesPath);
-            
-            // КРИТИЧНО: Логируем на уровне error чтобы точно было видно
-            logger.error('[Upload] 🚀 Starting metadata processing for uploaded files', {
+            logger.debug('[Upload] Starting metadata processing for uploaded files', {
               deviceId: id,
               filesCount: filesToProcess.length,
               devicesPath,

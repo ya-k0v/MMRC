@@ -76,21 +76,11 @@ export function saveFileMetadata({
   streamUrl = null,
   streamProtocol = 'auto'
 }) {
-  console.error('[DB] ===== saveFileMetadata CALLED =====');
-  console.error('[DB] Device ID:', deviceId);
-  console.error('[DB] Safe name:', safeName);
-  console.error('[DB] Original name:', originalName);
-  console.error('[DB] File path:', filePath);
-  console.error('[DB] File size:', fileSize);
-  console.error('[DB] Has MD5:', !!md5Hash);
-  
   try {
     const db = getDatabase();
-    console.error('[DB] Database connection OK');
     
     // КРИТИЧНО: Используем retry для критических операций записи
     const result = withRetrySync(() => {
-      console.error('[DB] Preparing INSERT statement...');
       const stmt = db.prepare(`
         INSERT OR REPLACE INTO files_metadata (
           device_id, safe_name, original_name, file_path, file_size, md5_hash, partial_md5, mime_type,
@@ -100,7 +90,6 @@ export function saveFileMetadata({
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       
-      console.error('[DB] Executing INSERT...');
       const result = stmt.run(
         deviceId,
         safeName,
@@ -125,20 +114,12 @@ export function saveFileMetadata({
         streamProtocol
       );
       
-      console.error('[DB] ✅ INSERT successful!');
-      console.error('[DB] Changes:', result.changes);
-      console.error('[DB] Last insert rowid:', result.lastInsertRowid);
-      
       // Проверяем, что запись действительно в БД
       const checkStmt = db.prepare('SELECT * FROM files_metadata WHERE device_id = ? AND safe_name = ?');
       const checkResult = checkStmt.get(deviceId, safeName);
-      console.error('[DB] Verification query result:', checkResult ? 'FOUND' : 'NOT FOUND');
-      if (checkResult) {
-        console.error('[DB] Verified file in DB:', checkResult.safe_name, checkResult.file_path);
-      }
       
       // Логируем успешное сохранение с деталями
-      logger.error('✅ File metadata saved to database', { 
+      logger.debug('File metadata saved to database', { 
         deviceId, 
         safeName,
         originalName,
