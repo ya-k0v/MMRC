@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Скрипт очистки временных файлов и резервных копий
-# Использование: bash scripts/cleanup.sh [--aggressive]
+# Использование: bash dev/scripts/cleanup.sh [--aggressive]
 #
 
 set -e

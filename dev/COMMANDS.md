@@ -1,39 +1,10 @@
-# MANUAL — Командные блоки VideoControl
+# 📋 Шпаргалка по командам VideoControl
 
-Версия проекта: 3.0.0
-
-Справочник разделён по областям: Videocontrol (systemd/Node.js), Nginx, SQL/SQLite, хранилище контента, бэкапы, Android/ADB, быстрые установки и дополнительные проверки.
+Быстрая справка по командам для управления и обслуживания VideoControl.
 
 ---
 
-## 📚 Дополнительная документация
-
-### Панели управления
-
-- **Админ-панель:** `public/ADMIN_PANEL_README.md` — подробное описание админ-панели
-- **Спикер-панель:** `public/SPEAKER_PANEL_README.md` — подробное описание спикер-панели
-- **Hero-модуль:** `public/hero/README.md` — подробное описание картотеки героев
-
-### Быстрый старт
-
-- **QUICK-START.md** — пошаговая установка и подготовка окружения
-- **README.md** — обзор системы, архитектура и возможности
-
----
-
-### Новые возможности (v3.0.0)
-- **Дедупликация стримов** — один FFmpeg процесс обслуживает все устройства, использующие один и тот же исходный URL стрима. Стрим работает, пока хотя бы одно устройство его использует.
-- **Динамические пути данных** — все пути данных (content, streams, converted, logs, temp) определяются динамически на основе единой настройки `contentRoot` в админ-панели. Автоматическое создание поддиректорий.
-- **Очистка несуществующих файлов** — автоматическая проверка файлов в БД и удаление записей для файлов, которых нет на диске. API endpoint для ручной очистки.
-- **Улучшенная логика idle timeout** — стримы останавливаются только если все устройства закрыли стрим и прошло 3 минуты без активности.
-- **Hero Module** — отдельный модуль (`public/hero/`, `src/hero/`) с базой `config/hero/heroes.db` и REST API для биографий.
-- **Авто-миграции heroes.db** — база создаётся и синхронизируется при старте сервера, доступен экспорт `/api/hero/export-database`.
-- **Quick-install 2.0** — улучшенный скрипт с выбором режима хранилища, sysctl оптимизациями и готовым systemd unit.
-- **Android APK v3.0.0** — новая сборка плеера + ADB-скрипт `scripts/quick-setup-android.sh` для быстрой настройки устройств.
-
----
-
-## Блок A — Videocontrol (systemd/Node.js)
+## 🖥️ Видеоконтроль (systemd/Node.js)
 
 ### Сервис и логи
 ```bash
@@ -84,7 +55,8 @@ curl -H "Authorization: Bearer TOKEN" http://HOST/api/metrics
 
 ---
 
-## Блок B — Nginx
+## 🌐 Nginx
+
 ```bash
 sudo nginx -t
 sudo systemctl restart nginx
@@ -97,7 +69,7 @@ sudo tail -n 200 /var/log/nginx/videocontrol-error.log
 
 ---
 
-## Блок C — SQL / SQLite
+## 💾 SQL / SQLite
 
 ### Консоль и настройки
 ```bash
@@ -143,6 +115,7 @@ SET password_hash='$2b$10$jgHKNtHUKUhkftKlOfDqOulY9LFBVi/AirOu0YSKfzDlvFD60QI/W'
     updated_at=CURRENT_TIMESTAMP
 WHERE username='admin';
 ```
+
 Генерация нового bcrypt-хэша:
 ```bash
 node -e "import('bcrypt').then(b=>b.hash('NEW_STRONG_PASSWORD',10).then(console.log))"
@@ -150,8 +123,10 @@ node -e "import('bcrypt').then(b=>b.hash('NEW_STRONG_PASSWORD',10).then(console.
 
 ---
 
-## Блок D — Хранилище данных
-По умолчанию: `data/*` (локально) или `/mnt/videocontrol-data/*` (если DATA_ROOT задан). Режимы: `local`, `external`, `external_fstab`.
+## 📁 Хранилище данных
+
+По умолчанию: `data/*` (локально) или `/mnt/videocontrol-data/*` (если DATA_ROOT задан).
+
 ```bash
 # Проверка места и прав
 df -h data/content
@@ -174,7 +149,7 @@ find data/converted/trailers -type f -mtime +7 -print -delete
 
 ---
 
-## Блок E — Бэкапы и восстановление
+## 💿 Бэкапы и восстановление
 
 ### SQLite
 ```bash
@@ -201,7 +176,7 @@ rsync -aH --delete /backup/videocontrol-data/ data/
 
 ---
 
-## Блок F — Android / ADB
+## 📱 Android / ADB
 
 ### Подготовка и подключение
 ```bash
@@ -255,7 +230,8 @@ adb -s SERIAL shell monkey -p com.videocontrol.mediaplayer -c android.intent.cat
 
 ---
 
-## Блок G — Быстрая установка и переменные
+## 🚀 Быстрая установка и переменные
+
 ```bash
 # Переменные для quick-install.sh
 export AUTO_CONFIRM=1                  # отключает все вопросы
@@ -266,10 +242,10 @@ export CONTENT_FSTAB_OPTS="ext4 defaults,noatime 0 2"
 
 # Неблокирующий запуск
 sudo AUTO_CONFIRM=1 STORAGE_MODE=external CONTENT_DIR=/mnt/vc-content \
-     bash scripts/quick-install.sh /vid/videocontrol
+     bash dev/scripts/quick-install.sh /vid/videocontrol
 
 # Быстрая установка server-only (без Nginx) с автоответами
-sudo AUTO_CONFIRM=1 bash scripts/install-server.sh
+sudo AUTO_CONFIRM=1 bash dev/scripts/install-server.sh
 ```
 
 ### Чистый сервер за 5 шагов
@@ -288,7 +264,7 @@ export CONTENT_DIR=/mnt/vc-content
 export CONTENT_SOURCE=/dev/sdb1
 export CONTENT_FSTAB_OPTS="ext4 defaults,noatime 0 2"
 
-printf 'y\ny\n' | sudo bash scripts/quick-install.sh /vid/videocontrol
+printf 'y\ny\n' | sudo bash dev/scripts/quick-install.sh /vid/videocontrol
 
 sudo systemctl status videocontrol
 sudo nginx -t && sudo systemctl restart nginx
@@ -297,7 +273,8 @@ echo "URL: http://$(hostname -I | awk '{print $1}')"
 
 ---
 
-## Блок H — Дополнительные проверки
+## 🔍 Дополнительные проверки
+
 ```bash
 # Проверка синхронизации панели спикера
 journalctl -u videocontrol -n 200 --no-pager | grep "player/folderPage"
@@ -307,9 +284,7 @@ curl -s http://HOST/api/devices | jq '.[] | {device_id, current}'
 adb -s SERIAL shell ping -c 3 <SERVER_IP>
 ```
 
-- Убедитесь, что ссылки на воспроизведение идут через `/api/files/resolve/<device>/<file>` с ответом `206 Partial Content`.
-- MEDIA_ERR_SRC_NOT_SUPPORTED чаще всего связано с отсутствием трейлера/видео или неправильными Range-заголовками на сервере.
-
 ---
 
-Документ обновлен: 2025-11-17.
+**Версия:** 3.0.0
+

@@ -20,7 +20,7 @@
 #
 # ИСПОЛЬЗОВАНИЕ:
 #   # Интерактивная установка
-#   sudo bash scripts/install-server.sh
+#   sudo bash dev/scripts/install-server.sh
 #
 #   # Non-interactive
 #   AUTO_CONFIRM=1 sudo bash scripts/install-server.sh
@@ -267,7 +267,7 @@ echo ""
 echo "📖 Documentation:"
 echo "  📘 Overview:      README.md"
 echo "  🚀 Quick start:   QUICK-START.md"
-echo "  🧰 Operations:    docs/MANUAL.md"
+echo "  🧰 Operations:    dev/MANUAL.md"
 echo "  📱 Android:       clients/android-mediaplayer/README.md"
 echo "  🎧 MPV client:    clients/mpv/README.md"
 echo ""

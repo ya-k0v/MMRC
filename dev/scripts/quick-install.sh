@@ -15,7 +15,7 @@
 #
 # ИСПОЛЬЗОВАНИЕ:
 #   # Интерактивная установка
-#   sudo bash scripts/quick-install.sh /vid/videocontrol
+#   sudo bash dev/scripts/quick-install.sh /vid/videocontrol
 #
 #   # Non-interactive (production)
 #   AUTO_CONFIRM=1 STORAGE_MODE=external DATA_ROOT=/mnt/videocontrol-data \
@@ -63,8 +63,8 @@
 #   - Динамические пути данных через config/app-settings.json
 #   - Автоматические миграции heroes.db
 #   - Дедупликация стримов (один FFmpeg на URL)
-#   - Скрипты проверки: scripts/check-environment.sh
-#   - Скрипты очистки: scripts/cleanup.sh
+#   - Скрипты проверки: dev/scripts/check-environment.sh
+#   - Скрипты очистки: dev/scripts/cleanup.sh
 #
 # ========================================
 
@@ -271,10 +271,10 @@ npm install
 echo -e "${GREEN}✅ NPM packages installed${NC}"
 
 # Проверяем окружение после установки зависимостей
-if [ -f scripts/check-environment.sh ]; then
+if [ -f dev/scripts/check-environment.sh ]; then
     echo ""
     echo "  Running environment check..."
-    bash scripts/check-environment.sh || {
+    bash dev/scripts/check-environment.sh || {
         echo -e "  ${YELLOW}⚠️  Environment check completed with warnings${NC}"
     }
 fi
@@ -472,8 +472,8 @@ echo -e "${GREEN}✅ Project structure created${NC}"
 echo ""
 echo -e "${BLUE}[5/7] Optimizing network for large file uploads...${NC}"
 
-if [ -f scripts/optimize-network.sh ]; then
-    bash scripts/optimize-network.sh
+if [ -f dev/scripts/optimize-network.sh ]; then
+    bash dev/scripts/optimize-network.sh
     echo -e "${GREEN}✅ TCP buffers optimized (16MB for fast uploads)${NC}"
 fi
 
@@ -742,10 +742,10 @@ echo "📚 Documentation:"
 echo "  Main:     $INSTALL_DIR/README.md"
 echo "  Install:  $INSTALL_DIR/INSTALL.md (new OS setup)"
 echo "  Quick:    $INSTALL_DIR/QUICK-START.md"
-echo "  Manual:   $INSTALL_DIR/docs/MANUAL.md"
+echo "  Manual:   $INSTALL_DIR/dev/MANUAL.md"
 echo ""
 echo "🛠️  Utility scripts:"
-echo "  Check env:  bash $INSTALL_DIR/scripts/check-environment.sh"
-echo "  Cleanup:    bash $INSTALL_DIR/scripts/cleanup.sh"
+echo "  Check env:  bash $INSTALL_DIR/dev/scripts/check-environment.sh"
+echo "  Cleanup:    bash $INSTALL_DIR/dev/scripts/cleanup.sh"
 echo ""
 

@@ -3,11 +3,11 @@
  * Утилита для обработки существующих MP4 файлов с faststart
  * 
  * Использование:
- *   node scripts/process-existing-mp4-faststart.js [deviceId] [--all]
+ *   node dev/scripts/process-existing-mp4-faststart.js [deviceId] [--all]
  * 
  * Примеры:
- *   node scripts/process-existing-mp4-faststart.js 001TV    # Обработать файлы устройства 001TV
- *   node scripts/process-existing-mp4-faststart.js --all   # Обработать все файлы всех устройств
+ *   node dev/scripts/process-existing-mp4-faststart.js 001TV    # Обработать файлы устройства 001TV
+ *   node dev/scripts/process-existing-mp4-faststart.js --all   # Обработать все файлы всех устройств
  */
 
 import fs from 'fs';

@@ -16,7 +16,7 @@
 #   Увеличение TCP буферов до 16MB позволяет достичь скорости 80-120 MB/s.
 #
 # ИСПОЛЬЗОВАНИЕ:
-#   sudo bash scripts/optimize-network.sh
+#   sudo bash dev/scripts/optimize-network.sh
 #
 # ЧТО ДЕЛАЕТ СКРИПТ:
 #   1. Увеличивает TCP буферы (rmem_max, wmem_max) до 16MB
