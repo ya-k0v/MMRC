@@ -258,14 +258,27 @@ function setVolumeControlsDisabled(disabled) {
 }
 
 /**
+ * Проверяет наличие информации в элементах с классом meta-value-player
+ * @returns {boolean} true если есть информация
+ */
+function hasPlayerInfo() {
+  const metaValuePlayer = document.querySelector('.meta-value-player');
+  if (!metaValuePlayer) return false;
+  const text = metaValuePlayer.textContent?.trim() || '';
+  return text.length > 0;
+}
+
+/**
  * Блокирует/разблокирует все элементы управления (кнопки, миниатюры, прогресс-бар)
  * @param {boolean} disabled - true для блокировки, false для разблокировки
+ * @param {boolean} allowStopAndClose - если true, разрешает кнопки стоп и закрыть даже при disabled
  */
-function setControlButtonsDisabled(disabled) {
+function setControlButtonsDisabled(disabled, allowStopAndClose = false) {
   // Кнопки навигации PDF/PPTX/папок
   if (pdfPrevBtn) pdfPrevBtn.disabled = disabled;
   if (pdfNextBtn) pdfNextBtn.disabled = disabled;
-  if (pdfCloseBtn) pdfCloseBtn.disabled = disabled;
+  // Кнопка закрыть может быть активна, если есть информация о воспроизведении
+  if (pdfCloseBtn) pdfCloseBtn.disabled = allowStopAndClose ? false : disabled;
   
   // Кнопки управления воспроизведением
   const playBtn = document.getElementById('playBtn');
@@ -277,7 +290,8 @@ function setControlButtonsDisabled(disabled) {
   if (playBtn) playBtn.disabled = disabled;
   if (pauseBtn) pauseBtn.disabled = disabled;
   if (restartBtn) restartBtn.disabled = disabled;
-  if (stopBtn) stopBtn.disabled = disabled;
+  // Кнопка стоп может быть активна, если есть информация о воспроизведении
+  if (stopBtn) stopBtn.disabled = allowStopAndClose ? false : disabled;
   if (videoProgressBar) videoProgressBar.disabled = disabled;
   
   // Кнопка плейлиста
@@ -324,8 +338,10 @@ function updateVolumeUI() {
   setVolumeControlsDisabled(disabled);
   
   // КРИТИЧНО: Блокируем все кнопки управления при офлайне
+  // Но разрешаем кнопки стоп и закрыть, если есть информация о воспроизведении
   const controlsDisabled = !currentDevice || !isReady;
-  setControlButtonsDisabled(controlsDisabled);
+  const hasPlayerInfo = controlsDisabled && hasPlayerInfo();
+  setControlButtonsDisabled(controlsDisabled, hasPlayerInfo);
   
   if (!state) {
     if (!hasDevice) {
@@ -2551,6 +2567,8 @@ function updatePlaybackInfoUI() {
 
   updatePreviewControlButtons();
   refreshTvTilePlaybackInfo(currentDevice);
+  // Обновляем состояние кнопок с учетом информации о воспроизведении
+  updateVolumeUI();
 }
 
 function refreshTvTilePlaybackInfo(deviceId) {
