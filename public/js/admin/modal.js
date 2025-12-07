@@ -1047,6 +1047,9 @@ async function loadSettingsContent(adminFetch) {
     return;
   }
   
+  // Очищаем контейнер перед добавлением нового содержимого
+  container.innerHTML = '';
+  
   const currentContentRoot = settingsData?.runtime?.contentRoot || settingsData?.contentRoot || '';
   // По умолчанию используется локальная папка проекта (data/ внутри проекта)
   // Админ может изменить на любой абсолютный путь через настройки
