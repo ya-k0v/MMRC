@@ -225,11 +225,22 @@ function isDeviceReady(deviceId) {
 /**
  * Требует что устройство онлайн, иначе блокирует действие
  * @param {string} deviceId - ID устройства
+ * @param {boolean} allowWithPlayerInfo - если true, разрешает действие при наличии информации о воспроизведении
  * @returns {boolean} true если устройство онлайн и действие разрешено
  */
-function requireDeviceReady(deviceId) {
+function requireDeviceReady(deviceId, allowWithPlayerInfo = false) {
   if (!isDeviceReady(deviceId)) {
-    console.warn('[Speaker] Устройство офлайн, действие заблокировано', { deviceId });
+    // Если разрешено действие при наличии информации о воспроизведении, проверяем наличие информации
+    if (allowWithPlayerInfo) {
+      const hasInfo = hasPlayerInfo();
+      if (hasInfo) {
+        console.log('[Speaker] Устройство офлайн, но есть информация о воспроизведении - действие разрешено', { deviceId });
+        return true;
+      } else {
+        console.log('[Speaker] Устройство офлайн и нет информации о воспроизведении', { deviceId });
+      }
+    }
+    console.warn('[Speaker] Устройство офлайн, действие заблокировано', { deviceId, allowWithPlayerInfo });
     return false;
   }
   return true;
@@ -258,14 +269,36 @@ function setVolumeControlsDisabled(disabled) {
 }
 
 /**
- * Проверяет наличие информации в элементах с классом meta-value-player
+ * Проверяет наличие информации в элементах с классом meta-value-player или meta-value
  * @returns {boolean} true если есть информация
  */
 function hasPlayerInfo() {
+  // Ищем элемент в previewPlaybackInfo
+  const infoEl = document.getElementById('previewPlaybackInfo');
+  if (infoEl) {
+    // Проверяем meta-value-player (информация от плеера)
+    const metaValuePlayer = infoEl.querySelector('.meta-value-player');
+    if (metaValuePlayer) {
+      const text = metaValuePlayer.textContent?.trim() || '';
+      if (text.length > 0) return true;
+    }
+    // Также проверяем любой meta-value с информацией (например, "Кадр 4 из 10 | Плейлист")
+    const metaValue = infoEl.querySelector('.meta-value');
+    if (metaValue) {
+      const text = metaValue.textContent?.trim() || '';
+      // Проверяем, что это не просто пустая строка или дефолтные значения
+      if (text.length > 0 && text !== '--:--' && !text.match(/^\s*$/)) {
+        return true;
+      }
+    }
+  }
+  // Также проверяем глобально на случай, если элемент находится в другом месте
   const metaValuePlayer = document.querySelector('.meta-value-player');
-  if (!metaValuePlayer) return false;
-  const text = metaValuePlayer.textContent?.trim() || '';
-  return text.length > 0;
+  if (metaValuePlayer) {
+    const text = metaValuePlayer.textContent?.trim() || '';
+    if (text.length > 0) return true;
+  }
+  return false;
 }
 
 /**
@@ -340,8 +373,8 @@ function updateVolumeUI() {
   // КРИТИЧНО: Блокируем все кнопки управления при офлайне
   // Но разрешаем кнопки стоп и закрыть, если есть информация о воспроизведении
   const controlsDisabled = !currentDevice || !isReady;
-  const hasPlayerInfo = controlsDisabled && hasPlayerInfo();
-  setControlButtonsDisabled(controlsDisabled, hasPlayerInfo);
+  const allowStopAndClose = controlsDisabled && hasPlayerInfo();
+  setControlButtonsDisabled(controlsDisabled, allowStopAndClose);
   
   if (!state) {
     if (!hasDevice) {
@@ -809,8 +842,9 @@ function stopFolderPlaylist(reason = '', notifyServer = true) {
     // Failed to remove playlist state
   }
   // КРИТИЧНО: Проверяем онлайн статус перед отправкой команды
+  // Разрешаем остановку при наличии информации о воспроизведении
   if (notifyServer && deviceId) {
-    if (requireDeviceReady(deviceId)) {
+    if (requireDeviceReady(deviceId, true)) {
       socket.emit('control/playlistStop', { device_id: deviceId });
     } else {
       // Устройство офлайн - только очищаем локальное состояние
@@ -2891,7 +2925,7 @@ document.getElementById('restartBtn').onclick = () => {
   socket.emit('control/restart', { device_id: currentDevice });
 };
 document.getElementById('stopBtn').onclick = () => {
-  if (!requireDeviceReady(currentDevice)) return;
+  if (!requireDeviceReady(currentDevice, true)) return; // Разрешаем стоп при наличии информации о воспроизведении
   stopFolderPlaylist('toolbar stop');
   socket.emit('control/stop', { device_id: currentDevice });
   // Мгновенно убираем таймер при стопе
@@ -3019,7 +3053,7 @@ if (pdfNextBtn) {
   };
 }
 document.getElementById('pdfCloseBtn').onclick = () => {
-  if (!requireDeviceReady(currentDevice)) return;
+  if (!requireDeviceReady(currentDevice, true)) return; // Разрешаем закрыть при наличии информации о воспроизведении
   
   // Устанавливаем флаг что пользователь ЯВНО закрыл превью
   previewManuallyClosed = true;
@@ -3046,7 +3080,7 @@ document.getElementById('pdfCloseBtn').onclick = () => {
       stopFolderPlaylist('preview closed');
     } else {
       // Если плейлист активен только на сервере для текущего устройства - отправляем команду на сервер
-      if (requireDeviceReady(currentDevice)) {
+      if (requireDeviceReady(currentDevice, true)) { // Разрешаем при наличии информации о воспроизведении
         socket.emit('control/playlistStop', { device_id: currentDevice });
       }
     }
@@ -3059,7 +3093,7 @@ document.getElementById('pdfCloseBtn').onclick = () => {
   }
   
   // Останавливаем воспроизведение
-  if (requireDeviceReady(currentDevice)) {
+  if (requireDeviceReady(currentDevice, true)) { // Разрешаем при наличии информации о воспроизведении
     socket.emit('control/stop', { device_id: currentDevice });
   }
   
