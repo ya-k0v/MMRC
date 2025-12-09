@@ -125,13 +125,67 @@ export const heroQueries = {
   },
 
   create(data) {
+    // КРИТИЧНО: Валидация обязательных полей
+    if (!data || typeof data !== 'object') {
+      throw new Error('Data must be an object');
+    }
+    
+    // Валидация full_name (обязательное поле, NOT NULL в схеме)
+    if (!data.full_name || typeof data.full_name !== 'string') {
+      throw new Error('full_name is required and must be a string');
+    }
+    const trimmedName = data.full_name.trim();
+    if (trimmedName.length === 0) {
+      throw new Error('full_name cannot be empty');
+    }
+    if (trimmedName.length > 200) {
+      throw new Error('full_name is too long (max 200 characters)');
+    }
+    
+    // Валидация длины других полей
+    if (data.rank !== null && data.rank !== undefined) {
+      if (typeof data.rank !== 'string') {
+        throw new Error('rank must be a string or null');
+      }
+      if (data.rank.length > 100) {
+        throw new Error('rank is too long (max 100 characters)');
+      }
+    }
+    
+    if (data.birth_year !== null && data.birth_year !== undefined) {
+      if (typeof data.birth_year !== 'string' && typeof data.birth_year !== 'number') {
+        throw new Error('birth_year must be a string, number, or null');
+      }
+      if (typeof data.birth_year === 'string' && data.birth_year.length > 50) {
+        throw new Error('birth_year is too long (max 50 characters)');
+      }
+    }
+    
+    if (data.death_year !== null && data.death_year !== undefined) {
+      if (typeof data.death_year !== 'string' && typeof data.death_year !== 'number') {
+        throw new Error('death_year must be a string, number, or null');
+      }
+      if (typeof data.death_year === 'string' && data.death_year.length > 50) {
+        throw new Error('death_year is too long (max 50 characters)');
+      }
+    }
+    
+    if (data.biography !== null && data.biography !== undefined) {
+      if (typeof data.biography !== 'string') {
+        throw new Error('biography must be a string or null');
+      }
+      if (data.biography.length > 1024 * 1024) {
+        throw new Error('biography is too long (max 1MB)');
+      }
+    }
+    
     const stmt = heroDb.prepare(`
       INSERT INTO heroes (full_name, birth_year, death_year, rank, photo_base64, biography)
       VALUES (?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
-      data.full_name,
+      trimmedName,
       data.birth_year || null,
       data.death_year || null,
       data.rank || null,
@@ -143,6 +197,97 @@ export const heroQueries = {
   },
 
   update(id, data) {
+    // Валидация ID
+    if (!Number.isFinite(id) || id <= 0) {
+      throw new Error(`Invalid hero id: must be a positive integer`);
+    }
+    
+    // Валидация данных
+    if (!data || typeof data !== 'object') {
+      throw new Error('Data must be an object');
+    }
+    
+    // Получаем текущие данные героя из базы
+    const current = heroDb.prepare('SELECT * FROM heroes WHERE id = ?').get(id);
+    if (!current) {
+      throw new Error(`Hero with id ${id} not found`);
+    }
+    
+    // Валидация и нормализация full_name
+    let full_name = current.full_name;
+    if (data.hasOwnProperty('full_name')) {
+      if (data.full_name === null || data.full_name === undefined) {
+        throw new Error('full_name cannot be null (required field)');
+      }
+      if (typeof data.full_name !== 'string') {
+        throw new Error('full_name must be a string');
+      }
+      const trimmedName = data.full_name.trim();
+      if (trimmedName.length === 0) {
+        throw new Error('full_name cannot be empty');
+      }
+      if (trimmedName.length > 200) {
+        throw new Error('full_name is too long (max 200 characters)');
+      }
+      full_name = trimmedName;
+    }
+    
+    // Валидация и нормализация остальных полей
+    let birth_year = current.birth_year;
+    if (data.hasOwnProperty('birth_year')) {
+      if (data.birth_year !== null && data.birth_year !== undefined) {
+        if (typeof data.birth_year !== 'string' && typeof data.birth_year !== 'number') {
+          throw new Error('birth_year must be a string, number, or null');
+        }
+        if (typeof data.birth_year === 'string' && data.birth_year.length > 50) {
+          throw new Error('birth_year is too long (max 50 characters)');
+        }
+      }
+      birth_year = data.birth_year || null;
+    }
+    
+    let death_year = current.death_year;
+    if (data.hasOwnProperty('death_year')) {
+      if (data.death_year !== null && data.death_year !== undefined) {
+        if (typeof data.death_year !== 'string' && typeof data.death_year !== 'number') {
+          throw new Error('death_year must be a string, number, or null');
+        }
+        if (typeof data.death_year === 'string' && data.death_year.length > 50) {
+          throw new Error('death_year is too long (max 50 characters)');
+        }
+      }
+      death_year = data.death_year || null;
+    }
+    
+    let rank = current.rank;
+    if (data.hasOwnProperty('rank')) {
+      if (data.rank !== null && data.rank !== undefined) {
+        if (typeof data.rank !== 'string') {
+          throw new Error('rank must be a string or null');
+        }
+        if (data.rank.length > 100) {
+          throw new Error('rank is too long (max 100 characters)');
+        }
+      }
+      rank = data.rank || null;
+    }
+    
+    // Для photo_base64: если явно передан (включая null для удаления), используем его, иначе оставляем текущее
+    const photo_base64 = data.hasOwnProperty('photo_base64') ? (data.photo_base64 || null) : current.photo_base64;
+    
+    let biography = current.biography;
+    if (data.hasOwnProperty('biography')) {
+      if (data.biography !== null && data.biography !== undefined) {
+        if (typeof data.biography !== 'string') {
+          throw new Error('biography must be a string or null');
+        }
+        if (data.biography.length > 1024 * 1024) {
+          throw new Error('biography is too long (max 1MB)');
+        }
+      }
+      biography = data.biography || null;
+    }
+    
     return heroDb
       .prepare(
         `
@@ -152,13 +297,12 @@ export const heroQueries = {
       `
       )
       .run(
-        data.full_name,
-        data.birth_year || null,
-        data.death_year || null,
-        data.rank || null,
-        // Если photo_base64 явно передан (включая null для удаления), используем его, иначе оставляем текущее значение
-        data.photo_base64 !== undefined ? (data.photo_base64 || null) : null,
-        data.biography || null,
+        full_name,
+        birth_year,
+        death_year,
+        rank,
+        photo_base64,
+        biography,
         id
       );
   },
@@ -253,6 +397,41 @@ export const heroQueries = {
 
   deleteMediaByHero(heroId) {
     return heroDb.prepare('DELETE FROM hero_media WHERE hero_id = ?').run(heroId);
+  },
+
+  /**
+   * Обновление героя с медиа в транзакции для атомарности
+   * @param {number} id - ID героя
+   * @param {Object} data - Данные для обновления
+   * @param {Function} validateMediaItem - Функция валидации медиа элемента (вызывается перед добавлением)
+   */
+  updateWithMedia(id, data, validateMediaItem) {
+    // КРИТИЧНО: Используем транзакцию для атомарности операций
+    // Сохраняем ссылку на heroQueries для использования внутри транзакции
+    const self = this;
+    const transaction = heroDb.transaction((id, data, validateMediaItem) => {
+      // Обновляем основные данные героя
+      self.update(id, data);
+      
+      // Обновляем медиа в той же транзакции
+      if (Array.isArray(data.media)) {
+        self.deleteMediaByHero(id);
+        data.media.forEach((item) => {
+          // Валидация медиа элемента (если функция предоставлена)
+          if (validateMediaItem) {
+            validateMediaItem(item);
+          }
+          self.addMedia(id, {
+            type: item.type || 'photo',
+            media_base64: item.media_base64,
+            caption: item.caption || '',
+            order_index: item.order_index || 0
+          });
+        });
+      }
+    });
+    
+    return transaction(id, data, validateMediaItem);
   }
 };
 

@@ -167,6 +167,57 @@ export async function safeFetch(url, options = {}) {
 }
 
 /**
+ * Fetch с автоматическим retry при сетевых ошибках
+ * @param {Function} fetchFn - Функция для выполнения запроса (должна возвращать Promise)
+ * @param {Object} options - Опции retry
+ * @param {number} options.maxRetries - Максимальное количество попыток (по умолчанию 3)
+ * @param {number} options.initialDelay - Начальная задержка в мс (по умолчанию 1000)
+ * @param {number} options.maxDelay - Максимальная задержка в мс (по умолчанию 10000)
+ * @param {Function} options.shouldRetry - Функция для определения, нужно ли повторять запрос (по умолчанию для сетевых ошибок)
+ */
+export async function fetchWithRetry(fetchFn, options = {}) {
+  const {
+    maxRetries = 3,
+    initialDelay = 1000,
+    maxDelay = 10000,
+    shouldRetry = (error) => {
+      // Повторяем для сетевых ошибок и 5xx ошибок сервера
+      return error.name === 'TypeError' || 
+             error.name === 'NetworkError' ||
+             (error.message && error.message.includes('Failed to fetch')) ||
+             (error.status >= 500 && error.status < 600);
+    }
+  } = options;
+  
+  let lastError;
+  let delay = initialDelay;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fetchFn();
+    } catch (error) {
+      lastError = error;
+      
+      // Если это последняя попытка или ошибка не требует retry, выбрасываем ошибку
+      if (attempt === maxRetries || !shouldRetry(error)) {
+        throw error;
+      }
+      
+      // Экспоненциальная задержка с jitter
+      const jitter = Math.random() * 0.3 * delay; // Добавляем случайность до 30%
+      const currentDelay = Math.min(delay + jitter, maxDelay);
+      
+      await new Promise(resolve => setTimeout(resolve, currentDelay));
+      
+      // Увеличиваем задержку для следующей попытки
+      delay = Math.min(delay * 2, maxDelay);
+    }
+  }
+  
+  throw lastError;
+}
+
+/**
  * Показ состояния загрузки
  */
 export function showLoadingState(container, message = 'Загрузка...') {
@@ -198,6 +249,140 @@ export function showErrorState(container, message = 'Произошла ошиб
       ${retryButton}
     </div>
   `);
+}
+
+/**
+ * Конфигурация лимитов для файлов
+ */
+export const FILE_LIMITS = {
+  PHOTO_MAX_SIZE: 10 * 1024 * 1024, // 10MB
+  VIDEO_MAX_SIZE: 200 * 1024 * 1024, // 200MB
+  BASE64_OVERHEAD: 1.33, // Base64 увеличивает размер примерно на 33%
+};
+
+/**
+ * Magic bytes (сигнатуры) для валидации типов файлов
+ */
+const FILE_SIGNATURES = {
+  // Изображения
+  'image/jpeg': [
+    [0xFF, 0xD8, 0xFF],
+  ],
+  'image/png': [
+    [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+  ],
+  'image/gif': [
+    [0x47, 0x49, 0x46, 0x38, 0x37, 0x61], // GIF87a
+    [0x47, 0x49, 0x46, 0x38, 0x39, 0x61], // GIF89a
+  ],
+  'image/webp': [
+    [0x52, 0x49, 0x46, 0x46], // RIFF
+  ],
+  // Видео
+  'video/mp4': [
+    [0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70], // ftyp box
+    [0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70], // ftyp box variant
+  ],
+  'video/webm': [
+    [0x1A, 0x45, 0xDF, 0xA3], // EBML header
+  ],
+};
+
+/**
+ * Проверка magic bytes файла
+ */
+async function checkFileSignature(file, expectedMimeType) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const arrayBuffer = e.target.result;
+      const bytes = new Uint8Array(arrayBuffer);
+      const signatures = FILE_SIGNATURES[expectedMimeType];
+      
+      if (!signatures) {
+        // Если нет сигнатуры для типа, разрешаем (fallback на проверку file.type)
+        resolve(true);
+        return;
+      }
+      
+      // Проверяем каждую возможную сигнатуру
+      for (const signature of signatures) {
+        let matches = true;
+        for (let i = 0; i < signature.length && i < bytes.length; i++) {
+          if (bytes[i] !== signature[i]) {
+            matches = false;
+            break;
+          }
+        }
+        if (matches) {
+          resolve(true);
+          return;
+        }
+      }
+      
+      resolve(false);
+    };
+    reader.onerror = () => resolve(false);
+    // Читаем только первые 12 байт для проверки сигнатуры
+    reader.readAsArrayBuffer(file.slice(0, 12));
+  });
+}
+
+/**
+ * Валидация типа файла по MIME и magic bytes
+ */
+export async function validateFileType(file, expectedType) {
+  if (!file || !file.type) {
+    return { valid: false, error: 'Файл не определен' };
+  }
+  
+  const isImage = expectedType === 'image';
+  const isVideo = expectedType === 'video';
+  
+  // Проверка MIME типа
+  if (isImage && !file.type.startsWith('image/')) {
+    return { valid: false, error: 'Файл не является изображением' };
+  }
+  if (isVideo && !file.type.startsWith('video/')) {
+    return { valid: false, error: 'Файл не является видео' };
+  }
+  
+  // Проверка magic bytes для критичных типов
+  const criticalTypes = ['image/jpeg', 'image/png', 'image/gif', 'video/mp4'];
+  if (criticalTypes.includes(file.type)) {
+    const signatureValid = await checkFileSignature(file, file.type);
+    if (!signatureValid) {
+      return { valid: false, error: `Файл не соответствует заявленному типу ${file.type}` };
+    }
+  }
+  
+  return { valid: true };
+}
+
+/**
+ * Валидация размера файла и base64
+ */
+export function validateFileSize(file, isVideo = false) {
+  const maxSize = isVideo ? FILE_LIMITS.VIDEO_MAX_SIZE : FILE_LIMITS.PHOTO_MAX_SIZE;
+  
+  if (file.size > maxSize) {
+    const maxSizeMB = (maxSize / (1024 * 1024)).toFixed(0);
+    return {
+      valid: false,
+      error: `Файл слишком большой (максимум ${maxSizeMB}MB)`
+    };
+  }
+  
+  // Проверяем размер base64 (примерно на 33% больше)
+  const estimatedBase64Size = file.size * FILE_LIMITS.BASE64_OVERHEAD;
+  if (estimatedBase64Size > maxSize * 1.5) {
+    return {
+      valid: false,
+      error: 'Файл слишком большой для конвертации в base64'
+    };
+  }
+  
+  return { valid: true };
 }
 
 /**

@@ -11,6 +11,14 @@ import logger from '../utils/logger.js';
 let JWT_SECRET = process.env.JWT_SECRET;
 
 if (!JWT_SECRET) {
+  // КРИТИЧНО: В production JWT_SECRET обязателен
+  if (process.env.NODE_ENV === 'production') {
+    logger.error('[Auth] ❌ JWT_SECRET is required in production!');
+    logger.error('[Auth] Set JWT_SECRET in .env file and restart the server.');
+    logger.error('[Auth] You can generate a secure secret with: node -e "console.log(require(\'crypto\').randomBytes(64).toString(\'hex\'))"');
+    process.exit(1);
+  }
+  // В development генерируем случайный ключ
   JWT_SECRET = crypto.randomBytes(64).toString('hex');
   logger.warn('[Auth] ⚠️ JWT_SECRET not set in env, generated random secret. Tokens will be invalidated on server restart!');
   logger.warn('[Auth] 💡 Set JWT_SECRET in .env file for production persistence.');

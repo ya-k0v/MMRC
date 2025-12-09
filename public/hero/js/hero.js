@@ -59,9 +59,8 @@ let allHeroes = [];
 let autoChangeTimer = null;
 let serverHealthCheckInterval = null;
 let isServerAvailable = true; // Состояние доступности сервера
-const AUTO_CHANGE_INTERVAL = 10 * 60 * 1000; // 10 минут в миллисекундах
-const HEALTH_CHECK_INTERVAL = 30 * 1000; // Проверка доступности каждые 30 секунд
-
+const AUTO_CHANGE_INTERVAL = 10 * 60 * 1000; // 10 минут
+const HEALTH_CHECK_INTERVAL = 30 * 1000; // 30 секунд
 // Используем safeFetch вместо fetchJSON
 async function fetchJSON(url) {
   return await safeFetch(url);
@@ -104,10 +103,9 @@ async function searchHeroes(query) {
   }
 }
 
-async function loadHero(id, withAnimation = true) {
+async function loadHero(id, withAnimation = true, showLoading = true) {
   try {
-    // Показываем состояние загрузки
-    if (contentEl) {
+    if (showLoading && contentEl) {
       showLoadingState(contentEl, 'Загрузка карточки героя...');
       if (emptyStateEl) emptyStateEl.style.display = 'none';
       contentEl.style.display = 'block';
@@ -116,23 +114,22 @@ async function loadHero(id, withAnimation = true) {
     const hero = await fetchJSON(`/api/hero/${id}`);
     currentHero = hero;
     
-    if (withAnimation && contentEl && contentEl.textContent.trim() !== '') {
-      // Плавная смена карточек с кроссфейдом
+    const hasExistingContent = contentEl && contentEl.textContent.trim() !== '';
+    
+    if (withAnimation && hasExistingContent) {
       await fadeOutCurrent();
       await fadeInNew(hero);
     } else {
-      // Первая загрузка без анимации
       renderHero(hero);
       if (emptyStateEl) emptyStateEl.style.display = 'none';
-      contentEl.style.display = 'block';
+      if (contentEl) contentEl.style.display = 'block';
     }
     
-    // Запускаем таймер смены карточки
     startAutoChangeTimer();
   } catch (error) {
     console.error('[Hero] Load hero error:', error);
     if (contentEl) {
-      showErrorState(contentEl, `Не удалось загрузить данные героя: ${error.message || 'Неизвестная ошибка'}`, () => loadHero(id, withAnimation));
+      showErrorState(contentEl, `Не удалось загрузить данные героя: ${error.message || 'Неизвестная ошибка'}`, () => loadHero(id, withAnimation, showLoading));
     } else {
       alert('Не удалось загрузить данные героя');
     }
@@ -157,7 +154,6 @@ async function fadeOutCurrent() {
 
 async function fadeInNew(hero) {
   return new Promise((resolve) => {
-    // Сначала очищаем контент
     if (contentEl) {
       setHTML(contentEl, '');
       contentEl.style.opacity = '0';
@@ -165,6 +161,7 @@ async function fadeInNew(hero) {
     
     // Рендерим новый контент
     renderHero(hero);
+    
     if (emptyStateEl) emptyStateEl.style.display = 'none';
     if (contentEl) {
       contentEl.style.display = 'block';
@@ -187,6 +184,9 @@ async function fadeInNew(hero) {
             resolve();
           }, 500); // Длительность анимации fade-in
         } else {
+          if (contentEl) {
+            contentEl.style.opacity = '1';
+          }
           resolve();
         }
       });
@@ -197,15 +197,34 @@ async function fadeInNew(hero) {
 }
 
 function getRandomHero() {
-  if (!allHeroes || allHeroes.length === 0) return null;
+  if (!allHeroes || allHeroes.length === 0) {
+    return null;
+  }
+  
   // Исключаем текущего героя из выбора, если есть другие
-  const availableHeroes = allHeroes.filter(h => !currentHero || h.id !== currentHero.id);
+  const currentHeroId = currentHero ? Number(currentHero.id) : null;
+  const availableHeroes = allHeroes.filter(h => {
+    const heroId = Number(h.id);
+    return !currentHeroId || heroId !== currentHeroId;
+  });
+  
   const heroesToChooseFrom = availableHeroes.length > 0 ? availableHeroes : allHeroes;
+  if (heroesToChooseFrom.length === 0) return null;
+  
   const randomIndex = Math.floor(Math.random() * heroesToChooseFrom.length);
   return heroesToChooseFrom[randomIndex];
 }
 
+let isTimerStarting = false; // Флаг для предотвращения множественных вызовов
+
 function startAutoChangeTimer() {
+  // Защита от множественных одновременных вызовов
+  if (isTimerStarting) {
+    return;
+  }
+  
+  isTimerStarting = true;
+  
   // Очищаем предыдущий таймер
   if (autoChangeTimer) {
     clearTimeout(autoChangeTimer);
@@ -214,22 +233,69 @@ function startAutoChangeTimer() {
   
   // Обновляем карточки только если сервер доступен
   if (!isServerAvailable) {
-    console.log('[Hero Watchdog] Сервер недоступен, автосмена карточек приостановлена');
+    isTimerStarting = false;
     return;
   }
   
-  // Устанавливаем новый таймер на 10 минут
+  // Проверяем, что есть герои для выбора
+  if (!allHeroes || allHeroes.length === 0) {
+    isTimerStarting = false;
+    return;
+  }
+  
+  // Устанавливаем новый таймер
   autoChangeTimer = setTimeout(async () => {
+    isTimerStarting = false; // Сбрасываем флаг при срабатывании таймера
+    
     if (!isServerAvailable) {
-      console.log('[Hero Watchdog] Сервер недоступен, пропускаем автосмену карточки');
+      // Перезапускаем таймер для следующей попытки
+      isTimerStarting = false;
+      startAutoChangeTimer();
       return;
     }
     
     const nextHero = getRandomHero();
     if (nextHero) {
-      await loadHero(nextHero.id);
+      // Проверяем, что выбранный герой отличается от текущего
+      const currentHeroId = currentHero ? Number(currentHero.id) : null;
+      const nextHeroId = Number(nextHero.id);
+      
+      if (currentHeroId && currentHeroId === nextHeroId) {
+        console.warn(`[Hero Watchdog] Выбран тот же герой (ID: ${nextHeroId}), выбираем другого`);
+        // Пробуем выбрать другого героя
+        const availableHeroes = allHeroes.filter(h => Number(h.id) !== nextHeroId);
+        if (availableHeroes.length > 0) {
+          const randomIndex = Math.floor(Math.random() * availableHeroes.length);
+          const alternativeHero = availableHeroes[randomIndex];
+          console.log(`[Hero Watchdog] Выбран альтернативный герой: ${alternativeHero.full_name} (ID: ${alternativeHero.id})`);
+          nextHero = alternativeHero;
+        } else {
+          console.warn('[Hero Watchdog] Нет других героев для выбора');
+          isTimerStarting = false;
+          startAutoChangeTimer();
+          return;
+        }
+      }
+      
+      try {
+        await loadHero(nextHero.id, false, false); // Автосмена без анимации и без показа загрузки
+        // loadHero сам вызовет startAutoChangeTimer() после успешной загрузки
+      } catch (error) {
+        console.error('[Hero Watchdog] Ошибка при автосмене карточки:', error);
+        // Перезапускаем таймер даже при ошибке
+        isTimerStarting = false;
+        startAutoChangeTimer();
+      }
+    } else {
+      console.warn('[Hero Watchdog] Не удалось выбрать следующего героя, перезапускаем таймер');
+      // Перезапускаем таймер, если не удалось выбрать героя
+      isTimerStarting = false;
+      startAutoChangeTimer();
     }
   }, AUTO_CHANGE_INTERVAL);
+  
+  // Сбрасываем флаг после установки таймера
+  isTimerStarting = false;
 }
 
 function pauseAutoChangeTimer(reason = '') {
@@ -326,16 +392,17 @@ async function refreshHeroes() {
       const updatedHero = allHeroes.find(h => h.id === currentHero.id);
       if (updatedHero) {
         // Обновляем данные текущего героя без анимации
+        // НЕ перезапускаем таймер - он уже работает
         currentHero = updatedHero;
         renderHero(updatedHero);
-        // Перезапускаем таймер автосмены
-        startAutoChangeTimer();
+        console.log('[Hero Watchdog] Данные текущего героя обновлены без перезапуска таймера');
       }
     } else if (allHeroes.length > 0) {
       // Если текущего героя нет в списке, выбираем случайного
       const randomHero = getRandomHero();
       if (randomHero) {
         await loadHero(randomHero.id);
+        // loadHero сам вызовет startAutoChangeTimer()
       }
     }
   } catch (error) {
@@ -360,8 +427,6 @@ function initServerWatchdog() {
       await refreshHeroes();
     }
   }, AUTO_CHANGE_INTERVAL);
-  
-  console.log('[Hero Watchdog] Инициализирован: проверка доступности каждые', HEALTH_CHECK_INTERVAL / 1000, 'сек, обновление карточек каждые', AUTO_CHANGE_INTERVAL / 1000 / 60, 'мин');
   }
 
 // Функции escapeHtml, formatBiography, renderMediaThumbnail теперь импортируются из hero-utils.js
@@ -422,6 +487,119 @@ function renderHero(hero) {
 // renderMediaThumbnail теперь импортируется из hero-utils.js
 
 
+function openAvatarLightbox() {
+  if (!currentHero || !currentHero.photo_base64) return;
+  
+  // Скрываем страницу героя перед открытием лайтбокса
+  const heroContainer = document.querySelector('.hero-container');
+  if (heroContainer) {
+    heroContainer.style.opacity = '0';
+    heroContainer.style.pointerEvents = 'none';
+  }
+  
+  // Фиксируем размеры экрана при открытии
+  const screenWidth = window.innerWidth;
+  const screenHeight = window.innerHeight;
+  const maxWidth = screenWidth - 100;
+  const maxHeight = screenHeight - 200;
+  
+  const lightboxHTML = `
+    <div class="lightbox-overlay" data-action="close">
+      <button class="lightbox-close" data-action="close" title="Закрыть">✕</button>
+      <div class="lightbox-content" data-action="close">
+        <img src="${currentHero.photo_base64}" alt="${escapeHtml(currentHero.full_name || '')}" style="max-width: ${maxWidth}px; max-height: ${maxHeight}px; width: auto; height: auto; object-fit: contain;"/>
+      </div>
+    </div>
+  `;
+  setHTML(lightboxEl, lightboxHTML);
+  lightboxEl.style.display = 'block';
+  document.body.style.overflow = 'hidden';
+  
+  // Убеждаемся, что страница героя скрыта после рендеринга лайтбокса
+  if (heroContainer) {
+    heroContainer.style.opacity = '0';
+    heroContainer.style.pointerEvents = 'none';
+  }
+  
+  // Принудительное масштабирование аватара - устанавливаем размеры сразу
+  const img = lightboxEl.querySelector('img');
+  if (img) {
+    // Используем зафиксированные размеры экрана через замыкание
+    const fixedMaxWidth = maxWidth;
+    const fixedMaxHeight = maxHeight;
+    
+    // Сразу устанавливаем максимальные размеры, чтобы изображение не рендерилось в полном размере
+    img.style.maxWidth = fixedMaxWidth + 'px';
+    img.style.maxHeight = fixedMaxHeight + 'px';
+    img.style.width = 'auto';
+    img.style.height = 'auto';
+    img.style.objectFit = 'contain';
+    
+    const scaleImage = function() {
+      // Ждем, пока изображение загрузится
+      if (this.naturalWidth === 0 || this.naturalHeight === 0) {
+        setTimeout(() => scaleImage.call(this), 50);
+        return;
+      }
+      
+      const imgWidth = this.naturalWidth;
+      const imgHeight = this.naturalHeight;
+      
+      // Вычисляем масштаб для подгонки под экран
+      const scaleX = fixedMaxWidth / imgWidth;
+      const scaleY = fixedMaxHeight / imgHeight;
+      const scale = Math.min(scaleX, scaleY, 1); // Не увеличиваем маленькие изображения
+      
+      // Устанавливаем размеры принудительно
+      const newWidth = Math.floor(imgWidth * scale);
+      const newHeight = Math.floor(imgHeight * scale);
+      
+      // Принудительно устанавливаем размеры
+      this.style.width = newWidth + 'px';
+      this.style.height = newHeight + 'px';
+      this.style.maxWidth = fixedMaxWidth + 'px';
+      this.style.maxHeight = fixedMaxHeight + 'px';
+      this.style.minWidth = '0';
+      this.style.minHeight = '0';
+      this.style.objectFit = 'contain';
+      this.style.display = 'block';
+      
+      // Дополнительная проверка - если размеры все еще больше, принудительно уменьшаем
+      if (newWidth > fixedMaxWidth || newHeight > fixedMaxHeight) {
+        const finalScale = Math.min(fixedMaxWidth / newWidth, fixedMaxHeight / newHeight);
+        this.style.width = Math.floor(newWidth * finalScale) + 'px';
+        this.style.height = Math.floor(newHeight * finalScale) + 'px';
+      }
+    };
+    
+    // Обработчики для разных случаев загрузки
+    img.onload = scaleImage;
+    img.addEventListener('load', scaleImage);
+    
+    // Если изображение уже загружено
+    if (img.complete && img.naturalWidth > 0) {
+      requestAnimationFrame(() => scaleImage.call(img));
+    } else {
+      // Пробуем через небольшую задержку
+      setTimeout(() => {
+        if (img.naturalWidth > 0) {
+          scaleImage.call(img);
+        } else {
+          // Продолжаем попытки до загрузки
+          const checkInterval = setInterval(() => {
+            if (img.naturalWidth > 0) {
+              scaleImage.call(img);
+              clearInterval(checkInterval);
+            }
+          }, 50);
+          // Останавливаем через 5 секунд
+          setTimeout(() => clearInterval(checkInterval), 5000);
+        }
+      }, 100);
+    }
+  }
+}
+
 function openLightbox(index) {
   if (!currentHero || !currentHero.media?.length) return;
   currentMediaIndex = index;
@@ -429,16 +607,27 @@ function openLightbox(index) {
   const total = currentHero.media.length;
   const isLast = index === total - 1;
 
+  // Скрываем страницу героя перед открытием/переключением лайтбокса
+  const heroContainer = document.querySelector('.hero-container');
+  if (heroContainer) {
+    heroContainer.style.opacity = '0';
+    heroContainer.style.pointerEvents = 'none';
+  }
+
+  // Фиксируем размеры экрана при открытии
+  const screenWidth = window.innerWidth;
+  const screenHeight = window.innerHeight;
+  const maxWidth = screenWidth - 100;
+  const maxHeight = screenHeight - 200;
+
   const lightboxHTML = `
     <div class="lightbox-overlay" data-action="${isLast ? 'close' : 'next'}">
       <button class="lightbox-close" data-action="close" title="Закрыть">✕</button>
-      ${index > 0 ? '<button class="lightbox-nav prev" data-action="prev" title="Предыдущее">←</button>' : ''}
-      ${!isLast ? '<button class="lightbox-nav next" data-action="next" title="Следующее">→</button>' : ''}
       <div class="lightbox-content" data-action="${isLast ? 'close' : 'next'}">
         ${
           media.type === 'photo'
-            ? `<img src="${media.media_base64}" alt="${media.caption || ''}"/>`
-            : `<video src="${media.media_base64}" controls autoplay></video>`
+            ? `<img src="${media.media_base64}" alt="${media.caption || ''}" style="max-width: ${maxWidth}px; max-height: ${maxHeight}px; width: auto; height: auto; object-fit: contain;"/>`
+            : `<video src="${media.media_base64}" controls autoplay style="max-width: ${maxWidth}px; max-height: ${maxHeight}px; width: auto; height: auto; object-fit: contain;"></video>`
         }
         ${media.caption ? `<div class="lightbox-caption">${media.caption}</div>` : ''}
       </div>
@@ -450,12 +639,143 @@ function openLightbox(index) {
   setHTML(lightboxEl, lightboxHTML);
   lightboxEl.style.display = 'block';
   document.body.style.overflow = 'hidden';
+  
+  // Убеждаемся, что страница героя скрыта после рендеринга лайтбокса
+  if (heroContainer) {
+    heroContainer.style.opacity = '0';
+    heroContainer.style.pointerEvents = 'none';
+  }
+  
+  // Принудительное масштабирование изображения после загрузки
+  const img = lightboxEl.querySelector('img');
+  const video = lightboxEl.querySelector('video');
+  const mediaEl = img || video;
+  
+  if (mediaEl) {
+    // Используем зафиксированные размеры экрана через замыкание
+    const fixedMaxWidth = maxWidth;
+    const fixedMaxHeight = maxHeight;
+    
+    // Сразу устанавливаем максимальные размеры, чтобы медиа не рендерилось в полном размере
+    mediaEl.style.maxWidth = fixedMaxWidth + 'px';
+    mediaEl.style.maxHeight = fixedMaxHeight + 'px';
+    mediaEl.style.width = 'auto';
+    mediaEl.style.height = 'auto';
+    mediaEl.style.objectFit = 'contain';
+    
+    const scaleMedia = function() {
+      let mediaWidth, mediaHeight;
+      
+      if (this.tagName === 'IMG') {
+        // Для изображений
+        if (this.naturalWidth === 0 || this.naturalHeight === 0) {
+          setTimeout(() => scaleMedia.call(this), 50);
+          return;
+        }
+        mediaWidth = this.naturalWidth;
+        mediaHeight = this.naturalHeight;
+      } else {
+        // Для видео
+        if (this.videoWidth === 0 || this.videoHeight === 0) {
+          setTimeout(() => scaleMedia.call(this), 50);
+          return;
+        }
+        mediaWidth = this.videoWidth;
+        mediaHeight = this.videoHeight;
+      }
+      
+      // Вычисляем масштаб для подгонки под экран
+      const scaleX = fixedMaxWidth / mediaWidth;
+      const scaleY = fixedMaxHeight / mediaHeight;
+      const scale = Math.min(scaleX, scaleY, 1); // Не увеличиваем маленькие медиа
+      
+      // Устанавливаем размеры принудительно
+      const newWidth = Math.floor(mediaWidth * scale);
+      const newHeight = Math.floor(mediaHeight * scale);
+      
+      // Принудительно устанавливаем размеры
+      this.style.width = newWidth + 'px';
+      this.style.height = newHeight + 'px';
+      this.style.maxWidth = fixedMaxWidth + 'px';
+      this.style.maxHeight = fixedMaxHeight + 'px';
+      this.style.minWidth = '0';
+      this.style.minHeight = '0';
+      this.style.objectFit = 'contain';
+      this.style.display = 'block';
+      
+      // Дополнительная проверка - если размеры все еще больше, принудительно уменьшаем
+      if (newWidth > fixedMaxWidth || newHeight > fixedMaxHeight) {
+        const finalScale = Math.min(fixedMaxWidth / newWidth, fixedMaxHeight / newHeight);
+        this.style.width = Math.floor(newWidth * finalScale) + 'px';
+        this.style.height = Math.floor(newHeight * finalScale) + 'px';
+      }
+    };
+    
+    if (img) {
+      img.onload = scaleMedia;
+      img.addEventListener('load', scaleMedia);
+      
+      // Если изображение уже загружено
+      if (img.complete && img.naturalWidth > 0) {
+        requestAnimationFrame(() => scaleMedia.call(img));
+      } else {
+        setTimeout(() => {
+          if (img.naturalWidth > 0) {
+            scaleMedia.call(img);
+          } else {
+            // Продолжаем попытки до загрузки
+            const checkInterval = setInterval(() => {
+              if (img.naturalWidth > 0) {
+                scaleMedia.call(img);
+                clearInterval(checkInterval);
+              }
+            }, 50);
+            // Останавливаем через 5 секунд
+            setTimeout(() => clearInterval(checkInterval), 5000);
+          }
+        }, 100);
+      }
+    } else if (video) {
+      video.onloadedmetadata = scaleMedia;
+      video.addEventListener('loadedmetadata', scaleMedia);
+      
+      if (video.readyState >= 2 && video.videoWidth > 0) {
+        requestAnimationFrame(() => scaleMedia.call(video));
+      } else {
+        setTimeout(() => {
+          if (video.videoWidth > 0) {
+            scaleMedia.call(video);
+          } else {
+            // Продолжаем попытки до загрузки
+            const checkInterval = setInterval(() => {
+              if (video.videoWidth > 0) {
+                scaleMedia.call(video);
+                clearInterval(checkInterval);
+              }
+            }, 50);
+            // Останавливаем через 5 секунд
+            setTimeout(() => clearInterval(checkInterval), 5000);
+          }
+        }, 100);
+      }
+    }
+  }
 }
 
 function closeLightbox() {
   lightboxEl.style.display = 'none';
   setHTML(lightboxEl, '');
   document.body.style.overflow = '';
+  
+  // Показываем страницу героя обратно после закрытия лайтбокса
+  const heroContainer = document.querySelector('.hero-container');
+  if (heroContainer) {
+    // Используем requestAnimationFrame для плавного появления
+    requestAnimationFrame(() => {
+      heroContainer.style.opacity = '1';
+      heroContainer.style.pointerEvents = 'auto';
+    });
+  }
 }
 
 function showPrevMedia() {
@@ -475,6 +795,8 @@ document.addEventListener('click', (event) => {
   if (event.target.closest('.media-thumbnail')) {
     const idx = Number(event.target.closest('.media-thumbnail').dataset.index);
     openLightbox(idx);
+  } else if (event.target.closest('.hero-photo')) {
+    openAvatarLightbox();
   } else if (lightboxEl.style.display === 'block') {
     // Закрытие по клику на фон или на последний материал
     const action = event.target.closest('[data-action]')?.dataset.action;
@@ -509,6 +831,10 @@ if (searchInput) {
       if (query.length > 0 && autoChangeTimer) {
         clearTimeout(autoChangeTimer);
         autoChangeTimer = null;
+      }
+      // Если поле поиска очищено и таймер не запущен, перезапускаем его
+      else if (query.length === 0 && !autoChangeTimer && isServerAvailable) {
+        startAutoChangeTimer();
       }
       searchHeroes(query);
     }, 300)
@@ -545,6 +871,11 @@ if (searchInput) {
     
     if (scrollY) {
       window.scrollTo(0, parseInt(scrollY || '0') * -1);
+    }
+    
+    // Если поле поиска пустое и таймер не запущен, перезапускаем его
+    if (searchInput.value.trim().length === 0 && !autoChangeTimer && isServerAvailable) {
+      startAutoChangeTimer();
     }
   });
 }

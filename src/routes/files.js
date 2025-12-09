@@ -18,7 +18,7 @@ import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import logger, { logFile, logSecurity } from '../utils/logger.js';
 import { getCachedResolution, clearResolutionCache } from '../video/resolution-cache.js';
 import { processUploadedFilesAsync } from '../utils/file-metadata-processor.js';
-import { getFileMetadata, deleteFileMetadata, getDeviceFilesMetadata, saveFileMetadata, countFileReferences, updateFileOriginalName, createStreamingEntry, updateStreamMetadata, cleanupMissingFiles } from '../database/files-metadata.js';
+import { getFileMetadata, deleteFileMetadata, getDeviceFilesMetadata, deleteDeviceFilesMetadata, saveFileMetadata, countFileReferences, updateFileOriginalName, createStreamingEntry, updateStreamMetadata, cleanupMissingFiles } from '../database/files-metadata.js';
 import { getStreamPlaybackUrl, getStreamRestreamStatus, upsertStreamJob, removeStreamJob } from '../streams/stream-manager.js';
 import { getTrailerPath } from '../video/trailer-generator.js';
 import { requireSpeaker } from '../middleware/auth.js';
@@ -1682,6 +1682,100 @@ export function createFilesRouter(deps) {
   });
   
   // DELETE /api/devices/:id/files/:name - Удаление файла или папки
+  // DELETE /api/devices/:id/files - Полная очистка устройства
+  router.delete('/:id/files', deleteLimiter, requireAdmin, async (req, res) => {
+    const id = sanitizeDeviceId(req.params.id);
+    
+    if (!id) {
+      return res.status(400).json({ error: 'Неверный ID устройства' });
+    }
+    
+    const d = devices[id];
+    if (!d) {
+      return res.status(404).json({ error: 'Устройство не найдено' });
+    }
+    
+    // КРИТИЧНО: Используем getDevicesPath() и d.folder для получения правильного пути
+    const devicesPath = getDevicesPath();
+    if (!devicesPath) {
+      logger.error('[clear-device-files] Devices path not configured', { deviceId: id });
+      return res.status(500).json({ error: 'Путь к устройствам не настроен' });
+    }
+    
+    const devicePath = path.join(devicesPath, d.folder || id);
+    
+    try {
+      logger.info('[clear-device-files] Начало очистки устройства', { deviceId: id, devicePath });
+      
+      // Останавливаем все стримы устройства перед очисткой
+      const metadata = getDeviceFilesMetadata(id);
+      const streamingFiles = metadata.filter(m => m.content_type === 'streaming');
+      
+      for (const fileMeta of streamingFiles) {
+        try {
+          logger.info('[clear-device-files] Останавливаем стрим', { deviceId: id, fileName: fileMeta.safe_name });
+          removeStreamJob(id, fileMeta.safe_name, 'device_cleared');
+        } catch (streamErr) {
+          logger.warn('[clear-device-files] Ошибка остановки стрима', { 
+            deviceId: id, 
+            fileName: fileMeta.safe_name, 
+            error: streamErr.message 
+          });
+        }
+      }
+      
+      // Удаляем каталог устройства полностью (включая заглушки и медиа)
+      if (fs.existsSync(devicePath)) {
+        logger.info('[clear-device-files] Удаление директории', { deviceId: id, devicePath });
+        fs.rmSync(devicePath, { recursive: true, force: true });
+      } else {
+        logger.warn('[clear-device-files] Директория не существует', { deviceId: id, devicePath });
+      }
+      
+      // Создаем пустую директорию заново
+      fs.mkdirSync(devicePath, { recursive: true });
+      logger.info('[clear-device-files] Директория создана заново', { deviceId: id, devicePath });
+      
+      // Очищаем метаданные в БД (используем функцию вместо цикла)
+      const deletedCount = deleteDeviceFilesMetadata(id);
+      logger.info('[clear-device-files] Метаданные удалены', { deviceId: id, deletedCount });
+      
+      // Очищаем fileNamesMap и сохраняем
+      if (fileNamesMap[id]) {
+        fileNamesMap[id] = {};
+        saveFileNamesMap();
+        logger.info('[clear-device-files] fileNamesMap очищен', { deviceId: id });
+      }
+      
+      // Обновляем кеш устройств/файлов
+      updateDeviceFilesFromDB(id, devices, fileNamesMap);
+      
+      // Сбрасываем текущее состояние воспроизведения устройства
+      if (devices[id]) {
+        devices[id].current = null;
+        devices[id].files = [];
+      }
+      
+      io.emit('devices/updated');
+      
+      auditLog(req, AuditAction.Delete, `Device ${id} cleared`);
+      
+      logger.info('[clear-device-files] Очистка завершена успешно', { deviceId: id });
+      res.json({ success: true, cleared: true, deletedFiles: deletedCount });
+    } catch (e) {
+      logger.error('[clear-device-files] Ошибка очистки', { 
+        deviceId: id, 
+        devicePath,
+        error: e.message, 
+        stack: e.stack 
+      });
+      res.status(500).json({ 
+        error: 'Ошибка очистки устройства', 
+        details: process.env.NODE_ENV === 'development' ? e.message : undefined
+      });
+    }
+  });
+
   router.delete('/:id/files/:name', deleteLimiter, async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
     
@@ -2068,6 +2162,8 @@ export function createFilesRouter(deps) {
 
       // Дополнительный ffprobe fallback для старых файлов
       if (['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) {
+        const devicesPath = getDevicesPath();
+        const deviceFolderPath = path.join(devicesPath, id);
         const filePath = (metadata && metadata.file_path) || path.join(deviceFolderPath, safeName);
         if (
           (fileStatus.status !== 'processing' && fileStatus.status !== 'checking') &&
