@@ -1789,8 +1789,11 @@ async function selectDevice(id, resetPage = true) {
     fileList.querySelectorAll('.file-item').forEach(item => item.classList.remove('active'));
   }
   
-  // При смене устройства всегда возвращаемся в режим "Текущее"
-  setFilesMode('device', { skipLoad: true });
+  // КРИТИЧНО: При смене устройства возвращаемся в режим "Текущее"
+  // Но НЕ сбрасываем режим, если устройство не изменилось (например, при обновлении состояния)
+  if (isDeviceSwitch) {
+    setFilesMode('device', { skipLoad: true });
+  }
 
   await loadFiles();
   await syncPreviewWithPlayerState();
@@ -2638,7 +2641,13 @@ async function handlePlayAggregated({ sourceDeviceId, safeName, contentType, str
 
   // Стримы
   if (normalizedType === 'streaming') {
-    const payload = { device_id: targetDeviceId, file: safeName, type: 'streaming', streamProtocol: streamProtocol || undefined };
+    const payload = { 
+      device_id: targetDeviceId, 
+      file: safeName, 
+      type: 'streaming', 
+      streamProtocol: streamProtocol || undefined,
+      originDeviceId: sourceDeviceId // КРИТИЧНО: Указываем устройство-источник для поиска стрима
+    };
     socket.emit('control/play', payload);
     return;
   }

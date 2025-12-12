@@ -225,7 +225,16 @@ export function setupControlHandlers(socket, deps) {
           // КРИТИЧНО: Пересчитываем playbackStreamUrl и effectiveStreamProtocol внутри setTimeout
           // так как они могут быть не определены в этой области видимости
           const ext = hasExtension ? file.split('.').pop().toLowerCase() : '';
-          const streamEntry = deviceStillExists.streams ? deviceStillExists.streams[file] : undefined;
+          
+          // КРИТИЧНО: Ищем стрим сначала в целевом устройстве, затем в устройстве-источнике (если указан)
+          let streamEntry = deviceStillExists.streams ? deviceStillExists.streams[file] : undefined;
+          if (!streamEntry && originDeviceId && originDeviceId !== device_id) {
+            const sourceDevice = devices[originDeviceId];
+            if (sourceDevice && sourceDevice.streams) {
+              streamEntry = sourceDevice.streams[file];
+            }
+          }
+          
           const requestedStreamProtocol = sanitizeStreamProtocol(streamProtocol);
           let localPlaybackStreamUrl = streamEntry ? (streamEntry.proxyUrl || streamEntry.url) : null;
           let localEffectiveStreamProtocol = null;
@@ -241,7 +250,9 @@ export function setupControlHandlers(socket, deps) {
             if (streamManager) {
               const existingUrl = streamManager.getPlaybackUrl(device_id, file);
               if (!existingUrl) {
-                const metadata = getFileMetadata(device_id, file);
+                // КРИТИЧНО: Если стрим найден в устройстве-источнике, берем метаданные оттуда
+                const metadataDeviceId = (originDeviceId && originDeviceId !== device_id && streamEntry && !deviceStillExists.streams?.[file]) ? originDeviceId : device_id;
+                const metadata = getFileMetadata(metadataDeviceId, file);
                 if (metadata && metadata.content_type === 'streaming') {
                   try {
                     localPlaybackStreamUrl = await streamManager.ensureStreamRunning(device_id, file, metadata);
@@ -266,18 +277,26 @@ export function setupControlHandlers(socket, deps) {
           }
           
           // Определяем тип нового контента
-          let type = 'video';
-          if (!hasExtension) {
-            type = 'folder';
-          } else if (ext === 'pdf') {
-            type = 'pdf';
-          } else if (ext === 'pptx') {
-            type = 'pptx';
-          } else if (['png','jpg','jpeg','gif','webp'].includes(ext)) {
-            type = 'image';
-          } else if (ext === 'zip') {
-            type = 'folder';
-          } else if (streamEntry) {
+          // КРИТИЧНО: Приоритет у requestedType (переданного с фронта), затем streamEntry, затем fallback по расширению
+          let type = requestedType || null;
+          if (!type) {
+            if (!hasExtension) {
+              type = 'folder';
+            } else if (ext === 'pdf') {
+              type = 'pdf';
+            } else if (ext === 'pptx') {
+              type = 'pptx';
+            } else if (['png','jpg','jpeg','gif','webp'].includes(ext)) {
+              type = 'image';
+            } else if (ext === 'zip') {
+              type = 'folder';
+            } else if (streamEntry) {
+              type = 'streaming';
+            } else {
+              type = 'video';
+            }
+          } else if (streamEntry && type !== 'streaming') {
+            // Если streamEntry найден, но тип не streaming - принудительно streaming
             type = 'streaming';
           }
           
@@ -323,11 +342,29 @@ export function setupControlHandlers(socket, deps) {
       
       // Проверяем есть ли расширение у файла (hasExtension уже объявлена выше)
       const ext = hasExtension ? file.split('.').pop().toLowerCase() : '';
-      const streamEntry = d.streams ? d.streams[file] : undefined;
+      
+      // КРИТИЧНО: Ищем стрим сначала в целевом устройстве, затем в устройстве-источнике (если указан)
+      let streamEntry = d.streams ? d.streams[file] : undefined;
+      if (!streamEntry && originDeviceId && originDeviceId !== device_id) {
+        const sourceDevice = devices[originDeviceId];
+        if (sourceDevice && sourceDevice.streams) {
+          streamEntry = sourceDevice.streams[file];
+          logger.info('[Control] 🔍 Stream found in source device', {
+            deviceId: device_id,
+            sourceDeviceId: originDeviceId,
+            file,
+            streamEntryFound: !!streamEntry,
+            streamEntryUrl: streamEntry?.url,
+            streamEntryProtocol: streamEntry?.protocol
+          });
+        }
+      }
+      
       const requestedStreamProtocol = sanitizeStreamProtocol(streamProtocol);
       
       logger.info('[Control] 🔍 Stream entry lookup', {
         deviceId: device_id,
+        originDeviceId,
         file,
         hasStreams: !!d.streams,
         streamKeys: d.streams ? Object.keys(d.streams) : [],
@@ -360,9 +397,13 @@ export function setupControlHandlers(socket, deps) {
           
           if (!existingUrl) {
             // FFmpeg не запущен - запускаем его (lazy loading)
-            const metadata = getFileMetadata(device_id, file);
+            // КРИТИЧНО: Если стрим найден в устройстве-источнике, берем метаданные оттуда
+            const metadataDeviceId = (originDeviceId && originDeviceId !== device_id && streamEntry && !d.streams?.[file]) ? originDeviceId : device_id;
+            const metadata = getFileMetadata(metadataDeviceId, file);
             logger.info('[Control] 🔍 Checking metadata for stream', {
               deviceId: device_id,
+              metadataDeviceId,
+              originDeviceId,
               file,
               hasMetadata: !!metadata,
               contentType: metadata?.content_type,
@@ -452,11 +493,15 @@ export function setupControlHandlers(socket, deps) {
       
       // Если тип не передан - проверяем БД
       if (!type) {
-        const metadata = getFileMetadata(device_id, file);
+        // КРИТИЧНО: Если указан originDeviceId, проверяем метаданные в устройстве-источнике
+        const metadataDeviceId = (originDeviceId && originDeviceId !== device_id) ? originDeviceId : device_id;
+        const metadata = getFileMetadata(metadataDeviceId, file);
         if (metadata && metadata.content_type) {
           type = metadata.content_type;
           logger.info('[Control] 🔍 Type from DB', {
             deviceId: device_id,
+            metadataDeviceId,
+            originDeviceId,
             file,
             contentType: metadata.content_type
           });
