@@ -31,6 +31,9 @@ config/hero/heroes.db.backup.*
 config/biographies.db
 config/biographies.db-shm
 config/biographies.db-wal
+# Development/test database files
+src/database/*.sqlite
+src/database/*.db
 
 # Legacy JSON artifacts
 config/devices.json

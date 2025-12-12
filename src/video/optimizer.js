@@ -142,6 +142,8 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
   // Устанавливаем статус "обработка"
   setFileStatus(deviceId, fileName, { status: 'processing', progress: 5, canPlay: false });
   io.emit('file/processing', { device_id: deviceId, file: fileName });
+  io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 5 });
+  logger.info(`[VideoOpt] 📊 Начало обработки: ${fileName} (5%)`, { deviceId, fileName });
   
   // Определяем целевой профиль
   const profiles = videoOptConfig.profiles || {};
@@ -252,9 +254,16 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
             // Обновляем статус
             setFileStatus(deviceId, fileName, { status: 'processing', progress, canPlay: false });
             
-            // Отправляем событие клиентам каждые 5%
-            if (progress % 5 === 0) {
+            // Отправляем событие клиентам каждые 2% для более плавного прогресса
+            // Также логируем каждые 5% для уменьшения объема логов
+            const shouldEmit = progress % 2 === 0;
+            const shouldLog = progress % 5 === 0;
+            
+            if (shouldEmit) {
               io.emit('file/progress', { device_id: deviceId, file: fileName, progress });
+            }
+            
+            if (shouldLog) {
               logger.info(`[VideoOpt] 📊 Прогресс: ${progress}% (${currentTime.toFixed(1)}s / ${duration.toFixed(1)}s)`, { deviceId, fileName, progress, currentTime, duration });
             }
           }
@@ -284,7 +293,8 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     });
     
     setFileStatus(deviceId, fileName, { status: 'processing', progress: 90, canPlay: false });
-    logger.info(`[VideoOpt] ✅ Конвертация завершена: ${fileName}`, { deviceId, fileName });
+    io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 90 });
+    logger.info(`[VideoOpt] ✅ Конвертация завершена: ${fileName} (90%)`, { deviceId, fileName });
     
     // Проверяем что файл создан и не пустой
     const stats = fs.statSync(tempPath);
@@ -369,6 +379,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       setFileStatus(deviceId, finalFileName, { status: 'ready', progress: 100, canPlay: true });
       
       // КРИТИЧНО: Сначала обновляем devices, затем уведомляем о готовности файла
+      io.emit('file/progress', { device_id: deviceId, file: finalFileName, progress: 100 });
       io.emit('devices/updated');
       io.emit('file/ready', { device_id: deviceId, file: finalFileName });
       
@@ -418,6 +429,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       setFileStatus(deviceId, fileName, { status: 'ready', progress: 100, canPlay: true });
       
       // КРИТИЧНО: Сначала обновляем devices, затем уведомляем о готовности файла
+      io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 100 });
       io.emit('devices/updated');
       io.emit('file/ready', { device_id: deviceId, file: fileName });
       
@@ -468,6 +480,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       canPlay: true,  // Оригинал можно воспроизвести
       error: errorMessage 
     });
+    io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 0 });
     io.emit('file/error', { device_id: deviceId, file: fileName, error: errorMessage });
     
     return { success: false, message: errorMessage };

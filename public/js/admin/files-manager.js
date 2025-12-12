@@ -574,6 +574,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
   panelEl.querySelectorAll('.previewFileBtn').forEach(btn => {
     btn.onclick = async () => {
       const safeName = decodeURIComponent(btn.getAttribute('data-safe'));
+      const originalName = decodeURIComponent(btn.getAttribute('data-original') || safeName);
       const previewContainer = document.querySelector('#detailPane .previewHolder');
       
       if (!previewContainer) return;
@@ -583,7 +584,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         const protocol = btn.getAttribute('data-stream-protocol') || '';
         const protocolParam = protocol ? `&protocol=${encodeURIComponent(protocol)}` : '';
         const iframe = document.createElement('iframe');
-        iframe.src = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&type=streaming&file=${encodeURIComponent(safeName)}${protocolParam}`;
+        iframe.src = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&type=streaming&file=${encodeURIComponent(safeName)}&originalName=${encodeURIComponent(originalName)}${protocolParam}`;
         iframe.style.cssText = 'width:100%;height:100%;border:0';
         iframe.allow = 'autoplay; fullscreen';
         previewContainer.appendChild(iframe);
@@ -687,7 +688,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       } else {
         // Для видео и обычных изображений показываем в iframe
         const frame = previewContainer.querySelector('iframe') || document.createElement('iframe');
-        let u = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&muted=1&file=${encodeURIComponent(safeName)}`;
+        let u = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&muted=1&file=${encodeURIComponent(safeName)}&originalName=${encodeURIComponent(originalName)}`;
         
         if (['png','jpg','jpeg','gif','webp'].includes(ext)) {
           u += `&type=image&page=1`;

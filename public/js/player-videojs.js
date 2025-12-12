@@ -17,8 +17,14 @@ const preview = url.searchParams.get('preview') === '1';
 const forceMuted = url.searchParams.get('muted') === '1';
 const forceSound = (url.searchParams.get('sound') === '1') || (url.searchParams.get('autoplay') === '1');
 const previewFile = url.searchParams.get('file');
+const previewOriginalName = url.searchParams.get('originalName'); // Оригинальное имя для отображения
 const previewStreamProtocol = url.searchParams.get('protocol');
 const previewStreamUrl = url.searchParams.get('stream_url'); // Прямой URL стрима для превью
+
+// КРИТИЧНО: Устанавливаем заголовок страницы с оригинальным именем файла для превью
+if (preview && previewOriginalName) {
+  document.title = `${previewOriginalName} - Preview - Video Control`;
+}
 
 const idle = document.getElementById('idle');
 const v = document.getElementById('v');
@@ -284,10 +290,50 @@ if (!device_id || !device_id.trim()) {
   document.addEventListener('DOMContentLoaded', () => {
     if (typeof videojs !== 'undefined') {
       try {
+        // КРИТИЧНО: Определяем тип контента ДО инициализации Video.js для правильной настройки параметров
+        let isStaticPreview = false;
+        if (preview && previewFile) {
+          const previewType = url.searchParams.get('type');
+          const ext = previewFile.split('.').pop().toLowerCase();
+          isStaticPreview = previewType === 'pdf' || previewType === 'pptx' || previewType === 'folder' || previewType === 'image' || 
+                           ['png','jpg','jpeg','gif','webp'].includes(ext) || !ext;
+        }
+        
+        // КРИТИЧНО: Для статического превью устанавливаем обработчик ошибок на элемент video ДО инициализации Video.js
+        // Это помогает перехватить ошибки на более раннем этапе
+        if (isStaticPreview && v) {
+          v.addEventListener('error', function(e) {
+            // Полностью подавляем ошибки для статического контента
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+          }, true); // Используем capture phase для раннего перехвата
+          
+          // КРИТИЧНО: Перехватываем console.error для подавления ошибок Video.js для статического контента
+          const originalConsoleError = console.error;
+          console.error = function(...args) {
+            // Проверяем, является ли это ошибкой Video.js для статического контента
+            const errorStr = args.join(' ');
+            if (errorStr.includes('VIDEOJS: ERROR') && 
+                (errorStr.includes('MEDIA_ERR_SRC_NOT_SUPPORTED') || errorStr.includes('CODE:4'))) {
+              // Подавляем ошибку Video.js для статического контента
+              return;
+            }
+            // Для всех остальных ошибок используем оригинальный console.error
+            originalConsoleError.apply(console, args);
+          };
+          
+          // Восстанавливаем console.error после инициализации Video.js
+          setTimeout(() => {
+            console.error = originalConsoleError;
+          }, 1000);
+        }
+        
         vjsPlayer = videojs('v', {
           controls: false,
-          autoplay: preview ? 'muted' : false, // SAFARI: autoplay только в preview режиме и только если muted
-          preload: preview ? 'auto' : 'metadata', // В preview загружаем сразу для Safari
+          // КРИТИЧНО: Для статического превью отключаем autoplay и preload, чтобы Video.js не пытался загружать контент
+          autoplay: (preview && !isStaticPreview) ? 'muted' : false, // SAFARI: autoplay только для видео в preview режиме
+          preload: (preview && !isStaticPreview) ? 'auto' : 'metadata', // В preview загружаем только видео
           muted: true,
           loop: false,
           playsinline: true,
@@ -304,13 +350,56 @@ if (!device_id || !device_id.trim()) {
           fluid: false
         });
         
+        // КРИТИЧНО: Устанавливаем обработчик ошибок ДО ready(), чтобы перехватить ошибки как можно раньше
+        // Для статического превью используем one() для перехвата первой ошибки
+        if (preview && previewFile) {
+          const previewType = url.searchParams.get('type');
+          const ext = previewFile.split('.').pop().toLowerCase();
+          const isStaticPreview = previewType === 'pdf' || previewType === 'pptx' || previewType === 'folder' || previewType === 'image' || 
+                                 ['png','jpg','jpeg','gif','webp'].includes(ext) || !ext;
+          
+          if (isStaticPreview) {
+            // Для статического превью перехватываем ошибки ДО того, как Video.js попытается загрузить контент
+            vjsPlayer.one('error', function() {
+              // Полностью игнорируем ошибки для статического контента
+              return;
+            });
+            // Также устанавливаем постоянный обработчик на случай множественных ошибок
+            vjsPlayer.on('error', function() {
+              return;
+            });
+          }
+        }
+        
         // Ждем полной готовности Video.js
         vjsPlayer.ready(function() {
+          
+          // КРИТИЧНО: Для статического превью сразу останавливаем Video.js и скрываем контейнер
+          // НЕ устанавливаем пустой src - это вызывает ошибку MEDIA_ERR_SRC_NOT_SUPPORTED
+          if (isStaticPreview) {
+            try {
+              vjsPlayer.pause();
+              // НЕ вызываем vjsPlayer.src({ src: '' }) - это вызывает ошибку!
+              // Просто скрываем контейнер и останавливаем плеер
+              if (videoContainer) videoContainer.style.display = 'none';
+              // Используем tech() для предотвращения загрузки
+              const tech = vjsPlayer.tech();
+              if (tech && tech.setSrc) {
+                try {
+                  tech.setSrc('');
+                } catch (e) {
+                  // Игнорируем ошибки при установке пустого src через tech
+                }
+              }
+            } catch (e) {
+              // Игнорируем ошибки при остановке для статического контента
+            }
+          }
           
           // КРИТИЧНО: НЕ очищаем буферы здесь - они уже очищены при инициализации выше
           // Если очистить здесь, можно случайно удалить заглушку, которая уже загружается
           // Дополнительная очистка нужна только для видео, если оно случайно воспроизводится из кэша
-          if (vjsPlayer) {
+          if (vjsPlayer && !isStaticPreview) {
             try {
               // Останавливаем видео на случай если оно играет из кэша
               vjsPlayer.pause();
@@ -426,9 +515,23 @@ if (!device_id || !device_id.trim()) {
           
           // Обработчик ошибок
           vjsPlayer.on('error', function() {
+            // КРИТИЧНО: Если это preview режим и статический контент, игнорируем ошибки СРАЗУ
+            // Это должно быть первой проверкой, чтобы не логировать ошибки для статического контента
+            if (preview && previewFile) {
+              const previewType = url.searchParams.get('type');
+              const ext = previewFile.split('.').pop().toLowerCase();
+              const isStaticPreview = previewType === 'pdf' || previewType === 'pptx' || previewType === 'folder' || previewType === 'image' || 
+                                     ['png','jpg','jpeg','gif','webp'].includes(ext) || !ext;
+              
+              if (isStaticPreview) {
+                // Для статического превью ошибки Video.js полностью игнорируем (не логируем)
+                return;
+              }
+            }
+            
             // Если src отсутствует (статические превью папок/PDF/PPTX/картинок очищают src), игнорируем
             const srcInfo = vjsPlayer.currentSource && vjsPlayer.currentSource();
-            if (!srcInfo || !srcInfo.src) {
+            if (!srcInfo || !srcInfo.src || srcInfo.src === '') {
               return;
             }
             
@@ -613,6 +716,24 @@ if (!device_id || !device_id.trim()) {
           });
           
           vjsPlayer.on('loadstart', () => {
+            // КРИТИЧНО: Для статического превью предотвращаем загрузку контента
+            if (preview && previewFile) {
+              const previewType = url.searchParams.get('type');
+              const ext = previewFile.split('.').pop().toLowerCase();
+              const isStaticPreview = previewType === 'pdf' || previewType === 'pptx' || previewType === 'folder' || previewType === 'image' || 
+                                     ['png','jpg','jpeg','gif','webp'].includes(ext) || !ext;
+              
+              if (isStaticPreview) {
+                // Немедленно останавливаем и очищаем src для статического контента
+                try {
+                  vjsPlayer.pause();
+                  vjsPlayer.src({ src: '' });
+                  if (videoContainer) videoContainer.style.display = 'none';
+                } catch (e) {
+                  // Игнорируем ошибки
+                }
+              }
+            }
           });
           
           vjsPlayer.on('loadeddata', () => {
@@ -626,11 +747,25 @@ if (!device_id || !device_id.trim()) {
           // Загружаем заглушку или preview файл после готовности
           if (preview && previewFile) {
             // Preview режим - показываем указанный файл
+            // КРИТИЧНО: Определяем тип контента СРАЗУ, чтобы остановить Video.js для статического контента
+            const previewType = url.searchParams.get('type');
+            const previewPage = url.searchParams.get('page');
+            const ext = previewFile.split('.').pop().toLowerCase();
+            const isStaticPreview = previewType === 'pdf' || previewType === 'pptx' || previewType === 'folder' || previewType === 'image' || 
+                                   ['png','jpg','jpeg','gif','webp'].includes(ext) || !ext;
+            
+            // КРИТИЧНО: Для статических превью СРАЗУ останавливаем Video.js, чтобы избежать ошибок загрузки
+            if (isStaticPreview) {
+              try {
+                vjsPlayer.pause();
+                vjsPlayer.src({ src: '' });
+                videoContainer.style.display = 'none';
+              } catch (err) {
+                console.debug('[Player] Ошибка остановки Video.js для статического превью (можно игнорировать):', err);
+              }
+            }
+            
             setTimeout(() => {
-              const previewType = url.searchParams.get('type');
-              const previewPage = url.searchParams.get('page');
-              const ext = previewFile.split('.').pop().toLowerCase();
-              
               console.log('[Player] 🔍 Preview режим:', { previewFile, previewType, previewPage, ext });
               
               // КРИТИЧНО: Для статических превью (pdf/pptx/folder/image) выключаем видеоплеер,

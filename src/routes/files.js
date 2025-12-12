@@ -22,6 +22,7 @@ import { getStreamPlaybackUrl, getStreamRestreamStatus, upsertStreamJob, removeS
 import { getTrailerPath } from '../video/trailer-generator.js';
 import { requireSpeaker } from '../middleware/auth.js';
 import { validateUploadSize } from '../middleware/multer-config.js';
+import { validateFilesAsync } from '../middleware/file-validation.js';
 import { getDatabase } from '../database/database.js';
 
 const STREAM_PROTOCOLS = new Set(['auto', 'hls', 'dash', 'mpegts']);
@@ -461,6 +462,85 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
     });
     
     if (!exists) {
+      // КРИТИЧНО: Если файл с contentType='pptx' или 'pdf' не существует, но папка существует,
+      // значит файл был конвертирован, но метаданные не обновились
+      if ((f.content_type === 'pdf' || f.content_type === 'pptx') && safeName.includes('.')) {
+        const folderName = safeName.replace(/\.(pdf|pptx)$/i, '');
+        const devicesPath = getDevicesPath();
+        const deviceFolder = path.join(devicesPath, devices[deviceId]?.folder || deviceId);
+        const possibleFolderPath = path.join(deviceFolder, folderName);
+        
+        if (fs.existsSync(possibleFolderPath) && fs.statSync(possibleFolderPath).isDirectory()) {
+          // Папка существует - файл был конвертирован, но метаданные не обновились
+          logger.warn('[updateDeviceFilesFromDB] Обнаружен конвертированный файл без обновленных метаданных, обновляем...', {
+            deviceId,
+            oldSafeName: safeName,
+            newSafeName: folderName,
+            contentType: f.content_type,
+            folderPath: possibleFolderPath
+          });
+          
+          // Обновляем метаданные в БД (в фоне, чтобы не блокировать основную логику)
+          Promise.resolve().then(async () => {
+            try {
+              const { deleteFileMetadata, saveFileMetadata } = await import('../database/files-metadata.js');
+              const folderStats = fs.statSync(possibleFolderPath);
+              const { getFolderImagesCount } = await import('../converters/folder-converter.js');
+              const pagesCount = await getFolderImagesCount(deviceId, folderName);
+              
+              // Удаляем старую запись
+              deleteFileMetadata(deviceId, safeName);
+              
+              // Создаем новую запись для папки
+              saveFileMetadata({
+                deviceId,
+                safeName: folderName,
+                originalName: displayName.replace(/\.(pdf|pptx)$/i, ''),
+                filePath: path.resolve(possibleFolderPath),
+                fileSize: 0,
+                md5Hash: '',
+                partialMd5: null,
+                mimeType: null,
+                videoParams: {},
+                audioParams: {},
+                fileMtime: folderStats.mtimeMs,
+                contentType: 'folder',
+                streamUrl: null,
+                streamProtocol: 'auto',
+                pagesCount
+              });
+              
+              logger.info('[updateDeviceFilesFromDB] ✅ Метаданные обновлены для конвертированного файла', {
+                deviceId,
+                oldSafeName: safeName,
+                newSafeName: folderName,
+                pagesCount
+              });
+              
+              // Обновляем список файлов после обновления метаданных
+              await new Promise(resolve => setTimeout(resolve, 200)); // Задержка для завершения транзакции БД
+              updateDeviceFilesFromDB(deviceId, devices, fileNamesMap);
+            } catch (updateErr) {
+              logger.error('[updateDeviceFilesFromDB] Ошибка обновления метаданных для конвертированного файла', {
+                deviceId,
+                safeName,
+                error: updateErr.message,
+                stack: updateErr.stack
+              });
+            }
+          }).catch(err => {
+            logger.error('[updateDeviceFilesFromDB] Необработанная ошибка при обновлении метаданных', {
+              deviceId,
+              safeName,
+              error: err.message
+            });
+          });
+          
+          // Пропускаем эту итерацию, метаданные будут обновлены в фоне
+          return;
+        }
+      }
+      
       logger.warn('[updateDeviceFilesFromDB] Static content not found on disk', {
         deviceId,
         safeName,
@@ -900,7 +980,7 @@ export function createFilesRouter(deps) {
         fileNamesMap[targetDeviceId][targetSafeName] = originalName;
         saveFileNamesMap(fileNamesMap);
         // Обновляем метаданные в БД, если originalName отличается
-        if (existing.original_name !== originalName) {
+        if (existing && existing.original_name !== originalName) {
           updateFileOriginalName(targetDeviceId, targetSafeName, originalName);
         }
         updateDeviceFilesFromDB(targetDeviceId, devices, fileNamesMap);
@@ -1380,6 +1460,49 @@ export function createFilesRouter(deps) {
         logger.error('[Upload] Upload error', { error: err.message, code: err.code });
         cleanupOnAbort();
         return res.status(400).json({ error: err.message });
+      }
+      
+      // КРИТИЧНО: Валидация MIME-типов файлов (проверка реального типа, а не только расширения)
+      // Это дополнительная защита от подделки расширений файлов
+      if (req.files && req.files.length > 0) {
+        try {
+          const validationResult = await validateFilesAsync(req.files);
+          
+          if (!validationResult.valid) {
+            logger.warn('[Upload] ⚠️ File MIME type validation failed', {
+              deviceId: id,
+              invalidFiles: validationResult.invalid
+            });
+            
+            // Очищаем файлы при ошибке валидации
+            cleanupOnAbort();
+            
+            return res.status(400).json({
+              error: 'Обнаружены файлы с недопустимыми типами',
+              invalid: validationResult.invalid
+            });
+          }
+          
+          // Сохраняем результаты валидации для дальнейшего использования
+          req.validatedFiles = validationResult.results;
+          
+          logger.debug('[Upload] ✅ File MIME type validation passed', {
+            deviceId: id,
+            filesCount: req.files.length,
+            validatedMimes: validationResult.results.map(r => r.mime)
+          });
+        } catch (validationErr) {
+          logger.error('[Upload] ❌ File MIME type validation error', {
+            deviceId: id,
+            error: validationErr.message,
+            stack: validationErr.stack
+          });
+          
+          // Очищаем файлы при ошибке валидации
+          cleanupOnAbort();
+          
+          return res.status(500).json({ error: 'Ошибка валидации файлов' });
+        }
       }
       
       const uploaded = (req.files || []).map(f => {
@@ -3121,6 +3244,81 @@ export function createFilesRouter(deps) {
       // КРИТИЧНО: Определяем contentType для папок/PDF/PPTX из метаданных БД
       if (metadata && (metadata.content_type === 'folder' || metadata.content_type === 'pdf' || metadata.content_type === 'pptx')) {
         contentType = metadata.content_type;
+        
+        // КРИТИЧНО: Если в БД указан contentType = 'pdf' или 'pptx', но файл не существует на диске,
+        // проверяем, не был ли он уже конвертирован в папку
+        if ((contentType === 'pdf' || contentType === 'pptx') && metadata.file_path) {
+          if (!fs.existsSync(metadata.file_path)) {
+            // Файл не существует, проверяем наличие папки (конвертированный файл)
+            const folderName = safeName.replace(/\.(pdf|pptx)$/i, '');
+            const devicesPath = getDevicesPath();
+            const deviceFolder = path.join(devicesPath, devices[id]?.folder || id);
+            const possibleFolderPath = path.join(deviceFolder, folderName);
+            
+            if (fs.existsSync(possibleFolderPath) && fs.statSync(possibleFolderPath).isDirectory()) {
+              // Папка существует - файл был конвертирован, но метаданные не обновились
+              logger.warn('[files-with-status] Обнаружен конвертированный файл без обновленных метаданных', {
+                deviceId: id,
+                safeName,
+                contentType,
+                folderPath: possibleFolderPath
+              });
+              
+              // Обновляем contentType на 'folder'
+              contentType = 'folder';
+              
+              // Пытаемся обновить метаданные в БД
+              try {
+                const { deleteFileMetadata, saveFileMetadata } = await import('../database/files-metadata.js');
+                const folderStats = fs.statSync(possibleFolderPath);
+                const { getFolderImagesCount } = await import('../converters/folder-converter.js');
+                const pagesCount = await getFolderImagesCount(id, folderName);
+                
+                // Удаляем старую запись
+                deleteFileMetadata(id, safeName);
+                
+                // Создаем новую запись для папки
+                saveFileMetadata({
+                  deviceId: id,
+                  safeName: folderName,
+                  originalName: originalName.replace(/\.(pdf|pptx)$/i, ''),
+                  filePath: path.resolve(possibleFolderPath),
+                  fileSize: 0,
+                  md5Hash: '',
+                  partialMd5: null,
+                  mimeType: null,
+                  videoParams: {},
+                  audioParams: {},
+                  fileMtime: folderStats.mtimeMs,
+                  contentType: 'folder',
+                  streamUrl: null,
+                  streamProtocol: 'auto',
+                  pagesCount
+                });
+                
+                logger.info('[files-with-status] ✅ Метаданные обновлены для конвертированного файла', {
+                  deviceId: id,
+                  oldSafeName: safeName,
+                  newSafeName: folderName,
+                  pagesCount
+                });
+                
+                // Обновляем safeName для дальнейшей обработки
+                safeName = folderName;
+                metadata = getFileMetadata(id, folderName);
+                if (metadata) {
+                  contentType = metadata.content_type || 'folder';
+                }
+              } catch (updateErr) {
+                logger.error('[files-with-status] Ошибка обновления метаданных для конвертированного файла', {
+                  deviceId: id,
+                  safeName,
+                  error: updateErr.message
+                });
+              }
+            }
+          }
+        }
       } else if (!ext || ext === '' || ext === '.zip') {
         // Fallback: если нет метаданных, определяем по отсутствию расширения
         contentType = 'folder';
@@ -3149,6 +3347,56 @@ export function createFilesRouter(deps) {
           } catch (error) {
             folderImageCount = null;
           }
+        }
+      }
+      
+      // КРИТИЧНО: Проверяем существование файла/папки перед добавлением в список
+      // Для статического контента (папки/PDF/PPTX) проверяем существование папки
+      if (contentType === 'folder' || contentType === 'pdf' || contentType === 'pptx') {
+        const checkPath = metadata?.file_path || path.join(getDevicesPath(), devices[id]?.folder || id, safeName);
+        if (!fs.existsSync(checkPath)) {
+          logger.warn('[files-with-status] Статический контент не найден на диске, пропускаем', {
+            deviceId: id,
+            safeName,
+            contentType,
+            filePath: checkPath
+          });
+          continue; // Пропускаем этот файл
+        }
+        
+        // Дополнительная проверка для папок
+        if (contentType === 'folder') {
+          try {
+            const stat = fs.statSync(checkPath);
+            if (!stat.isDirectory()) {
+              logger.warn('[files-with-status] Путь существует, но это не папка, пропускаем', {
+                deviceId: id,
+                safeName,
+                filePath: checkPath
+              });
+              continue; // Пропускаем этот файл
+            }
+          } catch (statErr) {
+            logger.warn('[files-with-status] Ошибка проверки папки, пропускаем', {
+              deviceId: id,
+              safeName,
+              filePath: checkPath,
+              error: statErr.message
+            });
+            continue; // Пропускаем этот файл
+          }
+        }
+      } else if (contentType !== 'streaming') {
+        // Для обычных файлов проверяем существование
+        const checkPath = metadata?.file_path || path.join(getDevicesPath(), devices[id]?.folder || id, safeName);
+        if (!fs.existsSync(checkPath)) {
+          logger.warn('[files-with-status] Файл не найден на диске, пропускаем', {
+            deviceId: id,
+            safeName,
+            contentType,
+            filePath: checkPath
+          });
+          continue; // Пропускаем этот файл
         }
       }
       
