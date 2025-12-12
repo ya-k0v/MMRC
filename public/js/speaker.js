@@ -1007,13 +1007,35 @@ async function fetchStaticPreviewImages(deviceId, safeName, contentType) {
       );
     }
     if (contentType === 'pdf' || contentType === 'pptx') {
-      const res = await speakerFetch(`/api/devices/${encodeURIComponent(deviceId)}/slides-count?file=${encodeURIComponent(safeName)}`);
-      if (!res.ok) return [];
-      const data = await res.json();
-      const count = Math.min(Number(data.count) || 0, 20);
+      // КРИТИЧНО: После конвертации PDF/PPTX превращается в папку с именем без расширения
+      // Проверяем, существует ли папка (файл уже конвертирован) или еще исходный файл
+      // Используем имя папки для получения изображений
+      const folderName = safeName.replace(/\.(pdf|pptx)$/i, '');
+      
+      // Пробуем получить количество слайдов по исходному имени файла
+      let res = await speakerFetch(`/api/devices/${encodeURIComponent(deviceId)}/slides-count?file=${encodeURIComponent(safeName)}`);
+      let count = 0;
+      
+      if (res.ok) {
+        const data = await res.json();
+        count = Math.min(Number(data.count) || 0, 20);
+      }
+      
+      // Если не получилось по исходному имени, пробуем по имени папки (файл уже конвертирован)
+      if (count === 0) {
+        res = await speakerFetch(`/api/devices/${encodeURIComponent(deviceId)}/slides-count?file=${encodeURIComponent(folderName)}`);
+        if (res.ok) {
+          const data = await res.json();
+          count = Math.min(Number(data.count) || 0, 20);
+        }
+      }
+      
+      if (count === 0) return [];
+      
       const urlType = contentType === 'pdf' ? 'page' : 'slide';
+      // КРИТИЧНО: Используем имя папки для получения изображений (после конвертации исходный файл удален)
       return Array.from({ length: count }, (_, idx) =>
-        `/api/devices/${encodeURIComponent(deviceId)}/converted/${encodeURIComponent(safeName)}/${urlType}/${idx + 1}`
+        `/api/devices/${encodeURIComponent(deviceId)}/converted/${encodeURIComponent(folderName)}/${urlType}/${idx + 1}`
       );
     }
   } catch (error) {

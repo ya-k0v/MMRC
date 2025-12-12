@@ -17,6 +17,7 @@ import logger, { logFile, logSecurity } from '../utils/logger.js';
 import { getCachedResolution, clearResolutionCache } from '../video/resolution-cache.js';
 import { processUploadedFilesAsync, processUploadedStaticContent } from '../utils/file-metadata-processor.js';
 import { getFileMetadata, deleteFileMetadata, getDeviceFilesMetadata, deleteDeviceFilesMetadata, saveFileMetadata, countFileReferences, updateFileOriginalName, createStreamingEntry, updateStreamMetadata, cleanupMissingFiles } from '../database/files-metadata.js';
+import { getFileStatus } from '../video/file-status.js';
 import { getStreamPlaybackUrl, getStreamRestreamStatus, upsertStreamJob, removeStreamJob } from '../streams/stream-manager.js';
 import { getTrailerPath } from '../video/trailer-generator.js';
 import { requireSpeaker } from '../middleware/auth.js';
@@ -1543,7 +1544,12 @@ export function createFilesRouter(deps) {
                     folderName,
                     originalFolderName,
                     folderPath,
-                    'folder'
+                    'folder',
+                    {
+                      updateDeviceFilesFromDB, // КРИТИЧНО: Передаем функцию для обновления списка файлов
+                      devices,
+                      fileNamesMap
+                    }
                   );
                   
                   if (result.success) {
@@ -1645,6 +1651,7 @@ export function createFilesRouter(deps) {
                   devices,
                   fileNamesMap,
                   saveFileNamesMapFn: saveFileNamesMap,
+                  updateDeviceFilesFromDB, // КРИТИЧНО: Передаем функцию для обновления списка файлов
                   io
                 }
               );
@@ -2977,7 +2984,27 @@ export function createFilesRouter(deps) {
     for (let i = 0; i < files.length; i++) {
       const safeName = files[i];
       
-      const fileStatus = getFileStatus(id, safeName) || { status: 'ready', progress: 100, canPlay: true };
+      // КРИТИЧНО: Для папок проверяем статус и по исходному имени файла (PDF/PPTX)
+      // Это нужно, так как статус сохраняется с исходным именем файла (например, "file.pdf"),
+      // а в списке файлов после конвертации будет имя папки (например, "file")
+      let fileStatus = getFileStatus(id, safeName);
+      if (!fileStatus || fileStatus.status === 'ready') {
+        // Если статус не найден или файл готов, проверяем исходное имя файла (для PDF/PPTX)
+        const ext = path.extname(safeName).toLowerCase();
+        if (!ext || ext === '' || ext === '.zip') {
+          // Это папка, проверяем возможные исходные имена (PDF/PPTX)
+          const pdfName = `${safeName}.pdf`;
+          const pptxName = `${safeName}.pptx`;
+          const pdfStatus = getFileStatus(id, pdfName);
+          const pptxStatus = getFileStatus(id, pptxName);
+          if (pdfStatus && pdfStatus.status !== 'ready') {
+            fileStatus = pdfStatus;
+          } else if (pptxStatus && pptxStatus.status !== 'ready') {
+            fileStatus = pptxStatus;
+          }
+        }
+      }
+      fileStatus = fileStatus || { status: 'ready', progress: 100, canPlay: true };
       
       let resolution = null;
       let isPlaceholder = false;

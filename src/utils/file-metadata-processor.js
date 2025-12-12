@@ -576,109 +576,232 @@ export async function processUploadedStaticContent(
       finalSafeName = safeName; // Имя папки
 
     } else if (contentType === 'pdf' || contentType === 'pptx') {
-      // Для PDF/PPTX: конвертируем в слайды, удаляем исходный файл
+      // Для PDF/PPTX: сначала сохраняем метаданные исходного файла, затем конвертируем в фоне
       if (!stats.isFile()) {
         return { success: false, error: 'Expected file for PDF/PPTX content type' };
       }
 
-      // Проверяем наличие функции конвертации
-      if (!options.autoConvertFileFn) {
-        logger.warn('[FileMetadata] autoConvertFileFn not provided, skipping conversion', { deviceId, safeName });
-        return { success: false, error: 'Conversion function not provided' };
-      }
-
-      try {
-        // Запускаем конвертацию
-        const convertedCount = await options.autoConvertFileFn(
-          deviceId,
-          safeName,
-          options.devices,
-          options.fileNamesMap,
-          options.saveFileNamesMapFn,
-          options.io
-        );
-
-        if (convertedCount === 0) {
-          return { success: false, error: 'Conversion failed or produced no slides' };
-        }
-
-        pagesCount = convertedCount;
-
-        // После конвертации исходный файл должен быть удален (это делает autoConvertFile)
-        // Имя папки - это safeName без расширения
-        const folderName = safeName.replace(/\.(pdf|pptx)$/i, '');
-        const devicesPath = getDevicesPath();
-        const deviceFolder = path.join(devicesPath, options.devices[deviceId]?.folder || deviceId);
-        finalFilePath = path.join(deviceFolder, folderName); // Путь к папке со слайдами
-        finalSafeName = folderName; // Имя папки (без расширения)
-
-        // Проверяем что папка существует
-        if (!fs.existsSync(finalFilePath)) {
-          return { success: false, error: 'Converted folder not found after conversion' };
-        }
-
-        // КРИТИЧНО: После конвертации это папка, используем mtime папки
-        const folderStats = fs.statSync(finalFilePath);
-        fileMtime = folderStats.mtimeMs;
-
-        logFile('info', 'PDF/PPTX converted and metadata prepared', {
-          deviceId,
-          originalFile: safeName,
-          folderName: finalSafeName,
-          pagesCount,
-          folderPath: finalFilePath
-        });
-
-      } catch (err) {
-        logger.error('[FileMetadata] Failed to convert PDF/PPTX', {
-          error: err.message,
-          stack: err.stack,
-          deviceId,
-          safeName
-        });
-        return { success: false, error: `Conversion failed: ${err.message}` };
-      }
-    } else {
-      return { success: false, error: `Unknown content type: ${contentType}` };
-    }
-
-    // Сохраняем метаданные в БД
-    try {
-      // КРИТИЧНО: После конвертации PDF/PPTX превращаются в папки
-      // contentType должен быть 'folder', а не 'pdf' или 'pptx'
-      const finalContentType = (contentType === 'pdf' || contentType === 'pptx') ? 'folder' : contentType;
+      // КРИТИЧНО: Сначала сохраняем метаданные исходного файла с оригинальным именем и статусом "processing"
+      // Это позволит файлу сразу появиться в списке с правильным именем
+      const absoluteFilePath = path.resolve(filePath);
+      const mimeType = contentType === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
       
-      // mimeType только для исходных файлов, после конвертации это папка
-      const mimeType = (contentType === 'pdf' || contentType === 'pptx') ? null :
-                      contentType === 'folder' ? null :
-                      null;
-
-      // КРИТИЧНО: Используем абсолютный путь для file_path
-      const absoluteFilePath = path.resolve(finalFilePath);
-      
-      logger.info('[FileMetadata] Сохранение метаданных статического контента', {
+      logger.info('[FileMetadata] Сохранение метаданных исходного PDF/PPTX файла (до конвертации)', {
         deviceId,
-        safeName: finalSafeName,
-        originalName: originalName.replace(/\.(pdf|pptx)$/i, ''),
+        safeName,
+        originalName,
         filePath: absoluteFilePath,
-        filePathExists: fs.existsSync(absoluteFilePath),
-        contentType: finalContentType,
-        pagesCount
+        contentType
       });
       
+      // Сохраняем метаданные исходного файла
       saveFileMetadata({
         deviceId,
-        safeName: finalSafeName,
-        originalName: originalName.replace(/\.(pdf|pptx)$/i, ''), // Убираем расширение из originalName
-        filePath: absoluteFilePath, // ✅ Используем абсолютный путь
-        fileSize: 0, // Для папок размер = 0
+        safeName, // Исходное имя файла (например, "file.pdf")
+        originalName, // Оригинальное имя с расширением
+        filePath: absoluteFilePath,
+        fileSize: stats.size,
         md5Hash: '', // Без дедупликации для статического контента
         partialMd5: null,
         mimeType,
         videoParams: {},
         audioParams: {},
         fileMtime,
-        contentType: finalContentType,  // ✅ После конвертации это 'folder'
+        contentType, // 'pdf' или 'pptx' (не 'folder' пока)
+        streamUrl: null,
+        streamProtocol: 'auto',
+        pagesCount: 0 // Пока неизвестно, будет обновлено после конвертации
+      });
+
+      // КРИТИЧНО: Обновляем список файлов устройства из БД сразу после сохранения метаданных
+      // Это позволит файлу сразу появиться в списке с правильным именем и статусом "Обработка"
+      if (options.devices && options.updateDeviceFilesFromDB) {
+        try {
+          options.updateDeviceFilesFromDB(deviceId, options.devices, options.fileNamesMap || {});
+          if (options.io) {
+            options.io.emit('devices/updated');
+          }
+        } catch (updateErr) {
+          logger.error('[FileMetadata] Ошибка обновления списка файлов после сохранения метаданных', {
+            deviceId,
+            safeName,
+            error: updateErr.message
+          });
+        }
+      }
+
+      // Отправляем событие начала обработки
+      if (options.io) {
+        options.io.emit('file/processing', { device_id: deviceId, file: safeName, type: contentType });
+        options.io.emit('file/progress', { device_id: deviceId, file: safeName, progress: 0 });
+      }
+
+      // Проверяем наличие функции конвертации
+      if (!options.autoConvertFileFn) {
+        logger.warn('[FileMetadata] autoConvertFileFn not provided, skipping conversion', { deviceId, safeName });
+        // Метаданные уже сохранены, возвращаем успех
+        return { success: true, pagesCount: 0 };
+      }
+
+      // КРИТИЧНО: Запускаем конвертацию в фоне (не await, чтобы не блокировать)
+      // После конвертации метаданные будут обновлены на папку
+      Promise.resolve().then(async () => {
+        try {
+          // Запускаем конвертацию
+          const convertedCount = await options.autoConvertFileFn(
+            deviceId,
+            safeName,
+            options.devices,
+            options.fileNamesMap,
+            options.saveFileNamesMapFn,
+            options.io
+          );
+
+          if (convertedCount === 0) {
+            logger.error('[FileMetadata] Конвертация не удалась или не создала слайды', { deviceId, safeName });
+            // Обновляем статус на ошибку
+            if (options.io) {
+              options.io.emit('file/error', { device_id: deviceId, file: safeName, error: 'Conversion failed' });
+            }
+            return;
+          }
+
+          // После конвертации исходный файл должен быть удален (это делает autoConvertFile)
+          // Имя папки - это safeName без расширения
+          const folderName = safeName.replace(/\.(pdf|pptx)$/i, '');
+          const devicesPath = getDevicesPath();
+          const deviceFolder = path.join(devicesPath, options.devices[deviceId]?.folder || deviceId);
+          const convertedFolderPath = path.join(deviceFolder, folderName);
+
+          // Проверяем что папка существует
+          if (!fs.existsSync(convertedFolderPath)) {
+            logger.error('[FileMetadata] Папка со слайдами не найдена после конвертации', { deviceId, safeName, folderPath: convertedFolderPath });
+            return;
+          }
+
+          // КРИТИЧНО: После конвертации это папка, используем mtime папки
+          const folderStats = fs.statSync(convertedFolderPath);
+          const folderMtime = folderStats.mtimeMs;
+
+          // Обновляем метаданные: удаляем старую запись исходного файла и создаем новую для папки
+          try {
+            // Удаляем метаданные исходного файла
+            const { deleteFileMetadata } = await import('../database/files-metadata.js');
+            deleteFileMetadata(deviceId, safeName);
+
+            // Сохраняем метаданные папки
+            const absoluteFolderPath = path.resolve(convertedFolderPath);
+            saveFileMetadata({
+              deviceId,
+              safeName: folderName, // Имя папки (без расширения)
+              originalName: originalName.replace(/\.(pdf|pptx)$/i, ''), // Убираем расширение из originalName
+              filePath: absoluteFolderPath,
+              fileSize: 0, // Для папок размер = 0
+              md5Hash: '',
+              partialMd5: null,
+              mimeType: null, // Папка не имеет mimeType
+              videoParams: {},
+              audioParams: {},
+              fileMtime: folderMtime,
+              contentType: 'folder', // После конвертации это папка
+              streamUrl: null,
+              streamProtocol: 'auto',
+              pagesCount: convertedCount
+            });
+
+            logger.info('[FileMetadata] ✅ PDF/PPTX конвертирован, метаданные обновлены на папку', {
+              deviceId,
+              originalFile: safeName,
+              folderName,
+              pagesCount: convertedCount,
+              folderPath: convertedFolderPath
+            });
+
+            // КРИТИЧНО: Обновляем список файлов устройства из БД после обновления метаданных
+            if (options.devices && options.updateDeviceFilesFromDB) {
+              try {
+                await new Promise(resolve => setTimeout(resolve, 200)); // Задержка для завершения транзакции БД
+                options.updateDeviceFilesFromDB(deviceId, options.devices, options.fileNamesMap || {});
+              } catch (updateErr) {
+                logger.error('[FileMetadata] Ошибка обновления списка файлов после конвертации', {
+                  deviceId,
+                  folderName,
+                  error: updateErr.message
+                });
+              }
+            }
+
+            // Отправляем событие готовности
+            if (options.io) {
+              options.io.emit('file/ready', { device_id: deviceId, file: safeName, pages: convertedCount });
+              options.io.emit('devices/updated');
+            }
+
+          } catch (updateErr) {
+            logger.error('[FileMetadata] ❌ Ошибка обновления метаданных после конвертации', {
+              deviceId,
+              safeName,
+              error: updateErr.message,
+              stack: updateErr.stack
+            });
+          }
+
+        } catch (err) {
+          logger.error('[FileMetadata] ❌ Ошибка конвертации PDF/PPTX', {
+            error: err.message,
+            stack: err.stack,
+            deviceId,
+            safeName
+          });
+          
+          // Обновляем статус на ошибку
+          if (options.io) {
+            options.io.emit('file/error', { device_id: deviceId, file: safeName, error: err.message });
+          }
+        }
+      }).catch(err => {
+        logger.error('[FileMetadata] ❌ Необработанная ошибка в фоновой конвертации', {
+          deviceId,
+          safeName,
+          error: err.message,
+          stack: err.stack
+        });
+      });
+
+      // Возвращаем успех сразу (метаданные уже сохранены, конвертация идет в фоне)
+      return { success: true, pagesCount: 0 }; // pagesCount будет обновлен после конвертации
+    } else {
+      return { success: false, error: `Unknown content type: ${contentType}` };
+    }
+
+    // Сохраняем метаданные в БД (только для папок, не для PDF/PPTX - они уже сохранены выше)
+    try {
+      // КРИТИЧНО: Для папок сохраняем метаданные здесь
+      const absoluteFilePath = path.resolve(finalFilePath);
+      
+      logger.info('[FileMetadata] Сохранение метаданных статического контента', {
+        deviceId,
+        safeName: finalSafeName,
+        originalName,
+        filePath: absoluteFilePath,
+        filePathExists: fs.existsSync(absoluteFilePath),
+        contentType,
+        pagesCount
+      });
+      
+      saveFileMetadata({
+        deviceId,
+        safeName: finalSafeName,
+        originalName,
+        filePath: absoluteFilePath,
+        fileSize: 0, // Для папок размер = 0
+        md5Hash: '', // Без дедупликации для статического контента
+        partialMd5: null,
+        mimeType: null, // Папки не имеют mimeType
+        videoParams: {},
+        audioParams: {},
+        fileMtime,
+        contentType, // 'folder'
         streamUrl: null,
         streamProtocol: 'auto',
         pagesCount

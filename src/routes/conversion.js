@@ -71,9 +71,22 @@ export function createConversionRouter(deps) {
         const folderName = fileName.replace(/\.zip$/i, '');
         count = await getFolderImagesCount(id, folderName);
       } else if (ext === '.pdf' || ext === '.pptx') {
+        // КРИТИЧНО: Пробуем получить количество слайдов по исходному имени файла
         count = await getPageSlideCount(id, fileName);
+        
+        // Если не получилось (файл уже конвертирован и удален), пробуем по имени папки
+        if (count === 0) {
+          const folderName = fileName.replace(/\.(pdf|pptx)$/i, '');
+          count = await getFolderImagesCount(id, folderName);
+        }
       } else {
+        // Для других типов файлов пробуем getPageSlideCount
         count = await getPageSlideCount(id, fileName);
+        
+        // Если не получилось, пробуем как папку (возможно, файл уже конвертирован)
+        if (count === 0) {
+          count = await getFolderImagesCount(id, fileName);
+        }
       }
       res.json({ count });
     } catch (error) {

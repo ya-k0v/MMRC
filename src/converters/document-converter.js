@@ -148,8 +148,8 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
             convertedPages.push({ page: i, path: imagePath });
             logger.info(`[Converter] ✅ Страница ${i} конвертирована: ${imagePath} (${(stats.size / 1024).toFixed(2)} KB)`);
             if (onProgress) {
-              // Прогресс 5-95% в зависимости от номера страницы
-              const pct = Math.max(5, Math.min(95, Math.round(5 + (i / pageCount) * 90)));
+              // Прогресс 0-99% в зависимости от номера страницы
+              const pct = Math.max(0, Math.min(99, Math.round((i / pageCount) * 99)));
               onProgress(pct);
             }
           } else {
@@ -376,18 +376,33 @@ export function findFileFolder(deviceFolderOrId, fileName) {
   const deviceFolder = path.join(devicesPath, deviceFolderOrId);
   if (!fs.existsSync(deviceFolder)) return null;
   
+  const ext = path.extname(fileName).toLowerCase();
   const folderName = fileName.replace(/\.(pdf|pptx)$/i, '');
   const possibleFolder = path.join(deviceFolder, folderName);
   
+  // КРИТИЧНО: После конвертации исходный файл удаляется, поэтому проверяем только существование папки
+  // и наличие PNG файлов внутри (признак успешной конвертации)
   if (fs.existsSync(possibleFolder) && fs.statSync(possibleFolder).isDirectory()) {
     const folderContents = fs.readdirSync(possibleFolder);
-    if (folderContents.includes(fileName)) {
+    // Проверяем наличие PNG файлов (признак успешной конвертации)
+    const hasPngFiles = folderContents.some(f => f.toLowerCase().endsWith('.png'));
+    if (hasPngFiles) {
+      return possibleFolder;
+    }
+    // Если это PDF/PPTX и папка существует, но нет PNG - возможно конвертация еще идет
+    // Возвращаем папку в любом случае, чтобы не блокировать запросы
+    if (ext === '.pdf' || ext === '.pptx') {
       return possibleFolder;
     }
   }
   
-  const filePath = path.join(deviceFolder, fileName);
-  if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) return null;
+  // Если передали имя папки напрямую (без расширения), проверяем его
+  if (!ext || ext === '') {
+    const directFolder = path.join(deviceFolder, fileName);
+    if (fs.existsSync(directFolder) && fs.statSync(directFolder).isDirectory()) {
+      return directFolder;
+    }
+  }
   
   return null;
 }
@@ -444,9 +459,10 @@ export async function autoConvertFile(deviceId, fileName, devices, fileNamesMap,
   // Отправляем событие начала обработки
   if (io) {
     io.emit('file/processing', { device_id: deviceId, file: fileName, type: ext.substring(1) });
+    io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 0 });
     logger.info(`[Converter] 📄 Начало конвертации: ${fileName}`, { deviceId, fileName });
   }
-  setFileStatus(deviceId, folderName, { status: 'processing', progress: 5, canPlay: false });
+  setFileStatus(deviceId, fileName, { status: 'processing', progress: 0, canPlay: false }); // Используем fileName, а не folderName
   
   const convertedDir = path.join(deviceFolder, folderName);
   const originalName = fileNamesMap[deviceId]?.[fileName] || fileName;
@@ -464,10 +480,12 @@ export async function autoConvertFile(deviceId, fileName, devices, fileNamesMap,
       saveFileNamesMapFn(fileNamesMap);
     }
     
-    setFileStatus(deviceId, folderName, { status: 'ready', progress: 100, canPlay: true });
+    // КРИТИЧНО: Обновляем статус с fileName (не folderName), чтобы фронтенд мог найти файл
+    setFileStatus(deviceId, fileName, { status: 'ready', progress: 100, canPlay: true });
     
     // Отправляем событие готовности (файл уже был конвертирован)
     if (io) {
+      io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 100 });
       io.emit('file/ready', { device_id: deviceId, file: fileName, pages: existing });
       logger.info(`[Converter] ✅ Уже конвертирован: ${fileName} (${existing} страниц)`, { deviceId, fileName, pages: existing });
     }
@@ -486,15 +504,19 @@ export async function autoConvertFile(deviceId, fileName, devices, fileNamesMap,
     let count = 0;
     if (ext === '.pptx') {
       count = await convertPptxToImages(filePath, convertedDir, (progress) => {
-        setFileStatus(deviceId, folderName, { status: 'processing', progress, canPlay: false });
-        if (io && progress % 5 === 0) {
+        // КРИТИЧНО: Используем fileName для статуса (не folderName), чтобы фронтенд мог найти файл
+        setFileStatus(deviceId, fileName, { status: 'processing', progress, canPlay: false });
+        // Отправляем прогресс на каждое обновление (не только каждые 5%)
+        if (io) {
           io.emit('file/progress', { device_id: deviceId, file: fileName, progress });
         }
       });
     } else if (ext === '.pdf') {
       count = await convertPdfToImages(filePath, convertedDir, (progress) => {
-        setFileStatus(deviceId, folderName, { status: 'processing', progress, canPlay: false });
-        if (io && progress % 5 === 0) {
+        // КРИТИЧНО: Используем fileName для статуса (не folderName), чтобы фронтенд мог найти файл
+        setFileStatus(deviceId, fileName, { status: 'processing', progress, canPlay: false });
+        // Отправляем прогресс на каждое обновление (не только каждые 5%)
+        if (io) {
           io.emit('file/progress', { device_id: deviceId, file: fileName, progress });
         }
       });
@@ -525,6 +547,8 @@ export async function autoConvertFile(deviceId, fileName, devices, fileNamesMap,
     
     // Отправляем событие успешной конвертации
     if (io && count > 0) {
+      // Отправляем финальный прогресс 100%
+      io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 100 });
       io.emit('file/ready', { device_id: deviceId, file: fileName, pages: count });
       logger.info(`[Converter] ✅ Конвертировано: ${fileName} (${count} страниц)`, { deviceId, fileName, pages: count });
       
@@ -532,7 +556,8 @@ export async function autoConvertFile(deviceId, fileName, devices, fileNamesMap,
       io.emit('devices/updated');
     }
     
-    setFileStatus(deviceId, folderName, { status: 'ready', progress: 100, canPlay: true });
+    // КРИТИЧНО: Обновляем статус с fileName (не folderName), чтобы фронтенд мог найти файл
+    setFileStatus(deviceId, fileName, { status: 'ready', progress: 100, canPlay: true });
     
     return count;
     
@@ -546,9 +571,11 @@ export async function autoConvertFile(deviceId, fileName, devices, fileNamesMap,
         file: fileName, 
         error: error.message || String(error) 
       });
+      io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 0 });
     }
     
-    setFileStatus(deviceId, folderName, { status: 'error', progress: 0, canPlay: false, error: error.message });
+    // КРИТИЧНО: Обновляем статус с fileName (не folderName), чтобы фронтенд мог найти файл
+    setFileStatus(deviceId, fileName, { status: 'error', progress: 0, canPlay: false, error: error.message });
     
     // При ошибке исходный файл остается на месте (не удаляем его)
     
