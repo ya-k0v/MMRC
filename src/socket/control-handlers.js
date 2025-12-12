@@ -158,7 +158,7 @@ export function setupControlHandlers(socket, deps) {
   };
   
   // control/play - Запустить воспроизведение
-  socket.on('control/play', async ({ device_id, file, page, type: requestedType, streamProtocol }) => {
+  socket.on('control/play', async ({ device_id, file, page, type: requestedType, streamProtocol, originDeviceId }) => {
     const d = devices[device_id];
     if (!d) return;
 
@@ -447,27 +447,28 @@ export function setupControlHandlers(socket, deps) {
       }
       
       // Определяем тип контента
-      let type = requestedType || 'video'; // По умолчанию
+      // КРИТИЧНО: Приоритет у requestedType (переданного с фронта), затем БД, затем fallback по расширению
+      let type = requestedType || null;
       
-      // КРИТИЧНО: Проверяем БД, если streamEntry не найден, но файл может быть стримом
-      if (!streamEntry && !requestedType) {
+      // Если тип не передан - проверяем БД
+      if (!type) {
         const metadata = getFileMetadata(device_id, file);
-        if (metadata && metadata.content_type === 'streaming') {
-          logger.info('[Control] 🔍 Stream found in DB (before type determination)', {
+        if (metadata && metadata.content_type) {
+          type = metadata.content_type;
+          logger.info('[Control] 🔍 Type from DB', {
             deviceId: device_id,
             file,
-            streamUrl: metadata.stream_url,
-            streamProtocol: metadata.stream_protocol
+            contentType: metadata.content_type
           });
-          type = 'streaming';
         }
       }
       
+      // Если streamEntry найден - принудительно streaming
       if (streamEntry) {
         type = 'streaming';
-      } else if (!requestedType && type !== 'streaming') {
+      } else if (!type || type === 'video') {
+        // Fallback по расширению только если тип не определён или это video (старые записи)
         if (!hasExtension) {
-          // Нет расширения = это папка с изображениями
           type = 'folder';
         } else if (ext === 'pdf') {
           type = 'pdf';
@@ -476,7 +477,9 @@ export function setupControlHandlers(socket, deps) {
         } else if (['png','jpg','jpeg','gif','webp'].includes(ext)) {
           type = 'image';
         } else if (ext === 'zip') {
-          type = 'folder'; // ZIP = папка с изображениями
+          type = 'folder';
+        } else {
+          type = type || 'video'; // По умолчанию video только если ничего не подошло
         }
       }
       
@@ -707,7 +710,8 @@ export function setupControlHandlers(socket, deps) {
         type, 
         file, 
         state: 'playing', 
-        page: (type === 'pdf' || type === 'pptx' || type === 'folder') ? pageNum : undefined 
+        page: (type === 'pdf' || type === 'pptx' || type === 'folder') ? pageNum : undefined,
+        originDeviceId: originDeviceId || device_id
       };
       if (type === 'streaming') {
         d.current.streamUrl = playbackStreamUrl;
@@ -761,11 +765,11 @@ export function setupControlHandlers(socket, deps) {
         }
       }
       
-      io.to(`device:${device_id}`).emit('player/play', {
-        ...d.current,
-        stream_url: type === 'streaming' ? playbackStreamUrl : undefined,
-        stream_protocol: type === 'streaming' ? effectiveStreamProtocol : undefined
-      });
+          io.to(`device:${device_id}`).emit('player/play', {
+            ...d.current,
+            stream_url: type === 'streaming' ? playbackStreamUrl : undefined,
+            stream_protocol: type === 'streaming' ? effectiveStreamProtocol : undefined
+          });
       emitDeviceVolumeState(device_id, 'control_play');
     } else {
       // КРИТИЧНО: Если файл не указан - это RESUME после паузы
@@ -970,9 +974,11 @@ export function setupControlHandlers(socket, deps) {
       io.emit('player/pptxPage', d.current.page); // Для спикера
     } else if (d.current.type === 'folder' && d.current.file) {
       // Получаем количество изображений в папке для проверки границ
+      // КРИТИЧНО: Используем originDeviceId если есть (для файлов из "Все файлы"), иначе device_id
+      const contentDeviceId = d.current.originDeviceId || device_id;
       const folderName = d.current.file.replace(/\.zip$/i, ''); // Убираем .zip если есть
       try {
-        const maxImages = await getFolderImagesCount(device_id, folderName);
+        const maxImages = await getFolderImagesCount(contentDeviceId, folderName);
         logger.info(`[Control] pdfPrev folder: maxImages=${maxImages}, currentPage=${d.current.page}`, { deviceId: device_id, folderName, maxImages, currentPage: d.current.page });
         if (maxImages > 0) {
           const prevImage = Math.max(1, (d.current.page || 1) - 1);
@@ -1010,8 +1016,11 @@ export function setupControlHandlers(socket, deps) {
       return; // Просто игнорируем, не делаем ничего
     }
     
+    // КРИТИЧНО: Используем originDeviceId если есть (для файлов из "Все файлы"), иначе device_id
+    const contentDeviceId = d.current.originDeviceId || device_id;
+    
     if (d.current.type === 'pdf' && d.current.file) {
-      const maxPages = await getPageSlideCount(device_id, d.current.file, 'page');
+      const maxPages = await getPageSlideCount(contentDeviceId, d.current.file, 'page');
       if (maxPages > 0) {
         const nextPage = Math.min((d.current.page || 1) + 1, maxPages);
         if (nextPage !== d.current.page) {
@@ -1021,7 +1030,7 @@ export function setupControlHandlers(socket, deps) {
         }
       }
     } else if (d.current.type === 'pptx' && d.current.file) {
-      const maxSlides = await getPageSlideCount(device_id, d.current.file, 'slide');
+      const maxSlides = await getPageSlideCount(contentDeviceId, d.current.file, 'slide');
       if (maxSlides > 0) {
         const nextSlide = Math.min((d.current.page || 1) + 1, maxSlides);
         if (nextSlide !== d.current.page) {
@@ -1034,7 +1043,7 @@ export function setupControlHandlers(socket, deps) {
       // Получаем количество изображений в папке
       const folderName = d.current.file.replace(/\.zip$/i, ''); // Убираем .zip если есть
       try {
-        const maxImages = await getFolderImagesCount(device_id, folderName);
+        const maxImages = await getFolderImagesCount(contentDeviceId, folderName);
         logger.info(`[Control] pdfNext folder: maxImages=${maxImages}, currentPage=${d.current.page}`, { deviceId: device_id, folderName, maxImages, currentPage: d.current.page });
         if (maxImages > 0) {
           const nextImage = Math.min((d.current.page || 1) + 1, maxImages);

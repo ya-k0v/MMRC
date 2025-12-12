@@ -97,9 +97,12 @@ CREATE TABLE IF NOT EXISTS files_metadata (
   
   -- Заглушки (placeholders)
   is_placeholder BOOLEAN DEFAULT 0,
-  content_type TEXT DEFAULT 'file', -- file | folder | streaming
+  content_type TEXT DEFAULT 'file', -- file | folder | streaming | pdf | pptx
   stream_url TEXT,
   stream_protocol TEXT DEFAULT 'auto',
+  
+  -- Метаданные статического контента (папки, PDF, PPTX)
+  pages_count INTEGER,  -- Количество слайдов/страниц/изображений
   
   -- Timestamps
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

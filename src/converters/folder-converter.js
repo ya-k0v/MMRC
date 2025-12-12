@@ -8,6 +8,7 @@ import path from 'path';
 import { exec as execCallback } from 'child_process';
 import util from 'util';
 import { getDevicesPath, getConvertedCache } from '../config/settings-manager.js';
+import { getAnyFileMetadataBySafeName } from '../database/files-metadata.js';
 import { makeSafeFolderName } from '../utils/transliterate.js';
 import logger from '../utils/logger.js';
 
@@ -17,13 +18,14 @@ const exec = util.promisify(execCallback);
  * Распаковать ZIP архив с изображениями в папку
  * @param {string} deviceId - ID устройства
  * @param {string} zipFileName - Имя ZIP файла
- * @returns {Promise<{success: boolean, error?: string, imagesCount?: number}>}
+ * @param {string} deviceFolderName - Имя папки устройства (опционально, по умолчанию deviceId)
+ * @returns {Promise<{success: boolean, error?: string, imagesCount?: number, folderName?: string, originalFolderName?: string}>}
  */
-export async function extractZipToFolder(deviceId, zipFileName) {
+export async function extractZipToFolder(deviceId, zipFileName, deviceFolderName = null) {
   try {
     // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
     const devicesPath = getDevicesPath();
-    const deviceFolder = path.join(devicesPath, deviceId);
+    const deviceFolder = path.join(devicesPath, deviceFolderName || deviceId);
     const zipPath = path.join(deviceFolder, zipFileName);
     
     if (!fs.existsSync(zipPath)) {
@@ -162,36 +164,65 @@ export async function extractZipToFolder(deviceId, zipFileName) {
  * @param {string} folderName - Имя папки
  * @returns {Promise<string[]>} Список файлов изображений
  */
+export function resolveFolderPath(deviceId, folderName) {
+  const devicesPath = getDevicesPath();
+  const candidates = [];
+  if (deviceId) {
+    candidates.push(path.join(devicesPath, deviceId, folderName));
+  }
+  // общий корень
+  candidates.push(path.join(devicesPath, folderName));
+  // fallback: поиск по всем устройствам (одноуровневый обход)
+  try {
+    const entries = fs.readdirSync(devicesPath, { withFileTypes: true });
+    entries
+      .filter(e => e.isDirectory())
+      .forEach(e => {
+        candidates.push(path.join(devicesPath, e.name, folderName));
+      });
+  } catch (e) {
+    // ignore
+  }
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+        return candidate;
+      }
+    } catch (e) {
+      // ignore candidate
+    }
+  }
+
+  // Fallback: ищем по метаданным (любое устройство)
+  try {
+    const meta = getAnyFileMetadataBySafeName(folderName);
+    if (meta?.file_path && fs.existsSync(meta.file_path) && fs.statSync(meta.file_path).isDirectory()) {
+      return meta.file_path;
+    }
+  } catch (e) {
+    // ignore
+  }
+  return null;
+}
+
 export async function getFolderImages(deviceId, folderName) {
   try {
-    // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
-    const devicesPath = getDevicesPath();
-    const folderPath = path.join(devicesPath, deviceId, folderName);
-    
-    if (!fs.existsSync(folderPath)) {
-      return [];
-    }
-    
-    const stat = fs.statSync(folderPath);
-    if (!stat.isDirectory()) {
-      return [];
-    }
-    
+    const folderPath = resolveFolderPath(deviceId, folderName);
+    if (!folderPath) return { files: [], folderPath: null };
+
     const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
     const files = fs.readdirSync(folderPath)
       .filter(file => {
         const ext = path.extname(file).toLowerCase();
         return imageExtensions.includes(ext);
       })
-      .sort((a, b) => {
-        // Сортировка с учетом чисел
-        return a.localeCompare(b, undefined, { numeric: true });
-      });
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
     
-    return files;
+    return { files, folderPath };
   } catch (error) {
     logger.error('[FolderConverter] ❌ Ошибка чтения папки', { error: error.message, stack: error.stack, deviceId, folderName });
-    return [];
+    return { files: [], folderPath: null };
   }
 }
 
@@ -202,8 +233,8 @@ export async function getFolderImages(deviceId, folderName) {
  * @returns {Promise<number>} Количество изображений
  */
 export async function getFolderImagesCount(deviceId, folderName) {
-  const images = await getFolderImages(deviceId, folderName);
-  return images.length;
+  const { files } = await getFolderImages(deviceId, folderName);
+  return files.length;
 }
 
 /**

@@ -7,22 +7,21 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { ALLOWED_EXT } from '../config/constants.js';
 import { getDevicesPath } from '../config/settings-manager.js';
-import { sanitizeDeviceId, isSystemFile } from '../utils/sanitize.js';
+import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { extractZipToFolder, getFolderImagesCount } from '../converters/folder-converter.js';
 import { makeSafeFolderName } from '../utils/transliterate.js';
-import { scanDeviceFiles } from '../utils/file-scanner.js';
 import { uploadLimiter, deleteLimiter } from '../middleware/rate-limit.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import logger, { logFile, logSecurity } from '../utils/logger.js';
 import { getCachedResolution, clearResolutionCache } from '../video/resolution-cache.js';
-import { processUploadedFilesAsync } from '../utils/file-metadata-processor.js';
+import { processUploadedFilesAsync, processUploadedStaticContent } from '../utils/file-metadata-processor.js';
 import { getFileMetadata, deleteFileMetadata, getDeviceFilesMetadata, deleteDeviceFilesMetadata, saveFileMetadata, countFileReferences, updateFileOriginalName, createStreamingEntry, updateStreamMetadata, cleanupMissingFiles } from '../database/files-metadata.js';
 import { getStreamPlaybackUrl, getStreamRestreamStatus, upsertStreamJob, removeStreamJob } from '../streams/stream-manager.js';
 import { getTrailerPath } from '../video/trailer-generator.js';
 import { requireSpeaker } from '../middleware/auth.js';
 import { validateUploadSize } from '../middleware/multer-config.js';
+import { getDatabase } from '../database/database.js';
 
 const STREAM_PROTOCOLS = new Set(['auto', 'hls', 'dash', 'mpegts']);
 
@@ -78,10 +77,20 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
   const targetFolder = path.join(devicesPath, devices[targetId].folder);
   
   const sourcePath = path.join(sourceFolder, folderName);
-  const targetPath = path.join(targetFolder, folderName);
+  let targetSafeName = folderName;
+  let targetPath = path.join(targetFolder, targetSafeName);
   
+  // Если папка уже есть, генерируем уникальное имя (как для файлов)
   if (fs.existsSync(targetPath)) {
-    return res.status(409).json({ error: 'Папка уже существует в целевом устройстве' });
+    const suffix = '_' + crypto.randomBytes(3).toString('hex');
+    targetSafeName = `${folderName}${suffix}`;
+    targetPath = path.join(targetFolder, targetSafeName);
+    logFile('info', '⚠️ Target folder exists, using unique name', {
+      sourceId,
+      targetId,
+      folderName,
+      unique: targetSafeName
+    });
   }
   
   try {
@@ -93,11 +102,37 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
     // Устанавливаем права
     await fs.promises.chmod(targetPath, 0o755);
     
-    // Копируем маппинг
-    if (fileNamesMap[sourceId]?.[folderName]) {
+    // Копируем маппинг (используем оригинальное имя, если было)
+    const originalName = fileNamesMap[sourceId]?.[folderName] || folderName;
+    if (originalName) {
       if (!fileNamesMap[targetId]) fileNamesMap[targetId] = {};
-      fileNamesMap[targetId][folderName] = fileNamesMap[sourceId][folderName];
+      fileNamesMap[targetId][targetSafeName] = originalName;
       saveFileNamesMap(fileNamesMap);
+    }
+    
+    // Сохраняем метаданные в БД для скопированной папки
+    try {
+      const stat = fs.statSync(targetPath);
+      const pagesCount = await getFolderImagesCount(targetId, targetSafeName);
+      saveFileMetadata({
+        deviceId: targetId,
+        safeName: targetSafeName,
+        originalName: originalName || targetSafeName,
+        filePath: targetPath,
+        fileSize: 0,
+        md5Hash: '',
+        partialMd5: null,
+        mimeType: null,
+        videoParams: {},
+        audioParams: {},
+        fileMtime: stat.mtimeMs,
+        contentType: 'folder',
+        streamUrl: null,
+        streamProtocol: 'auto',
+        pagesCount
+      });
+    } catch (err) {
+      logger.warn('[copy-folder] Failed to save metadata for copied folder', { error: err.message, targetId, targetSafeName });
     }
     
     // Если move - удаляем из источника
@@ -118,13 +153,13 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
     logFile('info', `✅ Folder ${move ? 'moved' : 'copied'} successfully`, {
       sourceDevice: sourceId,
       targetDevice: targetId,
-      folderName
+      folderName: targetSafeName
     });
     
     res.json({ 
       ok: true, 
       action: move ? 'moved' : 'copied', 
-      file: folderName, 
+      file: targetSafeName, 
       from: sourceId, 
       to: targetId,
       type: 'folder'
@@ -148,8 +183,44 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
   
   // 1. Получаем файлы из БД (обычные файлы)
   const filesMetadata = getDeviceFilesMetadata(deviceId);
+  
+  logger.debug(`[updateDeviceFilesFromDB] Получено метаданных из БД для ${deviceId}: ${filesMetadata.length}`, {
+    deviceId,
+    totalMetadata: filesMetadata.length,
+    metadata: filesMetadata.map(f => ({
+      safe_name: f.safe_name,
+      content_type: f.content_type,
+      file_path: f.file_path
+    }))
+  });
+  
   const streamingMetadata = filesMetadata.filter(f => (f.content_type === 'streaming' || (!f.file_path && f.stream_url)));
-  const physicalMetadata = filesMetadata.filter(f => f.content_type !== 'streaming' && (!f.stream_url || f.file_path));
+  
+  // 2. Получаем папки/PDF/PPTX из БД (content_type: 'folder', 'pdf', 'pptx')
+  // КРИТИЧНО: Папки/PDF/PPTX теперь хранятся в БД, не сканируем диск
+  const staticContentMetadata = filesMetadata.filter(f => 
+    f.content_type === 'folder' || f.content_type === 'pdf' || f.content_type === 'pptx'
+  );
+  
+  logger.info(`[updateDeviceFilesFromDB] Найдено статического контента для ${deviceId}: ${staticContentMetadata.length}`, {
+    deviceId,
+    staticContent: staticContentMetadata.map(f => ({
+      safe_name: f.safe_name,
+      original_name: f.original_name,
+      content_type: f.content_type,
+      file_path: f.file_path,
+      pages_count: f.pages_count
+    }))
+  });
+  
+  // КРИТИЧНО: Исключаем статический контент из physicalMetadata, чтобы избежать дублирования
+  const physicalMetadata = filesMetadata.filter(f => 
+    f.content_type !== 'streaming' && 
+    (!f.stream_url || f.file_path) &&
+    f.content_type !== 'folder' &&  // ✅ Исключаем статический контент
+    f.content_type !== 'pdf' &&
+    f.content_type !== 'pptx'
+  );
   
   // КРИТИЧНО: Логируем для отладки стримов
   if (streamingMetadata.length > 0) {
@@ -185,48 +256,37 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
     return exists;
   });
   
-  const missingCount = filesMetadata.length - existingMetadata.length;
+  const missingCount = physicalMetadata.length - existingMetadata.length;
   if (missingCount > 0) {
     logger.warn(`[updateDeviceFilesFromDB] ${deviceId}: ${missingCount} files from DB not found physically`, {
       deviceId,
       missingCount,
-      totalInDB: filesMetadata.length,
+      totalInDB: physicalMetadata.length,
       existing: existingMetadata.length,
-      missingFiles: filesMetadata.filter(f => !existingMetadata.includes(f)).map(f => f.safe_name)
+      missingFiles: physicalMetadata.filter(f => !existingMetadata.includes(f)).map(f => f.safe_name)
     });
   }
   
-  // 2. Сканируем папку устройства для PDF/PPTX/image папок
-  // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
-  const devicesPath = getDevicesPath();
-  const deviceFolder = path.join(devicesPath, device.folder);
-  const folders = [];
-  const folderPaths = []; // Полные пути к папкам устройства
+  // Получаем пути к папкам из БД для фильтрации файлов внутри папок
+  const folderPaths = staticContentMetadata
+    .filter(f => f.file_path && fs.existsSync(f.file_path))
+    .map(f => {
+      const stat = fs.statSync(f.file_path);
+      return stat.isDirectory() ? f.file_path : null;
+    })
+    .filter(Boolean);
   
-  if (fs.existsSync(deviceFolder)) {
-    const folderEntries = fs.readdirSync(deviceFolder);
-    for (const entry of folderEntries) {
-      if (entry.startsWith('.')) continue; // Пропускаем скрытые
-      
-      const entryPath = path.join(deviceFolder, entry);
-      try {
-        const stat = fs.statSync(entryPath);
-        
-        if (stat.isDirectory()) {
-          // Это папка - добавляем её
-          folders.push(entry);
-          folderPaths.push(entryPath); // Сохраняем полный путь к папке
-        }
-      } catch (e) {
-        // Игнорируем ошибки доступа к файлам
-      }
-    }
-  }
+  // Список папок из БД (для обратной совместимости)
+  const folders = staticContentMetadata
+    .filter(f => f.content_type === 'folder' && f.file_path && fs.existsSync(f.file_path))
+    .map(f => path.basename(f.file_path));
   
-  // 3. Фильтруем файлы из БД: исключаем только те, что физически находятся внутри папок
+  // 3. Фильтруем файлы из БД: исключаем только файлы внутри папок
   // КРИТИЧНО: Проверяем физический путь файла, а не только имя!
   // Файл должен скрываться только если он физически находится внутри папки
   // Это позволяет иметь файлы с одинаковыми именами в папке и в корне устройства
+  // КРИТИЧНО: Плейсхолдеры НЕ фильтруем здесь - они должны быть видны в обычных списках устройств
+  // Фильтрация плейсхолдеров только в GET /api/devices/all/files (агрегированный список)
   const filteredMetadata = existingMetadata.filter(f => {
     if (!f.file_path) return true; // Если нет пути - показываем (на всякий случай)
     
@@ -266,7 +326,7 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
     return {
       safeName: f.safe_name,
       originalName: f.original_name || nameMap[f.safe_name] || f.safe_name,
-      folderImageCount: null,
+      folderImageCount: f.pages_count || null,  // Используем pages_count из БД
       contentType: f.content_type || null,
       streamUrl: f.stream_url || null,
       streamProxyUrl: proxyUrl,
@@ -280,6 +340,8 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
   const streams = {};
   streamingMetadata.forEach(f => {
     const safeName = f.safe_name;
+    // КРИТИЧНО: Плейсхолдеры НЕ фильтруем здесь - они должны быть видны в обычных списках устройств
+    // Фильтрация плейсхолдеров только в GET /api/devices/all/files (агрегированный список)
     const displayName = f.original_name || nameMap[safeName] || safeName;
     
     // КРИТИЧНО: Пропускаем стримы без stream_url - они невалидны и не могут быть воспроизведены
@@ -345,10 +407,112 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
     });
   });
   
-  // 4. Добавляем папки
-  folders.forEach(folder => {
-    files.push(folder);
-    fileNames.push(nameMap[folder] || folder);
+  // 4. Добавляем папки/PDF/PPTX из БД в список файлов
+  staticContentMetadata.forEach(f => {
+    const safeName = f.safe_name;
+    // КРИТИЧНО: Плейсхолдеры НЕ фильтруем здесь - они должны быть видны в обычных списках устройств
+    // Фильтрация плейсхолдеров только в GET /api/devices/all/files (агрегированный список)
+    const displayName = f.original_name || nameMap[safeName] || safeName;
+    
+    // Проверяем существование папки/файла
+    if (!f.file_path) {
+      logger.warn('[updateDeviceFilesFromDB] Static content missing file_path', {
+        deviceId,
+        safeName,
+        contentType: f.content_type
+      });
+      return;
+    }
+    
+    // КРИТИЧНО: Проверяем существование файла/папки
+    // path.resolve() для абсолютных путей возвращает тот же путь, но нормализует его
+    const normalizedPath = path.resolve(f.file_path);
+    let exists = false;
+    
+    try {
+      exists = fs.existsSync(normalizedPath);
+      // Дополнительная проверка: если это папка, проверяем что это действительно директория
+      if (exists && f.content_type === 'folder') {
+        const stat = fs.statSync(normalizedPath);
+        exists = stat.isDirectory();
+      }
+    } catch (err) {
+      logger.warn('[updateDeviceFilesFromDB] Error checking static content', {
+        deviceId,
+        safeName,
+        contentType: f.content_type,
+        filePath: f.file_path,
+        normalizedPath,
+        error: err.message
+      });
+      exists = false;
+    }
+    
+    logger.info('[updateDeviceFilesFromDB] Checking static content', {
+      deviceId,
+      safeName,
+      displayName,
+      contentType: f.content_type,
+      filePath: f.file_path,
+      normalizedPath,
+      exists,
+      pagesCount: f.pages_count
+    });
+    
+    if (!exists) {
+      logger.warn('[updateDeviceFilesFromDB] Static content not found on disk', {
+        deviceId,
+        safeName,
+        contentType: f.content_type,
+        filePath: f.file_path,
+        normalizedPath
+      });
+      return;
+    }
+    
+    // КРИТИЧНО: Добавляем в список файлов, даже если уже есть (для обновления метаданных)
+    const existingIndex = files.indexOf(safeName);
+    if (existingIndex >= 0) {
+      // Обновляем имя файла если изменилось
+      fileNames[existingIndex] = displayName;
+      logger.debug('[updateDeviceFilesFromDB] Static content already in list, updated', {
+        deviceId,
+        safeName,
+        displayName
+      });
+    } else {
+      // Добавляем новый файл
+      files.push(safeName);
+      fileNames.push(displayName);
+      
+      logger.info('[updateDeviceFilesFromDB] ✅ Static content added to files list', {
+        deviceId,
+        safeName,
+        displayName,
+        contentType: f.content_type,
+        pagesCount: f.pages_count,
+        filePath: f.file_path
+      });
+    }
+    
+    // Добавляем/обновляем метаданные
+    const existingMetaIndex = metadataList.findIndex(m => m.safeName === safeName);
+    const metaEntry = {
+      safeName,
+      originalName: displayName,
+      folderImageCount: f.pages_count || null,  // Используем pages_count из БД
+      contentType: f.content_type || null,
+      streamUrl: null,
+      streamProxyUrl: null,
+      restreamStatus: null,
+      streamProtocol: null
+    };
+    
+    if (existingMetaIndex >= 0) {
+      metadataList[existingMetaIndex] = metaEntry;
+    } else {
+      metadataList.push(metaEntry);
+    }
   });
   
   device.files = files;
@@ -356,9 +520,19 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
   device.fileMetadata = metadataList;
   device.streams = streams;
   
-  logger.info(`[updateDeviceFilesFromDB] ${deviceId}: БД=${filteredMetadata.length} (существует=${existingMetadata.length}, отсутствует=${missingCount}), Папки=${folders.length}, Всего=${files.length}`);
-  if (folders.length > 0) {
-    logger.info(`[updateDeviceFilesFromDB] Папки: ${folders.join(', ')}`);
+  const staticContentCount = staticContentMetadata.length;
+  const staticContentAdded = staticContentMetadata.filter(f => {
+    if (!f.file_path) return false;
+    return fs.existsSync(f.file_path) && files.includes(f.safe_name);
+  }).length;
+  
+  logger.info(`[updateDeviceFilesFromDB] ${deviceId}: БД=${filteredMetadata.length} (существует=${existingMetadata.length}, отсутствует=${missingCount}), Статический контент=${staticContentCount} (добавлено=${staticContentAdded}), Всего=${files.length}`);
+  if (staticContentCount > 0) {
+    logger.info(`[updateDeviceFilesFromDB] Статический контент: ${staticContentMetadata.map(f => {
+      const exists = f.file_path && fs.existsSync(f.file_path);
+      const inList = files.includes(f.safe_name);
+      return `${f.safe_name} (${f.content_type}, ${f.pages_count || 0} страниц, path=${f.file_path}, exists=${exists}, inList=${inList})`;
+    }).join(', ')}`);
   }
   if (existingMetadata.length !== filteredMetadata.length) {
     logger.info(`[updateDeviceFilesFromDB] Скрыто ${existingMetadata.length - filteredMetadata.length} файлов (в папках)`);
@@ -388,6 +562,397 @@ export function createFilesRouter(deps) {
     getFileStatus,
     requireAdmin = (_req, _res, next) => next()
   } = deps;
+
+  // GET /api/devices/all/files - агрегированный список файлов по всем устройствам
+  // Доступен только для авторизованных ролей (requireSpeaker: speaker/admin/hero_admin)
+  router.get('/all/files', requireSpeaker[0], requireSpeaker[1], (req, res) => {
+    const q = (req.query.q || '').toString().trim();
+    const deviceFilter = sanitizeDeviceId(req.query.device);
+    const excludeDevice = sanitizeDeviceId(req.query.excludeDevice); // Исключить файлы выбранного устройства
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '200', 10) || 200, 1), 500);
+    const offset = Math.max(parseInt(req.query.offset || '0', 10) || 0, 0);
+
+    try {
+      const db = getDatabase();
+      const params = [];
+      const where = [];
+
+      if (deviceFilter) {
+        where.push('device_id = ?');
+        params.push(deviceFilter);
+      }
+
+      if (excludeDevice) {
+        where.push('device_id != ?');
+        params.push(excludeDevice);
+      }
+
+      if (q) {
+        where.push('(safe_name LIKE ? OR original_name LIKE ?)');
+        const like = `%${q}%`;
+        params.push(like, like);
+      }
+
+      // КРИТИЧНО: Исключаем плейсхолдеры и временные файлы
+      where.push('(is_placeholder = 0 OR is_placeholder IS NULL)');
+      where.push('safe_name NOT LIKE ?');
+      where.push('safe_name NOT LIKE ?');
+      where.push('safe_name != ?');
+      params.push('.optimizing_%', '.placeholder%', 'placeholder.mp4');
+
+      const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+      const stmt = db.prepare(`
+        SELECT 
+          device_id,
+          safe_name,
+          original_name,
+          file_size,
+          mime_type,
+          content_type,
+          stream_url,
+          stream_protocol,
+          file_mtime,
+          md5_hash,
+          video_duration,
+          video_width,
+          video_height,
+          pages_count,
+          is_placeholder
+        FROM files_metadata
+        ${whereSql}
+        ORDER BY file_mtime DESC, created_at DESC
+        LIMIT ? OFFSET ?
+      `);
+
+      const rows = stmt.all(...params, limit, offset);
+      // COUNT запрос использует те же условия WHERE
+      const countRow = db.prepare(`SELECT COUNT(*) as total FROM files_metadata ${whereSql}`).get(...params);
+      const total = countRow?.total ?? rows.length;
+
+      // Дополняем списком папок/PDF/PPTX, которые не лежат в files_metadata
+      const itemsMap = new Map();
+      const items = rows.map((r) => {
+        const key = `${r.device_id}::${r.safe_name}`;
+        itemsMap.set(key, true);
+        return {
+          deviceId: r.device_id,
+          safeName: r.safe_name,
+          originalName: r.original_name,
+          size: r.file_size,
+          mime: r.mime_type,
+          contentType: r.content_type,
+          streamUrl: r.stream_url,
+          streamProtocol: r.stream_protocol,
+          mtime: r.file_mtime,
+          md5: r.md5_hash,
+          pagesCount: r.pages_count || null,  // Количество страниц/слайдов/изображений
+          video: r.video_duration ? {
+            duration: r.video_duration,
+            width: r.video_width,
+            height: r.video_height
+          } : null
+        };
+      });
+
+      // Добавляем псевдо-записи для папок/презентаций, которых нет в БД
+      for (const [deviceId, device] of Object.entries(devices)) {
+        // Исключаем файлы выбранного устройства
+        if (excludeDevice && deviceId === excludeDevice) continue;
+        
+        const files = device?.files || [];
+        const names = device?.fileNames || files;
+        files.forEach((safeName, idx) => {
+        const key = `${deviceId}::${safeName}`;
+        const isTemp = safeName.startsWith('.optimizing_') || safeName.startsWith('.placeholder') || safeName === 'placeholder.mp4';
+        if (isTemp) return;
+          if (itemsMap.has(key)) return;
+          const ext = safeName.includes('.') ? safeName.split('.').pop().toLowerCase() : '';
+          const isFolder = !safeName.includes('.') || ext === 'zip';
+          const isPdf = ext === 'pdf';
+          const isPptx = ext === 'pptx';
+          if (!(isFolder || isPdf || isPptx)) return;
+          items.push({
+            deviceId,
+            safeName,
+            originalName: names[idx] || safeName,
+            size: null,
+            mime: null,
+            contentType: isFolder ? 'folder' : ext,
+            streamUrl: null,
+            streamProtocol: null,
+            mtime: null,
+            md5: null,
+            video: null
+          });
+          itemsMap.set(key, true);
+        });
+      }
+
+      res.json({
+        items,
+        total: total + (items.length - rows.length),
+        limit,
+        offset,
+        count: items.length,
+        hasMore: offset + rows.length < total
+      });
+    } catch (err) {
+      logger.error('[files] Failed to fetch all files', { error: err.message });
+      res.status(500).json({ error: 'Не удалось получить список файлов' });
+    }
+  });
+
+  // POST /api/devices/play-from-all - подготовка к воспроизведению файла с другого устройства
+  // Создает (или переиспользует) ссылку на файл в целевом устройстве без физического копирования.
+  router.post('/play-from-all', requireSpeaker[0], requireSpeaker[1], jsonParser, async (req, res) => {
+    const sourceDeviceId = sanitizeDeviceId(req.body?.sourceDeviceId);
+    const targetDeviceId = sanitizeDeviceId(req.body?.targetDeviceId);
+    const safeName = req.body?.safeName;
+    const page = typeof req.body?.page === 'number' ? req.body.page : undefined;
+
+    if (!sourceDeviceId || !targetDeviceId || !safeName) {
+      return res.status(400).json({ error: 'sourceDeviceId, targetDeviceId и safeName обязательны' });
+    }
+
+    let sourceMeta = getFileMetadata(sourceDeviceId, safeName);
+
+    // Fallback для папок/PDF/PPTX, которые не лежат в files_metadata, но есть в файловой системе
+    if (!sourceMeta) {
+      const sourceDevice = devices[sourceDeviceId];
+      if (!sourceDevice) {
+        return res.status(404).json({ error: 'Источник не найден' });
+      }
+      const ext = safeName.includes('.') ? safeName.split('.').pop().toLowerCase() : '';
+      const isFolder = !safeName.includes('.') || ext === 'zip';
+      const isPdf = ext === 'pdf';
+      const isPptx = ext === 'pptx';
+      if (isFolder || isPdf || isPptx) {
+        const devicesPath = getDevicesPath();
+        const baseFolder = path.join(devicesPath, sourceDevice.folder || sourceDeviceId);
+        let filePath = path.join(baseFolder, safeName);
+        if (isFolder && ext === 'zip') {
+          // zip-папка: оставляем как есть, пусть path указывает на архив
+          filePath = path.join(baseFolder, safeName);
+        }
+        if (!fs.existsSync(filePath)) {
+          return res.status(404).json({ error: 'Файл не найден в источнике' });
+        }
+        const stat = fs.statSync(filePath);
+        const mimeGuess = isPdf ? 'application/pdf' : isPptx ? 'application/vnd.openxmlformats-officedocument.presentationml.presentation' : null;
+        // КРИТИЧНО: file_size обязателен в БД (NOT NULL), для папок используем 0
+        const fileSize = stat.isFile() ? stat.size : 0;
+        
+        // КРИТИЧНО: Получаем originalName из fileNamesMap или fileNames устройства-источника
+        const sourceNameMap = fileNamesMap[sourceDeviceId] || {};
+        const sourceFiles = sourceDevice.files || [];
+        const sourceFileNames = sourceDevice.fileNames || sourceFiles;
+        const fileIndex = sourceFiles.indexOf(safeName);
+        const originalName = sourceNameMap[safeName] || (fileIndex >= 0 ? sourceFileNames[fileIndex] : null) || safeName;
+        
+        sourceMeta = {
+          device_id: sourceDeviceId,
+          safe_name: safeName,
+          original_name: originalName, // КРИТИЧНО: Используем реальное originalName, а не safeName
+          file_path: filePath,
+          file_size: fileSize,
+          file_mtime: stat.mtime?.toISOString?.() || null,
+          content_type: isFolder ? 'folder' : (isPdf ? 'pdf' : isPptx ? 'pptx' : null),
+          mime_type: mimeGuess,
+          md5_hash: null,
+          partial_md5: null,
+          video_width: null,
+          video_height: null,
+          video_duration: null,
+          video_bitrate: null,
+          video_codec: null,
+          stream_url: null,
+          stream_protocol: null
+        };
+      }
+    }
+
+    if (!sourceMeta) {
+      return res.status(404).json({ error: 'Файл не найден в источнике' });
+    }
+
+    // Проверяем наличие целевого устройства
+    if (!devices[targetDeviceId]) {
+      return res.status(404).json({ error: 'Целевое устройство не найдено' });
+    }
+
+    // Получаем originalName с правильным приоритетом
+    const originalName =
+      sourceMeta.original_name ||
+      fileNamesMap[sourceDeviceId]?.[safeName] ||
+      safeName;
+
+    // Подготовка путей/копирования для статического контента (folder/pdf/pptx) если цель другое устройство
+    let targetFilePath = sourceMeta.file_path || null;
+    let pagesCount = sourceMeta.pages_count || null;
+    const extLower = path.extname(sourceMeta.safe_name || safeName).toLowerCase();
+    const isStaticContent = ['folder', 'pdf', 'pptx'].includes(sourceMeta.content_type);
+    const isImageFile = ['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(extLower);
+
+    // Ищем существующий safeName на целевом устройстве
+    let targetSafeName = safeName;
+    let skipCopy = false;
+    const existing = getFileMetadata(targetDeviceId, targetSafeName);
+
+    if (existing) {
+      const existingPath = existing.file_path;
+      const existsOnDisk = existingPath && fs.existsSync(existingPath);
+      const existingIsStatic = ['folder', 'pdf', 'pptx', 'image'].includes(existing.content_type || '');
+
+      if (existingIsStatic) {
+        // Всегда переиспользуем то же имя; путь берем из существующей записи, если есть
+        targetSafeName = existing.safe_name;
+        if (existing.file_path) {
+          targetFilePath = existing.file_path;
+        }
+        // Если физически есть — копировать не надо
+        if (existsOnDisk) {
+          skipCopy = true;
+        }
+      } else if (existing.file_path !== sourceMeta.file_path) {
+        // Конфликт по имени — генерируем уникальное (для разных путей)
+        const ext = path.extname(targetSafeName);
+        const base = path.basename(targetSafeName, ext);
+        targetSafeName = `${base}_${crypto.randomBytes(3).toString('hex')}${ext}`;
+      }
+    }
+
+    // Если это статический контент и pagesCount отсутствует, считаем на источнике
+    if (isStaticContent && (pagesCount === null || pagesCount === undefined)) {
+      try {
+        const ext = path.extname(sourceMeta.safe_name || safeName).toLowerCase();
+        const folderName = sourceMeta.content_type === 'folder'
+          ? sourceMeta.safe_name || safeName
+          : (sourceMeta.safe_name || safeName).replace(/\.(pdf|pptx)$/i, '');
+        pagesCount = await getFolderImagesCount(sourceDeviceId, folderName);
+      } catch (err) {
+        pagesCount = null;
+      }
+    }
+
+    // Новая логика: не копируем статический контент, используем путь источника
+    if (isStaticContent && targetDeviceId !== sourceDeviceId) {
+      skipCopy = true;
+      targetFilePath = sourceMeta.file_path;
+      targetSafeName = safeName;
+    }
+
+    // Копирование одиночных изображений (png/jpg/gif/webp) между устройствами
+    // Не копируем одиночные изображения, играем с источника
+    if (isImageFile && targetDeviceId !== sourceDeviceId) {
+      skipCopy = true;
+      targetFilePath = sourceMeta.file_path;
+      targetSafeName = safeName;
+    }
+
+    // Если записи нет или путь отличается — сохраняем метаданные, указывая на целевой путь (или исходный, если тот же девайс)
+    const alreadyLinked = (existing && existing.file_path === targetFilePath) || skipCopy;
+    const shouldSaveMetadata =
+      !isStaticContent && !isImageFile
+        ? !alreadyLinked
+        : (targetDeviceId === sourceDeviceId && !alreadyLinked); // для статического контента/изображений не сохраняем запись на целевое устройство, если оно другое
+
+    if (shouldSaveMetadata) {
+      saveFileMetadata({
+        deviceId: targetDeviceId,
+        safeName: targetSafeName,
+        originalName,
+        filePath: targetFilePath,
+        fileSize: sourceMeta.file_size ?? 0, // КРИТИЧНО: file_size обязателен (NOT NULL), используем 0 по умолчанию
+        md5Hash: sourceMeta.md5_hash,
+        partialMd5: sourceMeta.partial_md5,
+        mimeType: sourceMeta.mime_type,
+        videoParams: {
+          width: sourceMeta.video_width,
+          height: sourceMeta.video_height,
+          duration: sourceMeta.video_duration,
+          codec: sourceMeta.video_codec,
+          bitrate: sourceMeta.video_bitrate
+        },
+        audioParams: {
+          codec: sourceMeta.audio_codec,
+          bitrate: sourceMeta.audio_bitrate,
+          channels: sourceMeta.audio_channels
+        },
+        fileMtime: sourceMeta.file_mtime,
+        contentType: sourceMeta.content_type,
+        streamUrl: sourceMeta.stream_url,
+        streamProtocol: sourceMeta.stream_protocol,
+        pagesCount
+      });
+
+      if (!fileNamesMap[targetDeviceId]) fileNamesMap[targetDeviceId] = {};
+      fileNamesMap[targetDeviceId][targetSafeName] = originalName;
+      saveFileNamesMap(fileNamesMap);
+
+      updateDeviceFilesFromDB(targetDeviceId, devices, fileNamesMap);
+    } else {
+      // КРИТИЧНО: Даже если файл уже существует, обновляем fileNamesMap с правильным originalName
+      // Это важно, если файл был создан ранее без правильного originalName
+      const currentNameInMap = fileNamesMap[targetDeviceId]?.[targetSafeName];
+      if (currentNameInMap !== originalName) {
+        if (!fileNamesMap[targetDeviceId]) fileNamesMap[targetDeviceId] = {};
+        fileNamesMap[targetDeviceId][targetSafeName] = originalName;
+        saveFileNamesMap(fileNamesMap);
+        // Обновляем метаданные в БД, если originalName отличается
+        if (existing.original_name !== originalName) {
+          updateFileOriginalName(targetDeviceId, targetSafeName, originalName);
+        }
+        updateDeviceFilesFromDB(targetDeviceId, devices, fileNamesMap);
+      }
+    }
+
+    // Возвращаем safeName, чтобы фронт мог вызвать обычный play по целевому устройству
+    // КРИТИЧНО: Используем content_type из метаданных БД (приоритет), fallback только если нет
+    const metadata = existing || sourceMeta;
+    let contentType = metadata?.content_type;
+    
+    // Fallback только если content_type отсутствует в БД (старые записи)
+    if (!contentType) {
+      const ext = path.extname(targetSafeName).toLowerCase();
+      const hasExtension = targetSafeName.includes('.');
+      const targetDevice = devices[targetDeviceId];
+      
+      if (metadata?.stream_url || targetDevice?.streams?.[targetSafeName]) {
+        contentType = 'streaming';
+      } else if (!hasExtension) {
+        contentType = 'folder';
+      } else if (ext === '.pdf') {
+        contentType = 'pdf';
+      } else if (ext === '.pptx') {
+        contentType = 'pptx';
+      } else if (['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext)) {
+        contentType = 'image';
+      } else if (ext === '.zip') {
+        contentType = 'folder';
+      } else {
+        contentType = 'video';
+      }
+    }
+    
+    const playPayload = {
+      device_id: targetDeviceId,
+      file: targetSafeName,
+      type: contentType,
+      page: contentType === 'pdf' || contentType === 'pptx' || contentType === 'folder' ? (page || 1) : undefined,
+      streamProtocol: contentType === 'streaming'
+        ? normalizeStreamProtocol(sourceMeta.stream_protocol, sourceMeta.stream_url, sourceMeta.mime_type)
+        : undefined
+    };
+    res.json({
+      ok: true,
+      sourceDeviceId,
+      targetDeviceId,
+      safeName: targetSafeName,
+      alreadyLinked,
+      type: contentType,
+      playPayload
+    });
+  });
   // POST /api/devices/:id/streams - Добавление стрима (только админ)
   router.post('/:id/streams', requireAdmin, jsonParser, async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
@@ -880,41 +1445,295 @@ export function createFilesRouter(deps) {
       const devicesPath = getDevicesPath();
       
       // Проверяем есть ли PDF/PPTX/ZIP среди загруженных файлов
-      const documentsToMove = req.files ? req.files.filter(file => {
+      // КРИТИЧНО: PDF/PPTX/ZIP обрабатываются через processUploadedStaticContent
+      // Они остаются в /content/ и обрабатываются асинхронно
+      const staticContentFiles = req.files ? req.files.filter(file => {
         const ext = path.extname(file.filename).toLowerCase();
-        return ext === '.pdf' || ext === '.pptx' || ext === '.zip';
+        const isStatic = ext === '.pdf' || ext === '.pptx' || ext === '.zip';
+        if (isStatic) {
+          logger.debug(`[upload] 📄 Статический файл обнаружен: ${file.filename} (${ext})`, { 
+            deviceId: id, 
+            filename: file.filename, 
+            originalname: file.originalname,
+            ext 
+          });
+        }
+        return isStatic;
       }) : [];
       
-      // Перемещаем документы в папку устройства (НЕ в подпапку!)
-      if (documentsToMove.length > 0) {
-        const deviceFolder = path.join(devicesPath, devices[id].folder);
-        if (!fs.existsSync(deviceFolder)) {
-          fs.mkdirSync(deviceFolder, { recursive: true });
-        }
+      logger.info(`[upload] 📊 Анализ загруженных файлов`, {
+        deviceId: id,
+        totalFiles: req.files ? req.files.length : 0,
+        staticContentFiles: staticContentFiles.length,
+        staticFiles: staticContentFiles.map(f => ({ filename: f.filename, originalname: f.originalname, ext: path.extname(f.filename).toLowerCase() }))
+      });
+      
+      // Обрабатываем статический контент в фоне
+      if (staticContentFiles.length > 0) {
+        logger.info(`[upload] 📦 Найдено статического контента для обработки: ${staticContentFiles.length}`, {
+          deviceId: id,
+          files: staticContentFiles.map(f => ({ filename: f.filename, originalname: f.originalname }))
+        });
         
-        for (const file of documentsToMove) {
-          try {
-            const sourcePath = path.join(devicesPath, file.filename);  // Из /content/
-            const targetPath = path.join(deviceFolder, file.filename);  // В /content/{device}/{file}
-            
-            fs.renameSync(sourcePath, targetPath);
-            fs.chmodSync(targetPath, 0o644);
-            logger.info(`[upload] 📄 Файл перемещен: ${file.filename} -> ${devices[id].folder}/`);
-          } catch (e) {
-            logger.warn(`[upload] ⚠️ Ошибка перемещения ${file.filename}`, { error: e.message, stack: e.stack });
+        Promise.resolve().then(async () => {
+          for (const file of staticContentFiles) {
+            try {
+              const ext = path.extname(file.filename).toLowerCase();
+              const sourcePath = path.join(devicesPath, file.filename);  // В /content/
+              const originalName = fileNamesMap[id]?.[file.filename] || file.originalname || file.filename;
+              
+              logger.info(`[upload] 🔄 Начало обработки статического контента: ${file.filename}`, {
+                deviceId: id,
+                filename: file.filename,
+                originalname: file.originalname,
+                ext,
+                sourcePath,
+                exists: fs.existsSync(sourcePath)
+              });
+              
+              if (!fs.existsSync(sourcePath)) {
+                logger.warn(`[upload] ⚠️ Статический файл не найден: ${file.filename}`, { 
+                  deviceId: id, 
+                  filePath: sourcePath,
+                  devicesPath,
+                  filename: file.filename,
+                  originalname: file.originalname
+                });
+                continue;
+              }
+              
+              let contentType = 'folder';
+              if (ext === '.pdf') {
+                contentType = 'pdf';
+              } else if (ext === '.pptx') {
+                contentType = 'pptx';
+              } else if (ext === '.zip') {
+                contentType = 'folder';
+                // Для ZIP сначала распаковываем
+                // ZIP файл находится в /content/, но нужно распаковать в /content/{device}/
+                // Сначала перемещаем ZIP в папку устройства
+                const zipDeviceFolder = path.join(devicesPath, devices[id].folder);
+                if (!fs.existsSync(zipDeviceFolder)) {
+                  fs.mkdirSync(zipDeviceFolder, { recursive: true });
+                }
+                const zipTargetPath = path.join(zipDeviceFolder, file.filename);
+                if (fs.existsSync(sourcePath) && !fs.existsSync(zipTargetPath)) {
+                  fs.renameSync(sourcePath, zipTargetPath);
+                  fs.chmodSync(zipTargetPath, 0o644);
+                }
+                
+                const extractResult = await extractZipToFolder(id, file.filename, devices[id].folder);
+                if (!extractResult.success) {
+                  logger.error(`[upload] ❌ Ошибка распаковки ZIP ${file.filename}`, { 
+                    deviceId: id, 
+                    fileName: file.filename, 
+                    error: extractResult.error 
+                  });
+                  continue;
+                }
+                
+                // После распаковки обрабатываем папку
+                const folderName = extractResult.folderName;
+                const folderPath = path.join(zipDeviceFolder, folderName);
+                
+                if (fs.existsSync(folderPath)) {
+                  const originalFolderName = extractResult.originalFolderName || folderName;
+                  const result = await processUploadedStaticContent(
+                    id,
+                    folderName,
+                    originalFolderName,
+                    folderPath,
+                    'folder'
+                  );
+                  
+                  if (result.success) {
+                    // Сохраняем маппинг
+                    if (!fileNamesMap[id]) fileNamesMap[id] = {};
+                    fileNamesMap[id][folderName] = originalFolderName;
+                    saveFileNamesMap(fileNamesMap);
+                    
+                    logger.info(`[upload] ✅ Папка обработана: ${folderName} (${result.pagesCount} изображений)`, {
+                      deviceId: id,
+                      folderName,
+                      pagesCount: result.pagesCount
+                    });
+                    
+                    // КРИТИЧНО: Обновляем список файлов устройства из БД (сразу после сохранения метаданных)
+                    await new Promise(resolve => setTimeout(resolve, 200)); // Задержка для завершения транзакции БД
+                    updateDeviceFilesFromDB(id, devices, fileNamesMap);
+                    io.emit('devices/updated');
+                    
+                    // Проверяем, что папка действительно добавлена в список
+                    const device = devices[id];
+                    const isInList = device && device.files && device.files.includes(folderName);
+                    
+                    logger.info(`[upload] 📋 Список файлов обновлен для устройства ${id}`, {
+                      deviceId: id,
+                      folderName,
+                      isInList,
+                      totalFiles: device ? device.files.length : 0
+                    });
+                    
+                    if (!isInList) {
+                      logger.warn(`[upload] ⚠️ Папка не добавлена в список файлов после обработки`, {
+                        deviceId: id,
+                        folderName,
+                        deviceFiles: device ? device.files : null
+                      });
+                    }
+                  } else {
+                    logger.error(`[upload] ❌ Ошибка обработки папки ${folderName}`, {
+                      deviceId: id,
+                      folderName,
+                      error: result.error
+                    });
+                  }
+                }
+                
+                // Удаляем исходный ZIP файл после распаковки
+                // КРИТИЧНО: ZIP уже перемещен в zipTargetPath, проверяем его
+                try {
+                  if (fs.existsSync(zipTargetPath)) {
+                    fs.unlinkSync(zipTargetPath);
+                    logger.info(`[upload] 🗑️ Исходный ZIP удален: ${file.filename}`, { deviceId: id });
+                  } else if (fs.existsSync(sourcePath)) {
+                    // Fallback: если не найден в zipTargetPath, проверяем sourcePath
+                    fs.unlinkSync(sourcePath);
+                    logger.info(`[upload] 🗑️ Исходный ZIP удален (из sourcePath): ${file.filename}`, { deviceId: id });
+                  }
+                } catch (delErr) {
+                  logger.warn(`[upload] ⚠️ Не удалось удалить ZIP: ${file.filename}`, { error: delErr.message });
+                }
+                
+                continue;
+              }
+              
+              // Для PDF/PPTX: сначала перемещаем в папку устройства, затем обрабатываем
+              // КРИТИЧНО: autoConvertFile ожидает файл в /content/{device}/, а не в корне
+              const deviceFolder = path.join(devicesPath, devices[id].folder);
+              if (!fs.existsSync(deviceFolder)) {
+                fs.mkdirSync(deviceFolder, { recursive: true });
+              }
+              
+              const targetPath = path.join(deviceFolder, file.filename);
+              
+              // Перемещаем файл в папку устройства
+              if (fs.existsSync(sourcePath) && !fs.existsSync(targetPath)) {
+                fs.renameSync(sourcePath, targetPath);
+                fs.chmodSync(targetPath, 0o644);
+                logger.info(`[upload] 📄 Файл перемещен в папку устройства: ${file.filename}`, { deviceId: id });
+              } else if (!fs.existsSync(targetPath)) {
+                // Если файл уже не в sourcePath, возможно он уже перемещен
+                logger.warn(`[upload] ⚠️ Файл не найден ни в sourcePath, ни в targetPath: ${file.filename}`, { 
+                  deviceId: id, 
+                  sourcePath, 
+                  targetPath 
+                });
+                continue;
+              }
+              
+              // Теперь обрабатываем через processUploadedStaticContent
+              // (конвертация произойдет внутри функции)
+              const result = await processUploadedStaticContent(
+                id,
+                file.filename,
+                originalName,
+                targetPath,  // Используем targetPath вместо sourcePath
+                contentType,
+                {
+                  autoConvertFileFn: autoConvertFileWrapper,
+                  devices,
+                  fileNamesMap,
+                  saveFileNamesMapFn: saveFileNamesMap,
+                  io
+                }
+              );
+              
+              if (result.success) {
+                logger.info(`[upload] ✅ ${contentType.toUpperCase()} обработан: ${file.filename} (${result.pagesCount} слайдов)`, {
+                  deviceId: id,
+                  fileName: file.filename,
+                  contentType,
+                  pagesCount: result.pagesCount
+                });
+                
+                // КРИТИЧНО: Обновляем список файлов устройства из БД (сразу после сохранения метаданных)
+                updateDeviceFilesFromDB(id, devices, fileNamesMap);
+                
+                // Проверяем, что папка действительно добавлена в список
+                const device = devices[id];
+                const folderName = file.filename.replace(/\.(pdf|pptx)$/i, '');
+                const isInList = device && device.files && device.files.includes(folderName);
+                
+                logger.info(`[upload] 📋 Список файлов обновлен для устройства ${id}`, {
+                  deviceId: id,
+                  fileName: file.filename,
+                  folderName,
+                  isInList,
+                  totalFiles: device ? device.files.length : 0
+                });
+                
+                if (!isInList) {
+                  logger.warn(`[upload] ⚠️ Папка не добавлена в список файлов после обработки`, {
+                    deviceId: id,
+                    folderName,
+                    deviceFiles: device ? device.files : null
+                  });
+                }
+                
+                io.emit('devices/updated');
+              } else {
+                logger.error(`[upload] ❌ Ошибка обработки ${contentType} ${file.filename}`, {
+                  deviceId: id,
+                  fileName: file.filename,
+                  contentType,
+                  error: result.error
+                });
+              }
+              
+            } catch (err) {
+              logger.error(`[upload] ❌ Ошибка обработки статического контента ${file.filename}`, {
+                deviceId: id,
+                fileName: file.filename,
+                error: err.message,
+                stack: err.stack
+              });
+            }
           }
-        }
-        
-        // КРИТИЧНО: Автоконвертация PDF/PPTX (autoConvertFile сама создаст папку)
-        for (const file of documentsToMove) {
-          const ext = path.extname(file.filename).toLowerCase();
-          if (ext === '.pdf' || ext === '.pptx') {
-            logger.info(`[upload] 🔄 Запуск конвертации: ${file.filename}`);
-            autoConvertFileWrapper(id, file.filename).catch(err => {
-              logger.error(`[upload] ❌ Ошибка конвертации ${file.filename}`, { error: err.message, stack: err.stack });
-            });
-          }
-        }
+          
+          // Обновляем список файлов после обработки всех файлов
+          updateDeviceFilesFromDB(id, devices, fileNamesMap);
+          
+          // Проверяем результат обновления
+          const device = devices[id];
+          const staticContentInList = device && device.files ? 
+            staticContentFiles.map(f => {
+              const folderName = f.filename.replace(/\.(pdf|pptx|zip)$/i, '');
+              return { filename: f.filename, folderName, inList: device.files.includes(folderName) };
+            }) : [];
+          
+          logger.info(`[upload] ✅ Обработка статического контента завершена для устройства ${id}`, {
+            deviceId: id,
+            processedFiles: staticContentFiles.length,
+            totalFiles: device ? device.files.length : 0,
+            staticContentInList
+          });
+          
+          io.emit('devices/updated');
+        }).catch(err => {
+          logger.error('[upload] ❌ Критическая ошибка обработки статического контента', {
+            deviceId: id,
+            error: err.message,
+            stack: err.stack,
+            filesCount: staticContentFiles.length,
+            files: staticContentFiles.map(f => f.filename)
+          });
+        });
+      } else {
+        logger.debug(`[upload] Нет статического контента для обработки`, {
+          deviceId: id,
+          totalFiles: req.files ? req.files.length : 0
+        });
       }
       
       // КРИТИЧНО: Обработку папок переносим в фон, чтобы не блокировать ответ
@@ -1081,7 +1900,42 @@ export function createFilesRouter(deps) {
           if (!fileNamesMap[id]) fileNamesMap[id] = {};
           fileNamesMap[id][safeFolderName] = folderName;
           saveFileNamesMap(fileNamesMap);
-          
+
+          // Сохраняем метаданные папки в БД (pages_count, file_path, content_type=folder)
+          try {
+            const processResult = await processUploadedStaticContent(
+              id,
+              safeFolderName,
+              folderName,
+              targetFolder,
+              'folder'
+            );
+
+            if (processResult.success) {
+              logFile('info', `✅ Папка сохранена в БД: ${safeFolderName} (${processResult.pagesCount} изображений)`, {
+                deviceId: id,
+                folderName: safeFolderName,
+                pagesCount: processResult.pagesCount,
+                targetFolder
+              });
+            } else {
+              logger.error('[upload] ❌ Не удалось сохранить метаданные папки', {
+                deviceId: id,
+                folderName: safeFolderName,
+                error: processResult.error,
+                targetFolder
+              });
+            }
+          } catch (err) {
+            logger.error('[upload] ❌ Ошибка сохранения метаданных папки', {
+              deviceId: id,
+              folderName: safeFolderName,
+              error: err.message,
+              stack: err.stack,
+              targetFolder
+            });
+          }
+
           updateDeviceFilesFromDB(id, devices, fileNamesMap);
           io.emit('devices/updated');
         }).catch(err => {
@@ -1139,16 +1993,50 @@ export function createFilesRouter(deps) {
           }
         // Автоматическая обработка ZIP архивов с изображениями
         else if (ext === '.zip') {
-          extractZipToFolder(id, fileName).then(result => {
+          // ZIP файл должен быть в папке устройства
+          const devicesPath = getDevicesPath();
+          const deviceFolder = path.join(devicesPath, devices[id].folder);
+          const zipPath = path.join(deviceFolder, fileName);
+          
+          if (!fs.existsSync(zipPath)) {
+            logger.warn(`[upload] ⚠️ ZIP файл не найден в папке устройства: ${zipPath}`, { deviceId: id, fileName });
+            continue;
+          }
+          
+          extractZipToFolder(id, fileName, devices[id].folder).then(async (result) => {
             if (result.success) {
               logFile('info', `📦 ZIP распакован: ${fileName} -> ${result.folderName}/ (${result.imagesCount} изображений)`, { fileName, deviceId: id, folderName: result.folderName, imagesCount: result.imagesCount });
               
-              // Сохраняем маппинг оригинального имени папки
-              if (result.originalFolderName && result.folderName !== result.originalFolderName) {
-                if (!fileNamesMap[id]) fileNamesMap[id] = {};
-                fileNamesMap[id][result.folderName] = result.originalFolderName;
-                saveFileNamesMap(fileNamesMap);
-                logFile('info', `📝 Маппинг папки: "${result.folderName}" → "${result.originalFolderName}"`, { deviceId: id, folderName: result.folderName, originalFolderName: result.originalFolderName });
+              // Обрабатываем папку через processUploadedStaticContent
+              const folderPath = path.join(deviceFolder, result.folderName);
+              if (fs.existsSync(folderPath)) {
+                const originalFolderName = result.originalFolderName || result.folderName;
+                const processResult = await processUploadedStaticContent(
+                  id,
+                  result.folderName,
+                  originalFolderName,
+                  folderPath,
+                  'folder'
+                );
+                
+                if (processResult.success) {
+                  // Сохраняем маппинг
+                  if (!fileNamesMap[id]) fileNamesMap[id] = {};
+                  fileNamesMap[id][result.folderName] = originalFolderName;
+                  saveFileNamesMap(fileNamesMap);
+                  
+                  logFile('info', `✅ Папка обработана и сохранена в БД: ${result.folderName} (${processResult.pagesCount} изображений)`, {
+                    deviceId: id,
+                    folderName: result.folderName,
+                    pagesCount: processResult.pagesCount
+                  });
+                } else {
+                  logger.error(`[upload] ❌ Ошибка обработки папки ${result.folderName}`, {
+                    deviceId: id,
+                    folderName: result.folderName,
+                    error: processResult.error
+                  });
+                }
               }
               
               // Обновляем список файлов после распаковки
@@ -2062,9 +2950,27 @@ export function createFilesRouter(deps) {
     if (!d) {
       return res.status(404).json({ error: 'Устройство не найдено' });
     }
+
+    // Fallback: если список файлов пуст или не инициализирован (после перезапуска), подтягиваем из БД
+    if (!d.files || d.files.length === 0) {
+      try {
+        updateDeviceFilesFromDB(id, devices, fileNamesMap);
+      } catch (e) {
+        logger.warn('[files-with-status] Failed to refresh files from DB', { deviceId: id, error: e.message });
+      }
+    }
     
     const files = d.files || [];
     const fileNames = d.fileNames || files;
+    
+    // КРИТИЧНО: Логируем для отладки
+    logger.debug('[files-with-status] Getting files for device', {
+      deviceId: id,
+      filesCount: files.length,
+      files: files.slice(0, 10), // Первые 10 файлов для отладки
+      hasFileMetadata: !!d.fileMetadata,
+      fileMetadataCount: d.fileMetadata ? d.fileMetadata.length : 0
+    });
     
     const filesData = [];
     
@@ -2185,13 +3091,37 @@ export function createFilesRouter(deps) {
         }
       }
       
-      // Если это папка (без расширения или .zip) — считаем количество изображений
-      if (!ext || ext === '' || ext === '.zip') {
-        const folderName = safeName.replace(/\.zip$/i, '');
-        try {
-          folderImageCount = await getFolderImagesCount(id, folderName);
-        } catch (error) {
-          folderImageCount = null;
+      // КРИТИЧНО: Определяем contentType для папок/PDF/PPTX из метаданных БД
+      if (metadata && (metadata.content_type === 'folder' || metadata.content_type === 'pdf' || metadata.content_type === 'pptx')) {
+        contentType = metadata.content_type;
+      } else if (!ext || ext === '' || ext === '.zip') {
+        // Fallback: если нет метаданных, определяем по отсутствию расширения
+        contentType = 'folder';
+      } else if (ext === '.pdf') {
+        contentType = 'pdf';
+      } else if (ext === '.pptx') {
+        contentType = 'pptx';
+      }
+      
+      // Если это папка, PDF или PPTX — используем pages_count из БД
+      if (contentType === 'folder' || contentType === 'pdf' || contentType === 'pptx') {
+        // Используем pages_count из метаданных БД
+        if (metadata && metadata.pages_count !== null && metadata.pages_count !== undefined) {
+          folderImageCount = metadata.pages_count;
+        } else {
+          // Fallback: считаем вручную только если нет в БД (для старых записей)
+          const folderName = safeName.replace(/\.(zip|pdf|pptx)$/i, '');
+          try {
+            if (contentType === 'folder' || !ext || ext === '' || ext === '.zip') {
+              folderImageCount = await getFolderImagesCount(id, folderName);
+            } else {
+              // Для PDF/PPTX используем getPageSlideCount
+              const { getPageSlideCount } = await import('../converters/document-converter.js');
+              folderImageCount = await getPageSlideCount(id, safeName);
+            }
+          } catch (error) {
+            folderImageCount = null;
+          }
         }
       }
       

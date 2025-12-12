@@ -286,8 +286,13 @@
     </aside>
     <section class="speaker-main">
       <div class="panel files-panel" style="min-height:0; display:flex; flex-direction:column">
-        <div class="header" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-sm)">
-          <h3 class="title" id="filesPaneTitle" style="margin:0">Файлы</h3>
+        <div class="header" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-sm); flex-wrap:wrap">
+          <div style="display:flex; align-items:flex-end; gap:2px; flex-wrap:wrap">
+            <div id="filesModeSwitch" style="display:flex; align-items:flex-end; gap:2px;">
+              <button id="filesModeDevice" class="secondary" type="button" style="padding:8px 14px; border-radius:8px 8px 0 0; border:1px solid var(--border); background:var(--panel-2);">Файлы на устройстве</button>
+              <button id="filesModeAll" class="secondary" type="button" style="padding:8px 14px; border-radius:8px 8px 0 0; border:1px solid var(--border); background:var(--panel-2);">Все файлы</button>
+            </div>
+          </div>
           <div class="meta" id="filesPaneMeta" style="margin:0; white-space:nowrap">Выберите устройство слева</div>
         </div>
         <div style="display:flex; flex-direction:column; gap:var(--space-md); flex:1 1 auto; min-height:0">

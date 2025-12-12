@@ -24,6 +24,5 @@
     "winston-daily-rotate-file": "^5.0.0"
   },
   "devDependencies": {
-    "puppeteer": "^24.31.0"
   }
 }

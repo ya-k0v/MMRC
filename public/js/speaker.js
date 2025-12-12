@@ -66,6 +66,8 @@ const socket = io();
 const tvList = document.getElementById('tvList');
 const fileList = document.getElementById('fileList');
 const filePreview = document.getElementById('filePreview');
+const filesModeDeviceBtn = document.getElementById('filesModeDevice');
+const filesModeAllBtn = document.getElementById('filesModeAll');
 const pdfPrevBtn = document.getElementById('pdfPrevBtn');
 const pdfNextBtn = document.getElementById('pdfNextBtn');
 const pdfCloseBtn = document.getElementById('pdfCloseBtn');
@@ -79,6 +81,55 @@ const STATIC_CONTENT_TYPES = new Set(['pdf', 'pptx', 'folder']);
 const FOLDER_INTERVAL_OPTIONS = [5, 10, 15, 20];
 const DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS = 10;
 let previewLoadToken = 0;
+let fileListMode = 'device'; // device | all
+let currentFileSourceDevice = null;
+const ALL_FILES_LIMIT = 500;
+
+function getDeviceDisplayName(deviceId) {
+  if (!deviceId) return '';
+  const fromNodes = nodeNames?.[deviceId];
+  if (fromNodes) return fromNodes;
+  const found = devices?.find?.(d => d.device_id === deviceId);
+  if (found) return found.name || deviceId;
+  return deviceId;
+}
+
+// Fallback helper для построения URL стримов/файлов, если нет proxyUrl в данных
+function getStreamPlaybackUrl(deviceId, safeName) {
+  if (!deviceId || !safeName) return '';
+  return `/api/files/resolve/${encodeURIComponent(deviceId)}/${encodeURIComponent(safeName)}`;
+}
+
+function setFilesMode(mode = 'device', { skipLoad = false } = {}) {
+  if (mode !== 'device' && mode !== 'all') return;
+  fileListMode = mode;
+  filePage = 0;
+  currentFile = null;
+  currentFileSourceDevice = null;
+  if (filesModeDeviceBtn && filesModeAllBtn) {
+    const activate = (btn, active) => {
+      if (!btn) return;
+      btn.style.background = active ? 'var(--panel)' : 'var(--panel-2)';
+      btn.style.color = active ? 'var(--text)' : 'var(--muted)';
+      btn.style.borderBottomColor = active ? 'transparent' : 'var(--border)';
+      btn.style.boxShadow = active ? '0 -1px 0 var(--panel)' : 'none';
+    };
+    activate(filesModeDeviceBtn, mode === 'device');
+    activate(filesModeAllBtn, mode === 'all');
+  }
+  // Сбрасываем превью при переключении режима
+  if (filePreview) {
+    filePreview.innerHTML = '<div class="meta" style="padding:12px; color:var(--muted);">Выберите файл</div>';
+  }
+  if (!skipLoad) {
+    loadFiles();
+  }
+}
+
+if (filesModeDeviceBtn && filesModeAllBtn) {
+  filesModeDeviceBtn.addEventListener('click', () => setFilesMode('device'));
+  filesModeAllBtn.addEventListener('click', () => setFilesMode('all'));
+}
 
 // КРИТИЧНО: Отслеживание активных превью стримов (теперь по safeName, без deviceId)
 const activePreviewStreams = new Map(); // safeName -> {timestamp, iframe, isPlaying}
@@ -973,6 +1024,9 @@ async function fetchStaticPreviewImages(deviceId, safeName, contentType) {
 
 function renderThumbnailGrid(deviceId, safeName, contentType, imageUrls) {
   ensureThumbnailStyles();
+  // deviceId здесь — устройство, где хранится контент
+  // Для управления (плейлист/слайды) используем устройство воспроизведения
+  const playbackDeviceId = (currentDevice && isDeviceReady(currentDevice)) ? currentDevice : deviceId;
   currentPreviewContext = { deviceId, file: safeName, page: null };
   if (!imageUrls.length) {
     filePreview.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary)">Нет миниатюр для этого файла</div>`;
@@ -1008,7 +1062,7 @@ function renderThumbnailGrid(deviceId, safeName, contentType, imageUrls) {
           <button 
             id="folderPlaylistBtn"
             class="secondary folder-playlist-btn"
-            data-device="${escapeAttr(deviceId)}"
+            data-device="${escapeAttr(playbackDeviceId)}"
             data-file="${escapeAttr(safeName)}"
             data-count="${imageUrls.length}">
             Плейлист
@@ -1033,18 +1087,48 @@ function renderThumbnailGrid(deviceId, safeName, contentType, imageUrls) {
   `;
 
   filePreview.querySelectorAll('.thumbnail-preview').forEach((thumb, idx) => {
-    thumb.addEventListener('click', () => {
-      // КРИТИЧНО: Проверяем что устройство онлайн
-      if (!requireDeviceReady(deviceId)) return;
-      
+    thumb.addEventListener('click', async () => {
+      const sourceDeviceId = deviceId;
+      // Целевое устройство: если текущее онлайн — используем его, иначе источник
+      const targetDeviceId = (currentDevice && isDeviceReady(currentDevice))
+        ? currentDevice
+        : (isDeviceReady(sourceDeviceId) ? sourceDeviceId : currentDevice);
+
+      if (!requireDeviceReady(targetDeviceId)) return;
+
       const page = idx + 1;
-      stopFolderPlaylistIfNeeded('manual thumbnail click', { deviceId, file: safeName });
-      
+      stopFolderPlaylistIfNeeded('manual thumbnail click', { deviceId: targetDeviceId, file: safeName });
+
+      // Если источник и цель разные — готовим файл на целевом через play-from-all
+      if (targetDeviceId !== sourceDeviceId) {
+        try {
+          const res = await speakerFetch('/api/devices/play-from-all', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sourceDeviceId,
+              targetDeviceId,
+              safeName,
+              page
+            })
+          });
+          if (!res.ok) {
+            console.error('Не удалось подготовить файл на целевом устройстве:', res.status);
+            alert('Не удалось запустить файл на выбранном устройстве');
+            return;
+          }
+        } catch (err) {
+          console.error('play-from-all error for thumbnails', err);
+          alert('Не удалось запустить файл на выбранном устройстве');
+          return;
+        }
+      }
+
       // Отправляем громкость перед запуском контента
-      sendVolumeBeforePlay(deviceId);
-      
+      sendVolumeBeforePlay(targetDeviceId);
+
       socket.emit('control/play', {
-        device_id: deviceId,
+        device_id: targetDeviceId,
         file: safeName,
         page,
       });
@@ -1255,6 +1339,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadNodeNames(speakerFetch),
     loadDevices()
   ]);
+
+  // Инициализация режима списка (по умолчанию — текущее устройство)
+  setFilesMode('device', { skipLoad: true });
+
+  // Инициализируем режим списка файлов (подсветка кнопок)
+  setFilesMode(fileListMode || 'device');
   
   // Синхронизируем состояние плейлиста с сервера после загрузки устройств
   devices.forEach(device => {
@@ -1677,6 +1767,9 @@ async function selectDevice(id, resetPage = true) {
     fileList.querySelectorAll('.file-item').forEach(item => item.classList.remove('active'));
   }
   
+  // При смене устройства всегда возвращаемся в режим "Текущее"
+  setFilesMode('device', { skipLoad: true });
+
   await loadFiles();
   await syncPreviewWithPlayerState();
   updateVolumeUI();
@@ -1684,25 +1777,22 @@ async function selectDevice(id, resetPage = true) {
   
 }
 
-/* Загрузка и рендер файлов для текущего ТВ */
+/* Загрузка и рендер файлов для текущего ТВ или агрегата */
 async function loadFiles() {
+  if (fileListMode === 'all') {
+    return loadAllFilesAggregated();
+  }
   if (!currentDevice) return;
   
-  // Находим устройство для отображения имени и количества файлов
   const device = devices.find(d => d.device_id === currentDevice);
   const deviceName = device ? (device.name || nodeNames[currentDevice] || currentDevice) : currentDevice;
   
-  // Обновляем заголовок плитки файлов
-  const title = document.getElementById('filesPaneTitle');
   const meta = document.getElementById('filesPaneMeta');
-  if (title) title.textContent = `Файлы на ${deviceName}`;
   if (meta) meta.textContent = 'Загрузка...';
   
-  // Обновим информацию о прогрессе под заголовком панели превью
   updatePlaybackInfoUI();
   
   try {
-    // КРИТИЧНО: Используем files-with-status для получения разрешения видео
     const res = await speakerFetch(`/api/devices/${encodeURIComponent(currentDevice)}/files-with-status`);
     if (!res.ok) {
       console.error('Не удалось загрузить файлы:', res.status);
@@ -1712,13 +1802,11 @@ async function loadFiles() {
     }
     const filesData = await res.json();
 
-    // Поддержка старого формата (массив строк) и нового формата (массив объектов)
-    // ВАЖНО: Фильтруем заглушки - спикеру они не нужны в списке файлов
     allFiles = filesData
       .filter(item => !(typeof item === 'object' && item.isPlaceholder))
       .map(item => {
         if (typeof item === 'string') {
-          return { safeName: item, originalName: item, resolution: null, durationSeconds: null, folderImageCount: null, contentType: null, streamUrl: null, streamProxyUrl: null, streamProtocol: null };
+          return { safeName: item, originalName: item, resolution: null, durationSeconds: null, folderImageCount: null, contentType: null, streamUrl: null, streamProxyUrl: null, streamProtocol: null, sourceDeviceId: currentDevice };
         }
         return { 
           safeName: item.name || item.safeName || item.originalName, 
@@ -1728,10 +1816,11 @@ async function loadFiles() {
           folderImageCount: typeof item.folderImageCount === 'number' ? item.folderImageCount : null,
           contentType: item.contentType || null,
           streamUrl: item.streamUrl || null,
-          streamProxyUrl: item.streamProxyUrl || null,
+          streamProxyUrl: item.streamProxyUrl || getStreamPlaybackUrl(currentDevice, item.safeName || item.name || item.originalName),
           streamProtocol: item.streamProtocol || null,
           hasTrailer: item.hasTrailer || false,
-          trailerUrl: item.trailerUrl || null
+          trailerUrl: item.trailerUrl || null,
+          sourceDeviceId: currentDevice
         };
       });
 
@@ -1744,22 +1833,18 @@ async function loadFiles() {
         <div class="meta">Нет файлов</div>
       </li>
     `;
-    // Очистить пейджер файлов если есть
     const pager = document.getElementById('filePager');
     if (pager) pager.innerHTML = '';
     if (meta) meta.textContent = '0 файлов';
     return;
   }
   
-  // Обновляем счетчик файлов
   const totalFilesCount = allFiles.length;
   if (meta) meta.textContent = `${totalFilesCount} файл${totalFilesCount === 1 ? '' : totalFilesCount > 1 && totalFilesCount < 5 ? 'а' : 'ов'}`;
   
-  // Обновляем отображение прогресса из кэша (если есть)
   updatePlaybackInfoUI();
 
-  // Пагинация файлов (фиксированное значение 5 на мобильных)
-  const pageSize = getMobilePageSize('file'); // Фиксированное значение 5 на мобильных
+  const pageSize = getMobilePageSize('file');
   const totalPages = Math.max(1, Math.ceil(allFiles.length / pageSize));
   if (filePage >= totalPages) filePage = totalPages - 1;
   const start = filePage * pageSize;
@@ -1772,23 +1857,36 @@ async function loadFiles() {
     const ext = hasExtension ? safeName.split('.').pop().toLowerCase() : '';
     
     // Определяем тип файла (включая папки)
+    // КРИТИЧНО: Сначала проверяем contentType из метаданных БД, потом fallback на расширение
     let type = 'VID'; // По умолчанию
     let typeLabel = 'Видео'; // Русское название
     
     if (contentType === 'streaming') {
       type = 'STREAM';
       typeLabel = streamProtocol ? `Стрим (${streamProtocol.toUpperCase()})` : 'Стрим';
+    } else if (contentType === 'folder') {
+      // КРИТИЧНО: Папки теперь определяются по contentType из БД
+      type = 'FOLDER';
+      typeLabel = 'Папка';
+    } else if (contentType === 'pdf') {
+      type = 'PDF';
+      typeLabel = 'PDF';
+    } else if (contentType === 'pptx') {
+      type = 'PPTX';
+      typeLabel = 'Презентация';
     } else if (ext === 'pdf') {
+      // Fallback для старых записей без contentType в БД
       type = 'PDF';
       typeLabel = 'PDF';
     } else if (ext === 'pptx') {
+      // Fallback для старых записей без contentType в БД
       type = 'PPTX';
       typeLabel = 'Презентация';
     } else if (['png','jpg','jpeg','gif','webp'].includes(ext)) {
       type = 'IMG';
       typeLabel = 'Изображение';
     } else if (ext === 'zip' || !hasExtension) {
-      // ZIP или папка без расширения - это папка с изображениями
+      // Fallback: ZIP или папка без расширения - это папка с изображениями
       type = 'FOLDER';
       typeLabel = 'Папка';
     }
@@ -1967,7 +2065,7 @@ async function loadFiles() {
         }
       }
       
-      setCurrentFileSelection(safeName, item);
+      setCurrentFileSelection(safeName, item, currentDevice);
       previewManuallyClosed = false;
       
       // КРИТИЧНО: Для стримов показываем превью через showStreamingPreview
@@ -1982,10 +2080,14 @@ async function loadFiles() {
       const ext = hasExtension ? safeName.split('.').pop().toLowerCase() : '';
       
       // Для папок, PDF и PPTX показываем сетку миниатюр - откладываем тяжелую операцию
-      if (!hasExtension || ext === 'pdf' || ext === 'pptx') {
+      // КРИТИЧНО: Определяем статический контент по contentType из метаданных БД
+      const isStaticContentForPreview = contentType === 'folder' || contentType === 'pdf' || contentType === 'pptx' || !hasExtension || ext === 'pdf' || ext === 'pptx';
+      if (isStaticContentForPreview) {
         // Используем requestIdleCallback для неблокирующей загрузки, fallback на setTimeout
         const loadPreview = async () => {
-          await showStaticPreview(currentDevice, safeName, !hasExtension ? 'folder' : ext, { initiatedByUser: true });
+          // КРИТИЧНО: Используем contentType из метаданных БД, fallback на определение по расширению
+          const previewContentType = contentType || (!hasExtension ? 'folder' : ext);
+          await showStaticPreview(currentDevice, safeName, previewContentType, { initiatedByUser: true });
         };
         
         if ('requestIdleCallback' in window) {
@@ -2047,63 +2149,117 @@ async function loadFiles() {
     btn.onclick = (e) => {
       e.stopPropagation(); // Останавливаем всплытие, чтобы не вызвался клик по карточке
       
-      // КРИТИЧНО: Проверяем что устройство онлайн
-      if (!requireDeviceReady(currentDevice)) return;
-      
       const safeName = decodeURIComponent(btn.getAttribute('data-safe'));
       const containerItem = btn.closest('.file-item');
       const contentType = containerItem?.getAttribute('data-content-type') || null;
       const streamProtocol = btn.getAttribute('data-stream-protocol') || containerItem?.getAttribute('data-stream-protocol') || '';
       const originalName = decodeURIComponent(btn.getAttribute('data-original'));
-      setCurrentFileSelection(safeName, containerItem);
+      const sourceDeviceId = decodeURIComponent(btn.getAttribute('data-source-device') || '') || null;
+
+      // Если текущее устройство офлайн, но источник онлайн — используем источник
+      const targetDeviceId = (currentDevice && isDeviceReady(currentDevice))
+        ? currentDevice
+        : (sourceDeviceId && isDeviceReady(sourceDeviceId) ? sourceDeviceId : currentDevice);
+
+      if (!requireDeviceReady(targetDeviceId)) return;
+
+      setCurrentFileSelection(safeName, containerItem, sourceDeviceId || targetDeviceId);
       
       // Сбрасываем флаг закрытия при новом воспроизведении
       previewManuallyClosed = false;
-      stopFolderPlaylistIfNeeded('manual play button', { deviceId: currentDevice, file: safeName });
+      stopFolderPlaylistIfNeeded('manual play button', { deviceId: targetDeviceId, file: safeName });
       
       // Отправляем громкость перед запуском контента
-      sendVolumeBeforePlay(currentDevice);
+      sendVolumeBeforePlay(targetDeviceId);
       
-      // Определяем тип файла
-      if (contentType === 'streaming') {
+      // Определяем тип файла (приоритет contentType из БД)
+      const hasExtension = safeName.includes('.');
+      const ext = hasExtension ? safeName.split('.').pop().toLowerCase() : '';
+      const isImage = ['png','jpg','jpeg','gif','webp'].includes(ext);
+      let normalizedType = contentType || null;
+      if (!normalizedType) {
+        if (!hasExtension || ext === 'zip') normalizedType = 'folder';
+        else if (ext === 'pdf') normalizedType = 'pdf';
+        else if (ext === 'pptx') normalizedType = 'pptx';
+        else if (isImage) normalizedType = 'image';
+        else normalizedType = null;
+      }
+
+      if (normalizedType === 'streaming') {
         previewManuallyClosed = false;
-        stopFolderPlaylistIfNeeded('streaming play', { deviceId: currentDevice, file: safeName });
-        sendVolumeBeforePlay(currentDevice);
-        socket.emit('control/play', { device_id: currentDevice, file: safeName, type: 'streaming', streamProtocol: streamProtocol || undefined });
+        stopFolderPlaylistIfNeeded('streaming play', { deviceId: targetDeviceId, file: safeName });
+        sendVolumeBeforePlay(targetDeviceId);
+        socket.emit('control/play', { device_id: targetDeviceId, file: safeName, type: 'streaming', streamProtocol: streamProtocol || undefined });
         return;
       }
 
-      socket.emit('control/play', { device_id: currentDevice, file: safeName });
-
-      const hasExtension = safeName.includes('.');
-      const ext = hasExtension ? safeName.split('.').pop().toLowerCase() : '';
-      const isStaticContent = !hasExtension || ext === 'pdf' || ext === 'pptx';
+      // КРИТИЧНО: Определяем статический контент по contentType из метаданных БД
+      const isStaticContent = normalizedType === 'folder' || normalizedType === 'pdf' || normalizedType === 'pptx';
       
-      // Для PDF/PPTX/FOLDER - открываем превью автоматически (откладываем тяжелую операцию)
       if (isStaticContent) {
+        // Превью всегда берём с устройства-источника (там лежат файлы)
+        const previewDeviceId = sourceDeviceId || targetDeviceId;
+        const previewContentType = normalizedType || (!hasExtension ? 'folder' : ext);
+
         const loadPreview = async () => {
-          await showStaticPreview(currentDevice, safeName, !hasExtension ? 'folder' : ext, { initiatedByUser: true });
+          await showStaticPreview(previewDeviceId, safeName, previewContentType, { initiatedByUser: true });
         };
-        
         if ('requestIdleCallback' in window) {
           requestIdleCallback(loadPreview, { timeout: 100 });
         } else {
           setTimeout(loadPreview, 0);
         }
-      } else {
-      // Для видео и обычных изображений - показываем заглушку
-        // Чтобы не было двойной загрузки (preview + основной плеер)
-        setTimeout(() => {
-          const placeholderUrl = `/player-videojs.html?device_id=${encodeURIComponent(currentDevice)}&preview=1&muted=1`;
-          const frame = filePreview.querySelector('iframe');
-          if (frame) {
-            frame.src = placeholderUrl;
-          } else {
-            filePreview.innerHTML = `<iframe src="${placeholderUrl}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
-          }
-          updatePreviewControlButtons();
-        }, 300);
+
+        // Если целевое устройство отличается от источника — готовим файл на целевом (копирование/линк) через play-from-all
+        if (targetDeviceId && sourceDeviceId && targetDeviceId !== sourceDeviceId) {
+          speakerFetch('/api/devices/play-from-all', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sourceDeviceId,
+              targetDeviceId,
+              safeName
+            })
+          }).catch(err => {
+            console.error('play-from-all (static) failed', err);
+          });
+        }
+
+        // Отправляем команду play на целевое устройство (ожидается, что файл доступен после play-from-all или уже есть)
+        socket.emit('control/play', { device_id: targetDeviceId, file: safeName, type: normalizedType || previewContentType || 'folder', page: 1 });
+        return;
       }
+
+      // Изображения (одиночные) — отправляем как image
+      if (normalizedType === 'image') {
+        // Если целевое устройство отличается от источника — готовим файл на целевом
+        if (targetDeviceId && sourceDeviceId && targetDeviceId !== sourceDeviceId) {
+          speakerFetch('/api/devices/play-from-all', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sourceDeviceId,
+              targetDeviceId,
+              safeName
+            })
+          }).catch(err => console.error('play-from-all (image) failed', err));
+        }
+        socket.emit('control/play', { device_id: targetDeviceId, file: safeName, type: 'image', page: 1 });
+        return;
+      }
+
+      // Видео/изображения - показываем заглушку и отправляем play
+      setTimeout(() => {
+        const placeholderUrl = `/player-videojs.html?device_id=${encodeURIComponent(targetDeviceId)}&preview=1&muted=1`;
+        const frame = filePreview.querySelector('iframe');
+        if (frame) {
+          frame.src = placeholderUrl;
+        } else {
+          filePreview.innerHTML = `<iframe src="${placeholderUrl}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
+        }
+        updatePreviewControlButtons();
+      }, 300);
+      socket.emit('control/play', { device_id: targetDeviceId, file: safeName });
     };
   });
   
@@ -2115,9 +2271,397 @@ async function loadFiles() {
   await syncPreviewWithPlayerState();
 }
 
+/* Агрегированный список файлов по всем устройствам с запуском на выбранное */
+async function loadAllFilesAggregated() {
+  const title = document.getElementById('filesPaneTitle');
+  const meta = document.getElementById('filesPaneMeta');
+
+  if (!currentDevice) {
+    if (title) title.textContent = 'Все файлы';
+    if (meta) meta.textContent = 'Выберите целевое устройство слева';
+    fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-xl)"><div class="meta">Выберите устройство слева</div></li>';
+    return;
+  }
+
+  const targetName = getDeviceDisplayName(currentDevice);
+  if (title) title.textContent = `Все файлы → на ${targetName}`;
+  if (meta) meta.textContent = 'Загрузка...';
+
+  try {
+    // Исключаем файлы выбранного устройства из списка "Все файлы"
+    const excludeParam = currentDevice ? `&excludeDevice=${encodeURIComponent(currentDevice)}` : '';
+    const res = await speakerFetch(`/api/devices/all/files?limit=${ALL_FILES_LIMIT}${excludeParam}`);
+    if (!res.ok) {
+      console.error('Не удалось загрузить все файлы:', res.status);
+      fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-xl)"><div class="meta">Ошибка загрузки файлов</div></li>';
+      if (meta) meta.textContent = '0 файлов';
+      return;
+    }
+    const data = await res.json();
+    const items = data.items || [];
+
+    // КРИТИЧНО: Дополнительная фильтрация плейсхолдеров на фронте
+    const filteredItems = items.filter(item => {
+      const name = item.safeName || '';
+      const ct = (item.contentType || '').toLowerCase();
+      const isTemp = name.startsWith('.optimizing_') || name.startsWith('.placeholder') || name === 'placeholder.mp4';
+      const isPlaceholderType = ct === 'placeholder';
+      return !isTemp && !isPlaceholderType;
+    });
+
+    allFiles = filteredItems.map((item) => {
+      const video = item.video || {};
+      return {
+        safeName: item.safeName || item.originalName,
+        originalName: item.originalName || item.safeName,
+        resolution: video.width && video.height ? { width: video.width, height: video.height } : null,
+        durationSeconds: typeof video.duration === 'number' ? video.duration : null,
+        folderImageCount: item.pagesCount || null,
+        contentType: item.contentType || null,
+        streamUrl: item.streamUrl || null,
+        streamProxyUrl: null,
+        streamProtocol: item.streamProtocol || null,
+        hasTrailer: false,
+        trailerUrl: null,
+        sourceDeviceId: item.deviceId,
+        sourceDeviceName: getDeviceDisplayName(item.deviceId)
+      };
+    });
+
+    if (!allFiles.length) {
+      fileList.innerHTML = `
+        <li class="item" style="text-align:center; padding:var(--space-xl)">
+          <div class="meta">Нет файлов</div>
+        </li>
+      `;
+      const pager = document.getElementById('filePager');
+      if (pager) pager.innerHTML = '';
+      if (meta) meta.textContent = '0 файлов';
+      return;
+    }
+
+    const totalFilesCount = data.total || allFiles.length;
+    if (meta) meta.textContent = `${totalFilesCount} файл${totalFilesCount === 1 ? '' : totalFilesCount > 1 && totalFilesCount < 5 ? 'а' : 'ов'} · все устройства`;
+
+    const pageSize = getMobilePageSize('file');
+    const totalPages = Math.max(1, Math.ceil(allFiles.length / pageSize));
+    if (filePage >= totalPages) filePage = totalPages - 1;
+    const start = filePage * pageSize;
+    const end = Math.min(start + pageSize, allFiles.length);
+    const files = allFiles.slice(start, end);
+
+    fileList.innerHTML = files.map(({ safeName, originalName, resolution, durationSeconds, folderImageCount, contentType, streamProtocol, sourceDeviceName, sourceDeviceId }) => {
+      const hasExtension = safeName.includes('.');
+      const ext = hasExtension ? safeName.split('.').pop().toLowerCase() : '';
+      let type = 'VID';
+      let typeLabel = 'Видео';
+      // КРИТИЧНО: сначала используем contentType из БД/бэкенда, затем fallback по расширению
+      if (contentType === 'streaming') {
+        type = 'STREAM';
+        typeLabel = streamProtocol ? `Стрим (${(streamProtocol || '').toUpperCase()})` : 'Стрим';
+      } else if (contentType === 'folder') {
+        type = 'FOLDER';
+        typeLabel = 'Папка';
+      } else if (contentType === 'pdf') {
+        type = 'PDF';
+        typeLabel = 'PDF';
+      } else if (contentType === 'pptx') {
+        type = 'PPTX';
+        typeLabel = 'Презентация';
+      } else if (ext === 'pdf') {
+        type = 'PDF';
+        typeLabel = 'PDF';
+      } else if (ext === 'pptx') {
+        type = 'PPTX';
+        typeLabel = 'Презентация';
+      } else if (['png','jpg','jpeg','gif','webp'].includes(ext)) {
+        type = 'IMG';
+        typeLabel = 'Изображение';
+      } else if (ext === 'zip' || !hasExtension) {
+        type = 'FOLDER';
+        typeLabel = 'Папка';
+      }
+
+      let resolutionLabel = '';
+      if (type === 'VID' && resolution) {
+        const width = resolution.width || 0;
+        const height = resolution.height || 0;
+        if (width >= 3840 || height >= 2160) resolutionLabel = '4K';
+        else if (width >= 1920 || height >= 1080) resolutionLabel = 'FHD';
+        else if (width >= 1280 || height >= 720) resolutionLabel = 'HD';
+        else if (width > 0) resolutionLabel = 'SD';
+      }
+
+      const active = currentFile === safeName && currentFileSourceDevice === sourceDeviceId;
+      const displayName = originalName.replace(/\.[^.]+$/, '');
+
+      const metaBadges = [];
+      if (type === 'FOLDER' && typeof folderImageCount === 'number' && folderImageCount > 0) metaBadges.push(`${folderImageCount} фото`);
+      if (type === 'VID' && typeof durationSeconds === 'number' && durationSeconds > 0) metaBadges.push(formatTime(durationSeconds));
+      if (type === 'STREAM') metaBadges.push(streamProtocol ? streamProtocol.toUpperCase() : 'онлайн');
+      const typeBadgeLabel = metaBadges.length ? `${typeLabel} · ${metaBadges.join(' · ')}` : typeLabel;
+
+      return `
+        <li class="file-item ${active ? 'active' : ''}" 
+            data-safe="${encodeURIComponent(safeName)}" 
+            data-original="${encodeURIComponent(originalName)}"
+            data-content-type="${contentType || ''}"
+            data-stream-protocol="${streamProtocol || ''}"
+            data-source-device="${encodeURIComponent(sourceDeviceId || '')}"
+            style="
+              display:grid; 
+              grid-template-columns:3fr 1fr; 
+              cursor:pointer; 
+              padding:0; 
+              border-radius:var(--radius-md);
+              border:1px solid var(--border);
+              overflow:hidden;
+              background:transparent;
+              transition:all 0.2s;
+              min-height:78px;
+            ">
+          
+          <div class="file-info" style="
+            padding:8px 12px; 
+            min-width:0; 
+            display:flex; 
+            flex-direction:column; 
+            justify-content:center;
+            background:var(--panel);
+          ">
+            <div class="file-item-name" title="${displayName}" 
+                 style="font-size:1rem; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-bottom:3px; line-height:1.3;">
+              ${displayName}
+            </div>
+            <div class="file-meta" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+              <span class="file-type-badge" style="
+                display:inline-block;
+                padding:2px 6px;
+                border:1px solid rgba(255,255,255,0.15);
+                border-radius:3px;
+                font-size:0.75rem;
+                font-weight:500;
+                color:var(--text);
+                background:rgba(255,255,255,0.05);
+                white-space:nowrap;
+                line-height:1.2;
+              ">${typeBadgeLabel}</span>
+              ${resolutionLabel ? `
+                <span class="resolution-badge" style="
+                  display:inline-block;
+                  padding:2px 6px;
+                  border:1px solid var(--brand);
+                  border-radius:3px;
+                  font-size:0.75rem;
+                  font-weight:500;
+                  color:var(--brand);
+                  background:var(--brand-light);
+                  white-space:nowrap;
+                  line-height:1.2;
+                ">${resolutionLabel}</span>
+              ` : ''}
+              <span class="device-badge" style="
+                display:inline-block;
+                padding:2px 6px;
+                border:1px solid rgba(255,255,255,0.15);
+                border-radius:3px;
+                font-size:0.75rem;
+                font-weight:500;
+                color:var(--text);
+                background:rgba(255,255,255,0.08);
+                white-space:nowrap;
+                line-height:1.2;
+              ">${sourceDeviceName || sourceDeviceId}</span>
+            </div>
+          </div>
+          
+          <div class="playBtn" 
+               data-safe="${encodeURIComponent(safeName)}" 
+               data-original="${encodeURIComponent(originalName)}"
+               data-stream-protocol="${streamProtocol || ''}"
+               data-source-device="${encodeURIComponent(sourceDeviceId || '')}"
+               style="
+                 display:flex; 
+                 align-items:center; 
+                 justify-content:center; 
+                 font-size:2rem;
+                 background:var(--brand);
+                 color:white;
+                 transition:background 0.2s;
+                 min-height:100%;
+                 min-width:72px;
+                 cursor:pointer;
+                 user-select:none;
+               "
+               onmouseover="this.style.background='var(--brand-hover)'"
+               onmouseout="this.style.background='var(--brand)'"
+               role="button"
+               tabindex="0"
+               aria-label="Воспроизвести ${displayName}">
+            ▶
+          </div>
+        </li>
+      `;
+    }).join('');
+
+    const filePager = document.getElementById('filePager');
+    if (filePager) {
+      if (totalPages > 1) {
+        filePager.innerHTML = `
+          <button class="secondary" id="filePrev" ${filePage<=0?'disabled':''} style="min-width:80px">Назад</button>
+          <span style="white-space:nowrap">${filePage+1} из ${totalPages}</span>
+          <button class="secondary" id="fileNext" ${filePage>=totalPages-1?'disabled':''} style="min-width:80px">Вперёд</button>
+        `;
+        const prev = document.getElementById('filePrev');
+        const next = document.getElementById('fileNext');
+        if (prev) prev.onclick = () => { if (filePage>0) { filePage--; loadFiles(); } };
+        if (next) next.onclick = () => { if (filePage<totalPages-1) { filePage++; loadFiles(); } };
+      } else {
+        filePager.innerHTML = '';
+      }
+    }
+
+    // Клик по карточке: просто выделить, без превью
+    fileList.querySelectorAll('.file-item').forEach(item => {
+      item.onclick = (e) => {
+        if (e.target.closest('.playBtn')) return;
+        const safeName = decodeURIComponent(item.getAttribute('data-safe'));
+        const sourceDeviceId = decodeURIComponent(item.getAttribute('data-source-device') || '') || null;
+        const contentType = item.getAttribute('data-content-type') || null;
+        const streamProtocol = item.getAttribute('data-stream-protocol') || '';
+        const originalName = decodeURIComponent(item.getAttribute('data-original'));
+        const hasExtension = safeName.includes('.');
+        const ext = hasExtension ? safeName.split('.').pop().toLowerCase() : '';
+
+        setCurrentFileSelection(safeName, item, sourceDeviceId);
+        previewManuallyClosed = false;
+
+        // Стримы — превью через stream preview
+        if (contentType === 'streaming') {
+          showStreamingPreview(sourceDeviceId, safeName, streamProtocol);
+          return;
+        }
+
+        // Папки / PDF / PPTX — статический превью (учитываем contentType)
+        if (!hasExtension || ext === 'pdf' || ext === 'pptx' || contentType === 'folder' || contentType === 'pdf' || contentType === 'pptx') {
+          const type = contentType || (!hasExtension ? 'folder' : ext);
+          showStaticPreview(sourceDeviceId, safeName, type, { initiatedByUser: true });
+          return;
+        }
+
+        // Видео / изображения — превью через iframe плеера
+        const iframeSrcBase = `/player-videojs.html?device_id=${encodeURIComponent(sourceDeviceId || '')}&preview=1&muted=1&file=${encodeURIComponent(safeName)}`;
+        const src = `${iframeSrcBase}&t=${Date.now()}`;
+        const frame = filePreview.querySelector('iframe');
+        if (frame) {
+          frame.src = src;
+        } else {
+          filePreview.innerHTML = `<iframe src="${src}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
+        }
+        setTimeout(() => updatePreviewControlButtons(), 10);
+      };
+    });
+
+    fileList.querySelectorAll('.playBtn').forEach(btn => {
+      btn.onclick = async (e) => {
+        e.stopPropagation();
+        if (!requireDeviceReady(currentDevice)) return;
+        const safeName = decodeURIComponent(btn.getAttribute('data-safe'));
+        const contentType = (btn.closest('.file-item')?.getAttribute('data-content-type')) || null;
+        const streamProtocol = btn.getAttribute('data-stream-protocol') || '';
+        const sourceDeviceId = decodeURIComponent(btn.getAttribute('data-source-device') || '') || null;
+        const row = btn.closest('.file-item');
+        await handlePlayAggregated({ sourceDeviceId, safeName, contentType, streamProtocol, rowEl: row });
+      };
+    });
+
+  } catch (error) {
+    console.error('Не удалось отобразить все файлы:', error);
+    fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-xl)"><div class="meta">Ошибка загрузки файлов</div></li>';
+  }
+}
+
+async function handlePlayAggregated({ sourceDeviceId, safeName, contentType, streamProtocol, rowEl }) {
+  if (!sourceDeviceId) {
+    alert('Не указан источник файла');
+    return;
+  }
+
+  // Целевое устройство: приоритет у выбранного онлайн, иначе источник
+  const targetDeviceId = (currentDevice && isDeviceReady(currentDevice)) ? currentDevice : sourceDeviceId;
+  if (!targetDeviceId) {
+    alert('Не найдено целевое устройство');
+    return;
+  }
+  // Проверяем только целевое устройство (источник может быть офлайн)
+  if (!requireDeviceReady(targetDeviceId)) return;
+
+  setCurrentFileSelection(safeName, rowEl, sourceDeviceId);
+  previewManuallyClosed = false;
+  stopFolderPlaylistIfNeeded('manual play button', { deviceId: targetDeviceId, file: safeName });
+  sendVolumeBeforePlay(targetDeviceId);
+
+  // Определяем тип файла (приоритет contentType из БД)
+  const hasExtension = safeName.includes('.');
+  const ext = hasExtension ? safeName.split('.').pop().toLowerCase() : '';
+  const isImage = ['png','jpg','jpeg','gif','webp'].includes(ext);
+  let normalizedType = contentType || null;
+  if (!normalizedType) {
+    if (!hasExtension || ext === 'zip') normalizedType = 'folder';
+    else if (ext === 'pdf') normalizedType = 'pdf';
+    else if (ext === 'pptx') normalizedType = 'pptx';
+    else if (isImage) normalizedType = 'image';
+    else normalizedType = null;
+  }
+
+  // Стримы
+  if (normalizedType === 'streaming') {
+    const payload = { device_id: targetDeviceId, file: safeName, type: 'streaming', streamProtocol: streamProtocol || undefined };
+    socket.emit('control/play', payload);
+    return;
+  }
+
+  // Статический контент (папка/PDF/PPTX) — показываем превью как локальный клик
+  const isStaticContent = normalizedType === 'folder' || normalizedType === 'pdf' || normalizedType === 'pptx';
+  if (isStaticContent) {
+    const previewDeviceId = sourceDeviceId || targetDeviceId;
+    const previewContentType = normalizedType || (!hasExtension ? 'folder' : ext);
+
+    const loadPreview = async () => {
+      await showStaticPreview(previewDeviceId, safeName, previewContentType, { initiatedByUser: true });
+    };
+    if ('requestIdleCallback' in window) {
+      requestIdleCallback(loadPreview, { timeout: 100 });
+    } else {
+      setTimeout(loadPreview, 0);
+    }
+
+    // Воспроизводим напрямую на устройстве-источнике
+    socket.emit('control/play', { device_id: targetDeviceId, file: safeName, type: normalizedType || previewContentType || 'folder', page: 1, originDeviceId: sourceDeviceId });
+    return;
+  }
+
+  // Одиночные изображения
+  if (normalizedType === 'image') {
+    socket.emit('control/play', { device_id: targetDeviceId, file: safeName, type: 'image', page: 1, originDeviceId: sourceDeviceId });
+    return;
+  }
+
+  // Видео по умолчанию (без копирования)
+  const payload = {
+    device_id: targetDeviceId,
+    file: safeName,
+    type: normalizedType || 'video',
+    streamProtocol: undefined,
+    originDeviceId: sourceDeviceId
+  };
+  socket.emit('control/play', payload);
+}
+
 /* Установка выбранного файла и подсветка строки */
-function setCurrentFileSelection(filename, itemEl) {
+function setCurrentFileSelection(filename, itemEl, sourceDeviceId = null) {
   currentFile = filename;
+  currentFileSourceDevice = sourceDeviceId || currentDevice || null;
   // Убираем активное состояние у всех элементов
   fileList.querySelectorAll('.file-item').forEach(li => {
     li.classList.remove('active');
@@ -2216,7 +2760,7 @@ function resolveFileDisplayData(deviceId, fileName) {
   const fileInfo = currentMatches && device.current.folderImageCount
     ? { ...baseInfo, folderImageCount: device.current.folderImageCount }
     : baseInfo;
-  let displayName = (fileName || '').replace(/\.[^.]+$/, '') || (fileName || '');
+  let displayName = null; // КРИТИЧНО: Не используем fileName напрямую, т.к. это может быть safeName
   let folderImageCount = fileInfo?.folderImageCount ?? null;
   let cachedMeta = null;
   let contentType = fileInfo?.contentType || null;
@@ -2224,6 +2768,12 @@ function resolveFileDisplayData(deviceId, fileName) {
   let streamProxyUrl = fileInfo?.streamProxyUrl || null;
   let streamProtocol = fileInfo?.streamProtocol || null;
 
+  // Приоритет получения originalName для отображения:
+  // 1. fileInfo.originalName (из allFiles)
+  // 2. cachedMeta.displayName (из кэша)
+  // 3. device.fileMetadata[].originalName (из метаданных устройства)
+  // 4. device.fileNames[] (по индексу safeName в device.files)
+  // 5. fileName (fallback, только если ничего не найдено)
   if (fileInfo && fileInfo.originalName) {
     displayName = fileInfo.originalName.replace(/\.[^.]+$/, '') || fileInfo.originalName;
   } else {
@@ -2231,10 +2781,21 @@ function resolveFileDisplayData(deviceId, fileName) {
     if (cachedMeta?.displayName) {
       displayName = cachedMeta.displayName;
     } else {
-      // Дополнительный fallback: проверяем device.fileMetadata
+      // Проверяем device.fileMetadata
       const metaFromDevice = device?.fileMetadata?.find(m => m.safeName === fileName);
       if (metaFromDevice?.originalName) {
         displayName = metaFromDevice.originalName.replace(/\.[^.]+$/, '') || metaFromDevice.originalName;
+      } else {
+        // Проверяем device.fileNames по индексу
+        const files = device?.files || [];
+        const fileNames = device?.fileNames || files;
+        const fileIndex = files.indexOf(fileName);
+        if (fileIndex >= 0 && fileNames[fileIndex]) {
+          displayName = fileNames[fileIndex].replace(/\.[^.]+$/, '') || fileNames[fileIndex];
+        } else {
+          // Последний fallback - используем fileName (может быть safeName, но лучше чем ничего)
+          displayName = (fileName || '').replace(/\.[^.]+$/, '') || (fileName || '');
+        }
       }
     }
   }
@@ -3038,6 +3599,8 @@ if (pdfPrevBtn) {
   pdfPrevBtn.onclick = (e) => {
     e.preventDefault();
     e.stopPropagation();
+    // КРИТИЧНО: Проверяем только устройство, где воспроизводится (currentDevice), а не источник файла
+    // Источник может быть офлайн, но это не должно блокировать навигацию на целевом устройстве
     if (!requireDeviceReady(currentDevice)) return;
     console.log('[Speaker] ◀ Назад clicked');
     socket.emit('control/pdfPrev', { device_id: currentDevice });
@@ -3047,6 +3610,8 @@ if (pdfNextBtn) {
   pdfNextBtn.onclick = (e) => {
     e.preventDefault();
     e.stopPropagation();
+    // КРИТИЧНО: Проверяем только устройство, где воспроизводится (currentDevice), а не источник файла
+    // Источник может быть офлайн, но это не должно блокировать навигацию на целевом устройстве
     if (!requireDeviceReady(currentDevice)) return;
     console.log('[Speaker] Вперёд ▶ clicked');
     socket.emit('control/pdfNext', { device_id: currentDevice });
@@ -3791,4 +4356,5 @@ if (document.readyState === 'loading') {
 } else {
   initMobileAccordion();
 }
+
 

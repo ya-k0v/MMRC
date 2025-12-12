@@ -11,6 +11,8 @@ import logger, { logFile } from '../utils/logger.js';
 import { ensureTrailerForFile } from '../video/trailer-generator.js';
 import { getConvertedCache } from '../config/settings-manager.js';
 import { applyFaststartAsync } from '../video/mp4-faststart.js';
+import { getFolderImagesCount } from '../converters/folder-converter.js';
+import { getDevicesPath } from '../config/settings-manager.js';
 
 /**
  * Обработать загруженный файл: вычислить MD5, получить метаданные, сохранить в БД
@@ -504,6 +506,226 @@ export async function processUploadedFilesAsync(deviceId, files, devicesPath, fi
       totalFiles: files.length,
       errors
     });
+  }
+}
+
+/**
+ * Обработать загруженный статический контент (папки, PDF, PPTX)
+ * Сохраняет метаданные в БД с количеством элементов
+ * @param {string} deviceId
+ * @param {string} safeName - Безопасное имя (для папок - имя папки, для PDF/PPTX - имя файла)
+ * @param {string} originalName - Оригинальное имя
+ * @param {string} filePath - Путь к файлу или папке
+ * @param {string} contentType - 'folder' | 'pdf' | 'pptx'
+ * @param {Object} options - Дополнительные опции
+ * @param {Function} options.autoConvertFileFn - Функция для конвертации PDF/PPTX (опционально)
+ * @param {Object} options.devices - Объект devices (для конвертации)
+ * @param {Object} options.fileNamesMap - Маппинг имен (для конвертации)
+ * @param {Function} options.saveFileNamesMapFn - Функция сохранения маппинга (для конвертации)
+ * @param {Object} options.io - Socket.IO instance (для конвертации)
+ * @returns {Promise<{success: boolean, pagesCount?: number, error?: string}>}
+ */
+export async function processUploadedStaticContent(
+  deviceId,
+  safeName,
+  originalName,
+  filePath,
+  contentType,
+  options = {}
+) {
+  try {
+    if (!fs.existsSync(filePath)) {
+      logFile('warn', 'Static content not found for metadata processing', { deviceId, safeName, filePath, contentType });
+      return { success: false, error: `File/folder not found: ${filePath}` };
+    }
+
+    const stats = fs.statSync(filePath);
+    const fileMtime = stats.mtimeMs;
+    let pagesCount = 0;
+    let finalFilePath = filePath;
+    let finalSafeName = safeName;
+
+    if (contentType === 'folder') {
+      // Для папок: подсчитываем изображения
+      // filePath должен указывать на папку
+      if (!stats.isDirectory()) {
+        return { success: false, error: 'Expected directory for folder content type' };
+      }
+
+      try {
+        // КРИТИЧНО: Используем полный путь filePath для подсчета изображений
+        // так как папка может находиться в /content/{deviceFolder}/, а не в /content/{deviceId}/
+        const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+        const files = fs.readdirSync(filePath)
+          .filter(file => {
+            const ext = path.extname(file).toLowerCase();
+            return imageExtensions.includes(ext);
+          })
+          .sort((a, b) => {
+            // Сортировка с учетом чисел
+            return a.localeCompare(b, undefined, { numeric: true });
+          });
+        pagesCount = files.length;
+        logFile('info', 'Folder images counted', { deviceId, safeName, pagesCount, folderPath: filePath });
+      } catch (err) {
+        logger.error('[FileMetadata] Failed to count folder images', { error: err.message, deviceId, safeName, folderPath: filePath });
+        return { success: false, error: `Failed to count images: ${err.message}` };
+      }
+
+      finalFilePath = filePath; // Путь к папке
+      finalSafeName = safeName; // Имя папки
+
+    } else if (contentType === 'pdf' || contentType === 'pptx') {
+      // Для PDF/PPTX: конвертируем в слайды, удаляем исходный файл
+      if (!stats.isFile()) {
+        return { success: false, error: 'Expected file for PDF/PPTX content type' };
+      }
+
+      // Проверяем наличие функции конвертации
+      if (!options.autoConvertFileFn) {
+        logger.warn('[FileMetadata] autoConvertFileFn not provided, skipping conversion', { deviceId, safeName });
+        return { success: false, error: 'Conversion function not provided' };
+      }
+
+      try {
+        // Запускаем конвертацию
+        const convertedCount = await options.autoConvertFileFn(
+          deviceId,
+          safeName,
+          options.devices,
+          options.fileNamesMap,
+          options.saveFileNamesMapFn,
+          options.io
+        );
+
+        if (convertedCount === 0) {
+          return { success: false, error: 'Conversion failed or produced no slides' };
+        }
+
+        pagesCount = convertedCount;
+
+        // После конвертации исходный файл должен быть удален (это делает autoConvertFile)
+        // Имя папки - это safeName без расширения
+        const folderName = safeName.replace(/\.(pdf|pptx)$/i, '');
+        const devicesPath = getDevicesPath();
+        const deviceFolder = path.join(devicesPath, options.devices[deviceId]?.folder || deviceId);
+        finalFilePath = path.join(deviceFolder, folderName); // Путь к папке со слайдами
+        finalSafeName = folderName; // Имя папки (без расширения)
+
+        // Проверяем что папка существует
+        if (!fs.existsSync(finalFilePath)) {
+          return { success: false, error: 'Converted folder not found after conversion' };
+        }
+
+        // КРИТИЧНО: После конвертации это папка, используем mtime папки
+        const folderStats = fs.statSync(finalFilePath);
+        fileMtime = folderStats.mtimeMs;
+
+        logFile('info', 'PDF/PPTX converted and metadata prepared', {
+          deviceId,
+          originalFile: safeName,
+          folderName: finalSafeName,
+          pagesCount,
+          folderPath: finalFilePath
+        });
+
+      } catch (err) {
+        logger.error('[FileMetadata] Failed to convert PDF/PPTX', {
+          error: err.message,
+          stack: err.stack,
+          deviceId,
+          safeName
+        });
+        return { success: false, error: `Conversion failed: ${err.message}` };
+      }
+    } else {
+      return { success: false, error: `Unknown content type: ${contentType}` };
+    }
+
+    // Сохраняем метаданные в БД
+    try {
+      // КРИТИЧНО: После конвертации PDF/PPTX превращаются в папки
+      // contentType должен быть 'folder', а не 'pdf' или 'pptx'
+      const finalContentType = (contentType === 'pdf' || contentType === 'pptx') ? 'folder' : contentType;
+      
+      // mimeType только для исходных файлов, после конвертации это папка
+      const mimeType = (contentType === 'pdf' || contentType === 'pptx') ? null :
+                      contentType === 'folder' ? null :
+                      null;
+
+      // КРИТИЧНО: Используем абсолютный путь для file_path
+      const absoluteFilePath = path.resolve(finalFilePath);
+      
+      logger.info('[FileMetadata] Сохранение метаданных статического контента', {
+        deviceId,
+        safeName: finalSafeName,
+        originalName: originalName.replace(/\.(pdf|pptx)$/i, ''),
+        filePath: absoluteFilePath,
+        filePathExists: fs.existsSync(absoluteFilePath),
+        contentType: finalContentType,
+        pagesCount
+      });
+      
+      saveFileMetadata({
+        deviceId,
+        safeName: finalSafeName,
+        originalName: originalName.replace(/\.(pdf|pptx)$/i, ''), // Убираем расширение из originalName
+        filePath: absoluteFilePath, // ✅ Используем абсолютный путь
+        fileSize: 0, // Для папок размер = 0
+        md5Hash: '', // Без дедупликации для статического контента
+        partialMd5: null,
+        mimeType,
+        videoParams: {},
+        audioParams: {},
+        fileMtime,
+        contentType: finalContentType,  // ✅ После конвертации это 'folder'
+        streamUrl: null,
+        streamProtocol: 'auto',
+        pagesCount
+      });
+
+      logger.info('[FileMetadata] ✅ Static content metadata saved to database', {
+        deviceId,
+        safeName: finalSafeName,
+        originalName,
+        contentType,
+        pagesCount,
+        filePath: finalFilePath
+      });
+
+      logFile('info', '✅ Static content metadata saved to database', {
+        deviceId,
+        safeName: finalSafeName,
+        originalName,
+        contentType,
+        pagesCount,
+        filePath: finalFilePath
+      });
+
+      return { success: true, pagesCount };
+
+    } catch (saveError) {
+      logger.error('[FileMetadata] ❌ Failed to save static content metadata', {
+        deviceId,
+        safeName: finalSafeName,
+        originalName,
+        contentType,
+        error: saveError.message,
+        stack: saveError.stack
+      });
+      return { success: false, error: `Failed to save metadata: ${saveError.message}` };
+    }
+
+  } catch (error) {
+    logger.error('[FileMetadata] ❌ Error processing static content', {
+      deviceId,
+      safeName,
+      originalName,
+      contentType,
+      error: error.message,
+      stack: error.stack
+    });
+    return { success: false, error: error.message };
   }
 }
 

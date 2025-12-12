@@ -354,6 +354,10 @@ function ensureFilesMetadataStreamingColumns() {
       db.exec(`ALTER TABLE files_metadata ADD COLUMN stream_protocol TEXT DEFAULT 'auto'`);
       logger.info('[DB] Added stream_protocol column to files_metadata');
     }
+    if (!names.has('pages_count')) {
+      db.exec(`ALTER TABLE files_metadata ADD COLUMN pages_count INTEGER`);
+      logger.info('[DB] Added pages_count column to files_metadata');
+    }
   } catch (err) {
     logger.warn('[DB] Failed to ensure streaming columns (non-critical)', { error: err.message });
   }

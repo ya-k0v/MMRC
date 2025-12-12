@@ -10,6 +10,7 @@ import util from 'util';
 import { fromPath } from 'pdf2pic';
 import { PDFDocument } from 'pdf-lib';
 import { getDevicesPath } from '../config/settings-manager.js';
+import { setFileStatus } from '../video/file-status.js';
 import logger from '../utils/logger.js';
 
 const execAsync = util.promisify(exec);
@@ -56,7 +57,7 @@ export async function getPdfPageSize(pdfPath, pageIndex = 0) {
  * @param {string} outputDir - Папка для сохранения изображений
  * @returns {Promise<number>} Количество конвертированных страниц
  */
-export async function convertPdfToImages(pdfPath, outputDir) {
+export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) {
   // Получаем размеры первой страницы для определения пропорций
   const pageSize = await getPdfPageSize(pdfPath, 0);
   const { width: pdfWidth, height: pdfHeight, aspectRatio } = pageSize;
@@ -146,6 +147,11 @@ export async function convertPdfToImages(pdfPath, outputDir) {
           if (stats.size > 100) {
             convertedPages.push({ page: i, path: imagePath });
             logger.info(`[Converter] ✅ Страница ${i} конвертирована: ${imagePath} (${(stats.size / 1024).toFixed(2)} KB)`);
+            if (onProgress) {
+              // Прогресс 5-95% в зависимости от номера страницы
+              const pct = Math.max(5, Math.min(95, Math.round(5 + (i / pageCount) * 90)));
+              onProgress(pct);
+            }
           } else {
             logger.warn(`[Converter] ⚠️ Страница ${i}: файл слишком мал: ${imagePath}`);
           }
@@ -330,13 +336,14 @@ export async function convertPdfToImages(pdfPath, outputDir) {
  * @param {string} outputDir - Папка для сохранения изображений
  * @returns {Promise<number>} Количество конвертированных слайдов
  */
-export async function convertPptxToImages(pptxPath, outputDir) {
+export async function convertPptxToImages(pptxPath, outputDir, onProgress = null) {
   const fileNameWithoutExt = path.basename(pptxPath, path.extname(pptxPath));
   const pdfPath = path.join(outputDir, `${fileNameWithoutExt}.pdf`);
   
   try {
     // Конвертируем PPTX в PDF через LibreOffice
     await execAsync(`soffice --headless --convert-to pdf --outdir "${outputDir}" "${pptxPath}"`);
+    if (onProgress) onProgress(5); // Начальная стадия конвертации PPTX -> PDF
     
     // Проверяем что PDF создан
     if (!fs.existsSync(pdfPath)) {
@@ -344,7 +351,7 @@ export async function convertPptxToImages(pptxPath, outputDir) {
     }
     
     // Конвертируем PDF в изображения
-    const numPages = await convertPdfToImages(pdfPath, outputDir);
+    const numPages = await convertPdfToImages(pdfPath, outputDir, onProgress);
     
     // Удаляем временный PDF
     fs.unlinkSync(pdfPath);
@@ -432,14 +439,15 @@ export async function autoConvertFile(deviceId, fileName, devices, fileNamesMap,
   
   const ext = path.extname(fileName).toLowerCase();
   if (ext !== '.pdf' && ext !== '.pptx') return 0;
+  const folderName = fileName.replace(/\.(pdf|pptx)$/i, '');
   
   // Отправляем событие начала обработки
   if (io) {
     io.emit('file/processing', { device_id: deviceId, file: fileName, type: ext.substring(1) });
     logger.info(`[Converter] 📄 Начало конвертации: ${fileName}`, { deviceId, fileName });
   }
+  setFileStatus(deviceId, folderName, { status: 'processing', progress: 5, canPlay: false });
   
-  const folderName = fileName.replace(/\.(pdf|pptx)$/i, '');
   const convertedDir = path.join(deviceFolder, folderName);
   const originalName = fileNamesMap[deviceId]?.[fileName] || fileName;
   
@@ -456,6 +464,8 @@ export async function autoConvertFile(deviceId, fileName, devices, fileNamesMap,
       saveFileNamesMapFn(fileNamesMap);
     }
     
+    setFileStatus(deviceId, folderName, { status: 'ready', progress: 100, canPlay: true });
+    
     // Отправляем событие готовности (файл уже был конвертирован)
     if (io) {
       io.emit('file/ready', { device_id: deviceId, file: fileName, pages: existing });
@@ -471,25 +481,47 @@ export async function autoConvertFile(deviceId, fileName, devices, fileNamesMap,
       fs.mkdirSync(convertedDir, { recursive: true });
     }
     
-    // Перемещаем оригинальный файл в папку
-    const movedFilePath = path.join(convertedDir, fileName);
-    if (!fs.existsSync(movedFilePath)) {
-      fs.renameSync(filePath, movedFilePath);
+    // КРИТИЧНО: Конвертируем напрямую из исходного файла, затем удаляем его
+    // Конвертация создаст изображения в convertedDir
+    let count = 0;
+    if (ext === '.pptx') {
+      count = await convertPptxToImages(filePath, convertedDir, (progress) => {
+        setFileStatus(deviceId, folderName, { status: 'processing', progress, canPlay: false });
+        if (io && progress % 5 === 0) {
+          io.emit('file/progress', { device_id: deviceId, file: fileName, progress });
+        }
+      });
+    } else if (ext === '.pdf') {
+      count = await convertPdfToImages(filePath, convertedDir, (progress) => {
+        setFileStatus(deviceId, folderName, { status: 'processing', progress, canPlay: false });
+        if (io && progress % 5 === 0) {
+          io.emit('file/progress', { device_id: deviceId, file: fileName, progress });
+        }
+      });
+    }
+    
+    // Удаляем исходный файл после успешной конвертации
+    if (count > 0 && fs.existsSync(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+        logger.info(`[Converter] 🗑️ Исходный файл удален: ${fileName}`, { deviceId, fileName });
+      } catch (delErr) {
+        logger.warn(`[Converter] ⚠️ Не удалось удалить исходный файл: ${fileName}`, { 
+          error: delErr.message, 
+          deviceId, 
+          fileName 
+        });
+      }
     }
     
     // Сохраняем маппинг имен
     if (!fileNamesMap[deviceId]) fileNamesMap[deviceId] = {};
     fileNamesMap[deviceId][folderName] = originalName;
-    fileNamesMap[deviceId][fileName] = originalName;
-    saveFileNamesMapFn(fileNamesMap);
-    
-    // Конвертируем в изображения
-    let count = 0;
-    if (ext === '.pptx') {
-      count = await convertPptxToImages(movedFilePath, convertedDir);
-    } else if (ext === '.pdf') {
-      count = await convertPdfToImages(movedFilePath, convertedDir);
+    // Удаляем маппинг для исходного файла, так как он удален
+    if (fileNamesMap[deviceId][fileName]) {
+      delete fileNamesMap[deviceId][fileName];
     }
+    saveFileNamesMapFn(fileNamesMap);
     
     // Отправляем событие успешной конвертации
     if (io && count > 0) {
@@ -499,6 +531,8 @@ export async function autoConvertFile(deviceId, fileName, devices, fileNamesMap,
       // КРИТИЧНО: Обновляем список файлов (PPTX превратился в папку)
       io.emit('devices/updated');
     }
+    
+    setFileStatus(deviceId, folderName, { status: 'ready', progress: 100, canPlay: true });
     
     return count;
     
@@ -514,15 +548,9 @@ export async function autoConvertFile(deviceId, fileName, devices, fileNamesMap,
       });
     }
     
-    // Откатываем изменения при ошибке
-    const movedFilePath = path.join(convertedDir, fileName);
-    if (fs.existsSync(movedFilePath) && !fs.existsSync(filePath)) {
-      try {
-        fs.renameSync(movedFilePath, filePath);
-      } catch (rollbackError) {
-        logger.error(`[Converter] ⚠️ Ошибка отката`, { error: rollbackError.message, stack: rollbackError.stack, deviceId, fileName });
-      }
-    }
+    setFileStatus(deviceId, folderName, { status: 'error', progress: 0, canPlay: false, error: error.message });
+    
+    // При ошибке исходный файл остается на месте (не удаляем его)
     
     return 0;
   }

@@ -670,6 +670,33 @@ app.post('/api/admin/database/cleanup-missing-files', requireAuth, requireAdmin,
   }
 });
 
+// POST /api/admin/database/cleanup-orphaned-files - Удалить осиротевшие файлы из /content/
+app.post('/api/admin/database/cleanup-orphaned-files', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { dryRun = false, excludeExtensions = [] } = req.body || {};
+    const { cleanupOrphanedFiles } = await import('./src/database/cleanup-orphaned-files.js');
+    
+    logger.info('[Admin] Starting orphaned files cleanup', { dryRun, excludeExtensions });
+    
+    // Удаляем файлы в /content/ корне, которые не имеют записей в БД
+    const result = await cleanupOrphanedFiles({ dryRun, excludeExtensions });
+    
+    logger.info('[Admin] Orphaned files cleanup completed', result);
+    
+    res.json({
+      checked: result.checked,
+      orphaned: result.orphaned,
+      deleted: result.deleted,
+      errors: result.errors,
+      totalSizeMB: result.totalSizeMB,
+      dryRun
+    });
+  } catch (error) {
+    logger.error('[Admin] Failed to cleanup orphaned files:', error);
+    res.status(500).json({ error: error.message || 'Не удалось очистить осиротевшие файлы' });
+  }
+});
+
 // ========================================
 // HEALTH CHECK ENDPOINT
 // ========================================
@@ -755,8 +782,14 @@ async function autoOptimizeVideoWrapper(deviceId, fileName) {
   return await autoOptimizeVideo(deviceId, fileName, devices, io, fileNamesMap, (map) => saveFileNamesToDB(map));
 }
 
-async function autoConvertFileWrapper(deviceId, fileName) {
-  return await autoConvertFile(deviceId, fileName, devices, fileNamesMap, (map) => saveFileNamesToDB(map), io);
+async function autoConvertFileWrapper(deviceId, fileName, devicesParam, fileNamesMapParam, saveFileNamesMapFnParam, ioParam) {
+  // Используем переданные параметры или глобальные значения
+  const devicesToUse = devicesParam || devices;
+  const fileNamesMapToUse = fileNamesMapParam || fileNamesMap;
+  const saveFileNamesMapFnToUse = saveFileNamesMapFnParam || ((map) => saveFileNamesToDB(map));
+  const ioToUse = ioParam || io;
+  
+  return await autoConvertFile(deviceId, fileName, devicesToUse, fileNamesMapToUse, saveFileNamesMapFnToUse, ioToUse);
 }
 
 // ========================================

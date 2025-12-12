@@ -1146,9 +1146,13 @@ async function loadSettingsContent(adminFetch) {
   const divider2 = document.createElement('div');
   divider2.style.cssText = 'border-top:1px solid var(--border-color, rgba(255,255,255,0.1)); margin:0;';
   
+  // Контейнер для обеих секций очистки (рядом друг с другом)
+  const cleanupContainer = document.createElement('div');
+  cleanupContainer.style.cssText = 'display:flex; gap:var(--space-lg); padding-top:var(--space-md);';
+  
   // Очистка базы данных
   const cleanupSection = document.createElement('div');
-  cleanupSection.style.cssText = 'padding-top:var(--space-md);';
+  cleanupSection.style.cssText = 'flex:1; min-width:0;';
   
   const cleanupTitle = document.createElement('div');
   cleanupTitle.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary); margin-bottom:var(--space-sm);';
@@ -1198,11 +1202,67 @@ async function loadSettingsContent(adminFetch) {
   cleanupSection.appendChild(cleanupTitle);
   cleanupSection.appendChild(cleanupContent);
   
+  // Очистка осиротевших файлов
+  const orphanedSection = document.createElement('div');
+  orphanedSection.style.cssText = 'flex:1; min-width:0;';
+  
+  const orphanedTitle = document.createElement('div');
+  orphanedTitle.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary); margin-bottom:var(--space-sm);';
+  orphanedTitle.textContent = 'Очистка осиротевших файлов';
+  
+  const orphanedContent = document.createElement('div');
+  orphanedContent.style.cssText = 'display:flex; align-items:center; gap:var(--space-md);';
+  
+  const orphanedLeft = document.createElement('div');
+  orphanedLeft.style.cssText = 'flex:1; display:flex; flex-direction:column; gap:var(--space-xs);';
+  
+  const orphanedDescription = document.createElement('div');
+  orphanedDescription.className = 'meta';
+  orphanedDescription.style.cssText = 'color:var(--text-secondary); line-height:1.4;';
+  orphanedDescription.textContent = 'Найдите и удалите файлы в корне /content/, которые не имеют записей в базе данных.';
+  
+  const orphanedStatus = document.createElement('div');
+  orphanedStatus.id = 'orphanedStatus';
+  orphanedStatus.className = 'meta';
+  orphanedStatus.style.cssText = 'min-height:1.2em; font-size:0.85rem;';
+  
+  orphanedLeft.appendChild(orphanedDescription);
+  orphanedLeft.appendChild(orphanedStatus);
+  
+  const orphanedButtons = document.createElement('div');
+  orphanedButtons.style.cssText = 'flex-shrink:0; display:flex; gap:var(--space-xs);';
+  
+  const checkOrphanedBtn = document.createElement('button');
+  checkOrphanedBtn.id = 'checkOrphanedBtn';
+  checkOrphanedBtn.className = 'secondary';
+  checkOrphanedBtn.style.cssText = 'width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center;';
+  checkOrphanedBtn.title = 'Проверить осиротевшие файлы';
+  checkOrphanedBtn.textContent = '🔍';
+  
+  const cleanupOrphanedBtn = document.createElement('button');
+  cleanupOrphanedBtn.id = 'cleanupOrphanedBtn';
+  cleanupOrphanedBtn.className = 'danger meta-lg';
+  cleanupOrphanedBtn.style.cssText = 'width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center;';
+  cleanupOrphanedBtn.disabled = true;
+  cleanupOrphanedBtn.title = 'Удалить осиротевшие файлы';
+  cleanupOrphanedBtn.textContent = '🗑️';
+  
+  orphanedButtons.appendChild(checkOrphanedBtn);
+  orphanedButtons.appendChild(cleanupOrphanedBtn);
+  orphanedContent.appendChild(orphanedLeft);
+  orphanedContent.appendChild(orphanedButtons);
+  orphanedSection.appendChild(orphanedTitle);
+  orphanedSection.appendChild(orphanedContent);
+  
+  // Добавляем обе секции очистки в контейнер
+  cleanupContainer.appendChild(cleanupSection);
+  cleanupContainer.appendChild(orphanedSection);
+  
   mainDiv.appendChild(storageSection);
   mainDiv.appendChild(divider1);
   mainDiv.appendChild(dbSection);
   mainDiv.appendChild(divider2);
-  mainDiv.appendChild(cleanupSection);
+  mainDiv.appendChild(cleanupContainer);
   container.appendChild(mainDiv);
   
   // Используем уже созданные элементы напрямую
@@ -1211,8 +1271,9 @@ async function loadSettingsContent(adminFetch) {
   const statusEl = contentRootStatus;
   const exportBtn = exportDatabaseBtn;
   const cleanupStatusEl = cleanupStatus;
+  const orphanedStatusEl = orphanedStatus;
   
-  if (!inputEl || !saveBtn || !statusEl || !exportBtn || !checkFilesBtn || !cleanupFilesBtn || !cleanupStatusEl) return;
+  if (!inputEl || !saveBtn || !statusEl || !exportBtn || !checkFilesBtn || !cleanupFilesBtn || !cleanupStatusEl || !checkOrphanedBtn || !cleanupOrphanedBtn || !orphanedStatusEl) return;
   
   let lastSavedValue = currentContentRoot;
   inputEl.value = currentContentRoot;
@@ -1410,6 +1471,119 @@ async function loadSettingsContent(adminFetch) {
       cleanupFilesBtn.disabled = false;
     } finally {
       cleanupFilesBtn.innerHTML = '🗑️';
+    }
+  };
+
+  // Обработчики для очистки осиротевших файлов
+  let lastOrphanedResult = null;
+
+  checkOrphanedBtn.onclick = async () => {
+    checkOrphanedBtn.disabled = true;
+    checkOrphanedBtn.innerHTML = '⏳';
+    orphanedStatusEl.textContent = '';
+    orphanedStatusEl.style.color = 'var(--text-secondary)';
+    cleanupOrphanedBtn.disabled = true;
+
+    try {
+      const response = await adminFetch('/api/admin/database/cleanup-orphaned-files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun: true })
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Ошибка проверки' }));
+        throw new Error(error.error || 'Ошибка проверки');
+      }
+
+      const result = await response.json();
+      lastOrphanedResult = result;
+
+      let statusText = `Проверено: ${result.checked} файлов. `;
+      if (result.orphaned > 0) {
+        statusText += `Найдено осиротевших файлов: ${result.orphaned} (${result.totalSizeMB} МБ).`;
+      }
+      
+      // Активируем кнопку, если есть что удалять
+      if (result.orphaned > 0) {
+        cleanupOrphanedBtn.disabled = false;
+      }
+      
+      if (result.orphaned === 0) {
+        statusText = '✅ Осиротевших файлов не найдено.';
+        orphanedStatusEl.style.color = 'var(--success)';
+      } else if (result.orphaned > 0) {
+        orphanedStatusEl.style.color = 'var(--warning)';
+      } else {
+        orphanedStatusEl.style.color = 'var(--text-secondary)';
+      }
+
+      orphanedStatusEl.textContent = statusText;
+    } catch (err) {
+      orphanedStatusEl.textContent = `Ошибка: ${err.message}`;
+      orphanedStatusEl.style.color = 'var(--danger)';
+    } finally {
+      checkOrphanedBtn.disabled = false;
+      checkOrphanedBtn.innerHTML = '🔍';
+    }
+  };
+
+  cleanupOrphanedBtn.onclick = async () => {
+    if (!lastOrphanedResult || lastOrphanedResult.orphaned === 0) {
+      alert('Сначала выполните проверку осиротевших файлов');
+      return;
+    }
+
+    const confirmMessage = `Удалить ${lastOrphanedResult.orphaned} осиротевших файлов (${lastOrphanedResult.totalSizeMB} МБ)?\n\nЭто действие нельзя отменить!`;
+
+    if (!confirm(confirmMessage)) {
+      return;
+    }
+
+    cleanupOrphanedBtn.disabled = true;
+    cleanupOrphanedBtn.innerHTML = '⏳';
+    orphanedStatusEl.textContent = 'Удаление...';
+    orphanedStatusEl.style.color = 'var(--text-secondary)';
+
+    try {
+      const response = await adminFetch('/api/admin/database/cleanup-orphaned-files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun: false })
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Ошибка очистки' }));
+        throw new Error(error.error || 'Ошибка очистки');
+      }
+
+      const result = await response.json();
+      
+      let resultText = '';
+      if (result.deleted > 0) {
+        resultText = `✅ Удалено ${result.deleted} осиротевших файлов (${result.totalSizeMB} МБ освобождено).`;
+        if (result.errors && result.errors.length > 0) {
+          resultText += ` Ошибок: ${result.errors.length}.`;
+        }
+      } else {
+        resultText = '✅ Очистка завершена.';
+      }
+
+      orphanedStatusEl.textContent = resultText;
+      orphanedStatusEl.style.color = 'var(--success)';
+      cleanupOrphanedBtn.disabled = false;
+      cleanupOrphanedBtn.innerHTML = '🗑️';
+      lastOrphanedResult = null;
+
+      // Обновляем данные после очистки
+      setTimeout(() => {
+        orphanedStatusEl.textContent = '';
+      }, 5000);
+    } catch (err) {
+      orphanedStatusEl.textContent = `Ошибка: ${err.message}`;
+      orphanedStatusEl.style.color = 'var(--danger)';
+      cleanupOrphanedBtn.disabled = false;
+      cleanupOrphanedBtn.innerHTML = '🗑️';
     }
   };
 }

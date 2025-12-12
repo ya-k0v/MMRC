@@ -271,14 +271,28 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         // НОВОЕ: Убираем расширение из отображаемого имени (как на спикере)
         const displayName = originalName.replace(/\.[^.]+$/, '');
         
-        // Определяем метку типа файла из displayExt (что видит пользователь)
+        // Определяем метку типа файла
+        // КРИТИЧНО: Сначала проверяем contentType из метаданных БД, потом fallback на расширение
         let typeLabel = 'VID'; // По умолчанию
-        if (isStreaming) typeLabel = 'STREAM';
-        else if (displayExt === 'pdf') typeLabel = 'PDF';
-        else if (displayExt === 'pptx') typeLabel = 'PPTX';
-        else if (['png','jpg','jpeg','gif','webp'].includes(displayExt)) typeLabel = 'IMG';
-        else if (displayExt === 'zip' || !hasDisplayExt) {
-          // ZIP или папка без расширения - это папка с изображениями
+        if (isStreaming) {
+          typeLabel = 'STREAM';
+        } else if (contentType === 'folder') {
+          // КРИТИЧНО: Папки теперь определяются по contentType из БД
+          typeLabel = 'FOLDER';
+        } else if (contentType === 'pdf') {
+          typeLabel = 'PDF';
+        } else if (contentType === 'pptx') {
+          typeLabel = 'PPTX';
+        } else if (displayExt === 'pdf') {
+          // Fallback для старых записей без contentType в БД
+          typeLabel = 'PDF';
+        } else if (displayExt === 'pptx') {
+          // Fallback для старых записей без contentType в БД
+          typeLabel = 'PPTX';
+        } else if (['png','jpg','jpeg','gif','webp'].includes(displayExt)) {
+          typeLabel = 'IMG';
+        } else if (displayExt === 'zip' || !hasDisplayExt) {
+          // Fallback: ZIP или папка без расширения - это папка с изображениями
           typeLabel = 'FOLDER';
         }
         
@@ -311,7 +325,9 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         let statusText = '';
         let statusColor = '';
         
-        if (isVideo) {
+        const isStaticDoc = contentType === 'pdf' || contentType === 'pptx' || contentType === 'folder';
+        
+        if (isVideo || isStaticDoc) {
           if (isProcessing) {
             statusColor = 'var(--warning)';
             statusIcon = getClockIcon(14, statusColor);
@@ -578,12 +594,20 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       const hasExtension = safeName.includes('.');
       const ext = hasExtension ? safeName.split('.').pop().toLowerCase() : '';
       
+      // КРИТИЧНО: Определяем статический контент по contentType из метаданных БД
+      const isStaticContent = contentType === 'folder' || contentType === 'pdf' || contentType === 'pptx';
+      // Fallback для старых записей без contentType в БД
+      const isStaticContentFallback = !hasExtension || ext === 'pdf' || ext === 'pptx';
+      
       // Для папок, PDF и PPTX показываем сетку миниатюр
-      if (!hasExtension || ext === 'pdf' || ext === 'pptx') {
+      if (isStaticContent || isStaticContentFallback) {
         let images = [];
         let folderName = safeName;
         
-        if (!hasExtension) {
+        // КРИТИЧНО: Используем contentType из метаданных БД, fallback на определение по расширению
+        const previewContentType = contentType || (!hasExtension ? 'folder' : ext);
+        
+        if (previewContentType === 'folder' || (!hasExtension && !contentType)) {
           // Это папка с изображениями
           try {
             const res = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/folder/${encodeURIComponent(safeName)}/images`);
@@ -596,10 +620,10 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           } catch (e) {
             console.error('[Admin] Ошибка загрузки изображений папки:', e);
           }
-        } else if (ext === 'pdf' || ext === 'pptx') {
+        } else if (previewContentType === 'pdf' || previewContentType === 'pptx' || ext === 'pdf' || ext === 'pptx') {
           // Это презентация
           try {
-            const urlType = ext === 'pdf' ? 'page' : 'slide';
+            const urlType = (previewContentType === 'pdf' || ext === 'pdf') ? 'page' : 'slide';
             const res = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/slides-count?file=${encodeURIComponent(safeName)}`);
             const data = await res.json();
             const count = data.count || 0;

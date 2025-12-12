@@ -26,16 +26,14 @@ export function createFoldersRouter(deps) {
     const id = sanitizeDeviceId(req.params.id);
     const folderName = req.params.folderName;
     
-    if (!id || !devices[id]) {
-      return res.status(404).json({ error: 'Устройство не найдено' });
-    }
-    
-    if (!folderName) {
-      return res.status(400).json({ error: 'Требуется имя папки' });
-    }
+    if (!id) return res.status(400).json({ error: 'Требуется ID устройства' });
+    if (!folderName) return res.status(400).json({ error: 'Требуется имя папки' });
     
     try {
-      const images = await getFolderImages(id, folderName);
+      const { files: images } = await getFolderImages(id, folderName);
+      if (!images || images.length === 0) {
+        return res.status(404).json({ error: 'Изображения не найдены в папке' });
+      }
       res.json({ images, count: images.length });
     } catch (error) {
       logger.error('[folders] Error getting folder images', { error: error.message, stack: error.stack, deviceId: id, folderName });
@@ -71,27 +69,22 @@ export function createFoldersRouter(deps) {
     const folderName = req.params.folderName;
     const index = parseInt(req.params.index, 10);
     
-    if (!id || !devices[id]) {
-      return res.status(404).json({ error: 'Устройство не найдено' });
-    }
-    
+    if (!id) return res.status(400).json({ error: 'Требуется ID устройства' });
     if (!folderName || isNaN(index) || index < 1) {
       return res.status(400).json({ error: 'Неверные параметры' });
     }
     
     try {
-      const images = await getFolderImages(id, folderName);
+      const { files: images, folderPath } = await getFolderImages(id, folderName);
       
-      if (index > images.length) {
+      if (index > images.length || images.length === 0) {
         return res.status(404).json({ error: 'Изображение не найдено' });
       }
       
-      // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
-      const devicesPath = getDevicesPath();
       const imageName = images[index - 1]; // Convert to 0-based
-      const imagePath = path.join(devicesPath, id, folderName, imageName);
+      const imagePath = folderPath ? path.join(folderPath, imageName) : null;
       
-      if (!fs.existsSync(imagePath)) {
+      if (!imagePath || !fs.existsSync(imagePath)) {
         return res.status(404).json({ error: 'Файл изображения не найден' });
       }
       

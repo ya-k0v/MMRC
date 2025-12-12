@@ -74,20 +74,25 @@ export function saveFileMetadata({
   fileMtime,
   contentType = 'file',
   streamUrl = null,
-  streamProtocol = 'auto'
+  streamProtocol = 'auto',
+  pagesCount = null  // Количество слайдов/страниц/изображений для папок/PDF/PPTX
 }) {
   try {
     const db = getDatabase();
     
     // КРИТИЧНО: Используем retry для критических операций записи
     const result = withRetrySync(() => {
+      // КРИТИЧНО: Для статического контента (папки/PDF/PPTX) md5_hash может быть пустой строкой
+      // Используем пустую строку вместо NULL для совместимости с NOT NULL constraint
+      const finalMd5Hash = md5Hash || '';
+      
       const stmt = db.prepare(`
         INSERT OR REPLACE INTO files_metadata (
           device_id, safe_name, original_name, file_path, file_size, md5_hash, partial_md5, mime_type,
           video_width, video_height, video_duration, video_codec, video_profile, video_bitrate,
           audio_codec, audio_bitrate, audio_channels, file_mtime, content_type, stream_url,
-          stream_protocol
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          stream_protocol, pages_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       
       const result = stmt.run(
@@ -96,7 +101,7 @@ export function saveFileMetadata({
         originalName,
         filePath,
         fileSize,
-        md5Hash,
+        finalMd5Hash,
         partialMd5,
         mimeType,
         videoParams.width || null,
@@ -111,7 +116,8 @@ export function saveFileMetadata({
         fileMtime,
         contentType,
         streamUrl,
-        streamProtocol
+        streamProtocol,
+        pagesCount
       );
       
       // Проверяем, что запись действительно в БД
@@ -119,18 +125,21 @@ export function saveFileMetadata({
       const checkResult = checkStmt.get(deviceId, safeName);
       
       // Логируем успешное сохранение с деталями
-      logger.debug('File metadata saved to database', { 
+      const logLevel = (contentType === 'folder' || contentType === 'pdf' || contentType === 'pptx') ? 'info' : 'debug';
+      logger[logLevel]('File metadata saved to database', { 
         deviceId, 
         safeName,
         originalName,
         filePath,
         fileSize,
-        md5Hash: md5Hash ? md5Hash.substring(0, 12) : null,
+        md5Hash: finalMd5Hash ? finalMd5Hash.substring(0, 12) : null,
         mimeType,
         contentType,
+        pagesCount,
         changes: result.changes,
         lastInsertRowid: result.lastInsertRowid,
-        verified: !!checkResult
+        verified: !!checkResult,
+        fileExists: filePath ? fs.existsSync(filePath) : false
       });
       
       logFile('info', '✅ File metadata saved to database', { 
@@ -139,9 +148,10 @@ export function saveFileMetadata({
         originalName,
         filePath,
         fileSize,
-        md5Hash: md5Hash ? md5Hash.substring(0, 12) : null,
+        md5Hash: finalMd5Hash ? finalMd5Hash.substring(0, 12) : null,
         mimeType,
         contentType,
+        pagesCount,
         changes: result.changes,
         lastInsertRowid: result.lastInsertRowid
       });
@@ -201,6 +211,29 @@ export function getFileMetadata(deviceId, safeName) {
     return stmt.get(deviceId, safeName);
   } catch (error) {
     logger.error('Failed to get file metadata', { error: error.message, deviceId, safeName });
+    return null;
+  }
+}
+
+/**
+ * Получить метаданные файла по safe_name без привязки к устройству
+ * Берём самую свежую запись (по file_mtime/created_at)
+ * @param {string} safeName
+ * @returns {Object|null}
+ */
+export function getAnyFileMetadataBySafeName(safeName) {
+  try {
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      SELECT *
+      FROM files_metadata
+      WHERE safe_name = ?
+      ORDER BY file_mtime DESC, created_at DESC
+      LIMIT 1
+    `);
+    return stmt.get(safeName);
+  } catch (error) {
+    logger.error('Failed to get file metadata by safe name', { error: error.message, safeName });
     return null;
   }
 }
