@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Основные цвета из панели спикера (Dark theme) -->
+    <color name="bg_primary">#0b0e13</color>
+    <color name="bg_secondary">#111827</color> 
+    <color name="bg_tertiary">#0f172a</color>
+    <color name="bg_hover">#1e293b</color>
+    
+    <!-- Текст -->
+    <color name="text_primary">#e5e7eb</color> 
+    <color name="text_secondary">#cbd5e1</color> 
+    <color name="text_muted">#9aa3b2</color>  
+    <color name="text_muted_2">#64748b</color>   
+    
+    <!-- Акцентные цвета -->
+    <color name="brand">#3b82f6</color>          
+    <color name="brand_dark">#2563eb</color>      
+    <color name="brand_light">#60a5fa</color>    
+    
+    <!-- Статусы -->
+    <color name="status_success">#10b981</color>  
+    <color name="status_warning">#f59e0b</color>  
+    <color name="status_error">#ef4444</color>    
+    
+    <!-- Полупрозрачные overlay -->
+    <color name="overlay_dark">#80000000</color>
+    <color name="overlay_light">#40ffffff</color>
+    
+    <!-- Совместимость со старыми цветами -->
+    <color name="black">@android:color/black</color>
+    <color name="white">@android:color/white</color>
+    <color name="transparent">@android:color/transparent</color>
+</resources>
+

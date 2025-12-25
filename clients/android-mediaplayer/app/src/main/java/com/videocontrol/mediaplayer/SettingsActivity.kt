@@ -23,8 +23,14 @@ class SettingsActivity : AppCompatActivity() {
         private const val KEY_SHOW_STATUS = "show_status"
 
         fun getServerUrl(context: Context): String? {
-            return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getString(KEY_SERVER_URL, null)
+            val url = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString(KEY_SERVER_URL, null) ?: return null
+            // Добавляем "http://" если его нет (для Socket.IO и API нужен полный URL)
+            return if (url.startsWith("http://") || url.startsWith("https://")) {
+                url
+            } else {
+                "http://$url"
+            }
         }
 
         fun getDeviceId(context: Context): String? {
@@ -56,12 +62,15 @@ class SettingsActivity : AppCompatActivity() {
 
         // Загружаем сохраненные значения
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        serverUrlInput.setText(prefs.getString(KEY_SERVER_URL, "http://10.172.0.151"))
-        deviceIdInput.setText(prefs.getString(KEY_DEVICE_ID, "ATV001"))
+        val savedServerUrl = prefs.getString(KEY_SERVER_URL, "192.168.0.1")
+        // Убираем "http://" или "https://" при отображении
+        val displayUrl = savedServerUrl?.removePrefix("http://")?.removePrefix("https://") ?: "192.168.0.1"
+        serverUrlInput.setText(displayUrl)
+        deviceIdInput.setText(prefs.getString(KEY_DEVICE_ID, "TV001"))
         showStatusCheckbox.isChecked = prefs.getBoolean(KEY_SHOW_STATUS, false)
 
         saveButton.setOnClickListener {
-            val serverUrl = serverUrlInput.text.toString().trim()
+            var serverUrl = serverUrlInput.text.toString().trim()
             val deviceId = deviceIdInput.text.toString().trim()
             val showStatus = showStatusCheckbox.isChecked
 
@@ -74,6 +83,9 @@ class SettingsActivity : AppCompatActivity() {
                 Toast.makeText(this, "Укажите ID устройства", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
+
+            // Убираем "http://" или "https://" при сохранении (будет добавлено автоматически при использовании)
+            serverUrl = serverUrl.removePrefix("http://").removePrefix("https://")
 
             // Сохраняем настройки
             prefs.edit()

@@ -4,7 +4,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@android:color/black"
+    android:background="@color/bg_primary"
     tools:context=".MainActivity">
 
     <!-- Бренд-фон (логотип или черный) - самый нижний слой -->
@@ -12,7 +12,7 @@
         android:id="@+id/brandBg"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@android:color/black"
+        android:background="@color/bg_primary"
         android:scaleType="centerInside"
         android:alpha="1.0" />
 
@@ -53,7 +53,7 @@
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal"
         android:layout_margin="16dp"
-        android:textColor="@android:color/white"
+        android:textColor="@color/text_primary"
         android:textSize="14sp"
         android:visibility="gone" />
 

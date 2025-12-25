@@ -214,6 +214,7 @@ class MPVClient:
         self.current_folder_name: Optional[str] = None
         self.current_folder_image: int = 1
         self.is_playing_placeholder: bool = False
+        self.content_device_id: str = device_id  # Устройство, с которого берем контент (важно для All Files)
         
         # === КРИТИЧНО: Флаги управления (как Android и Video.js) ===
         self.skipPlaceholderOnVideoEnd: bool = False  # Предотвращает показ заглушки при переключении
@@ -435,8 +436,16 @@ class MPVClient:
             page = data.get('page', 1)
             stream_url = data.get('stream_url')
             stream_protocol = data.get('stream_protocol')
+            # НОВОЕ: Запоминаем устройство, с которого нужно брать контент (для статических файлов из "Все файлы")
+            origin_device_id = data.get('originDeviceId')
+            if origin_device_id:
+                self.content_device_id = origin_device_id
+                print(f"[MPV] 📡 Установлен content_device_id: {self.content_device_id} (для файла из другого устройства)")
+            else:
+                # Если originDeviceId не передан, используем текущее устройство
+                self.content_device_id = self.device_id
             
-            print(f"[MPV] ▶️ PLAY: type={file_type}, file={file_name}, page={page}")
+            print(f"[MPV] ▶️ PLAY: type={file_type}, file={file_name}, page={page}, content_device_id={self.content_device_id}")
             
             # КРИТИЧНО: Останавливаем заглушку при любой команде play (как Android)
             was_placeholder = self.is_playing_placeholder
@@ -1000,7 +1009,10 @@ class MPVClient:
         """Воспроизведение видео (идентично Android)"""
         try:
             encoded_filename = quote(filename, safe='')
-            url = f"{self.server_url}/content/{self.device_id}/{encoded_filename}"
+            # НОВОЕ: Используем API resolver для поддержки shared storage (дедупликация)
+            # КРИТИЧНО: Используем content_device_id для поддержки файлов из других устройств
+            device_id_for_content = self.content_device_id if self.content_device_id else self.device_id
+            url = f"{self.server_url}/api/files/resolve/{device_id_for_content}/{encoded_filename}"
             
             print(f"[MPV] 🎬 Playing video: {filename} (isPlaceholder={is_placeholder})")
             print(f"[MPV] 🔗 URL: {url}")
@@ -1073,7 +1085,10 @@ class MPVClient:
         """Показ изображения (идентично Android)"""
         try:
             encoded_filename = quote(filename, safe='')
-            url = f"{self.server_url}/content/{self.device_id}/{encoded_filename}"
+            # НОВОЕ: Используем API resolver для поддержки shared storage (дедупликация)
+            # КРИТИЧНО: Используем content_device_id для поддержки файлов из других устройств
+            device_id_for_content = self.content_device_id if self.content_device_id else self.device_id
+            url = f"{self.server_url}/api/files/resolve/{device_id_for_content}/{encoded_filename}"
             
             print(f"[MPV] 🖼️ Showing image: {filename} (isPlaceholder={is_placeholder})")
             print(f"[MPV] 🔗 URL: {url}")
@@ -1141,7 +1156,9 @@ class MPVClient:
         try:
             folder_name = filename.replace('.pdf', '')
             encoded_folder = quote(folder_name, safe='')
-            url = f"{self.server_url}/api/devices/{self.device_id}/converted/{encoded_folder}/page/{page}"
+            # КРИТИЧНО: Используем content_device_id для поддержки файлов из других устройств
+            device_id_for_content = self.content_device_id if self.content_device_id else self.device_id
+            url = f"{self.server_url}/api/devices/{device_id_for_content}/converted/{encoded_folder}/page/{page}"
             
             print(f"[MPV] 📄 PDF страница: {filename} - {page}")
             
@@ -1203,7 +1220,9 @@ class MPVClient:
         try:
             folder_name = filename.replace('.pptx', '')
             encoded_folder = quote(folder_name, safe='')
-            url = f"{self.server_url}/api/devices/{self.device_id}/converted/{encoded_folder}/slide/{slide}"
+            # КРИТИЧНО: Используем content_device_id для поддержки файлов из других устройств
+            device_id_for_content = self.content_device_id if self.content_device_id else self.device_id
+            url = f"{self.server_url}/api/devices/{device_id_for_content}/converted/{encoded_folder}/slide/{slide}"
             
             print(f"[MPV] 📊 PPTX слайд: {filename} - {slide}")
             
@@ -1264,7 +1283,9 @@ class MPVClient:
         try:
             clean_folder = folder_name.replace('.zip', '')
             encoded_folder = quote(clean_folder, safe='')
-            url = f"{self.server_url}/api/devices/{self.device_id}/folder/{encoded_folder}/image/{image_num}"
+            # КРИТИЧНО: Используем content_device_id для поддержки файлов из других устройств
+            device_id_for_content = self.content_device_id if self.content_device_id else self.device_id
+            url = f"{self.server_url}/api/devices/{device_id_for_content}/folder/{encoded_folder}/image/{image_num}"
             
             print(f"[MPV] 📁 Папка: {folder_name} - изображение {image_num}")
             
@@ -1333,13 +1354,16 @@ class MPVClient:
             if current_page < total_pages:
                 pages_to_preload.append(current_page + 1)  # Следующий
             
+            # КРИТИЧНО: Используем content_device_id для поддержки файлов из других устройств
+            device_id_for_content = self.content_device_id if self.content_device_id else self.device_id
+            
             for page in pages_to_preload:
                 if slide_type == 'pdf':
-                    url = f"{self.server_url}/api/devices/{self.device_id}/converted/{quote(file, safe='')}/page/{page}"
+                    url = f"{self.server_url}/api/devices/{device_id_for_content}/converted/{quote(file, safe='')}/page/{page}"
                 elif slide_type == 'pptx':
-                    url = f"{self.server_url}/api/devices/{self.device_id}/converted/{quote(file, safe='')}/slide/{page}"
+                    url = f"{self.server_url}/api/devices/{device_id_for_content}/converted/{quote(file, safe='')}/slide/{page}"
                 elif slide_type == 'folder':
-                    url = f"{self.server_url}/api/devices/{self.device_id}/folder/{quote(file, safe='')}/image/{page}"
+                    url = f"{self.server_url}/api/devices/{device_id_for_content}/folder/{quote(file, safe='')}/image/{page}"
                 else:
                     continue
                 

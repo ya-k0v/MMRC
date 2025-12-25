@@ -5,14 +5,14 @@
     android:orientation="vertical"
     android:padding="24dp"
     android:gravity="center"
-    android:background="@android:color/black">
+    android:background="@color/bg_primary">
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Настройки VideoControl"
+        android:text="Настройки VideoControl Player"
         android:textSize="24sp"
-        android:textColor="@android:color/white"
+        android:textColor="@color/text_primary"
         android:textStyle="bold"
         android:layout_marginBottom="32dp" />
 
@@ -20,7 +20,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Адрес сервера"
-        android:textColor="@android:color/white"
+        android:textColor="@color/text_primary"
         android:textSize="16sp"
         android:layout_marginBottom="8dp" />
 
@@ -30,9 +30,9 @@
         android:layout_height="56dp"
         android:hint="http://"
         android:inputType="textUri"
-        android:textColor="@android:color/white"
-        android:textColorHint="#888888"
-        android:background="@android:color/darker_gray"
+        android:textColor="@color/text_primary"
+        android:textColorHint="@color/text_muted"
+        android:background="@color/bg_secondary"
         android:padding="16dp"
         android:layout_marginBottom="24dp"
         android:textSize="16sp" />
@@ -41,7 +41,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="ID устройства"
-        android:textColor="@android:color/white"
+        android:textColor="@color/text_primary"
         android:textSize="16sp"
         android:layout_marginBottom="8dp" />
 
@@ -51,9 +51,9 @@
         android:layout_height="56dp"
         android:hint=""
         android:inputType="textNoSuggestions"
-        android:textColor="@android:color/white"
-        android:textColorHint="#888888"
-        android:background="@android:color/darker_gray"
+        android:textColor="@color/text_primary"
+        android:textColorHint="@color/text_muted"
+        android:background="@color/bg_secondary"
         android:padding="16dp"
         android:layout_marginBottom="24dp"
         android:textSize="16sp"
@@ -64,7 +64,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Показывать статусы (подключение, буферизация)"
-        android:textColor="@android:color/white"
+        android:textColor="@color/text_primary"
         android:textSize="16sp"
         android:layout_marginBottom="32dp"
         android:checked="false" />
@@ -80,8 +80,8 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Примеры:\n• Сервер: http://192.168.1.100\n• ID: ATV001, ATV002, BR001"
-        android:textColor="#888888"
+        android:text="Примеры:\n• Сервер: 192.168.1.100\n• ID: ATV001, ATV002, BR001"
+        android:textColor="@color/text_muted"
         android:textSize="12sp"
         android:layout_marginTop="24dp"
         android:gravity="center" />
