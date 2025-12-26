@@ -121,6 +121,18 @@ function setFilesMode(mode = 'device', { skipLoad = false } = {}) {
   if (filePreview) {
     filePreview.innerHTML = '<div class="meta" style="padding:12px; color:var(--muted);">Выберите файл</div>';
   }
+  
+  // КРИТИЧНО: При переключении режима обновляем кэш для текущего устройства
+  // Это гарантирует, что resolveFileDisplayData найдет правильные originalName
+  if (currentDevice) {
+    const device = devices.find(d => d.device_id === currentDevice);
+    if (device) {
+      prefillDeviceFileMeta(device);
+      // Обновляем превью TV для текущего устройства, чтобы отобразилось правильное имя
+      refreshTvTilePlaybackInfo(currentDevice);
+    }
+  }
+  
   if (!skipLoad) {
     loadFiles();
   }
@@ -512,6 +524,7 @@ let tvPage = 0;
 let filePage = 0;
 let nodeNames = {}; // { device_id: name }
 let allFiles = []; // Список всех файлов для текущего устройства (для отображения названий в прогресс-баре)
+let allFilesCache = []; // Кэш файлов из режима "Все файлы" (сохраняется при переключении режимов для поиска originalName)
 // Прогресс воспроизведения по устройству
 // device_id -> { file, currentTime, duration, durationKnownFromStart }
 // durationKnownFromStart: true если duration был известен с самого начала (для работы перемотки)
@@ -1795,6 +1808,15 @@ async function selectDevice(id, resetPage = true) {
     setFilesMode('device', { skipLoad: true });
   }
 
+  // КРИТИЧНО: Обновляем кэш метаданных для нового устройства ДО загрузки файлов
+  // Это гарантирует, что resolveFileDisplayData найдет правильные originalName
+  const newDevice = devices.find(d => d.device_id === id);
+  if (newDevice) {
+    prefillDeviceFileMeta(newDevice);
+    // Обновляем превью TV для нового устройства, чтобы отобразилось правильное имя
+    refreshTvTilePlaybackInfo(id);
+  }
+
   await loadFiles();
   await syncPreviewWithPlayerState();
   updateVolumeUI();
@@ -1833,9 +1855,12 @@ async function loadFiles() {
         if (typeof item === 'string') {
           return { safeName: item, originalName: item, resolution: null, durationSeconds: null, folderImageCount: null, contentType: null, streamUrl: null, streamProxyUrl: null, streamProtocol: null, sourceDeviceId: currentDevice };
         }
+        const itemSafeName = item.name || item.safeName || item.originalName;
         return { 
-          safeName: item.name || item.safeName || item.originalName, 
-          originalName: item.originalName || item.name || item.safeName,
+          safeName: itemSafeName, 
+          // КРИТИЧНО: Не используем safeName как fallback
+          // Если originalName нет или равен safeName, оставляем null, чтобы resolveFileDisplayData мог найти его из device.fileNames
+          originalName: (item.originalName && item.originalName !== itemSafeName) ? item.originalName : null,
           resolution: item.resolution || null,
           durationSeconds: typeof item.durationSeconds === 'number' ? item.durationSeconds : null,
           folderImageCount: typeof item.folderImageCount === 'number' ? item.folderImageCount : null,
@@ -1877,6 +1902,12 @@ async function loadFiles() {
   const files = allFiles.slice(start, end);
 
   fileList.innerHTML = files.map(({ safeName, originalName, resolution, durationSeconds, folderImageCount, contentType, streamProtocol, hasTrailer, trailerUrl }) => {
+    // КРИТИЧНО: Используем resolveFileDisplayData для получения правильного оригинального имени
+    // Это гарантирует, что будет использовано оригинальное имя из всех доступных источников
+    const { displayName: resolvedDisplayName } = resolveFileDisplayData(currentDevice, safeName);
+    // КРИТИЧНО: НЕ используем safeName как fallback - только resolvedDisplayName или originalName
+    // Если оба отсутствуют, используем resolvedDisplayName (который может быть safeName только как последний fallback)
+    const effectiveOriginalName = resolvedDisplayName || originalName;
     // Определяем расширение файла
     const hasExtension = safeName.includes('.');
     const ext = hasExtension ? safeName.split('.').pop().toLowerCase() : '';
@@ -1934,9 +1965,13 @@ async function loadFiles() {
     }
     
     // Используем safeName для сравнения с currentFile (для обратной совместимости)
-    const active = currentFile === safeName || currentFile === originalName;
-    // Убираем расширение из отображаемого имени (как в админке)
-    const displayName = originalName.replace(/\.[^.]+$/, '');
+    // КРИТИЧНО: Проверяем только safeName, так как currentFile всегда устанавливается в safeName
+    // originalName может быть null, поэтому не используем его для сравнения
+    const active = currentFile === safeName || (originalName && currentFile === originalName);
+    // КРИТИЧНО: Используем resolvedDisplayName (уже без расширения) или effectiveOriginalName
+    // НЕ используем safeName как fallback - только если resolvedDisplayName и effectiveOriginalName отсутствуют
+    // resolvedDisplayName уже должен содержать правильное оригинальное имя из resolveFileDisplayData
+    const displayName = resolvedDisplayName || (effectiveOriginalName ? effectiveOriginalName.replace(/\.[^.]+$/, '') : '');
     
     const metaBadges = [];
     if (type === 'FOLDER' && typeof folderImageCount === 'number') {
@@ -2338,7 +2373,9 @@ async function loadAllFilesAggregated() {
       const video = item.video || {};
       return {
         safeName: item.safeName || item.originalName,
-        originalName: item.originalName || item.safeName,
+        // КРИТИЧНО: Не используем safeName как fallback
+        // Если originalName нет, оставляем null, чтобы resolveFileDisplayData мог найти его из других источников
+        originalName: item.originalName || null,
         resolution: video.width && video.height ? { width: video.width, height: video.height } : null,
         durationSeconds: typeof video.duration === 'number' ? video.duration : null,
         folderImageCount: item.pagesCount || null,
@@ -2352,6 +2389,9 @@ async function loadAllFilesAggregated() {
         sourceDeviceName: getDeviceDisplayName(item.deviceId)
       };
     });
+
+    // КРИТИЧНО: Сохраняем копию в кэш для поиска файлов после переключения режимов
+    allFilesCache = [...allFiles];
 
     if (!allFiles.length) {
       fileList.innerHTML = `
@@ -2376,6 +2416,12 @@ async function loadAllFilesAggregated() {
     const files = allFiles.slice(start, end);
 
     fileList.innerHTML = files.map(({ safeName, originalName, resolution, durationSeconds, folderImageCount, contentType, streamProtocol, sourceDeviceName, sourceDeviceId }) => {
+      // КРИТИЧНО: Используем resolveFileDisplayData для получения правильного оригинального имени
+      // Это гарантирует, что будет использовано оригинальное имя из всех доступных источников
+      const { displayName: resolvedDisplayName } = resolveFileDisplayData(sourceDeviceId, safeName);
+      // КРИТИЧНО: НЕ используем safeName как fallback - только resolvedDisplayName или originalName
+      const effectiveOriginalName = resolvedDisplayName || originalName;
+      
       const hasExtension = safeName.includes('.');
       const ext = hasExtension ? safeName.split('.').pop().toLowerCase() : '';
       let type = 'VID';
@@ -2418,7 +2464,9 @@ async function loadAllFilesAggregated() {
       }
 
       const active = currentFile === safeName && currentFileSourceDevice === sourceDeviceId;
-      const displayName = originalName.replace(/\.[^.]+$/, '');
+      // КРИТИЧНО: Используем resolvedDisplayName (уже без расширения) или effectiveOriginalName
+      // НЕ используем safeName как fallback - только если resolvedDisplayName и effectiveOriginalName отсутствуют
+      const displayName = resolvedDisplayName || (effectiveOriginalName ? effectiveOriginalName.replace(/\.[^.]+$/, '') : '');
 
       const metaBadges = [];
       if (type === 'FOLDER' && typeof folderImageCount === 'number' && folderImageCount > 0) metaBadges.push(`${folderImageCount} фото`);
@@ -2715,10 +2763,14 @@ function cacheDeviceFileMeta(deviceId, files = [], { merge = false } = {}) {
   files.forEach(file => {
     if (!file) return;
     const safeName = file.safeName || file.name || file.fileName;
-    const originalName = file.originalName || file.displayName || file.name || safeName;
+    // КРИТИЧНО: Не используем safeName как fallback для originalName
+    // Если originalName нет, оставляем null, чтобы resolveFileDisplayData мог найти его из других источников
+    const originalName = file.originalName || file.displayName || (file.name && file.name !== safeName ? file.name : null) || null;
     if (!safeName && !originalName) return;
 
-    const displayName = (originalName || safeName || '').replace(/\.[^.]+$/, '') || (originalName || safeName || '');
+    // КРИТИЧНО: displayName должен быть ТОЛЬКО из originalName, без fallback на safeName
+    // Если originalName нет, не кэшируем displayName, чтобы resolveFileDisplayData мог найти его из device.fileMetadata или device.fileNames
+    const displayName = originalName ? (originalName.replace(/\.[^.]+$/, '') || originalName) : null;
     const folderImageCount = typeof file.folderImageCount === 'number' ? file.folderImageCount : null;
     const contentType = file.contentType || null;
     const streamUrl = file.streamUrl || null;
@@ -2769,82 +2821,221 @@ function normalizeFileNameVariants(name) {
 }
 
 function findFileInfoForDevice(deviceId, fileName) {
-  if (!fileName || !allFiles || allFiles.length === 0 || deviceId !== currentDevice) {
-    return null;
+  if (!fileName) return null;
+  
+  // Шаг 1: Проверяем allFilesCache (файлы из "Все файлы" - сохраняются при переключении режимов)
+  if (allFilesCache && allFilesCache.length > 0) {
+    const targetVariants = normalizeFileNameVariants(fileName);
+    if (targetVariants.length) {
+      // Сначала ищем с проверкой sourceDeviceId (если deviceId указан)
+      let found = null;
+      if (deviceId) {
+        found = allFilesCache.find(f => {
+          if (f.sourceDeviceId !== deviceId) {
+            return false;
+          }
+          const variants = [
+            ...normalizeFileNameVariants(f.safeName),
+            ...normalizeFileNameVariants(f.originalName),
+          ];
+          if (!variants.length) return false;
+          return variants.some(value => targetVariants.includes(value));
+        });
+      }
+      
+      // Если не найдено с проверкой sourceDeviceId, ищем без проверки (для совместимости)
+      if (!found) {
+        found = allFilesCache.find(f => {
+          const variants = [
+            ...normalizeFileNameVariants(f.safeName),
+            ...normalizeFileNameVariants(f.originalName),
+          ];
+          if (!variants.length) return false;
+          return variants.some(value => targetVariants.includes(value));
+        });
+      }
+      
+      if (found) return found;
+    }
   }
-  const targetVariants = normalizeFileNameVariants(fileName);
-  if (!targetVariants.length) return null;
-  return allFiles.find(f => {
-    const variants = [
-      ...normalizeFileNameVariants(f.safeName),
-      ...normalizeFileNameVariants(f.originalName),
-    ];
-    if (!variants.length) return false;
-    return variants.some(value => targetVariants.includes(value));
-  }) || null;
+  
+  // Шаг 2: Проверяем allFiles (текущий список файлов)
+  if (allFiles && allFiles.length > 0) {
+    const targetVariants = normalizeFileNameVariants(fileName);
+    if (targetVariants.length) {
+      const found = allFiles.find(f => {
+        // Если deviceId указан и не совпадает с currentDevice, проверяем sourceDeviceId
+        if (deviceId && deviceId !== currentDevice && f.sourceDeviceId !== deviceId) {
+          return false;
+        }
+        const variants = [
+          ...normalizeFileNameVariants(f.safeName),
+          ...normalizeFileNameVariants(f.originalName),
+        ];
+        if (!variants.length) return false;
+        return variants.some(value => targetVariants.includes(value));
+      });
+      if (found) return found;
+    }
+  }
+  
+  // Если не найдено в allFilesCache и allFiles - возвращаем null
+  // resolveFileDisplayData будет использовать другие источники (device.fileMetadata, device.fileNames)
+  return null;
 }
 
 function resolveFileDisplayData(deviceId, fileName) {
+  if (!deviceId || !fileName) {
+    return { displayName: fileName || '', fileInfo: null, folderImageCount: null, contentType: null, streamUrl: null, streamProxyUrl: null, streamProtocol: null };
+  }
+  
   const device = devices.find(d => d.device_id === deviceId);
-  const baseInfo = findFileInfoForDevice(deviceId, fileName);
+  
+  // Приоритет получения originalName для отображения:
+  // 1. fileInfo.originalName (из allFiles для currentDevice)
+  // 2. cachedMeta.displayName (из кэша fileMetaCache, заполняется через prefillDeviceFileMeta)
+  // 3. device.fileMetadata[].originalName (из метаданных устройства с сервера)
+  // 4. device.fileNames[] (по индексу safeName в device.files)
+  // 5. fileName (fallback, только если ничего не найдено)
+  
+  // Шаг 1: Проверяем allFiles и allFilesCache
+  // КРИТИЧНО: Для файлов из "Все файлы" с originDeviceId, ищем в allFilesCache по sourceDeviceId
+  let baseInfo = null;
+  if (device?.current?.originDeviceId) {
+    // Файл из "Все файлы" - ищем в allFilesCache по originDeviceId
+    baseInfo = findFileInfoForDevice(device.current.originDeviceId, fileName);
+  }
+  // Если не найдено, ищем по переданному deviceId
+  if (!baseInfo) {
+    baseInfo = findFileInfoForDevice(deviceId, fileName);
+  }
+  
   const currentMatches = device?.current && (device.current.file === fileName || device.current.playlistFile === fileName);
   const fileInfo = currentMatches && device.current.folderImageCount
     ? { ...baseInfo, folderImageCount: device.current.folderImageCount }
     : baseInfo;
-  let displayName = null; // КРИТИЧНО: Не используем fileName напрямую, т.к. это может быть safeName
+    
+  let displayName = null;
   let folderImageCount = fileInfo?.folderImageCount ?? null;
-  let cachedMeta = null;
   let contentType = fileInfo?.contentType || null;
   let streamUrl = fileInfo?.streamUrl || null;
   let streamProxyUrl = fileInfo?.streamProxyUrl || null;
   let streamProtocol = fileInfo?.streamProtocol || null;
-
-  // Приоритет получения originalName для отображения:
-  // 1. fileInfo.originalName (из allFiles)
-  // 2. cachedMeta.displayName (из кэша)
-  // 3. device.fileMetadata[].originalName (из метаданных устройства)
-  // 4. device.fileNames[] (по индексу safeName в device.files)
-  // 5. fileName (fallback, только если ничего не найдено)
+  let cachedMeta = null;
+  
   if (fileInfo && fileInfo.originalName) {
+    // Нашли в allFiles
     displayName = fileInfo.originalName.replace(/\.[^.]+$/, '') || fileInfo.originalName;
-  } else {
-    cachedMeta = resolveCachedFileMeta(deviceId, fileName);
-    if (cachedMeta?.displayName) {
-      displayName = cachedMeta.displayName;
+  } else if (device) {
+    // КРИТИЧНО: Если файл из "Все файлы" с originDeviceId, но originalName не найден в allFilesCache,
+    // ищем оригинальное имя в device.fileMetadata и device.fileNames устройства-источника
+    let searchDevice = device;
+    if (device.current?.originDeviceId && device.current.originDeviceId !== deviceId) {
+      const sourceDevice = devices.find(d => d.device_id === device.current.originDeviceId);
+      if (sourceDevice) {
+        searchDevice = sourceDevice;
+      }
+    }
+    
+    // Шаг 2: Проверяем device.fileMetadata (метаданные с сервера) - самый надежный источник
+    const targetVariants = normalizeFileNameVariants(fileName);
+    let metaFromDevice = null;
+    if (searchDevice.fileMetadata && Array.isArray(searchDevice.fileMetadata) && targetVariants.length > 0) {
+      metaFromDevice = searchDevice.fileMetadata.find(m => {
+        if (!m || !m.safeName) return false;
+        const metaVariants = normalizeFileNameVariants(m.safeName);
+        return metaVariants.some(v => targetVariants.includes(v));
+      });
+    }
+    
+    if (metaFromDevice?.originalName) {
+      displayName = metaFromDevice.originalName.replace(/\.[^.]+$/, '') || metaFromDevice.originalName;
+      if (folderImageCount == null) folderImageCount = metaFromDevice.folderImageCount ?? null;
+      if (!contentType) contentType = metaFromDevice.contentType || null;
     } else {
-      // Проверяем device.fileMetadata
-      const metaFromDevice = device?.fileMetadata?.find(m => m.safeName === fileName);
-      if (metaFromDevice?.originalName) {
-        displayName = metaFromDevice.originalName.replace(/\.[^.]+$/, '') || metaFromDevice.originalName;
+      // Шаг 3: Проверяем кэш fileMetaCache (заполняется через prefillDeviceFileMeta при загрузке устройств)
+      // КРИТИЧНО: Для файлов из "Все файлы" проверяем кэш устройства-источника
+      const cacheDeviceId = searchDevice.device_id || deviceId;
+      cachedMeta = resolveCachedFileMeta(cacheDeviceId, fileName);
+      // КРИТИЧНО: Используем displayName из кэша только если он есть и не равен safeName
+      // Если displayName отсутствует или равен safeName, продолжаем поиск в device.fileNames
+      const fileNameWithoutExt = (fileName || '').replace(/\.[^.]+$/, '') || fileName || '';
+      if (cachedMeta?.displayName && cachedMeta.displayName !== fileNameWithoutExt) {
+        displayName = cachedMeta.displayName;
+        if (folderImageCount == null) folderImageCount = cachedMeta.folderImageCount ?? null;
+        if (!contentType) contentType = cachedMeta.contentType || null;
+        if (!streamUrl) streamUrl = cachedMeta.streamUrl || null;
+        if (!streamProxyUrl) streamProxyUrl = cachedMeta.streamProxyUrl || null;
+        if (!streamProtocol) streamProtocol = cachedMeta.streamProtocol || null;
       } else {
-        // Проверяем device.fileNames по индексу
-        const files = device?.files || [];
-        const fileNames = device?.fileNames || files;
-        const fileIndex = files.indexOf(fileName);
-        if (fileIndex >= 0 && fileNames[fileIndex]) {
-          displayName = fileNames[fileIndex].replace(/\.[^.]+$/, '') || fileNames[fileIndex];
+        // Шаг 4: Проверяем device.fileNames по индексу
+        // КРИТИЧНО: Используем searchDevice (устройство-источник для файлов из "Все файлы")
+        const files = searchDevice.files || [];
+        // КРИТИЧНО: fileNames может быть равен files (безопасные имена), если оригинальные имена не загружены
+        // В этом случае нужно проверить, что fileNames !== files, иначе это безопасные имена
+        const fileNames = searchDevice.fileNames;
+        const fileNamesIsOriginal = fileNames && fileNames !== files && Array.isArray(fileNames);
+        
+        let fileIndex = -1;
+        if (targetVariants.length > 0 && files.length > 0) {
+          fileIndex = files.findIndex(f => {
+            const fileVariants = normalizeFileNameVariants(f);
+            return fileVariants.some(v => targetVariants.includes(v));
+          });
+        }
+        
+        if (fileIndex >= 0 && fileNamesIsOriginal && fileIndex < fileNames.length && fileNames[fileIndex]) {
+          // КРИТИЧНО: Используем fileNames[fileIndex] только если fileNames содержит оригинальные имена
+          // и fileNames[fileIndex] отличается от files[fileIndex] (safeName)
+          const safeNameAtIndex = files[fileIndex];
+          const originalNameFromFileNames = fileNames[fileIndex];
+          // Используем оригинальное имя только если оно отличается от безопасного
+          if (originalNameFromFileNames !== safeNameAtIndex) {
+            displayName = originalNameFromFileNames.replace(/\.[^.]+$/, '') || originalNameFromFileNames;
+          } else {
+            // Если fileNames[fileIndex] === files[fileIndex], значит fileNames содержит безопасные имена
+            // В этом случае не используем его, и переходим к следующему источнику
+            // Но это не должно происходить, если fileNamesIsOriginal === true
+            // Fallback на fileName (который является safeName) - это последний вариант
+            displayName = (fileName || '').replace(/\.[^.]+$/, '') || (fileName || '');
+          }
         } else {
-          // Последний fallback - используем fileName (может быть safeName, но лучше чем ничего)
+          // Шаг 5: Fallback - используем fileName (который является safeName)
+          // Это происходит только если:
+          // 1. fileIndex < 0 (файл не найден в device.files)
+          // 2. fileNames не содержит оригинальные имена (fileNamesIsOriginal === false)
+          // 3. fileNames[fileIndex] отсутствует или равен safeName
+          // В этом случае используем fileName (safeName) как последний fallback
           displayName = (fileName || '').replace(/\.[^.]+$/, '') || (fileName || '');
         }
       }
     }
+  } else {
+    // Устройство не найдено - проверяем кэш как последний шанс, затем fallback
+    cachedMeta = resolveCachedFileMeta(deviceId, fileName);
+    if (cachedMeta?.displayName) {
+      displayName = cachedMeta.displayName;
+      if (folderImageCount == null) folderImageCount = cachedMeta.folderImageCount ?? null;
+      if (!contentType) contentType = cachedMeta.contentType || null;
+      if (!streamUrl) streamUrl = cachedMeta.streamUrl || null;
+      if (!streamProxyUrl) streamProxyUrl = cachedMeta.streamProxyUrl || null;
+      if (!streamProtocol) streamProtocol = cachedMeta.streamProtocol || null;
+    } else {
+      displayName = (fileName || '').replace(/\.[^.]+$/, '') || (fileName || '');
+    }
   }
-
-  if (folderImageCount == null && cachedMeta?.folderImageCount != null) {
-    folderImageCount = cachedMeta.folderImageCount;
-  }
-  if (!contentType && cachedMeta?.contentType) {
-    contentType = cachedMeta.contentType;
-  }
-  if (!streamUrl && cachedMeta?.streamUrl) {
-    streamUrl = cachedMeta.streamUrl;
-  }
-  if (!streamProxyUrl && cachedMeta?.streamProxyUrl) {
-    streamProxyUrl = cachedMeta.streamProxyUrl;
-  }
-  if (!streamProtocol && cachedMeta?.streamProtocol) {
-    streamProtocol = cachedMeta.streamProtocol;
+  
+  // Дополнительно обновляем данные из cachedMeta если они есть и не были заполнены ранее
+  // (для случаев, когда displayName был найден из других источников, но метаданные отсутствуют)
+  if (!cachedMeta && (folderImageCount == null || !contentType || !streamUrl || !streamProxyUrl || !streamProtocol)) {
+    cachedMeta = resolveCachedFileMeta(deviceId, fileName);
+    if (cachedMeta) {
+      if (folderImageCount == null) folderImageCount = cachedMeta.folderImageCount ?? null;
+      if (!contentType) contentType = cachedMeta.contentType || null;
+      if (!streamUrl) streamUrl = cachedMeta.streamUrl || null;
+      if (!streamProxyUrl) streamProxyUrl = cachedMeta.streamProxyUrl || null;
+      if (!streamProtocol) streamProtocol = cachedMeta.streamProtocol || null;
+    }
   }
 
   return { displayName, fileInfo, folderImageCount, contentType, streamUrl, streamProxyUrl, streamProtocol };
@@ -2880,9 +3071,16 @@ function prefillDeviceFileMeta(device) {
 
   const items = files.map((safeName, idx) => {
     const meta = metaBySafe.get(safeName);
+    // КРИТИЧНО: Приоритет originalName:
+    // 1. meta?.originalName (из device.fileMetadata с сервера - самый надежный источник)
+    // 2. fileNames[idx] (из device.fileNames - маппинг имен), но только если он отличается от safeName
+    // НЕ используем safeName как fallback - если originalName нет, оставляем null
+    // чтобы resolveFileDisplayData мог найти его из device.fileNames напрямую
+    const fileNamesValue = fileNames[idx];
+    const originalName = meta?.originalName || (fileNamesValue && fileNamesValue !== safeName ? fileNamesValue : null) || null;
     return {
       safeName,
-      originalName: fileNames[idx] || meta?.originalName || safeName,
+      originalName: originalName,
       folderImageCount: meta?.folderImageCount ?? null,
       contentType: meta?.contentType || null,
       streamUrl: meta?.streamUrl || null,
@@ -2956,8 +3154,49 @@ function buildPreviewPlaybackInfo(device) {
     return null;
   }
 
+  // КРИТИЧНО: Определяем устройство-источник файла
+  // Если файл запущен из "Все файлы", originDeviceId указывает на устройство-источник
+  // Если файл запущен с текущего устройства, используем device.device_id
+  let sourceDeviceId = device.current.originDeviceId || device.device_id;
+  
+  // КРИТИЧНО: Если originDeviceId установлен, файл точно из "Все файлы" - ищем в allFilesCache
+  if (device.current.originDeviceId && allFilesCache && allFilesCache.length > 0) {
+    const currentFileName = device.current.file || device.current.playlistFile || '';
+    const fileInfo = allFilesCache.find(f => {
+      if (!currentFileName) return false;
+      // Точный поиск: sourceDeviceId должен совпадать с originDeviceId
+      if (f.sourceDeviceId !== device.current.originDeviceId) return false;
+      const variants = [
+        ...normalizeFileNameVariants(f.safeName),
+        ...normalizeFileNameVariants(f.originalName)
+      ];
+      const targetVariants = normalizeFileNameVariants(currentFileName);
+      if (!targetVariants.length) return false;
+      return variants.some(v => targetVariants.includes(v));
+    });
+    if (fileInfo && fileInfo.sourceDeviceId) {
+      sourceDeviceId = fileInfo.sourceDeviceId;
+    }
+  } else if (!device.current.originDeviceId && allFiles && allFiles.length > 0) {
+    // Fallback: если originDeviceId не установлен, ищем в текущем allFiles
+    const currentFileName = device.current.file || device.current.playlistFile || '';
+    const fileInfo = allFiles.find(f => {
+      if (!currentFileName) return false;
+      const variants = [
+        ...normalizeFileNameVariants(f.safeName),
+        ...normalizeFileNameVariants(f.originalName)
+      ];
+      const targetVariants = normalizeFileNameVariants(currentFileName);
+      if (!targetVariants.length) return false;
+      return variants.some(v => targetVariants.includes(v));
+    });
+    if (fileInfo && fileInfo.sourceDeviceId) {
+      sourceDeviceId = fileInfo.sourceDeviceId;
+    }
+  }
+
   if (device.current.type === 'streaming') {
-    const { displayName } = resolveFileDisplayData(device.device_id, device.current.file);
+    const { displayName } = resolveFileDisplayData(sourceDeviceId, device.current.file);
     const protocolLabel = device.current.streamProtocol ? device.current.streamProtocol.toUpperCase() : 'онлайн';
     const safeName = escapeHtml(truncateText(displayName, 50)) || 'Стрим';
     const playbackInfo = {
@@ -2973,7 +3212,7 @@ function buildPreviewPlaybackInfo(device) {
   if (STATIC_CONTENT_TYPES.has(device.current.type)) {
     const staticFile = device.current.playlistFile || device.current.file;
     const currentPage = Number(device.current.page) || 1;
-    const { displayName, fileInfo, folderImageCount: cachedFolderCount } = resolveFileDisplayData(device.device_id, staticFile);
+    const { displayName, fileInfo, folderImageCount: cachedFolderCount } = resolveFileDisplayData(sourceDeviceId, staticFile);
     let folderImageCount = cachedFolderCount || 0;
 
     if (folderImageCount === 0) {
@@ -2999,7 +3238,7 @@ function buildPreviewPlaybackInfo(device) {
 
   // Для изображений - показываем информацию о воспроизведении
   if (device.current.type === 'image') {
-    const { displayName, fileInfo } = resolveFileDisplayData(device.device_id, device.current.file);
+    const { displayName, fileInfo } = resolveFileDisplayData(sourceDeviceId, device.current.file);
     if (fileInfo && fileInfo.isPlaceholder) {
       return null;
     }
@@ -3027,7 +3266,7 @@ function buildPreviewPlaybackInfo(device) {
     return null;
   }
 
-  const { displayName, fileInfo } = resolveFileDisplayData(device.device_id, prog.file);
+  const { displayName, fileInfo } = resolveFileDisplayData(sourceDeviceId, prog.file);
   if (fileInfo && fileInfo.isPlaceholder) {
     return null;
   }
@@ -3711,6 +3950,13 @@ const onDevicesUpdated = debounce(async () => {
   const prevDevice = currentDevice;
   const prevFile = currentFile;
   await loadDevices();
+  
+  // КРИТИЧНО: Обновляем кэш метаданных для всех устройств после загрузки
+  // Это гарантирует, что resolveFileDisplayData найдет правильные originalName
+  devices.forEach(device => {
+    prefillDeviceFileMeta(device);
+  });
+  
   if (prevDevice && devices.find(d => d.device_id === prevDevice)) {
     // ИСПРАВЛЕНО: НЕ сбрасываем страницу при обновлении (false)
     await selectDevice(prevDevice, false);
