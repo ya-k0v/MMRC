@@ -62,6 +62,7 @@ import { circuitBreakers } from './src/utils/circuit-breaker.js';
 import { getSettings, updateContentRootPath, getDataRoot, getDevicesPath, getStreamsOutputDir, getConvertedCache, getLogsDir, getTempDir } from './src/config/settings-manager.js';
 import { getMetrics } from './src/utils/metrics.js';
 import { timerRegistry } from './src/utils/timer-registry.js';
+import adminRouter from './src/routes/admin.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -1040,3 +1041,6 @@ process.on('unhandledRejection', (reason, promise) => {
   // НЕ завершаем процесс - сервис должен продолжать работать
   // В production больше не завершаем процесс автоматически
 });
+
+// Admin API (установка APK и др.)
+app.use('/api/admin', adminRouter);

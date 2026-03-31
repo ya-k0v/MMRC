@@ -153,6 +153,7 @@ CREATE TABLE IF NOT EXISTS devices (
   folder TEXT NOT NULL,
   device_type TEXT DEFAULT 'browser',
   platform TEXT,
+  ip_address TEXT,
   capabilities TEXT, -- JSON строка
   last_seen DATETIME,
   current_state TEXT, -- JSON строка с current: {type, file, state}

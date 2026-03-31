@@ -5,6 +5,7 @@
 
 import { getActiveConnections, getDeviceSockets } from './connection-manager.js';
 import { getFileMetadata } from '../database/files-metadata.js';
+import { saveDevice } from '../database/database.js';
 import logger, { logSocket } from '../utils/logger.js';
 import { recordSocketEvent } from '../utils/metrics.js';
 
@@ -89,6 +90,7 @@ export function setupDeviceHandlers(socket, deps) {
         logger.debug(`[Socket.IO] Ошибка получения IP для socket ${socket.id}:`, e);
       }
       
+
       // Обновляем информацию об устройстве
       const deviceType = device_type || 'browser';
       const devicePlatform = platform || 'Unknown';
@@ -98,6 +100,13 @@ export function setupDeviceHandlers(socket, deps) {
       devices[device_id].platform = devicePlatform;
       devices[device_id].ipAddress = clientIP || null;
       devices[device_id].lastSeen = new Date().toISOString();
+
+      // Сохраняем ipAddress и platform в БД
+      try {
+        saveDevice(device_id, devices[device_id]);
+      } catch (e) {
+        logger.warn('[Socket.IO] Не удалось сохранить ipAddress/platform в БД', { deviceId: device_id, error: e.message });
+      }
       
       // КРИТИЧНО: Отправляем обновление устройства если IP изменился или это первое подключение
       const ipChanged = previousIP !== devices[device_id].ipAddress;

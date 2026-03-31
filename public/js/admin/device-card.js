@@ -87,6 +87,63 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
     delSvg.appendChild(delPath);
     delBtn.appendChild(delSvg);
     headerInner.appendChild(delBtn);
+
+    // Кнопка запуска Android-приложения (справа)
+    if (d.platform && d.platform.toLowerCase().includes('android')) {
+      import('./notifications.js').then(({ showToastNotification }) => {
+        const launchAppBtn = document.createElement('button');
+        launchAppBtn.className = 'meta-lg';
+        launchAppBtn.style.cssText = 'margin-left:auto; min-width:36px; width:36px; height:36px; padding:0; border-radius:var(--radius-sm); flex-shrink:0; align-items:center; justify-content:center; font-size:var(--font-size-lg); line-height:1; transition:all 0.2s; box-shadow:var(--shadow-sm); background:#4caf50; color:#fff;';
+        launchAppBtn.title = 'Запустить Android-приложение';
+        const playSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        playSvg.setAttribute('width', '18');
+        playSvg.setAttribute('height', '18');
+        playSvg.setAttribute('viewBox', '0 0 24 24');
+        playSvg.setAttribute('fill', 'none');
+        playSvg.setAttribute('stroke', 'currentColor');
+        playSvg.setAttribute('stroke-width', '2.5');
+        playSvg.setAttribute('stroke-linecap', 'round');
+        playSvg.setAttribute('stroke-linejoin', 'round');
+        playSvg.style.display = 'block';
+        const playPolygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+        playPolygon.setAttribute('points', '6,4 20,12 6,20');
+        playSvg.appendChild(playPolygon);
+        launchAppBtn.appendChild(playSvg);
+        launchAppBtn.onclick = async () => {
+          launchAppBtn.disabled = true;
+          launchAppBtn.title = 'Запуск...';
+          try {
+            const resp = await adminFetch(`/api/devices/${encodeURIComponent(d.device_id)}/launch-app`, { method: 'POST' });
+            const result = await resp.json();
+            if (result.ok) {
+              showToastNotification({
+                title: 'Android-приложение',
+                message: 'Команда на запуск приложения отправлена!',
+                severity: 'info',
+                timestamp: Date.now()
+              });
+            } else {
+              showToastNotification({
+                title: 'Ошибка запуска',
+                message: result.error || 'Неизвестная ошибка',
+                severity: 'warning',
+                timestamp: Date.now()
+              });
+            }
+          } catch (e) {
+            showToastNotification({
+              title: 'Ошибка соединения',
+              message: 'Не удалось отправить команду на сервер',
+              severity: 'critical',
+              timestamp: Date.now()
+            });
+          }
+          launchAppBtn.disabled = false;
+          launchAppBtn.title = 'Запустить Android-приложение';
+        };
+        headerInner.appendChild(launchAppBtn);
+      });
+    }
   }
   
   header.appendChild(headerInner);

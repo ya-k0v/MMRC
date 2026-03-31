@@ -589,10 +589,10 @@ export function getAllDevices() {
     return withRetrySync(() => {
       const database = getDatabase();
       const stmt = database.prepare(`
-        SELECT device_id, name, folder, device_type, platform, capabilities, 
-               last_seen, current_state, created_at, updated_at
-        FROM devices
-        ORDER BY device_id
+         SELECT device_id, name, folder, device_type, platform, ip_address, capabilities, 
+           last_seen, current_state, created_at, updated_at
+         FROM devices
+         ORDER BY device_id
       `);
       
       const rows = stmt.all();
@@ -605,6 +605,7 @@ export function getAllDevices() {
             folder: row.folder,
             deviceType: row.device_type,
             platform: row.platform,
+            ipAddress: row.ip_address || null,
             capabilities: row.capabilities ? JSON.parse(row.capabilities) : null,
             lastSeen: row.last_seen,
             current: row.current_state ? JSON.parse(row.current_state) : { type: 'idle', file: null, state: 'idle' },
@@ -619,6 +620,7 @@ export function getAllDevices() {
             folder: row.folder || row.device_id,
             deviceType: row.device_type || 'browser',
             platform: row.platform || null,
+            ipAddress: row.ip_address || null,
             capabilities: null,
             lastSeen: row.last_seen,
             current: { type: 'idle', file: null, state: 'idle' },
@@ -687,13 +689,14 @@ export function saveDevice(deviceId, data) {
     return withRetrySync(() => {
       const database = getDatabase();
       const stmt = database.prepare(`
-        INSERT INTO devices (device_id, name, folder, device_type, platform, capabilities, last_seen, current_state)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO devices (device_id, name, folder, device_type, platform, ip_address, capabilities, last_seen, current_state)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(device_id) DO UPDATE SET
           name = excluded.name,
           folder = excluded.folder,
           device_type = excluded.device_type,
           platform = excluded.platform,
+          ip_address = excluded.ip_address,
           capabilities = excluded.capabilities,
           last_seen = excluded.last_seen,
           current_state = excluded.current_state,
@@ -706,6 +709,7 @@ export function saveDevice(deviceId, data) {
         data.folder,
         data.deviceType || 'browser',
         data.platform || null,
+        data.ipAddress || null,
         data.capabilities ? JSON.stringify(data.capabilities) : null,
         data.lastSeen || null,
         data.current ? JSON.stringify(data.current) : null

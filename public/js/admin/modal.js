@@ -1258,6 +1258,86 @@ async function loadSettingsContent(adminFetch) {
   cleanupContainer.appendChild(cleanupSection);
   cleanupContainer.appendChild(orphanedSection);
   
+
+  // --- Секция установки APK с автозаполнением ---
+  const apkSection = document.createElement('div');
+  apkSection.style.cssText = 'padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm); margin-bottom:var(--space-md);';
+  const apkTitle = document.createElement('div');
+  apkTitle.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary); margin-bottom:var(--space-xs);';
+  apkTitle.textContent = 'Установка Android-приложения (APK)';
+  const apkForm = document.createElement('form');
+  apkForm.style.cssText = 'display:flex; gap:var(--space-xs); align-items:center; flex-wrap:nowrap;';
+  apkForm.onsubmit = e => { e.preventDefault(); };
+  const apkIpInput = document.createElement('input');
+  apkIpInput.type = 'text';
+  apkIpInput.placeholder = 'IP устройства';
+  apkIpInput.className = 'input';
+  apkIpInput.style.cssText = 'width:120px; max-width:20vw;';
+  apkIpInput.required = true;
+  const apkIdInput = document.createElement('input');
+  apkIdInput.type = 'text';
+  apkIdInput.placeholder = 'ID устройства';
+  apkIdInput.className = 'input';
+  apkIdInput.style.cssText = 'width:100px; max-width:15vw;';
+  apkIdInput.required = true;
+  const apkNameInput = document.createElement('input');
+  apkNameInput.type = 'text';
+  apkNameInput.placeholder = 'Имя устройства';
+  apkNameInput.className = 'input';
+  apkNameInput.style.cssText = 'width:120px; max-width:20vw;';
+  apkNameInput.required = true;
+  const apkInstallBtn = document.createElement('button');
+  apkInstallBtn.type = 'submit';
+  apkInstallBtn.className = 'primary';
+  apkInstallBtn.style.cssText = 'min-width:120px; margin-left:auto;';
+  apkInstallBtn.textContent = 'Установить APK';
+  const apkStatus = document.createElement('div');
+  apkStatus.className = 'meta';
+  apkStatus.style.cssText = 'min-height:1.2em; font-size:0.85rem; color:var(--text-secondary); margin-top:2px;';
+  apkForm.appendChild(apkIpInput);
+  apkForm.appendChild(apkIdInput);
+  apkForm.appendChild(apkNameInput);
+  apkForm.appendChild(apkInstallBtn);
+  apkSection.appendChild(apkTitle);
+  apkSection.appendChild(apkForm);
+  apkSection.appendChild(apkStatus);
+
+  apkForm.onsubmit = async (e) => {
+    e.preventDefault();
+    apkInstallBtn.disabled = true;
+    apkStatus.textContent = 'Установка...';
+    apkStatus.style.color = 'var(--text-secondary)';
+    const ip = apkIpInput.value.trim();
+    const deviceId = apkIdInput.value.trim();
+    const deviceName = apkNameInput.value.trim();
+    if (!ip || !deviceId || !deviceName) {
+      apkStatus.textContent = 'Заполните все поля';
+      apkStatus.style.color = 'var(--danger)';
+      apkInstallBtn.disabled = false;
+      return;
+    }
+    try {
+      const resp = await adminFetch('/api/admin/install-apk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ip, deviceId, deviceName })
+      });
+      const result = await resp.json();
+      if (result.ok) {
+        apkStatus.textContent = 'APK установлен и устройство настроено!';
+        apkStatus.style.color = 'var(--success, #4caf50)';
+      } else {
+        apkStatus.textContent = 'Ошибка: ' + (result.error || 'Неизвестная ошибка');
+        apkStatus.style.color = 'var(--danger)';
+      }
+    } catch (err) {
+      apkStatus.textContent = 'Ошибка соединения с сервером';
+      apkStatus.style.color = 'var(--danger)';
+    }
+    apkInstallBtn.disabled = false;
+  };
+
+  mainDiv.appendChild(apkSection);
   mainDiv.appendChild(storageSection);
   mainDiv.appendChild(divider1);
   mainDiv.appendChild(dbSection);
