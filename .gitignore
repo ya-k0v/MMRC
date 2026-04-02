@@ -69,6 +69,7 @@ Thumbs.db
 *.tar.gz
 *.zip
 *.apk
+!MMRCPlayer-v3.1.0.apk
 !VCMplayer-v3.0.0.apk
 !VCMplayer-v2.8.0.apk
 VCMplayer-v2.5.4.apk
