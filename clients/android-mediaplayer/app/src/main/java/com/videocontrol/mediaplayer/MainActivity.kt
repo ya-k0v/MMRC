@@ -1,3 +1,4 @@
+
 package com.videocontrol.mediaplayer
 
 import android.content.Intent
@@ -38,15 +39,19 @@ import io.socket.client.IO
 import io.socket.client.Socket
 import org.json.JSONObject
 import com.bumptech.glide.Glide
+import com.videocontrol.mediaplayer.BuildConfig
 import com.bumptech.glide.load.engine.DiskCacheStrategy
 import android.graphics.drawable.TransitionDrawable
 import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.PictureDrawable
 import android.graphics.Bitmap
 import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions
 import com.bumptech.glide.request.target.CustomTarget
 import com.bumptech.glide.request.transition.DrawableCrossFadeFactory
 import com.bumptech.glide.request.transition.Transition
 import java.net.URISyntaxException
+import java.net.HttpURLConnection
+import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -62,10 +67,12 @@ import android.os.Build
 import android.view.KeyEvent
 import android.graphics.Color
 import androidx.core.content.ContextCompat
+import com.caverock.androidsvg.SVG
 
 // Sealed class для типов контента
 sealed class ContentType {
     object Video : ContentType()
+    object Audio : ContentType()
     object Image : ContentType()
     object Pdf : ContentType()
     object Pptx : ContentType()
@@ -75,6 +82,7 @@ sealed class ContentType {
     
     fun asString(): String = when (this) {
         is Video -> "video"
+        is Audio -> "audio"
         is Image -> "image"
         is Pdf -> "pdf"
         is Pptx -> "pptx"
@@ -128,6 +136,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var imageView: ImageView
     private lateinit var statusText: TextView
     private lateinit var brandBg: ImageView
+    private lateinit var versionOverlay: TextView
 
     private var player: ExoPlayer? = null
     private var bufferPlayer: ExoPlayer? = null
@@ -141,6 +150,10 @@ class MainActivity : AppCompatActivity() {
     private var retryRunnable: Runnable? = null
     private var placeholderJob: Job? = null
     private var progressRunnable: Runnable? = null
+    private var audioLogoJob: Job? = null
+    private var lastAudioLogoFetchMs: Long = 0
+    private var audioLogoUrl: String? = null
+    private val audioLogoRefreshIntervalMs = 6 * 60 * 60 * 1000L
     
     // Используем PlaybackFlags вместо отдельных boolean
     private val playbackFlags = PlaybackFlags()
@@ -178,10 +191,18 @@ class MainActivity : AppCompatActivity() {
     private var awaitingVolumeSync = false
     private var pendingVolumeCommand: JSONObject? = null // Отложенная команда громкости
 
-    private val TAG = "VCMediaPlayer"
+    private val TAG = "MMRCPlayer"
+    private val userAgent by lazy { "MMRC/${BuildConfig.VERSION_NAME}" }
     private var SERVER_URL = ""
     private var DEVICE_ID = ""
     private var contentDeviceId: String = ""
+
+    private val audioExtensions = setOf("mp3", "aac", "wav", "flac", "ogg", "m4a", "opus", "weba")
+    private val videoExtensions = setOf("mp4", "webm", "ogg", "mkv", "mov", "avi", "m4v", "ts")
+    private val imageExtensions = setOf("png", "jpg", "jpeg", "gif", "webp")
+    private val documentExtensions = setOf("pdf", "pptx")
+    private val folderExtensions = setOf("zip")
+    private val mediaContentTypes = setOf("video", "audio", "streaming")
 
     // Проверка активности (упрощенная)
     private fun isActivityValid(): Boolean = !isDestroyed && !isFinishing
@@ -190,11 +211,129 @@ class MainActivity : AppCompatActivity() {
     private fun getDeviceIdForContent(): String = 
         if (contentDeviceId.isNotEmpty()) contentDeviceId else DEVICE_ID
 
+    private fun getFileExtension(fileName: String?): String {
+        if (fileName.isNullOrBlank()) return ""
+        val index = fileName.lastIndexOf('.')
+        return if (index >= 0 && index < fileName.length - 1) {
+            fileName.substring(index + 1).lowercase()
+        } else {
+            ""
+        }
+    }
+
+    private fun resolveContentType(
+        contentType: String?,
+        fileName: String?,
+        originalName: String?,
+        fallbackToFolder: Boolean = false
+    ): String {
+        val normalizedContentType = contentType?.trim()?.lowercase()
+        val resolvedContentType = normalizedContentType
+            ?.takeIf { it.isNotEmpty() && it != "file" && it != "unknown" }
+
+        val extFromFile = getFileExtension(fileName)
+        val extFromOriginal = getFileExtension(originalName)
+        val ext = if (extFromFile.isNotEmpty()) extFromFile else extFromOriginal
+
+        if (resolvedContentType != null) {
+            if (resolvedContentType == "video" && ext.isNotEmpty()) {
+                return when {
+                    audioExtensions.contains(ext) -> "audio"
+                    imageExtensions.contains(ext) -> "image"
+                    documentExtensions.contains(ext) -> ext
+                    folderExtensions.contains(ext) -> "folder"
+                    !videoExtensions.contains(ext) -> if (fallbackToFolder) "folder" else "video"
+                    else -> "video"
+                }
+            }
+            return resolvedContentType
+        }
+
+        if (ext.isEmpty()) return if (fallbackToFolder) "folder" else "unknown"
+
+        return when {
+            audioExtensions.contains(ext) -> "audio"
+            videoExtensions.contains(ext) -> "video"
+            imageExtensions.contains(ext) -> "image"
+            documentExtensions.contains(ext) -> ext
+            folderExtensions.contains(ext) -> "folder"
+            else -> if (fallbackToFolder) "folder" else "unknown"
+        }
+    }
+
+    private fun isMediaContentType(type: String?): Boolean {
+        return type != null && mediaContentTypes.contains(type)
+    }
+
     private fun clearImageView() {
         Glide.with(this).clear(imageView)
         imageView.setImageDrawable(null)
         imageView.visibility = View.GONE
         imageView.alpha = 0f
+    }
+
+    private fun resolveAudioLogoUrl(): String? {
+        val baseUrl = SERVER_URL.trim()
+        if (baseUrl.isEmpty()) return null
+        return "${baseUrl.trimEnd('/')}/audio-logo.svg"
+    }
+
+    private fun refreshAudioLogo(force: Boolean = false) {
+        val logoBaseUrl = resolveAudioLogoUrl() ?: return
+        val now = SystemClock.elapsedRealtime()
+        if (!force &&
+            logoBaseUrl == audioLogoUrl &&
+            brandBg.drawable != null &&
+            now - lastAudioLogoFetchMs < audioLogoRefreshIntervalMs
+        ) {
+            return
+        }
+
+        audioLogoJob?.cancel()
+        val requestUrl = if (force) "${logoBaseUrl}?t=${System.currentTimeMillis()}" else logoBaseUrl
+
+        audioLogoJob = lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val connection = (URL(requestUrl).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 5000
+                    readTimeout = 5000
+                    requestMethod = "GET"
+                }
+
+                if (connection.responseCode != 200) {
+                    Log.w(TAG, "Audio logo request failed: HTTP ${connection.responseCode}")
+                    connection.disconnect()
+                    return@launch
+                }
+
+                connection.inputStream.use { input ->
+                    val svg = SVG.getFromInputStream(input)
+                    val drawable = PictureDrawable(svg.renderToPicture())
+                    withContext(Dispatchers.Main) {
+                        if (!isActivityValid()) return@withContext
+                        brandBg.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+                        brandBg.setImageDrawable(drawable)
+                        audioLogoUrl = logoBaseUrl
+                        lastAudioLogoFetchMs = now
+                    }
+                }
+
+                connection.disconnect()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to load audio logo", e)
+            }
+        }
+    }
+
+    private fun showAudioLogo() {
+        refreshAudioLogo()
+        brandBg.visibility = View.VISIBLE
+        brandBg.alpha = 1f
+    }
+
+    private fun hideAudioLogo() {
+        brandBg.visibility = View.GONE
+        brandBg.alpha = 0f
     }
 
     private fun resetStaticContentState() {
@@ -558,8 +697,14 @@ class MainActivity : AppCompatActivity() {
         imageView = findViewById(R.id.imageView)
         statusText = findViewById(R.id.statusText)
         brandBg = findViewById(R.id.brandBg)
+        versionOverlay = findViewById(R.id.versionOverlay)
         bufferPlayerView.alpha = 0f
         bufferPlayerView.visibility = View.GONE
+
+        updateVersionOverlay()
+        versionOverlay.bringToFront()
+
+        refreshAudioLogo(force = true)
 
         // Длинное нажатие на экран - открывает настройки (для сенсорных экранов)
         val openSettingsListener = View.OnLongClickListener {
@@ -576,7 +721,7 @@ class MainActivity : AppCompatActivity() {
         val powerManager = getSystemService(POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(
             PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
-            "VCMediaPlayer::WakeLock"
+            "MMRCPlayer::WakeLock"
         )
         wakeLock?.acquire()
 
@@ -584,6 +729,12 @@ class MainActivity : AppCompatActivity() {
         connectSocket()
         startConnectionWatchdog()
         loadPlaceholder()
+    }
+
+    private fun updateVersionOverlay() {
+        if (!::versionOverlay.isInitialized) return
+        val deviceLabel = if (DEVICE_ID.isNotBlank()) DEVICE_ID else "unknown"
+        versionOverlay.text = "ID: $deviceLabel | v${BuildConfig.VERSION_NAME}"
     }
 
     private fun initializePlayer() {
@@ -747,16 +898,18 @@ class MainActivity : AppCompatActivity() {
                             return
                         }
                             
-                        if (!playbackFlags.isPlayingPlaceholder && currentVideoFile != null) {
-                            val isVideoReady = player?.playbackState == Player.STATE_READY
-                            if (isVideoReady || isPlaying) {
+                        val activeState = currentFileState
+                        val hasMedia = activeState?.file != null && isMediaContentType(activeState.type)
+                        if (!playbackFlags.isPlayingPlaceholder && hasMedia) {
+                            val isMediaReady = player?.playbackState == Player.STATE_READY
+                            if (isMediaReady || isPlaying) {
                                 startProgressUpdates()
                             } else {
                                 stopProgressUpdates()
                             }
-                            } else {
-                                stopProgressUpdates()
-                            }
+                        } else {
+                            stopProgressUpdates()
+                        }
                         }
                         
                         override fun onVideoSizeChanged(videoSize: com.google.android.exoplayer2.video.VideoSize) {
@@ -820,6 +973,7 @@ class MainActivity : AppCompatActivity() {
                     showStatus("Подключено", autohideSeconds = 2)  // Скрываем через 2 сек
                     registerDevice()
                     startPingTimer()
+                    refreshAudioLogo(force = true)
                     
                     
                     // Если играет контент - продолжаем воспроизведение
@@ -878,6 +1032,7 @@ class MainActivity : AppCompatActivity() {
                     registerDevice()
                     startPingTimer()
                     // Обновляем логотип при переподключении (может быть обновлен на сервере)
+                    refreshAudioLogo(force = true)
                 }
             }
             
@@ -977,8 +1132,10 @@ class MainActivity : AppCompatActivity() {
                     if (playbackFlags.isPlayingPlaceholder) {
                         return@runOnUiThread
                     }
-                    
-                    if (currentVideoFile == null) {
+
+                    val activeState = currentFileState
+                    val activeType = activeState?.type
+                    if (activeState?.file.isNullOrEmpty() || (activeType != "video" && activeType != "audio")) {
                         return@runOnUiThread
                     }
                     
@@ -1181,11 +1338,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun handlePlay(data: JSONObject) {
         try {
-            val type = data.optString("type")
-            val file = data.optString("file")
+            val rawType = data.optString("type")
+            val type = rawType.takeIf { it.isNotBlank() }
+            val fileName = data.optString("file").takeIf { it.isNotBlank() }
             val page = data.optInt("page", 1)
-            val streamUrl = data.optString("stream_url", null)
-            val streamProtocol = data.optString("stream_protocol", "hls")
+            val streamUrl = data.optString("stream_url").takeIf { it.isNotBlank() }
+            val streamProtocol = data.optString("stream_protocol", "hls").ifBlank { "hls" }
+            val originalName = data.optString("originalName").takeIf { it.isNotBlank() }
+                ?: data.optString("original_name").takeIf { it.isNotBlank() }
             // НОВОЕ: Запоминаем устройство, с которого нужно брать контент (для статических файлов из "Все файлы")
             val originDeviceId = data.optString("originDeviceId", null)
             if (!originDeviceId.isNullOrEmpty()) {
@@ -1196,34 +1356,10 @@ class MainActivity : AppCompatActivity() {
             }
 
 
-            var normalizedType = type
-            if (normalizedType == "file") {
-                normalizedType = "video"
-            }
-            
-            if (normalizedType == "video" && !file.isNullOrEmpty()) {
-                val hasExt = file.contains(".")
-                val ext = if (hasExt) {
-                    file.substringAfterLast(".", "").lowercase()
-                } else {
-                    ""
-                }
-                val videoExts = listOf("mp4", "webm", "ogg", "mkv", "mov", "avi", "ts", "m4v")
-                
-                if (!hasExt || ext == "zip") {
-                    normalizedType = "folder"
-                } else if (ext == "pdf") {
-                    normalizedType = "pdf"
-                } else if (ext == "pptx") {
-                    normalizedType = "pptx"
-                } else if (ext in listOf("png", "jpg", "jpeg", "gif", "webp")) {
-                    normalizedType = "image"
-                } else if (!videoExts.contains(ext)) {
-                    normalizedType = "folder"
-                }
-            }
+            val resolvedType = resolveContentType(type, fileName, originalName, fallbackToFolder = true)
+            val normalizedType = if (resolvedType == "unknown") "folder" else resolvedType
 
-            if (file.isNullOrEmpty() && normalizedType != "streaming" && normalizedType != "video") {
+            if (fileName.isNullOrEmpty() && normalizedType != "streaming" && normalizedType != "video" && normalizedType != "audio") {
                 Log.e(TAG, "File name is empty for type=$normalizedType")
                 showStatus("Ошибка: имя файла не указано")
                 return
@@ -1244,7 +1380,7 @@ class MainActivity : AppCompatActivity() {
 
             when (normalizedType) {
                 "video" -> {
-                    if (file.isNullOrEmpty()) {
+                    if (fileName.isNullOrEmpty()) {
                         if (currentVideoFile != null && player != null) {
                             if (savedPosition > 0) {
                                 player?.seekTo(savedPosition)
@@ -1256,15 +1392,33 @@ class MainActivity : AppCompatActivity() {
                             playbackFlags.skipPlaceholderOnVideoEnd = false
                         }
                     } else {
-                        playVideo(file, isPlaceholder = false)
-                        currentFileState = FileState("video", file, 1)
+                        playVideo(fileName, isPlaceholder = false)
+                        currentFileState = FileState("video", fileName, 1)
+                        playbackFlags.skipPlaceholderOnVideoEnd = false
+                    }
+                }
+                "audio" -> {
+                    if (fileName.isNullOrEmpty()) {
+                        if (currentVideoFile != null && player != null) {
+                            if (savedPosition > 0) {
+                                player?.seekTo(savedPosition)
+                                savedPosition = 0
+                            }
+                            player?.playWhenReady = true
+                            player?.play()
+                            startProgressUpdates()
+                            playbackFlags.skipPlaceholderOnVideoEnd = false
+                        }
+                    } else {
+                        playAudio(fileName)
+                        currentFileState = FileState("audio", fileName, 1)
                         playbackFlags.skipPlaceholderOnVideoEnd = false
                     }
                 }
                 "streaming" -> {
                     if (!streamUrl.isNullOrEmpty()) {
-                        playStream(streamUrl, streamProtocol, file ?: "")
-                        currentFileState = FileState("streaming", file ?: "", 1)
+                        playStream(streamUrl, streamProtocol, fileName ?: "")
+                        currentFileState = FileState("streaming", fileName ?: "", 1, streamProtocol = streamProtocol)
                         playbackFlags.skipPlaceholderOnVideoEnd = false
                     } else {
                         Log.e(TAG, "Stream URL is missing")
@@ -1272,9 +1426,9 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 "image" -> {
-                    if (!file.isNullOrEmpty()) {
-                        showImage(file, isPlaceholder = false)
-                        currentFileState = FileState("image", file, 1)
+                    if (!fileName.isNullOrEmpty()) {
+                        showImage(fileName, isPlaceholder = false)
+                        currentFileState = FileState("image", fileName, 1)
                         playbackFlags.skipPlaceholderOnVideoEnd = false
                     } else {
                         Log.e(TAG, "Image file name is empty")
@@ -1282,13 +1436,13 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 "pdf" -> {
-                    if (!file.isNullOrEmpty()) {
+                    if (!fileName.isNullOrEmpty()) {
                         // КРИТИЧНО: Устанавливаем currentFileState ДО вызова showPdfPage, чтобы команды листания работали сразу
-                        currentFileState = FileState("pdf", file, page)
-                        currentPdfFile = file
+                        currentFileState = FileState("pdf", fileName, page)
+                        currentPdfFile = fileName
                         currentPdfPage = page
                         val isFromPlaceholder = wasPlaceholder || prevFileStateType == null || prevFileStateType == "video"
-                        showPdfPage(file, page, isFromPlaceholder)
+                        showPdfPage(fileName, page, isFromPlaceholder)
                         playbackFlags.skipPlaceholderOnVideoEnd = false
                     } else {
                         Log.e(TAG, "PDF file name is empty")
@@ -1296,13 +1450,13 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 "pptx" -> {
-                    if (!file.isNullOrEmpty()) {
+                    if (!fileName.isNullOrEmpty()) {
                         // КРИТИЧНО: Устанавливаем currentFileState ДО вызова showPptxSlide, чтобы команды листания работали сразу
-                        currentFileState = FileState("pptx", file, page)
-                        currentPptxFile = file
+                        currentFileState = FileState("pptx", fileName, page)
+                        currentPptxFile = fileName
                         currentPptxSlide = page
                         val isFromPlaceholder = wasPlaceholder || prevFileStateType == null || prevFileStateType == "video"
-                        showPptxSlide(file, page, isFromPlaceholder)
+                        showPptxSlide(fileName, page, isFromPlaceholder)
                         playbackFlags.skipPlaceholderOnVideoEnd = false
                     } else {
                         Log.e(TAG, "PPTX file name is empty")
@@ -1310,8 +1464,8 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 "folder" -> {
-                    if (!file.isNullOrEmpty()) {
-                        val folderName = file.replace(Regex("\\.zip$", RegexOption.IGNORE_CASE), "")
+                    if (!fileName.isNullOrEmpty()) {
+                        val folderName = fileName.replace(Regex("\\.zip$", RegexOption.IGNORE_CASE), "")
                         // КРИТИЧНО: Устанавливаем currentFileState ДО вызова showFolderImage, чтобы команды листания работали сразу
                         currentFileState = FileState("folder", folderName, page)
                         currentFolderName = folderName
@@ -1526,6 +1680,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun playVideo(fileName: String, isPlaceholder: Boolean = false) {
         if (isDestroyed || isFinishing) return
+
+        hideAudioLogo()
         
         if (fileName.isNullOrEmpty()) {
             Log.e(TAG, "playVideo: fileName is empty")
@@ -1611,9 +1767,82 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+
+    private fun playAudio(fileName: String) {
+        if (isDestroyed || isFinishing) return
+
+        if (fileName.isEmpty()) {
+            Log.e(TAG, "playAudio: fileName is empty")
+            showStatus("Ошибка: имя файла не указано")
+            loadPlaceholder()
+            return
+        }
+
+        showAudioLogo()
+
+        try {
+            val deviceIdForContent = getDeviceIdForContent()
+            val audioUrl = "$SERVER_URL/api/files/resolve/$deviceIdForContent/${Uri.encode(fileName)}"
+
+            prepareContentPlayback(ContentType.Audio) {
+                playbackFlags.skipPlaceholderOnVideoEnd = false
+                errorRetryCount = 0
+                retryRunnable?.let { mainHandler.removeCallbacks(it) }
+                retryRunnable = null
+            }
+
+            val isSameFile = currentVideoFile == fileName
+            if (isSameFile && player != null) {
+                if (savedPosition > 0) {
+                    player?.seekTo(savedPosition)
+                    savedPosition = 0
+                }
+                player?.apply {
+                    playWhenReady = true
+                    play()
+                }
+                currentFileState = FileState("audio", fileName, 1)
+                playbackFlags.skipPlaceholderOnVideoEnd = false
+                startProgressUpdates()
+                return
+            }
+
+            stopProgressUpdates()
+            currentVideoFile = fileName
+            savedPosition = 0
+
+            if (!ensurePlayerInitialized()) {
+                showStatus("Ошибка подготовки аудио")
+                mainHandler.postDelayed({
+                    if (!isDestroyed && !isFinishing) {
+                        loadPlaceholder()
+                    }
+                }, 1000)
+                return
+            }
+
+            loadNewAudio(audioUrl, fileName, player!!, playerView)
+
+        } catch (e: OutOfMemoryError) {
+            Log.e(TAG, "OutOfMemoryError playing audio: $fileName", e)
+            handleOutOfMemory()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error playing audio: $fileName", e)
+            if (!isDestroyed && !isFinishing) {
+                showStatus("Ошибка загрузки аудио")
+                mainHandler.postDelayed({
+                    if (!isDestroyed && !isFinishing) {
+                        loadPlaceholder()
+                    }
+                }, 1000)
+            }
+        }
+    }
     
     private fun playStream(streamUrl: String, streamProtocol: String, fileName: String) {
         if (isDestroyed || isFinishing) return
+
+        hideAudioLogo()
         try {
             prepareContentPlayback(ContentType.Streaming) {
                 playbackFlags.skipPlaceholderOnVideoEnd = false
@@ -1674,6 +1903,87 @@ class MainActivity : AppCompatActivity() {
             }, 300)
         }
     }
+
+    private fun loadNewAudio(
+        audioUrl: String,
+        originalFileName: String,
+        targetPlayer: ExoPlayer,
+        targetView: StyledPlayerView
+    ) {
+        try {
+            val httpDataSourceFactory = DefaultHttpDataSource.Factory().apply {
+                setAllowCrossProtocolRedirects(true)
+                setConnectTimeoutMs(60000)
+                setReadTimeoutMs(60000)
+                setUserAgent(userAgent)
+            }
+
+            val cacheDataSourceFactory = if (simpleCache != null) {
+                CacheDataSource.Factory()
+                    .setCache(simpleCache!!)
+                    .setUpstreamDataSourceFactory(DefaultDataSource.Factory(this, httpDataSourceFactory))
+                    .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+            } else {
+                DefaultDataSource.Factory(this, httpDataSourceFactory)
+            }
+
+            val mediaItem = MediaItem.fromUri(audioUrl)
+            val mediaSource = ProgressiveMediaSource.Factory(cacheDataSourceFactory)
+                .createMediaSource(mediaItem)
+
+            mediaCodecInitRunnable?.let {
+                mainHandler.removeCallbacks(it)
+                mediaCodecInitRunnable = null
+            }
+
+            if (isDestroyed || isFinishing) {
+                return
+            }
+
+            safeReleasePlayer(targetPlayer, targetView) { released ->
+                if (!released) {
+                    Log.w(TAG, "Player release failed or timed out, continuing anyway")
+                }
+
+                if (isDestroyed || isFinishing) {
+                    return@safeReleasePlayer
+                }
+
+                try {
+                    targetView.player = targetPlayer
+                    targetView.visibility = View.GONE
+                    targetView.alpha = 0f
+
+                    targetPlayer.apply {
+                        setMediaSource(mediaSource)
+                        repeatMode = Player.REPEAT_MODE_OFF
+                        prepare()
+                        playWhenReady = true
+                        play()
+                    }
+
+                    playbackFlags.isPlayingPlaceholder = false
+                    currentFileState = FileState("audio", originalFileName, 1)
+                    playbackFlags.skipPlaceholderOnVideoEnd = false
+                    startProgressUpdates()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error initializing audio source", e)
+                    if (!isDestroyed && !isFinishing) {
+                        showStatus("Ошибка инициализации аудио")
+                    }
+                }
+            }
+
+        } catch (e: OutOfMemoryError) {
+            Log.e(TAG, "OutOfMemoryError loading new audio", e)
+            handleOutOfMemory()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading new audio", e)
+            if (!isDestroyed && !isFinishing) {
+                showStatus("Ошибка загрузки аудио")
+            }
+        }
+    }
     
     private fun loadNewVideo(
         videoUrl: String,
@@ -1690,7 +2000,7 @@ class MainActivity : AppCompatActivity() {
                 setAllowCrossProtocolRedirects(true)
                 setConnectTimeoutMs(60000)   // 60 секунд на подключение
                 setReadTimeoutMs(60000)      // 60 секунд на чтение
-                setUserAgent("VideoControl/1.0")
+                setUserAgent(userAgent)
             }
 
             val cacheDataSourceFactory = if (simpleCache != null) {
@@ -1800,7 +2110,7 @@ class MainActivity : AppCompatActivity() {
                 setAllowCrossProtocolRedirects(true)
                 setConnectTimeoutMs(60000)   // 60 секунд на подключение
                 setReadTimeoutMs(60000)      // 60 секунд на чтение
-                setUserAgent("VideoControl/1.0")
+                setUserAgent(userAgent)
             }
 
             val dataSourceFactory = DefaultDataSource.Factory(this, httpDataSourceFactory)
@@ -1858,7 +2168,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     
                     playbackFlags.isPlayingPlaceholder = false
-                    currentFileState = FileState("streaming", originalFileName, 1)
+                    currentFileState = FileState("streaming", originalFileName, 1, streamProtocol = streamProtocol)
                     // Сбрасываем флаг переключения после загрузки контента (как в videojs)
                     playbackFlags.skipPlaceholderOnVideoEnd = false
                     startProgressUpdates()
@@ -1903,6 +2213,8 @@ class MainActivity : AppCompatActivity() {
         resetStaticState: Boolean = true
     ) {
         if (isDestroyed || isFinishing) return
+
+        hideAudioLogo()
         
         // Если resetStaticState = false, не сбрасываем переменные статического контента (для первого показа)
         if (resetStaticState) {
@@ -1946,6 +2258,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun showImage(fileName: String, isPlaceholder: Boolean = false) {
         if (isDestroyed || isFinishing) return
+
+        hideAudioLogo()
         
         if (fileName.isNullOrEmpty()) {
             Log.e(TAG, "showImage: fileName is empty!")
@@ -2021,11 +2335,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
     
-    // Функция оставлена для совместимости, но ничего не делает
+    // Функция оставлена для совместимости
     private fun showLogoBackground(fadeDurationMs: Long = 500L) {
-        // Скрываем brandBg, так как логотип не используется
-        brandBg.visibility = View.GONE
-            brandBg.alpha = 0f
+        showAudioLogo()
     }
 
     private fun showPdfPage(fileName: String?, page: Int, isFromPlaceholder: Boolean = false) {
@@ -2878,9 +3190,14 @@ class MainActivity : AppCompatActivity() {
                 
                 try {
                     val exoPlayer = player ?: return
-                    val fileName = currentVideoFile ?: return
+                    val stateSnapshot = currentFileState
+                    val fileName = stateSnapshot?.file?.takeIf { it.isNotBlank() } ?: return
+                    val contentType = stateSnapshot.type ?: return
+                    if (!isMediaContentType(contentType)) {
+                        return
+                    }
                     
-                    // Отправляем прогресс только для видео (не для заглушек)
+                    // Отправляем прогресс только для медиа (видео/аудио/стрим), не для заглушек
                     // Проверяем не только isPlaying, но и состояние буферизации
                     val isPlayingOrBuffering = exoPlayer.isPlaying || 
                         exoPlayer.playbackState == Player.STATE_BUFFERING ||
@@ -2903,10 +3220,13 @@ class MainActivity : AppCompatActivity() {
                         // Сервер сможет обновить когда длительность появится
                         val progressData = JSONObject().apply {
                             put("device_id", DEVICE_ID)
-                            put("type", "video")
+                            put("type", contentType)
                             put("file", fileName)
                             put("currentTime", currentTime)
                             put("duration", durationSeconds)
+                            if (contentType == "streaming") {
+                                stateSnapshot.streamProtocol?.let { put("stream_protocol", it) }
+                            }
                         }
                         
                         if (socket?.connected() == true) {
@@ -2967,6 +3287,7 @@ class MainActivity : AppCompatActivity() {
         
         // Отменяем корутины
         placeholderJob?.cancel()
+        audioLogoJob?.cancel()
         playbackFlags.isLoadingPlaceholder = false  // Сбрасываем флаг загрузки заглушки
         
         // Освобождаем ресурсы с обработкой ошибок

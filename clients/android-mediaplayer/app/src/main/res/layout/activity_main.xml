@@ -13,7 +13,9 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="@color/bg_primary"
+        android:contentDescription="@string/app_name"
         android:scaleType="centerInside"
+        android:src="@mipmap/ic_launcher"
         android:alpha="1.0" />
 
     <!-- ExoPlayer View -->
@@ -56,6 +58,29 @@
         android:textColor="@color/text_primary"
         android:textSize="14sp"
         android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/versionOverlay"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginBottom="2dp"
+        android:layout_marginEnd="2dp"
+        android:textColor="#9aa0a6"
+        android:textSize="7sp"
+        android:alpha="0.7"
+        android:gravity="end"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:shadowColor="#99000000"
+        android:shadowDx="0"
+        android:shadowDy="1"
+        android:shadowRadius="2"
+        android:padding="2dp"
+        android:importantForAccessibility="no"
+        android:focusable="false"
+        android:clickable="false"
+        android:translationZ="16dp" />
 
     <!-- Кнопка настроек убрана, доступ через длинное нажатие на экран -->
 

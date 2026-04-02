@@ -14,6 +14,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "VideoControl MediaPlayer"
+rootProject.name = "MMRC Player"
 include ':app'
 
