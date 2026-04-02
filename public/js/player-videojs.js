@@ -1,4 +1,13 @@
-// VideoControl Player - Video.js версия (упрощенная и надежная)
+// MMRC Player - Video.js версия (упрощенная и надежная)
+
+import {
+  AUDIO_EXTENSIONS,
+  VIDEO_EXTENSIONS,
+  IMAGE_EXTENSIONS,
+  STATIC_CONTENT_TYPES,
+  getFileExtension,
+  resolveContentType
+} from './shared/content-type-helper.js';
 
 const socket = io('/', {
   transports: ['websocket', 'polling'],
@@ -20,11 +29,48 @@ const previewFile = url.searchParams.get('file');
 const previewOriginalName = url.searchParams.get('originalName'); // Оригинальное имя для отображения
 const previewStreamProtocol = url.searchParams.get('protocol');
 const previewStreamUrl = url.searchParams.get('stream_url'); // Прямой URL стрима для превью
+const previewTrailerUrl = url.searchParams.get('trailerUrl');
+
+const APP_VERSION = '3.1.0';
+const badgeDeviceId = device_id || (preview ? 'preview' : 'unknown');
+const playerBadge = document.getElementById('playerBadge');
+if (playerBadge) {
+  playerBadge.textContent = `ID: ${badgeDeviceId} | v${APP_VERSION}`;
+}
+
 
 // КРИТИЧНО: Устанавливаем заголовок страницы с оригинальным именем файла для превью
 if (preview && previewOriginalName) {
-  document.title = `${previewOriginalName} - Preview - Video Control`;
+  document.title = `${previewOriginalName} - Preview - MMRC`;
 }
+
+// Универсальный детектор типа контента (audio/video/static)
+function detectContentType(file, explicitType) {
+  const resolvedType = resolveContentType({
+    contentType: explicitType,
+    fileName: file,
+    fallbackToFolder: true
+  });
+
+  if (!resolvedType || resolvedType === 'unknown') return null;
+  if (resolvedType === 'audio') return 'audio';
+  if (resolvedType === 'video') return 'video';
+  if (resolvedType === 'streaming') return 'streaming';
+  if (resolvedType === 'image' || STATIC_CONTENT_TYPES.has(resolvedType)) return 'static';
+  return null;
+}
+
+// Для preview режима определяем тип контента заранее
+const previewType = url.searchParams.get('type');
+const resolvedPreviewType = resolveContentType({
+  contentType: previewType,
+  fileName: previewFile,
+  fallbackToFolder: Boolean(previewFile)
+});
+const previewExt = getFileExtension(previewFile || '');
+const isResolvedStaticPreview = resolvedPreviewType === 'image' || STATIC_CONTENT_TYPES.has(resolvedPreviewType);
+const detectedContentType = detectContentType(previewFile, resolvedPreviewType);
+
 
 const idle = document.getElementById('idle');
 const v = document.getElementById('v');
@@ -34,6 +80,59 @@ const img2 = document.getElementById('img2');
 const img = img1; // Для обратной совместимости со старым кодом
 const pdf = document.getElementById('pdf');
 const unmuteBtn = document.getElementById('unmute');
+const audioLogoUrlBase = '/audio-logo.svg';
+const audioLogoRefreshMs = 6 * 60 * 60 * 1000;
+let lastAudioLogoTs = 0;
+// Новый элемент для логотипа музыки (иконка)
+let musicLogo = document.getElementById('music-logo');
+let musicLogoImg = musicLogo ? musicLogo.querySelector('img') : null;
+if (!musicLogo) {
+  musicLogo = document.createElement('div');
+  musicLogo.id = 'music-logo';
+  musicLogo.style.display = 'none';
+  musicLogo.style.position = 'absolute';
+  musicLogo.style.top = '50%';
+  musicLogo.style.left = '50%';
+  musicLogo.style.transform = 'translate(-50%, -50%)';
+  musicLogo.style.zIndex = '1000';
+  musicLogo.style.width = '120px';
+  musicLogo.style.height = '120px';
+  musicLogo.style.background = 'rgba(0,0,0,0.7)';
+  musicLogo.style.borderRadius = '50%';
+  musicLogo.style.display = 'none'; // ВСЕГДА скрыт по умолчанию
+  musicLogo.style.alignItems = 'center';
+  musicLogo.style.justifyContent = 'center';
+  document.body.appendChild(musicLogo);
+}
+
+if (!musicLogoImg) {
+  musicLogoImg = document.createElement('img');
+  musicLogoImg.alt = 'Audio logo';
+  musicLogoImg.decoding = 'async';
+  musicLogoImg.loading = 'eager';
+  musicLogoImg.style.width = '80%';
+  musicLogoImg.style.height = '80%';
+  musicLogoImg.style.objectFit = 'contain';
+  musicLogo.appendChild(musicLogoImg);
+}
+
+function refreshAudioLogo(force = false) {
+  if (!musicLogoImg) return;
+  const now = Date.now();
+  if (!force && now - lastAudioLogoTs < audioLogoRefreshMs) return;
+  musicLogoImg.src = `${audioLogoUrlBase}?t=${now}`;
+  lastAudioLogoTs = now;
+}
+
+// Универсальная функция показа/скрытия иконки музыки
+function showMusicLogo(show = true) {
+  if (!musicLogo) return;
+  // Показываем только если явно аудио, иначе всегда скрываем
+  if (show) {
+    refreshAudioLogo();
+  }
+  musicLogo.style.display = show ? 'flex' : 'none';
+}
 
 let currentFileState = { type: null, file: null, page: 1, originDeviceId: null };
 let contentDeviceId = device_id; // Устройство, с которого берем контент (важно для All Files)
@@ -293,10 +392,7 @@ if (!device_id || !device_id.trim()) {
         // КРИТИЧНО: Определяем тип контента ДО инициализации Video.js для правильной настройки параметров
         let isStaticPreview = false;
         if (preview && previewFile) {
-          const previewType = url.searchParams.get('type');
-          const ext = previewFile.split('.').pop().toLowerCase();
-          isStaticPreview = previewType === 'pdf' || previewType === 'pptx' || previewType === 'folder' || previewType === 'image' || 
-                           ['png','jpg','jpeg','gif','webp'].includes(ext) || !ext;
+          isStaticPreview = resolvedPreviewType === 'image' || STATIC_CONTENT_TYPES.has(resolvedPreviewType);
         }
         
         // КРИТИЧНО: Для статического превью устанавливаем обработчик ошибок на элемент video ДО инициализации Video.js
@@ -331,15 +427,14 @@ if (!device_id || !device_id.trim()) {
         
         vjsPlayer = videojs('v', {
           controls: false,
-          // КРИТИЧНО: Для статического превью отключаем autoplay и preload, чтобы Video.js не пытался загружать контент
-          autoplay: (preview && !isStaticPreview) ? 'muted' : false, // SAFARI: autoplay только для видео в preview режиме
-          preload: (preview && !isStaticPreview) ? 'auto' : 'metadata', // В preview загружаем только видео
+          // Для аудио и видео autoplay только в preview, для статических - нет
+          autoplay: (preview && !isStaticPreview && detectedContentType !== 'audio') ? 'muted' : false,
+          preload: (preview && !isStaticPreview) ? 'auto' : 'metadata',
           muted: true,
           loop: false,
           playsinline: true,
           disablePictureInPicture: true,
           nativeControlsForTouch: false,
-          // КРИТИЧНО для Android WebView: полностью нативный режим
           html5: {
             nativeVideoTracks: true,
             nativeAudioTracks: true,
@@ -353,10 +448,7 @@ if (!device_id || !device_id.trim()) {
         // КРИТИЧНО: Устанавливаем обработчик ошибок ДО ready(), чтобы перехватить ошибки как можно раньше
         // Для статического превью используем one() для перехвата первой ошибки
         if (preview && previewFile) {
-          const previewType = url.searchParams.get('type');
-          const ext = previewFile.split('.').pop().toLowerCase();
-          const isStaticPreview = previewType === 'pdf' || previewType === 'pptx' || previewType === 'folder' || previewType === 'image' || 
-                                 ['png','jpg','jpeg','gif','webp'].includes(ext) || !ext;
+          const isStaticPreview = resolvedPreviewType === 'image' || STATIC_CONTENT_TYPES.has(resolvedPreviewType);
           
           if (isStaticPreview) {
             // Для статического превью перехватываем ошибки ДО того, как Video.js попытается загрузить контент
@@ -375,25 +467,19 @@ if (!device_id || !device_id.trim()) {
         vjsPlayer.ready(function() {
           
           // КРИТИЧНО: Для статического превью сразу останавливаем Video.js и скрываем контейнер
-          // НЕ устанавливаем пустой src - это вызывает ошибку MEDIA_ERR_SRC_NOT_SUPPORTED
+          // Для аудио показываем иконку музыки
+          // ВСЕГДА скрываем musicLogo до точного определения типа
+          showMusicLogo(false);
           if (isStaticPreview) {
             try {
               vjsPlayer.pause();
-              // НЕ вызываем vjsPlayer.src({ src: '' }) - это вызывает ошибку!
-              // Просто скрываем контейнер и останавливаем плеер
               if (videoContainer) videoContainer.style.display = 'none';
-              // Используем tech() для предотвращения загрузки
-              const tech = vjsPlayer.tech();
-              if (tech && tech.setSrc) {
-                try {
-                  tech.setSrc('');
-                } catch (e) {
-                  // Игнорируем ошибки при установке пустого src через tech
-                }
-              }
-            } catch (e) {
-              // Игнорируем ошибки при остановке для статического контента
-            }
+              try { vjsPlayer.src({ src: '' }); } catch (e) {}
+            } catch (e) {}
+          } else if (detectedContentType === 'audio') {
+            // Для аудио показываем иконку музыки только после полной инициализации
+            showMusicLogo(true);
+            if (videoContainer) videoContainer.style.display = '';
           }
           
           // КРИТИЧНО: НЕ очищаем буферы здесь - они уже очищены при инициализации выше
@@ -458,10 +544,13 @@ if (!device_id || !device_id.trim()) {
             // Проверяем, что видео ДЕЙСТВИТЕЛЬНО закончилось
             const currentTime = vjsPlayer.currentTime();
             const duration = vjsPlayer.duration();
-            const isActuallyEnded = duration > 0 && currentTime >= duration - 0.5;
+            const isAudio = currentFileState.type === 'audio';
+            const isActuallyEnded = isAudio
+              ? vjsPlayer.ended()
+              : (duration > 0 && currentTime >= duration - 0.5);
             const isLooping = vjsPlayer.loop();
             
-            console.log('[Player] 🔍 Проверка ended:', { currentTime, duration, isActuallyEnded, paused: vjsPlayer.paused(), loop: isLooping });
+            console.log('[Player] 🔍 Проверка ended:', { currentTime, duration, isActuallyEnded, paused: vjsPlayer.paused(), loop: isLooping, isAudio });
             
             // КРИТИЧНО: Если включен loop - НЕ показываем placeholder!
             if (isLooping && isActuallyEnded) {
@@ -473,12 +562,12 @@ if (!device_id || !device_id.trim()) {
             
             // КРИТИЧНО: Показываем заглушку ТОЛЬКО если:
             // 1. Это не preview режим
-            // 2. Видео действительно закончилось (isActuallyEnded проверяет currentTime >= duration - 0.5)
-            // 3. Текущий контент - это видео (не placeholder, не изображение, не папка/PDF/PPTX)
+            // 2. Медиа действительно закончилось (isActuallyEnded проверяет currentTime >= duration - 0.5)
+            // 3. Текущий контент - это видео/аудио (не placeholder, не изображение, не папка/PDF/PPTX)
             // 4. НЕ установлен флаг skipPlaceholderOnVideoEnd (isSwitchingFromPlaceholder) - аналог Android
             // КРИТИЧНО: НЕ проверяем isPaused, так как при окончании видео оно всегда на паузе
             const isPlaceholder = currentFileState.type === 'placeholder';
-            const isVideo = currentFileState.type === 'video' || currentFileState.type === null;
+            const isMedia = currentFileState.type === 'video' || currentFileState.type === 'audio' || currentFileState.type === null;
             const skipPlaceholderOnVideoEnd = isSwitchingFromPlaceholder; // Используем существующий флаг как аналог Android skipPlaceholderOnVideoEnd
             
             // Останавливаем отправку прогресса при окончании видео
@@ -489,8 +578,8 @@ if (!device_id || !device_id.trim()) {
             
             // КРИТИЧНО: Показываем заглушку если видео действительно закончилось
             // isActuallyEnded уже проверяет, что currentTime >= duration - 0.5, что гарантирует окончание
-            if (!preview && isActuallyEnded && isVideo && !isPlaceholder && !skipPlaceholderOnVideoEnd) {
-              console.log('[Player] ✅ Видео закончилось, останавливаем и показываем заглушку');
+            if (!preview && isActuallyEnded && isMedia && !isPlaceholder && !skipPlaceholderOnVideoEnd) {
+              console.log('[Player] ✅ Медиа закончилось, останавливаем и показываем заглушку');
               
               // КРИТИЧНО: Полностью останавливаем видео (stop) перед показом заглушки
               // Это аналогично поведению Android клиента
@@ -509,7 +598,7 @@ if (!device_id || !device_id.trim()) {
             } else if (!isActuallyEnded) {
               console.log('[Player] ⚠️ Ложное ended событие (Android WebView bug), игнорируем');
             } else {
-              console.log('[Player] ⚠️ Не показываем заглушку:', { preview, isActuallyEnded, currentFileStateType: currentFileState.type, isPlaceholder, isVideo, skipPlaceholderOnVideoEnd });
+              console.log('[Player] ⚠️ Не показываем заглушку:', { preview, isActuallyEnded, currentFileStateType: currentFileState.type, isPlaceholder, isMedia, skipPlaceholderOnVideoEnd });
             }
           });
           
@@ -517,16 +606,9 @@ if (!device_id || !device_id.trim()) {
           vjsPlayer.on('error', function() {
             // КРИТИЧНО: Если это preview режим и статический контент, игнорируем ошибки СРАЗУ
             // Это должно быть первой проверкой, чтобы не логировать ошибки для статического контента
-            if (preview && previewFile) {
-              const previewType = url.searchParams.get('type');
-              const ext = previewFile.split('.').pop().toLowerCase();
-              const isStaticPreview = previewType === 'pdf' || previewType === 'pptx' || previewType === 'folder' || previewType === 'image' || 
-                                     ['png','jpg','jpeg','gif','webp'].includes(ext) || !ext;
-              
-              if (isStaticPreview) {
-                // Для статического превью ошибки Video.js полностью игнорируем (не логируем)
-                return;
-              }
+            if (preview && previewFile && isResolvedStaticPreview) {
+              // Для статического превью ошибки Video.js полностью игнорируем (не логируем)
+              return;
             }
             
             // Если src отсутствует (статические превью папок/PDF/PPTX/картинок очищают src), игнорируем
@@ -589,21 +671,14 @@ if (!device_id || !device_id.trim()) {
           
           // КРИТИЧНО: Функция для отправки прогресса воспроизведения
           const emitProgress = () => {
-            // КРИТИЧНО: Не шлем прогресс из превью, не для заглушки, и только для активного видео
+            // Не шлем прогресс из превью, не для заглушки, и только для активного видео или аудио
             if (!vjsPlayer || !device_id || preview) return;
-            
-            // КРИТИЧНО: Не отправляем прогресс если показывается заглушка
-            if (currentFileState && (currentFileState.type !== 'video' || currentFileState.type === 'placeholder')) {
-              return;
-            }
-            
-            // КРИТИЧНО: Не отправляем прогресс если видео на паузе или остановлено
+            if (!currentFileState || currentFileState.type === 'placeholder') return;
+            if (currentFileState.type !== 'video' && currentFileState.type !== 'audio') return;
             if (vjsPlayer.paused() || vjsPlayer.ended()) {
               return;
             }
-            
             const now = Date.now();
-            // троттлим до ~2 раза в секунду
             if (now - lastProgressEmitTs < 500) return;
             lastProgressEmitTs = now;
             try {
@@ -611,7 +686,7 @@ if (!device_id || !device_id.trim()) {
               const dur = Number.isFinite(vjsPlayer.duration()) ? vjsPlayer.duration() : 0;
               socket.emit('player/progress', {
                 device_id,
-                type: 'video',
+                type: currentFileState.type,
                 file: currentFileState?.file || null,
                 currentTime: Math.max(0, Math.floor(cur)),
                 duration: Math.max(0, Math.floor(dur))
@@ -717,21 +792,14 @@ if (!device_id || !device_id.trim()) {
           
           vjsPlayer.on('loadstart', () => {
             // КРИТИЧНО: Для статического превью предотвращаем загрузку контента
-            if (preview && previewFile) {
-              const previewType = url.searchParams.get('type');
-              const ext = previewFile.split('.').pop().toLowerCase();
-              const isStaticPreview = previewType === 'pdf' || previewType === 'pptx' || previewType === 'folder' || previewType === 'image' || 
-                                     ['png','jpg','jpeg','gif','webp'].includes(ext) || !ext;
-              
-              if (isStaticPreview) {
-                // Немедленно останавливаем и очищаем src для статического контента
-                try {
-                  vjsPlayer.pause();
-                  vjsPlayer.src({ src: '' });
-                  if (videoContainer) videoContainer.style.display = 'none';
-                } catch (e) {
-                  // Игнорируем ошибки
-                }
+            if (preview && previewFile && isResolvedStaticPreview) {
+              // Немедленно останавливаем и очищаем src для статического контента
+              try {
+                vjsPlayer.pause();
+                vjsPlayer.src({ src: '' });
+                if (videoContainer) videoContainer.style.display = 'none';
+              } catch (e) {
+                // Игнорируем ошибки
               }
             }
           });
@@ -748,11 +816,9 @@ if (!device_id || !device_id.trim()) {
           if (preview && previewFile) {
             // Preview режим - показываем указанный файл
             // КРИТИЧНО: Определяем тип контента СРАЗУ, чтобы остановить Video.js для статического контента
-            const previewType = url.searchParams.get('type');
             const previewPage = url.searchParams.get('page');
-            const ext = previewFile.split('.').pop().toLowerCase();
-            const isStaticPreview = previewType === 'pdf' || previewType === 'pptx' || previewType === 'folder' || previewType === 'image' || 
-                                   ['png','jpg','jpeg','gif','webp'].includes(ext) || !ext;
+            const ext = previewExt;
+            const isStaticPreview = isResolvedStaticPreview;
             
             // КРИТИЧНО: Для статических превью СРАЗУ останавливаем Video.js, чтобы избежать ошибок загрузки
             if (isStaticPreview) {
@@ -766,7 +832,7 @@ if (!device_id || !device_id.trim()) {
             }
             
             setTimeout(() => {
-              console.log('[Player] 🔍 Preview режим:', { previewFile, previewType, previewPage, ext });
+              console.log('[Player] 🔍 Preview режим:', { previewFile, previewType, previewPage, ext, resolvedPreviewType });
               
               // КРИТИЧНО: Для статических превью (pdf/pptx/folder/image) выключаем видеоплеер,
               // чтобы Video.js не пытался загрузить неподдерживаемый src и не давал MEDIA_ERR_SRC_NOT_SUPPORTED.
@@ -779,25 +845,25 @@ if (!device_id || !device_id.trim()) {
                   videoContainer.style.display = 'none';
                 } catch (_) {}
                 img.src = url;
-                show(img);
+                showOnly(img);
               };
               
-              if (previewType === 'pdf' && previewPage) {
+              if ((previewType === 'pdf' || resolvedPreviewType === 'pdf') && previewPage) {
                 // PDF preview
                 const imageUrl = `/api/devices/${encodeURIComponent(device_id)}/converted/${encodeURIComponent(previewFile)}/page/${previewPage}`;
                 console.log('[Player] 📄 Preview PDF:', imageUrl);
                 showImagePreview(imageUrl);
-              } else if (previewType === 'pptx' && previewPage) {
+              } else if ((previewType === 'pptx' || resolvedPreviewType === 'pptx') && previewPage) {
                 // PPTX preview
                 const imageUrl = `/api/devices/${encodeURIComponent(device_id)}/converted/${encodeURIComponent(previewFile)}/slide/${previewPage}`;
                 console.log('[Player] 📊 Preview PPTX:', imageUrl);
                 showImagePreview(imageUrl);
-              } else if (previewType === 'folder' || (!ext && !previewType)) {
+              } else if (resolvedPreviewType === 'folder') {
                 // Папка превью: показываем первый кадр
                 const imageUrl = `/api/devices/${encodeURIComponent(device_id)}/folder/${encodeURIComponent(previewFile)}/image/1`;
                 console.log('[Player] 📁 Preview папки:', imageUrl);
                 showImagePreview(imageUrl);
-              } else if (previewType === 'image' || ['png','jpg','jpeg','gif','webp'].includes(ext)) {
+              } else if (resolvedPreviewType === 'image' || IMAGE_EXTENSIONS.includes(ext)) {
                 // Изображение preview
                 console.log('[Player] 🖼️ Preview изображение:', previewFile);
                 showImagePreview(content(previewFile));
@@ -912,50 +978,30 @@ if (!device_id || !device_id.trim()) {
                   .catch(err => {
                     console.warn('[Player] ⚠️ Не удалось загрузить данные стрима', err);
                   });
-              } else if (['mp4','webm','ogg','mkv','mov','avi'].includes(ext) || previewType === 'video') {
+              } else if (VIDEO_EXTENSIONS.includes(ext) || previewType === 'video' || resolvedPreviewType === 'video') {
                 // Видео preview
+                showMusicLogo(false);
                 console.log('[Player] 🎬 Preview видео:', previewFile);
                 vjsPlayer.loop(true);
                 vjsPlayer.muted(true);
                 vjsPlayer.volume(0);
-                
-                // КРИТИЧНО: Проверяем наличие трейлера - используем его вместо полного файла
-                const trailerUrlParam = url.searchParams.get('trailerUrl');
-                let videoSrc;
-                
-                if (trailerUrlParam) {
-                  // КРИТИЧНО: URLSearchParams.get() автоматически декодирует значение
-                  // trailerUrlParam уже должен быть правильным путем (/api/files/trailer/...)
-                  // Используем как есть, так как это уже декодированный путь
-                  const trailerUrl = trailerUrlParam;
-                  console.log('[Player] 🎬 Используем трейлер для превью:', trailerUrl);
-                  videoSrc = trailerUrl;
-                } else {
-                  // Fallback: используем preview endpoint (первые 10 секунд)
-                  const previewSeconds = parseInt(url.searchParams.get('seconds') || '10', 10);
-                  const previewStart = parseInt(url.searchParams.get('start') || '0', 10);
-                  videoSrc = videoPreviewSource(previewFile, { start: previewStart, seconds: previewSeconds });
-                  console.log('[Player] 🎬 Используем preview endpoint (трейлер недоступен):', videoSrc);
+                const previewVideoUrl = previewTrailerUrl || videoPreviewSource(previewFile, { seconds: 10 }) || content(previewFile);
+                if (videoContainer) {
+                  videoContainer.style.display = 'block';
+                  videoContainer.style.visibility = 'visible';
                 }
-                
-                vjsPlayer.src({ src: videoSrc, type: 'video/mp4' });
-                videoContainer.style.display = ''; // КРИТИЧНО: Сбрасываем display:none
-                show(videoContainer);
-                
-                // Даем время для загрузки src
+                vjsPlayer.src({ src: previewVideoUrl, type: 'video/mp4' });
+                vjsPlayer.load();
+                showOnly(videoContainer);
                 setTimeout(() => {
                   vjsPlayer.play().then(() => {
                     console.log('[Player] ✅ Preview видео запущено:', previewFile);
                   }).catch(err => {
-                    // КРИТИЧНО: Игнорируем AbortError - браузер блокирует autoplay на фоновых вкладках
-                    // Видео всё равно загружено и показан первый кадр
                     if (err.name === 'AbortError') {
                       console.log('[Player] ℹ️ Preview видео загружен (autoplay заблокирован браузером - это нормально для фоновых вкладок)');
                     } else {
                       console.warn('[Player] ⚠️ Preview ошибка:', err.name, err.message);
                     }
-                    
-                    // SAFARI FIX: Если autoplay не сработал, пробуем запустить при клике
                     if (preview) {
                       const startOnInteraction = () => {
                         vjsPlayer.play().then(() => {
@@ -969,7 +1015,46 @@ if (!device_id || !device_id.trim()) {
                     }
                   });
                 }, 150);
+              } else if (resolvedPreviewType === 'audio' || detectedContentType === 'audio' || AUDIO_EXTENSIONS.includes(ext)) {
+                // Аудио preview
+                showMusicLogo(true);
+                console.log('[Player] 🎵 Preview аудио:', previewFile);
+                vjsPlayer.loop(true);
+                vjsPlayer.muted(true);
+                vjsPlayer.volume(0);
+                vjsPlayer.src({ src: content(previewFile), type: 'audio/mp3' });
+                // Для аудио-превью показываем только логотип музыки и сам контейнер (без видео)
+                if (musicLogo && videoContainer && musicLogo.parentNode !== videoContainer.parentNode) {
+                  // Переместить musicLogo в тот же контейнер, что и videoContainer, если нужно
+                  videoContainer.parentNode.appendChild(musicLogo);
+                }
+                videoContainer.style.display = '';
+                showOnly(videoContainer);
+                showMusicLogo(true);
+                setTimeout(() => {
+                  vjsPlayer.play().then(() => {
+                    console.log('[Player] ✅ Preview аудио запущено:', previewFile);
+                  }).catch(err => {
+                    if (err.name === 'AbortError') {
+                      console.log('[Player] ℹ️ Preview аудио загружено (autoplay заблокирован браузером)');
+                    } else {
+                      console.warn('[Player] ⚠️ Preview аудио ошибка:', err.name, err.message);
+                    }
+                    if (preview) {
+                      const startOnInteraction = () => {
+                        vjsPlayer.play().then(() => {
+                          console.log('[Player] ✅ Safari: аудио запущено после user interaction');
+                        }).catch(e => console.log('[Player] Safari play error:', e));
+                        document.removeEventListener('click', startOnInteraction);
+                        document.removeEventListener('touchstart', startOnInteraction);
+                      };
+                      document.addEventListener('click', startOnInteraction, { once: true });
+                      document.addEventListener('touchstart', startOnInteraction, { once: true });
+                    }
+                  });
+                }, 150);
               } else {
+                showMusicLogo(false);
                 console.warn('[Player] ⚠️ Неизвестный тип preview:', ext, previewType);
               }
             }, 100);
@@ -1058,29 +1143,32 @@ if (!device_id || !device_id.trim()) {
     savedVideoPosition = 0;
   }
   
-  // Мгновенный показ элемента без задержек
-  function show(el, skipTransition = false) {
-    if (!el) {
-      console.warn('[Player] ⚠️ show() вызван с null/undefined element!');
-      return;
-    }
-    
-    
-    // Убедимся что body черный
+  // Централизованная функция: скрыть все элементы
+  function hideAllMediaElements() {
+    [idle, videoContainer, img1, img2, pdf].forEach(e => e && e.classList.remove('visible', 'preloading'));
+    showMusicLogo(false);
+  }
+
+  // Мгновенный показ только одного элемента
+  function showOnly(el) {
+    hideAllMediaElements();
+    if (!el) return;
     document.body.style.background = '#000';
     document.documentElement.style.background = '#000';
-    
-    // Мгновенно показываем новый элемент
     el.classList.add('visible');
     el.classList.remove('preloading');
-    
-    // Скрываем все остальные элементы
-    [idle, videoContainer, img1, img2, pdf].forEach(e => {
-      if (e && e !== el) {
-        e.classList.remove('visible', 'preloading');
-      }
-    });
-    
+  }
+
+  // Показать элемент без скрытия остальных
+  function show(el, keepPreloading = false) {
+    if (!el) return;
+    document.body.style.background = '#000';
+    document.documentElement.style.background = '#000';
+    el.classList.add('visible');
+    if (!keepPreloading) el.classList.remove('preloading');
+    if (el.style && el.style.display === 'none') {
+      el.style.display = '';
+    }
   }
   
   // Предзагрузка элемента (скрыто)
@@ -1301,8 +1389,8 @@ if (!device_id || !device_id.trim()) {
     videoContainer.style.display = 'block';
     videoContainer.classList.remove('visible', 'preloading');
 
-    const tech = vjsPlayer.tech(true);
-    const mediaEl = tech && typeof tech.el === 'function' ? tech.el() : document.getElementById('v_html5_api') || v;
+    // Безопасное получение video-элемента через публичный API
+    const mediaEl = vjsPlayer.el().querySelector('video') || document.getElementById('v_html5_api') || v;
     if (mediaEl) {
       mediaEl.crossOrigin = 'anonymous';
     }
@@ -1641,12 +1729,15 @@ if (!device_id || !device_id.trim()) {
     if (forceRefresh) {
       currentPlaceholderSrc = null;
     }
-    
+
+    // ВСЕГДА скрываем логотип музыки при показе заглушки (placeholder)
+    showMusicLogo(false);
+
     const src = await resolvePlaceholder(forceRefresh);
-    
+
     if (!src) {
       console.warn('[Player] ⚠️ Заглушка не найдена!');
-      
+
       // Показываем сообщение об отсутствии заглушки
       if (preview) {
         // В preview режиме показываем сообщение в PDF элементе
@@ -1681,27 +1772,27 @@ if (!device_id || !device_id.trim()) {
             </body>
           </html>
         `;
-        show(pdf);
+        showOnly(pdf);
       } else {
         // В обычном плеере просто скрываем все (включая оба буфера)
         [idle, v, img1, img2, pdf].forEach(el => el && el.classList.remove('visible'));
       }
       return;
     }
-    
+
     // КРИТИЧНО: Если та же заглушка уже играет - не перезагружаем (кроме force refresh)
     if (!forceRefresh && currentPlaceholderSrc === src && vjsPlayer && !vjsPlayer.paused()) {
       return;
     }
-    
+
     currentPlaceholderSrc = src;
     currentFileState = { type: 'placeholder', file: src, page: 1 }; // КРИТИЧНО: Сбрасываем состояние
-    
+
     // КРИТИЧНО: Убираем query параметры перед проверкой типа файла
     // URL может содержать ?t=timestamp для cache busting
     const srcWithoutQuery = src.split('?')[0];
     const isImage = /\.(png|jpg|jpeg|gif|webp)$/i.test(srcWithoutQuery);
-    
+
     if (isImage) {
       if (vjsPlayer) {
         try {
@@ -1725,7 +1816,7 @@ if (!device_id || !device_id.trim()) {
         pdf.srcdoc = '';
         pdf.classList.remove('visible', 'preloading');
       }
-      
+
       // КРИТИЧНО: Очищаем ОБА буфера перед загрузкой новой заглушки
       // Иначе старый контент может остаться в одном из буферов
       if (img1) {
@@ -1737,20 +1828,20 @@ if (!device_id || !device_id.trim()) {
         img2.classList.remove('visible', 'preloading');
       }
       currentImgBuffer = 1; // Сбрасываем буфер на начальный
-      
+
       // КРИТИЧНО: Дожидаемся загрузки изображения ПЕРЕД показом!
       // Иначе показывается черный экран
       const tempImg = new Image();
-      
+
       const showImagePlaceholder = () => {
         img1.src = src;
-        show(img1);
+        showOnly(img1);
       };
-      
+
       tempImg.onload = () => {
         showImagePlaceholder();
       };
-      
+
       tempImg.onerror = () => {
         console.error('[Player] ❌ Ошибка загрузки заглушки-изображения');
         // Показываем сообщение об ошибке
@@ -1883,7 +1974,7 @@ if (!device_id || !device_id.trim()) {
                 hideVideoJsControls();
                 
                 // Показываем с плавным появлением
-                show(videoContainer);
+                showOnly(videoContainer);
                 
                 // Запускаем воспроизведение
                 vjsPlayer.play().then(() => {
@@ -2062,7 +2153,7 @@ if (!device_id || !device_id.trim()) {
         
         // Первый показ - сразу черный, потом fade in; переключение - мгновенно
         // Мгновенно показываем изображение
-        show(next);
+        showOnly(next);
         
       // Переключаем активный буфер
       currentImgBuffer = currentImgBuffer === 1 ? 2 : 1;
@@ -2093,7 +2184,7 @@ if (!device_id || !device_id.trim()) {
     next.src = imageUrl;
     
     // Мгновенно показываем изображение
-    show(next);
+    showOnly(next);
     
     // Переключаем активный буфер
     currentImgBuffer = currentImgBuffer === 1 ? 2 : 1;
@@ -2114,7 +2205,7 @@ if (!device_id || !device_id.trim()) {
   tempImg.onerror = () => {
     console.error(`[Player] ❌ Ошибка загрузки изображения ${num}`);
     next.src = imageUrl;
-    show(next);
+    showOnly(next);
     currentImgBuffer = currentImgBuffer === 1 ? 2 : 1;
     
     // Отправляем информацию о текущей странице даже при ошибке
@@ -2172,7 +2263,7 @@ if (!device_id || !device_id.trim()) {
         next.src = cachedImage.src;
         
         // Мгновенно показываем слайд
-        show(next);
+        showOnly(next);
         
       // Переключаем активный буфер
       currentImgBuffer = currentImgBuffer === 1 ? 2 : 1;
@@ -2224,7 +2315,7 @@ if (!device_id || !device_id.trim()) {
   tempImg.onerror = () => {
     console.error(`[Player] ❌ Ошибка загрузки слайда ${num}`);
     next.src = imageUrl;
-    show(next, isFirstShow ? false : true);
+    showOnly(next);
     currentImgBuffer = currentImgBuffer === 1 ? 2 : 1;
     
     // Отправляем информацию о текущей странице даже при ошибке
@@ -2255,23 +2346,74 @@ if (!device_id || !device_id.trim()) {
       type = 'video';
     }
     // Нормализация типа для статического контента, если сервер прислал video
-    const hasExt = file && file.includes('.');
-    const ext = hasExt ? file.split('.').pop().toLowerCase() : '';
-    const videoExts = ['mp4','webm','ogg','mkv','mov','avi','ts','m4v'];
+    const ext = getFileExtension(file || '');
+    const inferredType = resolveContentType({ fileName: file, fallbackToFolder: true });
     if (type === 'video') {
-      if (!hasExt || ext === 'zip') {
-        type = 'folder';
-      } else if (ext === 'pdf') {
-        type = 'pdf';
-      } else if (ext === 'pptx') {
-        type = 'pptx';
-      } else if (['png','jpg','jpeg','gif','webp'].includes(ext)) {
-        type = 'image';
-      } else if (!videoExts.includes(ext)) {
+      if (inferredType && inferredType !== 'video' && inferredType !== 'unknown') {
+        type = inferredType;
+      } else if (inferredType === 'unknown') {
         // Неизвестное/нестандартное расширение — трактуем как папку (статический контент)
         type = 'folder';
       }
     }
+        // --- AUDIO FILE SUPPORT ---
+        if (type === 'audio' && file) {
+          clearAllBuffers();
+          currentFileState = { type: 'audio', file, page: 1 };
+          currentVideoFile = file;
+          savedVideoPosition = 0;
+          // Аудио загрузилось - сбрасываем флаг переключения с заглушки
+          isSwitchingFromPlaceholder = false;
+          // Останавливаем видео (универсальная очистка уже скрыла все элементы)
+          if (vjsPlayer) {
+            try {
+              vjsPlayer.pause();
+              vjsPlayer.currentTime(0);
+            } catch (e) {}
+          }
+          // Для аудио: скрываем videoContainer, но показываем musicLogo только если это чистое аудио (нет обложки/картинки/видео)
+          if (videoContainer) {
+            videoContainer.style.display = 'none';
+          }
+          // В режиме превью (preview) логотип музыки показываем только если это чистое аудио (без заглушки/обложки/картинки)
+          let isPureAudio = true;
+          const previewType = url.searchParams.get('type');
+          if (preview) {
+            // В preview всегда показывается заглушка/картинка — логотип музыки не нужен
+            isPureAudio = false;
+          } else {
+            if (typeof previewFile === 'string') {
+              if (IMAGE_EXTENSIONS.includes(previewExt)) isPureAudio = false;
+            }
+            if (previewType === 'video' || isResolvedStaticPreview) {
+              isPureAudio = false;
+            }
+          }
+          showMusicLogo(isPureAudio);
+          // Воспроизведение аудио через Video.js (audio only)
+          if (vjsPlayer) {
+            vjsPlayer.src({ src: content(file), type: 'audio/mp3' });
+            vjsPlayer.loop(false);
+            applyVolumeToPlayer('play_audio');
+            vjsPlayer.play().catch(() => {});
+            // Для аудио НЕ скрываем контролы (progress bar должен быть виден)
+            // hideVideoJsControls(); // НЕ вызываем для аудио
+          }
+          // Отправляем прогресс
+          if (device_id && !preview && socket && socket.connected) {
+            socket.emit('player/progress', {
+              device_id,
+              type: 'audio',
+              file: file,
+              currentTime: 0,
+              duration: 0
+            });
+          }
+          return;
+        } else {
+          // Скрываем логотип музыки если не аудио
+          showMusicLogo(false);
+        }
     // КРИТИЧНО: СРАЗУ скрываем ВСЕ элементы кроме того, который будет показан
     // Это гарантирует что при нажатии Play виден только новый контент
     [idle, videoContainer, img1, img2, pdf].forEach(e => {
@@ -2377,7 +2519,7 @@ if (!device_id || !device_id.trim()) {
           // Показываем videoContainer если он скрыт
           if (!videoContainer.classList.contains('visible')) {
             videoContainer.style.display = ''; // Сбрасываем display:none
-            show(videoContainer);
+            showOnly(videoContainer);
           }
           
           if (vjsPlayer.paused()) {
@@ -2565,7 +2707,7 @@ if (!device_id || !device_id.trim()) {
         current.src = imageUrl;
         
         // Мгновенно показываем изображение
-        show(current);
+        showOnly(current);
         
         // Переключаем буфер на 2 для следующего изображения
         currentImgBuffer = 2;
@@ -2587,7 +2729,7 @@ if (!device_id || !device_id.trim()) {
         console.warn('[Player] ⚠️ Ошибка загрузки изображения');
         // Показываем даже при ошибке
         current.src = imageUrl;
-        show(current);
+        showOnly(current);
         currentImgBuffer = 2;
         
         // КРИТИЧНО: Отправляем player/progress даже при ошибке
@@ -3059,6 +3201,7 @@ if (!device_id || !device_id.trim()) {
   socket.on('connect', () => {
     isRegistered = false; // Сбрасываем при каждом connect
     registerInFlight = false;
+    refreshAudioLogo(true);
     registerPlayer();
   });
 

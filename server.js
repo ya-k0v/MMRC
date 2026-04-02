@@ -57,6 +57,7 @@ import { setupNotificationsHandler } from './src/socket/notifications-handler.js
 import { notifyCriticalError } from './src/utils/notifications.js';
 import { initSystemMonitor, stopSystemMonitor } from './src/utils/system-monitor.js';
 import logger, { httpLoggerMiddleware } from './src/utils/logger.js';
+import { maybeGenerateIcons } from './src/utils/icon-generator.js';
 import { cleanupResolutionCache, getResolutionCacheSize } from './src/video/resolution-cache.js';
 import { circuitBreakers } from './src/utils/circuit-breaker.js';
 import { getSettings, updateContentRootPath, getDataRoot, getDevicesPath, getStreamsOutputDir, getConvertedCache, getLogsDir, getTempDir } from './src/config/settings-manager.js';
@@ -93,6 +94,11 @@ logger.info(`[Config] 📁 Streams: ${streamsDir}`);
 logger.info(`[Config] 📁 Converted: ${convertedDir}`);
 logger.info(`[Config] 📁 Logs: ${logsDir}`);
 logger.info(`[Config] 📁 Temp: ${tempDir}`);
+
+// Обновляем иконки при старте, если icon.svg был изменен недавно
+void maybeGenerateIcons().catch(error => {
+  logger.warn('[Icons] Auto generation failed', { error: error.message });
+});
 
 // ========================================
 // EXPRESS MIDDLEWARE

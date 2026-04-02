@@ -1,6 +1,6 @@
-# 📱 Клиенты VideoControl
+# 📱 Клиенты MMRC
 
-Руководство по установке и настройке клиентских приложений для VideoControl.
+Руководство по установке и настройке клиентских приложений для MMRC.
 
 ---
 
@@ -66,7 +66,7 @@ cd /vid/videocontrol
    ```
 
 4. **APK собран или скачан**
-   - APK должен быть в корне проекта: `VCMplayer-v*.apk`
+   - APK должен быть в корне проекта: `MMRCplayer-v*.apk`
 
 ---
 
@@ -117,7 +117,7 @@ cd clients/android-mediaplayer
 adb connect <device_ip>:5555
 
 # Установка
-adb install -r VCMplayer-v3.0.0.apk
+adb install -r MMRCplayer-v3.1.0.apk
 ```
 
 ### 2. Настройка устройства для 24/7
@@ -142,14 +142,14 @@ adb install -r VCMplayer-v3.0.0.apk
 
 **Для Xiaomi Mi TV:**
 ```
-Settings → Apps → VideoControl MediaPlayer
+Settings → Apps → MMRC Player
 → Autostart: ON ✅
 → Battery: No restrictions
 ```
 
 **Для Huawei:**
 ```
-Settings → Battery → App launch → VideoControl
+Settings → Battery → App launch → MMRC
 → Manual: ON → Auto-launch: ON ✅
 ```
 
@@ -178,14 +178,14 @@ adb devices -l
 adb shell "ps -A | grep videocontrol"
 
 # Проверка логов
-adb logcat -d | grep -E "BootReceiver|VCMediaPlayer"
+adb logcat -d | grep -E "BootReceiver|MMRCPlayer"
 ```
 
 ### Установка и перезапуск
 
 ```bash
 # Установка/обновление
-adb -s SERIAL install -r VCMplayer-v3.0.0.apk
+adb -s SERIAL install -r MMRCplayer-v3.1.0.apk
 
 # Остановка приложения
 adb -s SERIAL shell am force-stop com.videocontrol.mediaplayer
@@ -201,7 +201,7 @@ adb -s SERIAL shell pm clear com.videocontrol.mediaplayer
 
 ```bash
 # Логи приложения
-adb logcat -d | grep -iE "VCMediaPlayer|VideoControl|ExoPlayer|MediaCodec" | tail -n 200
+adb logcat -d | grep -iE "MMRCPlayer|MMRC|ExoPlayer|MediaCodec" | tail -n 200
 
 # Проверка сети
 adb -s SERIAL shell ping -c 3 192.168.1.1
@@ -248,10 +248,10 @@ adb -s SERIAL shell df -h /sdcard /data
 
 ```bash
 # Установка через curl
-curl -fsSL https://raw.githubusercontent.com/ya-k0v/VideoControl/main/clients/mpv/quick-install.sh | bash -s -- --server http://YOUR_SERVER --device mpv-001
+curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/main/clients/mpv/quick-install.sh | bash -s -- --server http://YOUR_SERVER --device mpv-001
 
 # Или через wget
-wget -qO- https://raw.githubusercontent.com/ya-k0v/VideoControl/main/clients/mpv/quick-install.sh | bash -s -- --server http://YOUR_SERVER --device mpv-001
+wget -qO- https://raw.githubusercontent.com/ya-k0v/MMRC/main/clients/mpv/quick-install.sh | bash -s -- --server http://YOUR_SERVER --device mpv-001
 ```
 
 Скрипт автоматически:
@@ -423,7 +423,7 @@ sudo apt install vdpauinfo libvdpau-va-gl1            # NVIDIA
 3. **Проверьте логи:**
    ```bash
    # Android
-   adb logcat | grep VideoControl
+   adb logcat | grep MMRC
    
    # MPV
    sudo journalctl -u videocontrol-mpv@DEVICE_ID -f
@@ -440,5 +440,5 @@ sudo apt install vdpauinfo libvdpau-va-gl1            # NVIDIA
 
 ---
 
-**Версия:** 3.0.0
+**Версия:** 3.1.0
 

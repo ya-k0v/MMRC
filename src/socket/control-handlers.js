@@ -851,13 +851,13 @@ export function setupControlHandlers(socket, deps) {
     io.emit('preview/refresh', { device_id });
   });
 
-  // control/seek - Перемотка видео
+  // control/seek - Перемотка медиа (видео/аудио)
   socket.on('control/seek', ({ device_id, position, file }) => {
     const d = devices[device_id];
     if (!d) return;
     
-    // Проверяем, что текущий контент - видео
-    if (d.current && d.current.type === 'video') {
+    // Проверяем, что текущий контент - видео или аудио
+    if (d.current && (d.current.type === 'video' || d.current.type === 'audio')) {
       // Проверяем, что файл совпадает (если указан)
       if (!file || d.current.file === file) {
         const targetPosition = typeof position === 'number' && position >= 0 ? position : 0;

@@ -1,8 +1,8 @@
-# 📺 VideoControl 3.0.0
+# 📺 MMRC 3.1.0
 
 **Система управления медиаконтентом для цифровых дисплеев**
 
-![Version](https://img.shields.io/badge/version-3.0.0-blue)
+![Version](https://img.shields.io/badge/version-3.1.0-blue)
 ![Node](https://img.shields.io/badge/node-20.x-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
@@ -103,7 +103,7 @@ MIT License — свободное использование
 
 ## 👤 Автор
 
-**ya-k0v** - [GitHub](https://github.com/ya-k0v/VideoControl)
+**ya-k0v** - [GitHub](https://github.com/ya-k0v/MMRC)
 
-**Версия:** 3.0.0
+**Версия:** 3.1.0
 

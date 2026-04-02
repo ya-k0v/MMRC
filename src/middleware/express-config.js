@@ -107,6 +107,13 @@ export function setupStaticFiles(app) {
         res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
         res.setHeader('Content-Type', 'text/css; charset=utf-8');
       }
+      // Иконки и логотипы - всегда без кэша
+      const fileName = path.basename(filePath);
+      if (/^(audio-logo\.svg|icon\.svg|favicon-\d+\.png|icon-\d+\.png|apple-touch-icon\.png)$/i.test(fileName)) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      }
     }
   }));
   

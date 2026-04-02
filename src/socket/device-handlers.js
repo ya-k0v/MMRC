@@ -355,6 +355,12 @@ export function setupDeviceHandlers(socket, deps) {
             device.current = { type: 'video', file, state: 'playing' };
             stateChanged = true;
           }
+        } else if (type === 'audio' && file) {
+          const prev = device.current || {};
+          if (prev.type !== 'audio' || prev.file !== file || prev.state !== 'playing') {
+            device.current = { type: 'audio', file, state: 'playing' };
+            stateChanged = true;
+          }
         } else if (type === 'streaming' && file) {
           // КРИТИЧНО: Обновляем состояние для стримов
           const prev = device.current || {};

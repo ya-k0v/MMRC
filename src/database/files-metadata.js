@@ -8,6 +8,7 @@ import fs from 'fs';
 import { getDatabase } from './database.js';
 import logger, { logFile } from '../utils/logger.js';
 import { withRetrySync, isRetryableDatabaseError } from '../utils/retry.js';
+import { STATIC_CONTENT_TYPES } from '../config/file-types.js';
 
 /**
  * Вычислить MD5 хэш файла (полный или частичный)
@@ -125,7 +126,7 @@ export function saveFileMetadata({
       const checkResult = checkStmt.get(deviceId, safeName);
       
       // Логируем успешное сохранение с деталями
-      const logLevel = (contentType === 'folder' || contentType === 'pdf' || contentType === 'pptx') ? 'info' : 'debug';
+      const logLevel = STATIC_CONTENT_TYPES.has(contentType) ? 'info' : 'debug';
       logger[logLevel]('File metadata saved to database', { 
         deviceId, 
         safeName,

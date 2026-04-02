@@ -1,8 +1,8 @@
-# 📺 VideoControl 3.0.0
+# 📺 MMRC 3.1.0
 
 **Система управления медиаконтентом для цифровых дисплеев**
 
-![Version](https://img.shields.io/badge/version-3.0.0-blue)
+![Version](https://img.shields.io/badge/version-3.1.0-blue)
 ![Node](https://img.shields.io/badge/node-20.x-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
@@ -126,7 +126,7 @@ videocontrol/
 
 ## 📱 Клиенты
 
-- **Android TV / Media Player** — APK в корне проекта (`VCMplayer-v3.0.0.apk`)
+- **Android TV / Media Player** — APK в корне проекта (`MMRCplayer-v3.1.0.apk`)
 - **MPV Player (Linux)** — нативный медиаплеер
 - **Browser** — веб-плеер через Video.js
 
@@ -165,15 +165,15 @@ MIT License — свободное использование
 
 ## 👤 Автор
 
-**ya-k0v** - [GitHub](https://github.com/ya-k0v/VideoControl)
+**ya-k0v** - [GitHub](https://github.com/ya-k0v/MMRC)
 
-**Версия:** 3.0.0
+**Версия:** 3.1.0
 
 ---
 
 ## 📞 Поддержка
 
-- GitHub: https://github.com/ya-k0v/VideoControl
-- Issues: https://github.com/ya-k0v/VideoControl/issues
+- GitHub: https://github.com/ya-k0v/MMRC
+- Issues: https://github.com/ya-k0v/MMRC/issues
 - Документация: [`docs/`](docs/)
 

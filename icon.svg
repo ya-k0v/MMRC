@@ -28,6 +28,4 @@
   <circle cx="256" cy="200" r="72" fill="url(#play-gradient)" opacity="0.95" filter="url(#shadow)"/>
   <polygon points="236,160 236,240 296,200" fill="#fff"/>
 
-  <!-- Base -->
-  <rect x="216" y="368" width="80" height="16" rx="8" fill="url(#bg-gradient)"/>
 </svg>

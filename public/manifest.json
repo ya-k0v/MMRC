@@ -1,7 +1,7 @@
 {
-  "name": "VideoControl Player",
-  "short_name": "VideoControl",
-  "description": "Video player for VideoControl system - displays content on screens",
+  "name": "MMRC Player",
+  "short_name": "MMRC",
+  "description": "Media player for MMRC system - displays content on screens",
   "scope": "/",
   "display": "fullscreen",
   "orientation": "landscape",
@@ -10,9 +10,15 @@
   "categories": ["entertainment", "productivity"],
   "icons": [
     {
-      "src": "/favicon.ico",
-      "sizes": "64x64",
-      "type": "image/x-icon",
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "any"
     }
   ]

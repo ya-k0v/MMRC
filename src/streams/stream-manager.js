@@ -1104,7 +1104,7 @@ class StreamManager extends EventEmitter {
       // ВАЖНО: -http_persistent удален из FFmpeg, используем только поддерживаемые опции
       args.push(
         '-multiple_requests', '1',       // Разрешаем множественные запросы для адаптивного битрейта
-        '-user_agent', 'FFmpeg/VideoControl', // Указываем User-Agent
+        '-user_agent', 'FFmpeg/MMRC', // Указываем User-Agent
         '-seekable', '0'                 // Отключаем seek для live стримов
         // КРИТИЧНО: -http_persistent удален, так как не поддерживается в новых версиях FFmpeg
       );
@@ -3386,7 +3386,7 @@ class StreamManager extends EventEmitter {
           path: urlObj.pathname + urlObj.search,
           timeout: this.options.sourceCheckTimeout,
           headers: {
-            'User-Agent': 'VideoControl/StreamChecker',
+            'User-Agent': 'MMRC/StreamChecker',
             'Range': 'bytes=0-1' // Для GET запрашиваем только первые 2 байта
           }
         }, (res) => {

@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { requireAdmin } from '../middleware/auth.js';
+import logger from '../utils/logger.js';
 
 // Получить admin accessToken через /api/auth/login
 async function getAdminAccessToken(serverUrl) {
@@ -79,10 +80,10 @@ router.post('/install-apk', requireAdmin, upload.single('apk'), async (req, res)
         deviceAdded = true;
       } else {
         const errText = await resp.text();
-        console.warn('Ошибка при добавлении устройства через API:', errText);
+        logger.warn('Ошибка при добавлении устройства через API', { error: errText });
       }
     } catch (e) {
-      console.warn('Не удалось создать устройство через API:', e.message);
+      logger.warn('Не удалось создать устройство через API', { error: e.message });
     }
 
     // 6. Возвращаем успешный ответ
@@ -94,7 +95,7 @@ router.post('/install-apk', requireAdmin, upload.single('apk'), async (req, res)
     }
     return res.json({ ok: true, deviceAdded });
   } catch (e) {
-    console.error('Ошибка при установке APK:', e);
+    logger.error('Ошибка при установке APK', { error: e?.message, stack: e?.stack });
     return res.status(500).json({ ok: false, error: 'Ошибка при установке APK на устройство' });
   } finally {
     // Удаляем временный файл, если он был загружен

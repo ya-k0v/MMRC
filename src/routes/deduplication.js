@@ -11,6 +11,7 @@ import { findDuplicateFile, saveFileMetadata, getFileMetadata } from '../databas
 import { getDatabase } from '../database/database.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import logger, { logFile } from '../utils/logger.js';
+import { VIDEO_EXTENSIONS } from '../config/file-types.js';
 
 const router = express.Router();
 
@@ -39,9 +40,8 @@ export function createDeduplicationRouter(deps) {
     }
     
     // Определяем тип файла по расширению
-    const ext = path.extname(filename || '').toLowerCase();
-    const videoExtensions = ['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'];
-    const isVideoFile = videoExtensions.includes(ext);
+    const ext = path.extname(filename || '').toLowerCase().slice(1); // удаляем точку
+    const isVideoFile = VIDEO_EXTENSIONS.includes(ext);
     
     // Дедупликация применяется ТОЛЬКО для видео файлов
     if (!isVideoFile) {
@@ -110,9 +110,8 @@ export function createDeduplicationRouter(deps) {
     }
     
     // Проверяем тип файла - дедупликация только для видео
-    const ext = path.extname(targetFilename || '').toLowerCase();
-    const videoExtensions = ['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'];
-    const isVideoFile = videoExtensions.includes(ext);
+    const ext = path.extname(targetFilename || '').toLowerCase().slice(1); // удаляем точку
+    const isVideoFile = VIDEO_EXTENSIONS.includes(ext);
     
     if (!isVideoFile) {
       logFile('warn', 'Attempt to copy non-video file via deduplication - rejected', {

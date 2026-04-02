@@ -13,6 +13,7 @@ import { getConvertedCache } from '../config/settings-manager.js';
 import { applyFaststartAsync } from '../video/mp4-faststart.js';
 import { getFolderImagesCount } from '../converters/folder-converter.js';
 import { getDevicesPath } from '../config/settings-manager.js';
+import { IMAGE_EXTENSIONS } from '../config/file-types.js';
 
 /**
  * Обработать загруженный файл: вычислить MD5, получить метаданные, сохранить в БД
@@ -555,7 +556,7 @@ export async function processUploadedStaticContent(
       try {
         // КРИТИЧНО: Используем полный путь filePath для подсчета изображений
         // так как папка может находиться в /content/{deviceFolder}/, а не в /content/{deviceId}/
-        const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+        const imageExtensions = IMAGE_EXTENSIONS.map(ext => `.${ext}`);
         const files = fs.readdirSync(filePath)
           .filter(file => {
             const ext = path.extname(file).toLowerCase();

@@ -1,10 +1,10 @@
-// Service Worker для VideoControl - Production Ready
+// Service Worker для MMRC - Production Ready
 // Версия 7.0 - File permissions fix, cache invalidation
 
 const VERSION = 'v14';
-const CACHE_NAME = `videocontrol-static-${VERSION}`;
-const PLACEHOLDER_CACHE_NAME = `videocontrol-placeholder-${VERSION}`;
-const CONTENT_CACHE_NAME = `videocontrol-content-${VERSION}`;
+const CACHE_NAME = `mmrc-static-${VERSION}`;
+const PLACEHOLDER_CACHE_NAME = `mmrc-placeholder-${VERSION}`;
+const CONTENT_CACHE_NAME = `mmrc-content-${VERSION}`;
 
 // Лимиты кэша
 const MAX_STATIC_ITEMS = 50;      // Максимум 50 статических файлов
@@ -140,6 +140,15 @@ self.addEventListener('fetch', (event) => {
     );
     return;
   }
+
+  // Иконки и логотипы - всегда берём свежие версии (без кэша)
+  if (url.pathname.match(/\/(audio-logo\.svg|icon\.svg|favicon-\d+\.png|icon-\d+\.png|apple-touch-icon\.png)$/i)) {
+    const noCacheRequest = new Request(event.request.url, { cache: 'reload' });
+    event.respondWith(
+      fetch(noCacheRequest).catch(() => caches.match(event.request))
+    );
+    return;
+  }
   
   // Кэшируем статические ресурсы (JS, CSS, HTML) - Stale-While-Revalidate
   if (url.pathname.match(/\.(js|css|html|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot)$/i) ||
@@ -171,7 +180,7 @@ self.addEventListener('fetch', (event) => {
               <head>
                 <meta charset="utf-8">
                 <meta name="viewport" content="width=device-width,initial-scale=1">
-                <title>Офлайн - VideoControl</title>
+                <title>Офлайн - MMRC</title>
                 <style>
                   body {
                     margin:0; padding:0; height:100vh;
@@ -188,7 +197,7 @@ self.addEventListener('fetch', (event) => {
               <body>
                 <div>
                   <h1>📡 Офлайн режим</h1>
-                  <p>Сервер VideoControl недоступен</p>
+                  <p>Сервер MMRC недоступен</p>
                   <p>Ожидание подключения...</p>
                   <div class="status">Service Worker v${VERSION}</div>
                 </div>

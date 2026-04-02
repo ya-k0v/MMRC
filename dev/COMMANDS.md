@@ -1,6 +1,6 @@
-# 📋 Шпаргалка по командам VideoControl
+# 📋 Шпаргалка по командам MMRC
 
-Быстрая справка по командам для управления и обслуживания VideoControl.
+Быстрая справка по командам для управления и обслуживания MMRC.
 
 ---
 
@@ -202,12 +202,12 @@ adb -s SERIAL shell getprop net.dns1
 adb -s SERIAL shell ping -c 3 192.168.1.1
 adb -s SERIAL shell netstat -an | grep -E "3000|80|443"
 adb -s SERIAL shell df -h /sdcard /data
-adb -s SERIAL shell ls -lh /sdcard/VideoControl/files
+adb -s SERIAL shell ls -lh /sdcard/MMRC/files
 ```
 
 ### Логи и диагностика
 ```bash
-adb -s SERIAL logcat -d | grep -iE "VCMediaPlayer|VideoControl|ExoPlayer|MediaCodec" | tail -n 200
+adb -s SERIAL logcat -d | grep -iE "MMRCPlayer|MMRC|ExoPlayer|MediaCodec" | tail -n 200
 adb -s SERIAL logcat | grep -iE "player error"
 adb -s SERIAL bugreport bugreport-$(date +%F_%H%M).zip
 adb -s SERIAL shell dumpsys package com.videocontrol.mediaplayer | grep granted
@@ -257,7 +257,7 @@ sudo mount -a
 
 sudo mkdir -p /vid/videocontrol && cd /vid/videocontrol
 sudo apt-get update -y && sudo apt-get install -y git
-sudo git clone https://github.com/ya-k0v/VideoControl.git .
+sudo git clone https://github.com/ya-k0v/MMRC.git .
 
 export STORAGE_MODE=external_fstab
 export CONTENT_DIR=/mnt/vc-content
@@ -286,5 +286,5 @@ adb -s SERIAL shell ping -c 3 <SERVER_IP>
 
 ---
 
-**Версия:** 3.0.0
+**Версия:** 3.1.0
 

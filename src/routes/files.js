@@ -24,6 +24,7 @@ import { requireSpeaker } from '../middleware/auth.js';
 import { validateUploadSize } from '../middleware/multer-config.js';
 import { validateFilesAsync } from '../middleware/file-validation.js';
 import { getDatabase } from '../database/database.js';
+import { resolveContentType, STATIC_CONTENT_TYPES } from '../config/file-types.js';
 
 const STREAM_PROTOCOLS = new Set(['auto', 'hls', 'dash', 'mpegts']);
 
@@ -994,24 +995,17 @@ export function createFilesRouter(deps) {
     
     // Fallback только если content_type отсутствует в БД (старые записи)
     if (!contentType) {
-      const ext = path.extname(targetSafeName).toLowerCase();
-      const hasExtension = targetSafeName.includes('.');
       const targetDevice = devices[targetDeviceId];
-      
+
       if (metadata?.stream_url || targetDevice?.streams?.[targetSafeName]) {
         contentType = 'streaming';
-      } else if (!hasExtension) {
-        contentType = 'folder';
-      } else if (ext === '.pdf') {
-        contentType = 'pdf';
-      } else if (ext === '.pptx') {
-        contentType = 'pptx';
-      } else if (['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext)) {
-        contentType = 'image';
-      } else if (ext === '.zip') {
-        contentType = 'folder';
       } else {
-        contentType = 'video';
+        const inferredType = resolveContentType({
+          fileName: targetSafeName,
+          originalName,
+          fallbackToFolder: true
+        });
+        contentType = inferredType || 'video';
       }
     }
     
@@ -1019,7 +1013,7 @@ export function createFilesRouter(deps) {
       device_id: targetDeviceId,
       file: targetSafeName,
       type: contentType,
-      page: contentType === 'pdf' || contentType === 'pptx' || contentType === 'folder' ? (page || 1) : undefined,
+      page: STATIC_CONTENT_TYPES.has(contentType) ? (page || 1) : undefined,
       streamProtocol: contentType === 'streaming'
         ? normalizeStreamProtocol(sourceMeta.stream_protocol, sourceMeta.stream_url, sourceMeta.mime_type)
         : undefined
@@ -3242,7 +3236,7 @@ export function createFilesRouter(deps) {
       }
       
       // КРИТИЧНО: Определяем contentType для папок/PDF/PPTX из метаданных БД
-      if (metadata && (metadata.content_type === 'folder' || metadata.content_type === 'pdf' || metadata.content_type === 'pptx')) {
+      if (metadata && STATIC_CONTENT_TYPES.has(metadata.content_type)) {
         contentType = metadata.content_type;
         
         // КРИТИЧНО: Если в БД указан contentType = 'pdf' или 'pptx', но файл не существует на диске,
@@ -3329,7 +3323,7 @@ export function createFilesRouter(deps) {
       }
       
       // Если это папка, PDF или PPTX — используем pages_count из БД
-      if (contentType === 'folder' || contentType === 'pdf' || contentType === 'pptx') {
+      if (STATIC_CONTENT_TYPES.has(contentType)) {
         // Используем pages_count из метаданных БД
         if (metadata && metadata.pages_count !== null && metadata.pages_count !== undefined) {
           folderImageCount = metadata.pages_count;
@@ -3352,7 +3346,7 @@ export function createFilesRouter(deps) {
       
       // КРИТИЧНО: Проверяем существование файла/папки перед добавлением в список
       // Для статического контента (папки/PDF/PPTX) проверяем существование папки
-      if (contentType === 'folder' || contentType === 'pdf' || contentType === 'pptx') {
+      if (STATIC_CONTENT_TYPES.has(contentType)) {
         const checkPath = metadata?.file_path || path.join(getDevicesPath(), devices[id]?.folder || id, safeName);
         if (!fs.existsSync(checkPath)) {
           logger.warn('[files-with-status] Статический контент не найден на диске, пропускаем', {

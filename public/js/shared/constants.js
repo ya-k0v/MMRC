@@ -10,6 +10,14 @@ import {
   getMonitorIcon, 
   getFilmIcon 
 } from './svg-icons.js';
+import {
+  AUDIO_EXTENSIONS,
+  VIDEO_EXTENSIONS,
+  IMAGE_EXTENSIONS,
+  DOCUMENT_EXTENSIONS,
+  FOLDER_EXTENSIONS,
+  resolveContentType
+} from './content-type-helper.js';
 
 /**
  * Получить SVG иконку для типа устройства
@@ -56,17 +64,17 @@ export const DEVICE_TYPE_NAMES = {
   'webos': 'WebOS',
   'tizen': 'Tizen',
   'VJC': 'Video.js Player',
-  'NATIVE_MEDIAPLAYER': 'VCMediaPlayer',
+  'NATIVE_MEDIAPLAYER': 'MMRC Player',
   'NATIVE_MPV': 'Linux MPV Player'
 };
 
 // Расширения файлов по типам
 export const FILE_EXTENSIONS = {
-  video: ['mp4', 'webm', 'ogg', 'mkv', 'mov', 'avi'],
-  audio: ['mp3', 'wav', 'm4a'],
-  image: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
-  document: ['pdf', 'pptx'],
-  folder: ['zip'] // ZIP архивы с изображениями - папки
+  video: VIDEO_EXTENSIONS,
+  audio: AUDIO_EXTENSIONS,
+  image: IMAGE_EXTENSIONS,
+  document: DOCUMENT_EXTENSIONS,
+  folder: FOLDER_EXTENSIONS // ZIP архивы с изображениями - папки
 };
 
 // Метки разрешения видео
@@ -97,15 +105,13 @@ export function getResolutionLabel(width, height) {
  * @returns {string} Тип файла (VID, IMG, PDF, PPTX, FOLDER)
  */
 export function getFileTypeLabel(fileName) {
-  const ext = fileName.split('.').pop().toLowerCase();
-  
-  if (ext === 'pdf') return 'PDF';
-  if (ext === 'pptx') return 'PPTX';
-  if (ext === 'zip') return 'FOLDER';
-  if (FILE_EXTENSIONS.image.includes(ext)) return 'IMG';
-  if (FILE_EXTENSIONS.video.includes(ext)) return 'VID';
-  if (FILE_EXTENSIONS.audio.includes(ext)) return 'AUD';
-  
+  const contentType = resolveContentType({ fileName });
+  if (contentType === 'pdf') return 'PDF';
+  if (contentType === 'pptx') return 'PPTX';
+  if (contentType === 'folder') return 'FOLDER';
+  if (contentType === 'image') return 'IMG';
+  if (contentType === 'video') return 'VID';
+  if (contentType === 'audio') return 'AUD';
   return 'FILE';
 }
 

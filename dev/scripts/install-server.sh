@@ -117,7 +117,7 @@ JWT_SECRET=$JWT_SECRET
 JWT_ACCESS_EXPIRES_IN=12h
 JWT_REFRESH_EXPIRES_IN=30d
 
-# Logging level
+# Logging level (off | debug | info | warning)
 LOG_LEVEL=info
 EOF
     echo "✅ Created .env with secure JWT secret"

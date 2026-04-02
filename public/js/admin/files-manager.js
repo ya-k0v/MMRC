@@ -3,6 +3,13 @@ import { adminFetch } from './auth.js';
 import { getCheckIcon, getCrossIcon, getClockIcon } from '../shared/svg-icons.js';
 import { formatTime } from '../shared/formatters.js';
 import { escapeHtml } from '../shared/utils.js';
+import {
+  VIDEO_EXTENSIONS,
+  STATIC_CONTENT_TYPES,
+  resolveContentType,
+  getFileExtension,
+  getContentTypeInfo
+} from '../shared/content-type-helper.js';
 
 /**
  * Универсальная функция для показа модального окна стрима (добавление/редактирование)
@@ -259,14 +266,8 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         const isStreaming = contentType === 'streaming';
         const isEligible = !isStreaming && /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp)$/i.test(safeName);
         
-        // КРИТИЧНО: Два расширения для разных целей!
-        // 1. displayExt из originalName - для отображения лейбла (PDF, PPTX, VID)
-        const hasDisplayExt = originalName.includes('.');
-        const displayExt = hasDisplayExt ? originalName.split('.').pop().toLowerCase() : '';
-        
-        // 2. safeExt из safeName - для проверок типа файла на диске
-        const hasSafeExt = safeName.includes('.');
-        const safeExt = hasSafeExt ? safeName.split('.').pop().toLowerCase() : '';
+        // safeExt из safeName - для проверок типа файла на диске
+        const safeExt = getFileExtension(safeName);
         
         // НОВОЕ: Убираем расширение из отображаемого имени (как на спикере)
         const displayName = originalName.replace(/\.[^.]+$/, '');
@@ -274,30 +275,20 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         // Определяем метку типа файла
         // КРИТИЧНО: Сначала проверяем contentType из метаданных БД, потом fallback на расширение
         let typeLabel = 'VID'; // По умолчанию
-        if (isStreaming) {
+        const normalizedType = resolveContentType({
+          contentType,
+          fileName: safeName,
+          originalName,
+          fallbackToFolder: true
+        });
+        if (normalizedType === 'streaming') {
           typeLabel = 'STREAM';
-        } else if (contentType === 'folder') {
-          // КРИТИЧНО: Папки теперь определяются по contentType из БД
-          typeLabel = 'FOLDER';
-        } else if (contentType === 'pdf') {
-          typeLabel = 'PDF';
-        } else if (contentType === 'pptx') {
-          typeLabel = 'PPTX';
-        } else if (displayExt === 'pdf') {
-          // Fallback для старых записей без contentType в БД
-          typeLabel = 'PDF';
-        } else if (displayExt === 'pptx') {
-          // Fallback для старых записей без contentType в БД
-          typeLabel = 'PPTX';
-        } else if (['png','jpg','jpeg','gif','webp'].includes(displayExt)) {
-          typeLabel = 'IMG';
-        } else if (displayExt === 'zip' || !hasDisplayExt) {
-          // Fallback: ZIP или папка без расширения - это папка с изображениями
-          typeLabel = 'FOLDER';
+        } else if (normalizedType && normalizedType !== 'unknown') {
+          typeLabel = getContentTypeInfo(normalizedType, streamProtocol).shortLabel;
         }
         
         // НОВОЕ: Определяем статус для видео из safeExt (фактический файл)
-        const isVideo = !isStreaming && ['mp4','webm','ogg','mkv','mov','avi'].includes(safeExt);
+        const isVideo = !isStreaming && (normalizedType === 'video' || VIDEO_EXTENSIONS.includes(safeExt));
         const fileStatus = status || 'ready';
         const isProcessing = fileStatus === 'processing' || fileStatus === 'checking';
         const hasError = fileStatus === 'error';
@@ -325,7 +316,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         let statusText = '';
         let statusColor = '';
         
-        const isStaticDoc = contentType === 'pdf' || contentType === 'pptx' || contentType === 'folder';
+        const isStaticDoc = STATIC_CONTENT_TYPES.has(normalizedType);
         
         if (isVideo || isStaticDoc) {
           if (isProcessing) {
@@ -576,39 +567,54 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       const safeName = decodeURIComponent(btn.getAttribute('data-safe'));
       const originalName = decodeURIComponent(btn.getAttribute('data-original') || safeName);
       const previewContainer = document.querySelector('#detailPane .previewHolder');
-      
       if (!previewContainer) return;
       const contentType = btn.closest('.file-item')?.getAttribute('data-content-type') || null;
-      
-      if (contentType === 'streaming') {
+
+      // Определяем тип файла
+      const normalizedType = resolveContentType({
+        contentType,
+        fileName: safeName,
+        originalName,
+        fallbackToFolder: true
+      });
+      const isAudio = normalizedType === 'audio';
+
+      if (normalizedType === 'streaming') {
         const protocol = btn.getAttribute('data-stream-protocol') || '';
         const protocolParam = protocol ? `&protocol=${encodeURIComponent(protocol)}` : '';
         const iframe = document.createElement('iframe');
         iframe.src = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&type=streaming&file=${encodeURIComponent(safeName)}&originalName=${encodeURIComponent(originalName)}${protocolParam}`;
         iframe.style.cssText = 'width:100%;height:100%;border:0';
         iframe.allow = 'autoplay; fullscreen';
+        previewContainer.innerHTML = '';
         previewContainer.appendChild(iframe);
         return;
       }
-      
-      // Определяем тип файла
-      const hasExtension = safeName.includes('.');
-      const ext = hasExtension ? safeName.split('.').pop().toLowerCase() : '';
-      
+
+      if (isAudio) {
+        // Для аудио: всегда очищаем контейнер и показываем только один iframe с логотипом аудио
+        const audioPreviewUrl = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&type=audio&file=${encodeURIComponent(safeName)}`;
+        previewContainer.innerHTML = '';
+        const frame = document.createElement('iframe');
+        frame.style.cssText = 'width:100%;height:100%;border:0';
+        frame.src = audioPreviewUrl;
+        frame.allow = 'autoplay; fullscreen';
+        previewContainer.appendChild(frame);
+        return;
+      }
+
       // КРИТИЧНО: Определяем статический контент по contentType из метаданных БД
-      const isStaticContent = contentType === 'folder' || contentType === 'pdf' || contentType === 'pptx';
-      // Fallback для старых записей без contentType в БД
-      const isStaticContentFallback = !hasExtension || ext === 'pdf' || ext === 'pptx';
-      
+      const isStaticContent = STATIC_CONTENT_TYPES.has(normalizedType);
+
       // Для папок, PDF и PPTX показываем сетку миниатюр
-      if (isStaticContent || isStaticContentFallback) {
+      if (isStaticContent) {
         let images = [];
         let folderName = safeName;
-        
+
         // КРИТИЧНО: Используем contentType из метаданных БД, fallback на определение по расширению
-        const previewContentType = contentType || (!hasExtension ? 'folder' : ext);
-        
-        if (previewContentType === 'folder' || (!hasExtension && !contentType)) {
+        const previewContentType = normalizedType || 'folder';
+
+       if (previewContentType === 'folder') {
           // Это папка с изображениями
           try {
             const res = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/folder/${encodeURIComponent(safeName)}/images`);
@@ -621,10 +627,10 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           } catch (e) {
             console.error('[Admin] Ошибка загрузки изображений папки:', e);
           }
-        } else if (previewContentType === 'pdf' || previewContentType === 'pptx' || ext === 'pdf' || ext === 'pptx') {
+        } else if (previewContentType === 'pdf' || previewContentType === 'pptx') {
           // Это презентация
           try {
-            const urlType = (previewContentType === 'pdf' || ext === 'pdf') ? 'page' : 'slide';
+            const urlType = previewContentType === 'pdf' ? 'page' : 'slide';
             const res = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/slides-count?file=${encodeURIComponent(safeName)}`);
             const data = await res.json();
             const count = data.count || 0;
@@ -689,19 +695,19 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         // Для видео и обычных изображений показываем в iframe
         const frame = previewContainer.querySelector('iframe') || document.createElement('iframe');
         let u = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&muted=1&file=${encodeURIComponent(safeName)}&originalName=${encodeURIComponent(originalName)}`;
-        
-        if (['png','jpg','jpeg','gif','webp'].includes(ext)) {
+
+        if (normalizedType === 'image') {
           u += `&type=image&page=1`;
         }
-        
+
         u += `&t=${Date.now()}`;
-        
+
         if (!previewContainer.querySelector('iframe')) {
           frame.style.cssText = 'width:100%;height:100%;border:0';
           previewContainer.innerHTML = '';
           previewContainer.appendChild(frame);
         }
-        
+
         frame.src = u;
       }
     };

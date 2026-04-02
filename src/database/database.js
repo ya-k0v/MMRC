@@ -1,5 +1,5 @@
 /**
- * Database module - SQLite database for VideoControl
+ * Database module - SQLite database for MMRC
  * @module database/database
  */
 

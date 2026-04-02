@@ -1,7 +1,7 @@
 {
-  "name": "VideoControl Admin",
-  "short_name": "VC Admin",
-  "description": "Admin panel for VideoControl system - manage devices and content",
+  "name": "MMRC Admin",
+  "short_name": "MMRC Admin",
+  "description": "Admin panel for MMRC system - manage devices and content",
   "start_url": "/admin.html",
   "scope": "/",
   "display": "fullscreen",
@@ -11,9 +11,15 @@
   "categories": ["productivity", "utilities"],
   "icons": [
     {
-      "src": "/favicon.ico",
-      "sizes": "64x64",
-      "type": "image/x-icon",
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "any"
     }
   ]

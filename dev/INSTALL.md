@@ -1,6 +1,6 @@
-# 📦 Установка VideoControl
+# 📦 Установка MMRC
 
-Полное руководство по установке VideoControl на новую систему.
+Полное руководство по установке MMRC на новую систему.
 
 ## 📋 Требования
 
@@ -22,13 +22,13 @@
 
 ```bash
 # На новом сервере (Ubuntu/Debian)
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/ya-k0v/VideoControl/main/dev/scripts/quick-install.sh)" /vid/videocontrol
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/main/dev/scripts/quick-install.sh)" /vid/videocontrol
 ```
 
 Или если уже клонировали репозиторий:
 
 ```bash
-git clone https://github.com/ya-k0v/VideoControl.git /vid/videocontrol
+git clone https://github.com/ya-k0v/MMRC.git /vid/videocontrol
 cd /vid/videocontrol
 sudo bash dev/scripts/quick-install.sh /vid/videocontrol
 ```
@@ -107,7 +107,7 @@ libreoffice --version
 
 ```bash
 # Клонируем репозиторий
-git clone https://github.com/ya-k0v/VideoControl.git /vid/videocontrol
+git clone https://github.com/ya-k0v/MMRC.git /vid/videocontrol
 cd /vid/videocontrol
 
 # Устанавливаем зависимости
@@ -231,7 +231,7 @@ tail -f data/logs/combined-*.log
 
 ```bash
 # На новом сервере
-git clone https://github.com/ya-k0v/VideoControl.git /vid/videocontrol
+git clone https://github.com/ya-k0v/MMRC.git /vid/videocontrol
 cd /vid/videocontrol
 npm install
 cp .env.example .env
@@ -452,4 +452,4 @@ sudo tail -50 /var/log/nginx/videocontrol_error.log
 
 ---
 
-**Версия:** 3.0.0
+**Версия:** 3.1.0

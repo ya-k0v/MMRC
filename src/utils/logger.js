@@ -19,6 +19,20 @@ const logFormat = winston.format.combine(
   winston.format.json()
 );
 
+// Нормализация уровня логирования из .env
+const rawLogLevel = (process.env.LOG_LEVEL || 'info').toString().trim().toLowerCase();
+const logLevelMap = {
+  off: 'off',
+  debug: 'debug',
+  info: 'info',
+  warning: 'error',
+  warn: 'warn',
+  error: 'error'
+};
+const normalizedLogLevel = logLevelMap[rawLogLevel] || 'info';
+const isLogSilent = normalizedLogLevel === 'off';
+const effectiveLogLevel = isLogSilent ? 'error' : normalizedLogLevel;
+
 // Форматирование для консоли (более читаемое)
 const consoleFormat = winston.format.combine(
   winston.format.colorize(),
@@ -39,7 +53,8 @@ const errorFileTransport = new DailyRotateFile({
   level: 'error',
   maxSize: '20m',
   maxFiles: '30d', // Хранить 30 дней
-  format: logFormat
+  format: logFormat,
+  silent: isLogSilent
 });
 
 // Транспорт: файлы с ротацией (combined - все уровни)
@@ -48,22 +63,24 @@ const combinedFileTransport = new DailyRotateFile({
   datePattern: 'YYYY-MM-DD',
   maxSize: '20m',
   maxFiles: '14d', // Хранить 14 дней
-  format: logFormat
+  format: logFormat,
+  silent: isLogSilent
 });
 
-// Транспорт: консоль (в production показываем только warn и error)
+// Транспорт: консоль (уровень задается через LOG_LEVEL)
 const consoleTransport = new winston.transports.Console({
   format: consoleFormat,
-  level: process.env.NODE_ENV === 'production' ? 'warn' : 'debug',
+  level: effectiveLogLevel,
   // Опционально: полностью отключить консоль если нужно
-  silent: process.env.SILENT_CONSOLE === 'true'
+  silent: isLogSilent || process.env.SILENT_CONSOLE === 'true'
 });
 
 // Создаем основной logger
 const logger = winston.createLogger({
-  level: process.env.LOG_LEVEL || 'info',
+  level: effectiveLogLevel,
+  silent: isLogSilent,
   format: logFormat,
-  defaultMeta: { service: 'videocontrol' },
+  defaultMeta: { service: 'mmrc' },
   transports: [
     errorFileTransport,
     combinedFileTransport,
