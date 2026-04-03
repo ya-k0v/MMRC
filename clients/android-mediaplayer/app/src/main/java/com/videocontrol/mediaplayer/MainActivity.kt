@@ -190,6 +190,7 @@ class MainActivity : AppCompatActivity() {
     private val volumeStep = 5
     private var awaitingVolumeSync = false
     private var pendingVolumeCommand: JSONObject? = null // Отложенная команда громкости
+    private var pendingSyncedPlayRunnable: Runnable? = null
 
     private val TAG = "MMRCPlayer"
     private val userAgent by lazy { "MMRC/${BuildConfig.VERSION_NAME}" }
@@ -1045,7 +1046,33 @@ class MainActivity : AppCompatActivity() {
 
             socket?.on("player/play") { args ->
                 if (args.isNotEmpty()) {
-                    val data = args[0] as JSONObject
+                    val data = args[0] as? JSONObject ?: return@on
+                    val startAtMs = data.optLong("startAt", 0L)
+                    val startDelayHintMs = data.optLong("startDelayMs", 0L)
+
+                    pendingSyncedPlayRunnable?.let {
+                        mainHandler.removeCallbacks(it)
+                        pendingSyncedPlayRunnable = null
+                    }
+
+                    val delayMs = when {
+                        startDelayHintMs > 0L -> max(0L, startDelayHintMs)
+                        startAtMs > 0L -> max(0L, startAtMs - System.currentTimeMillis())
+                        else -> 0L
+                    }
+
+                    if (delayMs > 0L) {
+                        val deferredPayload = JSONObject(data.toString())
+                        val scheduledPlay = Runnable {
+                            pendingSyncedPlayRunnable = null
+                            if (!isActivityValid()) return@Runnable
+                            handlePlay(deferredPayload)
+                        }
+                        pendingSyncedPlayRunnable = scheduledPlay
+                        mainHandler.postDelayed(scheduledPlay, delayMs)
+                        return@on
+                    }
+
                     runOnUiThread { handlePlay(data) }
                 }
             }
@@ -1088,6 +1115,11 @@ class MainActivity : AppCompatActivity() {
                     is String -> payload
                     else -> ""
                 } ?: ""
+
+                pendingSyncedPlayRunnable?.let {
+                    mainHandler.removeCallbacks(it)
+                    pendingSyncedPlayRunnable = null
+                }
                 
                 runOnUiThread {
                     if (playbackFlags.isPlayingPlaceholder && reason != "placeholder_refresh") {
@@ -3274,6 +3306,10 @@ class MainActivity : AppCompatActivity() {
         stopPingTimer()
         stopConnectionWatchdog()
         stopProgressUpdates()
+        pendingSyncedPlayRunnable?.let {
+            mainHandler.removeCallbacks(it)
+            pendingSyncedPlayRunnable = null
+        }
         // stopLogoRefreshTimer() удален - логотип больше не используется
         mainHandler.removeCallbacks(hideStatusRunnable)
         mainHandler.removeCallbacksAndMessages(null)

@@ -1,5 +1,5 @@
 [Unit]
-Description=MMRC Server v3.1.0
+Description=MMRC Server v3.1.1
 After=network-online.target local-fs.target
 Wants=network-online.target
 StartLimitIntervalSec=60

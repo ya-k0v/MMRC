@@ -452,4 +452,4 @@ sudo tail -50 /var/log/nginx/videocontrol_error.log
 
 ---
 
-**Версия:** 3.1.0
+**Версия:** 3.1.1

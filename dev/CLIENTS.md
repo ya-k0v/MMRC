@@ -117,7 +117,7 @@ cd clients/android-mediaplayer
 adb connect <device_ip>:5555
 
 # Установка
-adb install -r MMRCplayer-v3.1.0.apk
+adb install -r MMRCplayer-v3.1.1.apk
 ```
 
 ### 2. Настройка устройства для 24/7
@@ -185,7 +185,7 @@ adb logcat -d | grep -E "BootReceiver|MMRCPlayer"
 
 ```bash
 # Установка/обновление
-adb -s SERIAL install -r MMRCplayer-v3.1.0.apk
+adb -s SERIAL install -r MMRCplayer-v3.1.1.apk
 
 # Остановка приложения
 adb -s SERIAL shell am force-stop com.videocontrol.mediaplayer
@@ -440,5 +440,5 @@ sudo apt install vdpauinfo libvdpau-va-gl1            # NVIDIA
 
 ---
 
-**Версия:** 3.1.0
+**Версия:** 3.1.1
 

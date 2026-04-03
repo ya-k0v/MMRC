@@ -611,6 +611,11 @@ body.light .tvTile.active {
   box-shadow: 0 2px 8px rgba(59, 130, 246, 0.2);
 }
 
+.tvTile.selected:not(.active) {
+  border-color: rgba(59, 130, 246, 0.75);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.55);
+}
+
 /* Внутренняя структура tvTile */
 .tvTile-content {
   display: flex;

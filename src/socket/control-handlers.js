@@ -157,10 +157,11 @@ export function setupControlHandlers(socket, deps) {
     }
   };
   
-  // control/play - Запустить воспроизведение
-  socket.on('control/play', async ({ device_id, file, page, type: requestedType, streamProtocol, originDeviceId }) => {
+  const handleControlPlay = async ({ device_id, file, page, type: requestedType, streamProtocol, originDeviceId, startAt, startDelayMs }) => {
     const d = devices[device_id];
     if (!d) return;
+    const normalizedStartAt = Number.isFinite(Number(startAt)) ? Math.floor(Number(startAt)) : null;
+    const normalizedStartDelayMs = Number.isFinite(Number(startDelayMs)) ? Math.floor(Number(startDelayMs)) : null;
 
     // Если был активный плейлист и запускается другой файл — останавливаем серверный цикл
     if (
@@ -332,7 +333,9 @@ export function setupControlHandlers(socket, deps) {
           io.to(`device:${device_id}`).emit('player/play', {
             ...deviceStillExists.current,
             stream_url: type === 'streaming' ? localPlaybackStreamUrl : undefined,
-            stream_protocol: type === 'streaming' ? localEffectiveStreamProtocol : undefined
+            stream_protocol: type === 'streaming' ? localEffectiveStreamProtocol : undefined,
+            startAt: normalizedStartAt || undefined,
+            startDelayMs: normalizedStartDelayMs || undefined
           });
           emitDeviceVolumeState(device_id, 'control_play');
           io.emit('preview/refresh', { device_id });
@@ -734,7 +737,9 @@ export function setupControlHandlers(socket, deps) {
           io.to(`device:${device_id}`).emit('player/play', {
             ...d.current,
             stream_url: type === 'streaming' ? playbackStreamUrl : undefined,
-            stream_protocol: type === 'streaming' ? effectiveStreamProtocol : undefined
+            stream_protocol: type === 'streaming' ? effectiveStreamProtocol : undefined,
+            startAt: normalizedStartAt || undefined,
+            startDelayMs: normalizedStartDelayMs || undefined
           });
           emitDeviceVolumeState(device_id, 'control_play');
           io.emit('preview/refresh', { device_id });
@@ -813,7 +818,9 @@ export function setupControlHandlers(socket, deps) {
           io.to(`device:${device_id}`).emit('player/play', {
             ...d.current,
             stream_url: type === 'streaming' ? playbackStreamUrl : undefined,
-            stream_protocol: type === 'streaming' ? effectiveStreamProtocol : undefined
+            stream_protocol: type === 'streaming' ? effectiveStreamProtocol : undefined,
+            startAt: normalizedStartAt || undefined,
+            startDelayMs: normalizedStartDelayMs || undefined
           });
       emitDeviceVolumeState(device_id, 'control_play');
     } else {
@@ -829,6 +836,53 @@ export function setupControlHandlers(socket, deps) {
     }
     
     io.emit('preview/refresh', { device_id });
+  };
+
+  socket.on('control/play', handleControlPlay);
+
+  socket.on('control/play-batch', async ({ device_ids, file, page, type, streamProtocol, originDeviceId, startDelayMs }) => {
+    try {
+      const rawDeviceIds = Array.isArray(device_ids) ? device_ids : [];
+      const targetDeviceIds = Array.from(new Set(rawDeviceIds.filter((deviceId) => typeof deviceId === 'string' && deviceId.trim())));
+
+      if (!targetDeviceIds.length) {
+        return;
+      }
+
+      const availableDeviceIds = targetDeviceIds.filter((deviceId) => Boolean(devices[deviceId]));
+      if (!availableDeviceIds.length) {
+        return;
+      }
+
+      const parsedDelayMs = Number(startDelayMs);
+      const safeDelayMs = Number.isFinite(parsedDelayMs)
+        ? Math.min(10000, Math.max(700, Math.floor(parsedDelayMs)))
+        : 1800;
+      const synchronizedStartAt = Date.now() + safeDelayMs;
+
+      logger.info('[Control] play-batch scheduled', {
+        targets: availableDeviceIds,
+        file,
+        type,
+        startDelayMs: safeDelayMs,
+        startAt: synchronizedStartAt
+      });
+
+      await Promise.all(availableDeviceIds.map((targetDeviceId) =>
+        handleControlPlay({
+          device_id: targetDeviceId,
+          file,
+          page,
+          type,
+          streamProtocol,
+          originDeviceId,
+          startAt: synchronizedStartAt,
+          startDelayMs: safeDelayMs
+        })
+      ));
+    } catch (err) {
+      logger.error('[Control] play-batch failed', { error: err.message, file, type });
+    }
   });
 
   // control/pause - Пауза

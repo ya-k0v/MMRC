@@ -1,8 +1,8 @@
-# 📺 MMRC 3.1.0
+# 📺 MMRC 3.1.1
 
 **Система управления медиаконтентом для цифровых дисплеев**
 
-![Version](https://img.shields.io/badge/version-3.1.0-blue)
+![Version](https://img.shields.io/badge/version-3.1.1-blue)
 ![Node](https://img.shields.io/badge/node-20.x-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
@@ -126,7 +126,7 @@ videocontrol/
 
 ## 📱 Клиенты
 
-- **Android TV / Media Player** — APK в корне проекта (`MMRCplayer-v3.1.0.apk`)
+- **Android TV / Media Player** — APK в корне проекта (`MMRCplayer-v3.1.1.apk`)
 - **MPV Player (Linux)** — нативный медиаплеер
 - **Browser** — веб-плеер через Video.js
 
@@ -167,7 +167,7 @@ MIT License — свободное использование
 
 **ya-k0v** - [GitHub](https://github.com/ya-k0v/MMRC)
 
-**Версия:** 3.1.0
+**Версия:** 3.1.1
 
 ---
 

@@ -286,5 +286,5 @@ adb -s SERIAL shell ping -c 3 <SERVER_IP>
 
 ---
 
-**Версия:** 3.1.0
+**Версия:** 3.1.1
 

@@ -31,7 +31,7 @@ const previewStreamProtocol = url.searchParams.get('protocol');
 const previewStreamUrl = url.searchParams.get('stream_url'); // Прямой URL стрима для превью
 const previewTrailerUrl = url.searchParams.get('trailerUrl');
 
-const APP_VERSION = '3.1.0';
+const APP_VERSION = '3.1.1';
 const badgeDeviceId = device_id || (preview ? 'preview' : 'unknown');
 const playerBadge = document.getElementById('playerBadge');
 if (playerBadge) {
@@ -2334,7 +2334,35 @@ if (!device_id || !device_id.trim()) {
 }
 
   // WebSocket обработчики
-  socket.on('player/play', ({ type, file, page, stream_url, stream_protocol, originDeviceId }) => {
+  let pendingSyncedPlayTimer = null;
+  let pendingSyncedPlayToken = 0;
+  socket.on('player/play', function onPlayerPlay({ type, file, page, stream_url, stream_protocol, originDeviceId, startAt, startDelayMs }) {
+    const parsedStartDelayMs = Number(startDelayMs);
+    const parsedStartAt = Number(startAt);
+    const delayMs = Number.isFinite(parsedStartDelayMs) && parsedStartDelayMs > 0
+      ? Math.max(0, Math.floor(parsedStartDelayMs))
+      : (Number.isFinite(parsedStartAt) && parsedStartAt > 0 ? Math.max(0, parsedStartAt - Date.now()) : 0);
+
+    if (delayMs > 0) {
+      pendingSyncedPlayToken += 1;
+      const token = pendingSyncedPlayToken;
+      if (pendingSyncedPlayTimer) {
+        clearTimeout(pendingSyncedPlayTimer);
+        pendingSyncedPlayTimer = null;
+      }
+      pendingSyncedPlayTimer = setTimeout(() => {
+        if (token !== pendingSyncedPlayToken) return;
+        pendingSyncedPlayTimer = null;
+        onPlayerPlay({ type, file, page, stream_url, stream_protocol, originDeviceId, startAt: null, startDelayMs: null });
+      }, delayMs);
+      return;
+    }
+
+    if (pendingSyncedPlayTimer) {
+      clearTimeout(pendingSyncedPlayTimer);
+      pendingSyncedPlayTimer = null;
+    }
+
     // Обратная совместимость: сервер может прислать type='file' для видео
     if (type === 'file') {
       type = 'video';
@@ -2944,6 +2972,12 @@ if (!device_id || !device_id.trim()) {
   });
 
   socket.on('player/stop', (payload) => {
+    pendingSyncedPlayToken += 1;
+    if (pendingSyncedPlayTimer) {
+      clearTimeout(pendingSyncedPlayTimer);
+      pendingSyncedPlayTimer = null;
+    }
+
     destroyMpegtsPlayer('player_stop');
     destroyHlsPlayer('player_stop');
     destroyDashPlayer('player_stop');

@@ -147,88 +147,6 @@ const deviceVolumeState = {};
 devices = loadDevicesFromDB();
 fileNamesMap = loadFileNamesFromDB();
 
-// КРИТИЧНО: Используем updateDeviceFilesFromDB для правильной загрузки файлов и стримов
-// Эта функция правильно обрабатывает стримы из БД и создает device.streams
-for (const deviceId in devices) {
-  updateDeviceFilesFromDB(deviceId, devices, fileNamesMap);
-  
-  logger.info('Device files loaded (DB + folders)', { 
-    deviceId, 
-    totalFiles: devices[deviceId].files?.length || 0,
-    totalStreams: Object.keys(devices[deviceId].streams || {}).length
-  });
-  
-  // КРИТИЧНО: Валидация состояния устройства - проверяем, существует ли файл из current
-  const device = devices[deviceId];
-  if (device.current && device.current.file && device.current.type !== 'idle') {
-    const deviceFiles = device.files || [];
-    const deviceStreams = device.streams || {};
-    const currentFile = device.current.file;
-    const playlistFile = device.current.playlistFile;
-    
-    // Проверяем основной файл (включая стримы и папки)
-    let fileExists = deviceFiles.includes(currentFile);
-    
-    // Для стримов также проверяем streams объект
-    if (!fileExists && device.current.type === 'streaming') {
-      fileExists = !!deviceStreams[currentFile];
-    }
-    
-    // Для папок может быть .zip расширение
-    if (!fileExists) {
-      const withoutZip = currentFile.replace(/\.zip$/i, '');
-      fileExists = deviceFiles.includes(withoutZip);
-    }
-    
-    // Проверяем файл плейлиста, если есть
-    const playlistFileExists = !playlistFile || 
-                              deviceFiles.includes(playlistFile) ||
-                              deviceFiles.includes(playlistFile.replace(/\.zip$/i, ''));
-    
-    if (!fileExists || !playlistFileExists) {
-      logger.warn(`[Server] Файл из состояния устройства не найден, сбрасываем состояние`, {
-        deviceId,
-        currentFile,
-        playlistFile,
-        currentType: device.current.type,
-        fileExists,
-        playlistFileExists,
-        availableFiles: deviceFiles.slice(0, 5), // Первые 5 файлов для отладки
-        availableStreams: Object.keys(deviceStreams).slice(0, 5)
-      });
-      
-      // Сбрасываем состояние на idle
-      device.current = { type: 'idle', file: null, state: 'idle' };
-    }
-  }
-}
-
-// Сохраняем обновленное состояние в БД
-saveDevicesToDB(devices);
-
-// КРИТИЧНО: Автоматическая очистка несуществующих файлов из БД при старте
-// Проверяем только если установлена переменная окружения AUTO_CLEANUP_MISSING_FILES=true
-if (process.env.AUTO_CLEANUP_MISSING_FILES === 'true') {
-  logger.info('[Server] Auto-cleanup enabled, checking for missing files...');
-  cleanupMissingFiles({ deviceId: null, dryRun: false })
-    .then(result => {
-      logger.info('[Server] Auto-cleanup completed', {
-        checked: result.checked,
-        missing: result.missing,
-        deleted: result.deleted,
-        errors: result.errors
-      });
-    })
-    .catch(error => {
-      logger.error('[Server] Auto-cleanup failed', {
-        error: error.message,
-        stack: error.stack
-      });
-    });
-} else {
-  logger.info('[Server] Auto-cleanup disabled (set AUTO_CLEANUP_MISSING_FILES=true to enable)');
-}
-
 const streamManager = initStreamManager({
   outputRoot: getStreamsOutputDir(), // Используем функцию из settings-manager
   publicBasePath: '/streams'
@@ -821,12 +739,109 @@ setupNotificationsHandler(io);
 // Запускаем системный мониторинг (проверка диска, БД, процессов и т.д.)
 initSystemMonitor(streamManager, devices);
 
+function hydrateDevicesFromDatabase() {
+  // КРИТИЧНО: Используем updateDeviceFilesFromDB для правильной загрузки файлов и стримов
+  // Эта функция правильно обрабатывает стримы из БД и создает device.streams
+  for (const deviceId in devices) {
+    updateDeviceFilesFromDB(deviceId, devices, fileNamesMap);
+
+    logger.info('Device files loaded (DB + folders)', {
+      deviceId,
+      totalFiles: devices[deviceId].files?.length || 0,
+      totalStreams: Object.keys(devices[deviceId].streams || {}).length
+    });
+
+    // КРИТИЧНО: Валидация состояния устройства - проверяем, существует ли файл из current
+    const device = devices[deviceId];
+    if (device.current && device.current.file && device.current.type !== 'idle') {
+      const deviceFiles = device.files || [];
+      const deviceStreams = device.streams || {};
+      const currentFile = device.current.file;
+      const playlistFile = device.current.playlistFile;
+
+      // Проверяем основной файл (включая стримы и папки)
+      let fileExists = deviceFiles.includes(currentFile);
+
+      // Для стримов также проверяем streams объект
+      if (!fileExists && device.current.type === 'streaming') {
+        fileExists = !!deviceStreams[currentFile];
+      }
+
+      // Для папок может быть .zip расширение
+      if (!fileExists) {
+        const withoutZip = currentFile.replace(/\.zip$/i, '');
+        fileExists = deviceFiles.includes(withoutZip);
+      }
+
+      // Проверяем файл плейлиста, если есть
+      const playlistFileExists = !playlistFile ||
+                                deviceFiles.includes(playlistFile) ||
+                                deviceFiles.includes(playlistFile.replace(/\.zip$/i, ''));
+
+      if (!fileExists || !playlistFileExists) {
+        logger.warn('[Server] Файл из состояния устройства не найден, сбрасываем состояние', {
+          deviceId,
+          currentFile,
+          playlistFile,
+          currentType: device.current.type,
+          fileExists,
+          playlistFileExists,
+          availableFiles: deviceFiles.slice(0, 5),
+          availableStreams: Object.keys(deviceStreams).slice(0, 5)
+        });
+
+        // Сбрасываем состояние на idle
+        device.current = { type: 'idle', file: null, state: 'idle' };
+      }
+    }
+  }
+
+  // Сохраняем обновленное состояние в БД
+  saveDevicesToDB(devices);
+
+  // КРИТИЧНО: Автоматическая очистка несуществующих файлов из БД при старте
+  // Проверяем только если установлена переменная окружения AUTO_CLEANUP_MISSING_FILES=true
+  if (process.env.AUTO_CLEANUP_MISSING_FILES === 'true') {
+    logger.info('[Server] Auto-cleanup enabled, checking for missing files...');
+    cleanupMissingFiles({ deviceId: null, dryRun: false })
+      .then(result => {
+        logger.info('[Server] Auto-cleanup completed', {
+          checked: result.checked,
+          missing: result.missing,
+          deleted: result.deleted,
+          errors: result.errors
+        });
+      })
+      .catch(error => {
+        logger.error('[Server] Auto-cleanup failed', {
+          error: error.message,
+          stack: error.stack
+        });
+      });
+  } else {
+    logger.info('[Server] Auto-cleanup disabled (set AUTO_CLEANUP_MISSING_FILES=true to enable)');
+  }
+}
+
 // Запуск сервера
 server.listen(PORT, HOST, () => {
   logger.info(`Server started on ${HOST}:${PORT} (accessible only through Nginx)`, { 
     host: HOST, 
     port: PORT, 
     env: process.env.NODE_ENV || 'development' 
+  });
+
+  // Переносим тяжелую синхронную подготовку после открытия порта,
+  // чтобы nginx мог увидеть upstream сразу после рестарта.
+  setImmediate(() => {
+    try {
+      hydrateDevicesFromDatabase();
+    } catch (error) {
+      logger.error('[Server] Deferred bootstrap failed', {
+        error: error.message,
+        stack: error.stack
+      });
+    }
   });
 });
 

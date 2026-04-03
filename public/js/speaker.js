@@ -107,23 +107,50 @@ function getStreamPlaybackUrl(deviceId, safeName) {
   return `/api/files/resolve/${encodeURIComponent(deviceId)}/${encodeURIComponent(safeName)}`;
 }
 
+function renderFilesModeSwitch(activeMode = fileListMode) {
+  const isMultiSelection = getSelectedDeviceIds().length > 1;
+  const effectiveMode = isMultiSelection ? 'all' : activeMode;
+
+  if (filesModeDeviceBtn) {
+    filesModeDeviceBtn.style.display = isMultiSelection ? 'none' : '';
+  }
+  if (filesModeAllBtn) {
+    filesModeAllBtn.style.display = '';
+  }
+
+  const activate = (btn, active) => {
+    if (!btn) return;
+    btn.style.background = active ? 'var(--panel)' : 'var(--panel-2)';
+    btn.style.color = active ? 'var(--text)' : 'var(--muted)';
+    btn.style.borderBottomColor = active ? 'transparent' : 'var(--border)';
+    btn.style.boxShadow = active ? '0 -1px 0 var(--panel)' : 'none';
+  };
+
+  activate(filesModeDeviceBtn, effectiveMode === 'device');
+  activate(filesModeAllBtn, effectiveMode === 'all');
+}
+
+function syncFilesModeWithSelection({ skipLoad = false } = {}) {
+  const desiredMode = getSelectedDeviceIds().length > 1 ? 'all' : 'device';
+  if (fileListMode !== desiredMode) {
+    setFilesMode(desiredMode, { skipLoad });
+    return;
+  }
+  renderFilesModeSwitch(fileListMode);
+}
+
 function setFilesMode(mode = 'device', { skipLoad = false } = {}) {
   if (mode !== 'device' && mode !== 'all') return;
+
+  if (getSelectedDeviceIds().length > 1) {
+    mode = 'all';
+  }
+
   fileListMode = mode;
   filePage = 0;
   currentFile = null;
   currentFileSourceDevice = null;
-  if (filesModeDeviceBtn && filesModeAllBtn) {
-    const activate = (btn, active) => {
-      if (!btn) return;
-      btn.style.background = active ? 'var(--panel)' : 'var(--panel-2)';
-      btn.style.color = active ? 'var(--text)' : 'var(--muted)';
-      btn.style.borderBottomColor = active ? 'transparent' : 'var(--border)';
-      btn.style.boxShadow = active ? '0 -1px 0 var(--panel)' : 'none';
-    };
-    activate(filesModeDeviceBtn, mode === 'device');
-    activate(filesModeAllBtn, mode === 'all');
-  }
+  renderFilesModeSwitch(mode);
   // Сбрасываем превью при переключении режима
   if (filePreview) {
     filePreview.innerHTML = '<div class="meta" style="padding:12px; color:var(--muted);">Выберите файл</div>';
@@ -145,8 +172,10 @@ function setFilesMode(mode = 'device', { skipLoad = false } = {}) {
   }
 }
 
-if (filesModeDeviceBtn && filesModeAllBtn) {
+if (filesModeDeviceBtn) {
   filesModeDeviceBtn.addEventListener('click', () => setFilesMode('device'));
+}
+if (filesModeAllBtn) {
   filesModeAllBtn.addEventListener('click', () => setFilesMode('all'));
 }
 
@@ -266,17 +295,21 @@ async function ensureVolumeState(deviceId) {
 }
 
 function sendVolumeCommand(command = {}) {
-  if (!currentDevice || !readyDevices.has(currentDevice)) return;
-  const payload = {
-    device_id: currentDevice,
-    ...command
-  };
-  const hasLevelChange = typeof payload.level === 'number' && !Number.isNaN(payload.level);
-  const hasDeltaChange = typeof payload.delta === 'number' && !Number.isNaN(payload.delta);
-  if (typeof payload.muted === 'undefined' && (hasLevelChange || hasDeltaChange)) {
-    payload.muted = false;
-  }
-  socket.emit('control/volume', payload);
+  const targetDeviceIds = getPanelControlTargetDeviceIds();
+  if (!targetDeviceIds.length) return;
+
+  targetDeviceIds.forEach((deviceId) => {
+    const payload = {
+      device_id: deviceId,
+      ...command
+    };
+    const hasLevelChange = typeof payload.level === 'number' && !Number.isNaN(payload.level);
+    const hasDeltaChange = typeof payload.delta === 'number' && !Number.isNaN(payload.delta);
+    if (typeof payload.muted === 'undefined' && (hasLevelChange || hasDeltaChange)) {
+      payload.muted = false;
+    }
+    socket.emit('control/volume', payload);
+  });
 }
 
 /**
@@ -544,6 +577,99 @@ let folderPlaylistState = null;
 let folderPlaylistIntervalSeconds = DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS;
 const volumeStateByDevice = new Map();
 const VOLUME_STEP = 5;
+const selectedDeviceIds = new Set();
+let touchMultiSelectMode = false;
+const TV_TILE_LONG_PRESS_MS = 450;
+
+function isDesktopMultiSelectEvent(event) {
+  return Boolean(event && (event.ctrlKey || event.metaKey));
+}
+
+function getSelectedDeviceIds() {
+  const selected = Array.from(selectedDeviceIds);
+  if (selected.length) return selected;
+  return currentDevice ? [currentDevice] : [];
+}
+
+function setSingleDeviceSelection(deviceId) {
+  selectedDeviceIds.clear();
+  if (deviceId) {
+    selectedDeviceIds.add(deviceId);
+  }
+  touchMultiSelectMode = false;
+}
+
+function toggleDeviceSelection(deviceId) {
+  if (!deviceId) return;
+  if (selectedDeviceIds.has(deviceId)) {
+    selectedDeviceIds.delete(deviceId);
+  } else {
+    selectedDeviceIds.add(deviceId);
+  }
+  if (!selectedDeviceIds.size) {
+    touchMultiSelectMode = false;
+  }
+}
+
+function pruneSelectedDevices() {
+  const knownDeviceIds = new Set(devices.map((device) => device.device_id));
+  Array.from(selectedDeviceIds).forEach((deviceId) => {
+    if (!knownDeviceIds.has(deviceId)) {
+      selectedDeviceIds.delete(deviceId);
+    }
+  });
+
+  if (currentDevice && !knownDeviceIds.has(currentDevice)) {
+    currentDevice = null;
+  }
+
+  if (!currentDevice && selectedDeviceIds.size) {
+    const [firstSelectedDevice] = Array.from(selectedDeviceIds);
+    currentDevice = firstSelectedDevice || null;
+  }
+
+  if (!selectedDeviceIds.size && currentDevice) {
+    selectedDeviceIds.add(currentDevice);
+  }
+}
+
+function refreshTvSelectionClasses() {
+  if (!tvList) return;
+  tvList.querySelectorAll('.tvTile').forEach((tile) => {
+    const tileId = tile.dataset.id;
+    tile.classList.toggle('active', tileId === currentDevice);
+    tile.classList.toggle('selected', selectedDeviceIds.has(tileId));
+  });
+}
+
+function formatFilesMetaWithSelection(baseText = '') {
+  const selectedCount = getSelectedDeviceIds().length;
+  const cleanBase = (baseText || '').replace(/\s*·\s*выбрано устройств:\s*\d+/i, '').trim();
+  if (!selectedCount) {
+    return cleanBase;
+  }
+  return cleanBase ? `${cleanBase} · выбрано устройств: ${selectedCount}` : `Выбрано устройств: ${selectedCount}`;
+}
+
+function getPanelControlTargetDeviceIds({ allowWithPlayerInfo = false } = {}) {
+  const selectedTargets = getSelectedDeviceIds();
+  if (!selectedTargets.length) return [];
+  return selectedTargets.filter((deviceId) => requireDeviceReady(deviceId, allowWithPlayerInfo));
+}
+
+function emitControlToSelected(eventName, payloadFactory, options = {}) {
+  const targetDeviceIds = getPanelControlTargetDeviceIds(options);
+  if (!targetDeviceIds.length) return [];
+
+  targetDeviceIds.forEach((deviceId) => {
+    const payload = typeof payloadFactory === 'function'
+      ? payloadFactory(deviceId)
+      : { ...payloadFactory };
+    socket.emit(eventName, { device_id: deviceId, ...(payload || {}) });
+  });
+
+  return targetDeviceIds;
+}
 
 // --- Android Launch Button Logic ---
 const launchAndroidBtn = document.getElementById('launchAndroidBtn');
@@ -1213,18 +1339,19 @@ function renderThumbnailGrid(deviceId, safeName, contentType, imageUrls) {
   filePreview.querySelectorAll('.thumbnail-preview').forEach((thumb, idx) => {
     thumb.addEventListener('click', async () => {
       const sourceDeviceId = deviceId;
-      // Целевое устройство: если текущее онлайн — используем его, иначе источник
-      const targetDeviceId = (currentDevice && isDeviceReady(currentDevice))
-        ? currentDevice
-        : (isDeviceReady(sourceDeviceId) ? sourceDeviceId : currentDevice);
-
-      if (!requireDeviceReady(targetDeviceId)) return;
+      const selectedTargets = getSelectedDeviceIds();
+      const targetDeviceIds = selectedTargets.length
+        ? selectedTargets.filter((id) => isDeviceReady(id))
+        : [];
+      if (!targetDeviceIds.length) return;
 
       const page = idx + 1;
-      stopFolderPlaylistIfNeeded('manual thumbnail click', { deviceId: targetDeviceId, file: safeName });
+      targetDeviceIds.forEach((targetDeviceId) => {
+        stopFolderPlaylistIfNeeded('manual thumbnail click', { deviceId: targetDeviceId, file: safeName });
+      });
 
-      // Если источник и цель разные — готовим файл на целевом через play-from-all
-      if (targetDeviceId !== sourceDeviceId) {
+      for (const targetDeviceId of targetDeviceIds) {
+        if (targetDeviceId === sourceDeviceId) continue;
         try {
           const res = await speakerFetch('/api/devices/play-from-all', {
             method: 'POST',
@@ -1248,13 +1375,27 @@ function renderThumbnailGrid(deviceId, safeName, contentType, imageUrls) {
         }
       }
 
-      // Отправляем громкость перед запуском контента
-      sendVolumeBeforePlay(targetDeviceId);
+      targetDeviceIds.forEach((targetDeviceId) => {
+        sendVolumeBeforePlay(targetDeviceId);
+      });
+
+      const useBatchSync = targetDeviceIds.length > 1;
+      if (useBatchSync) {
+        socket.emit('control/play-batch', {
+          device_ids: targetDeviceIds,
+          file: safeName,
+          page,
+          originDeviceId: sourceDeviceId,
+          startDelayMs: 1800
+        });
+        return;
+      }
 
       socket.emit('control/play', {
-        device_id: targetDeviceId,
+        device_id: targetDeviceIds[0],
         file: safeName,
         page,
+        originDeviceId: sourceDeviceId,
       });
     });
   });
@@ -1265,7 +1406,40 @@ function renderThumbnailGrid(deviceId, safeName, contentType, imageUrls) {
       const btnDevice = playlistBtn.getAttribute('data-device');
       const btnFile = playlistBtn.getAttribute('data-file');
       const count = Number(playlistBtn.getAttribute('data-count')) || imageUrls.length;
-      toggleFolderPlaylist(btnDevice, btnFile, count);
+
+      const targetDeviceIds = getPanelControlTargetDeviceIds();
+      const useMultiSelection = targetDeviceIds.length > 1;
+
+      if (!useMultiSelection) {
+        toggleFolderPlaylist(btnDevice, btnFile, count);
+        return;
+      }
+
+      const isActive = playlistBtn.classList.contains('is-active');
+      const intervalSeconds = Math.max(1, folderPlaylistIntervalSeconds || DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS);
+      const activeThumbnail = filePreview.querySelector('.thumbnail-preview.is-active, .thumbnail-preview[data-selected="1"]');
+      const startPage = Math.max(1, Number(activeThumbnail?.getAttribute('data-page')) || 1);
+
+      targetDeviceIds.forEach((targetDeviceId) => {
+        if (isActive) {
+          socket.emit('control/playlistStop', { device_id: targetDeviceId });
+        } else {
+          socket.emit('control/playlistStart', {
+            device_id: targetDeviceId,
+            file: btnFile,
+            intervalSeconds,
+            startPage
+          });
+        }
+      });
+
+      if (isActive) {
+        playlistBtn.classList.remove('is-active');
+        playlistBtn.textContent = 'Плейлист';
+      } else {
+        playlistBtn.classList.add('is-active');
+        playlistBtn.textContent = 'Остановить плейлист';
+      }
       // updateFolderPlaylistButtonState вызывается внутри toggleFolderPlaylist
     });
     // Обновляем состояние кнопки после рендера
@@ -1279,6 +1453,20 @@ function renderThumbnailGrid(deviceId, safeName, contentType, imageUrls) {
         if (!Number.isFinite(nextValue)) return;
         folderPlaylistIntervalSeconds = nextValue;
         updateFolderPlaylistIntervalButtons(nextValue);
+        const selectedTargets = getPanelControlTargetDeviceIds();
+        const playlistBtn = document.getElementById('folderPlaylistBtn');
+        const buttonActive = playlistBtn?.classList?.contains('is-active');
+        const buttonFile = playlistBtn?.getAttribute('data-file') || safeName;
+
+        if (selectedTargets.length > 1 && buttonActive) {
+          selectedTargets.forEach((targetDeviceId) => {
+            socket.emit('control/playlistStart', {
+              device_id: targetDeviceId,
+              file: buttonFile,
+              intervalSeconds: nextValue
+            });
+          });
+        }
         if (folderPlaylistState) {
           folderPlaylistState.intervalSeconds = nextValue;
           // КРИТИЧНО: Проверяем что устройство онлайн перед отправкой команды
@@ -1464,7 +1652,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadDevices()
   ]);
 
-  // Инициализация режима списка (по умолчанию — текущее устройство)
+  // Инициализация режима списка (по умолчанию — файлы выбранного устройства)
   setFilesMode('device', { skipLoad: true });
 
   // Инициализируем режим списка файлов (подсветка кнопок)
@@ -1692,6 +1880,8 @@ async function loadDevices() {
     const pageSize = getMobilePageSize(); // Фиксированное значение 5 на мобильных
     const totalPages = Math.max(1, Math.ceil(devices.length / pageSize));
     if (tvPage >= totalPages) tvPage = totalPages - 1;
+    pruneSelectedDevices();
+    syncFilesModeWithSelection({ skipLoad: true });
     updateDevicesCount();
     renderTVList();
   } catch (error) {
@@ -1704,6 +1894,7 @@ function renderTvTile(device) {
   const name = device.name || nodeNames[device.device_id] || device.device_id;
   const filesCount = device.files?.length ?? 0;
   const isActive = device.device_id === currentDevice;
+  const isSelected = selectedDeviceIds.has(device.device_id);
   const isReady = readyDevices.has(device.device_id);
   const volumeState = getVolumeState(device.device_id);
   const volumeInfo = resolveVolumeIndicator(volumeState, isReady);
@@ -1731,7 +1922,7 @@ function renderTvTile(device) {
       </div>
     `;
   return `
-    <li class="tvTile${isActive ? ' active' : ''}" data-id="${device.device_id}">
+    <li class="tvTile${isActive ? ' active' : ''}${isSelected ? ' selected' : ''}" data-id="${device.device_id}">
       <div class="tvTile-content">
         <div class="tvTile-header">
           <div class="title tvTile-name">${name}</div>
@@ -1761,8 +1952,79 @@ function renderTVList() {
   tvList.innerHTML = pageItems.map(renderTvTile).join('');
 
   tvList.querySelectorAll('.tvTile').forEach(item => {
-    item.onclick = async () => { await selectDevice(item.dataset.id); };
+    const deviceId = item.dataset.id;
+    if (!deviceId) return;
+
+    let longPressTimer = null;
+    const clearLongPress = () => {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+    };
+
+    item.addEventListener('touchstart', () => {
+      clearLongPress();
+      longPressTimer = setTimeout(async () => {
+        item.dataset.longPressTriggered = '1';
+
+        if (!touchMultiSelectMode) {
+          touchMultiSelectMode = true;
+          selectedDeviceIds.clear();
+          selectedDeviceIds.add(deviceId);
+        } else {
+          toggleDeviceSelection(deviceId);
+        }
+
+        syncFilesModeWithSelection({ skipLoad: true });
+
+        await selectDevice(deviceId, false, { preserveSelection: true });
+      }, TV_TILE_LONG_PRESS_MS);
+    }, { passive: true });
+
+    item.addEventListener('touchend', clearLongPress, { passive: true });
+    item.addEventListener('touchcancel', clearLongPress, { passive: true });
+    item.addEventListener('touchmove', clearLongPress, { passive: true });
+
+    item.addEventListener('click', async (event) => {
+      if (item.dataset.longPressTriggered === '1') {
+        item.dataset.longPressTriggered = '0';
+        event.preventDefault();
+        return;
+      }
+
+      const isMultiSelect = isDesktopMultiSelectEvent(event) || touchMultiSelectMode;
+      if (!isMultiSelect) {
+        setSingleDeviceSelection(deviceId);
+        await selectDevice(deviceId, true, { preserveSelection: true });
+        return;
+      }
+
+      toggleDeviceSelection(deviceId);
+
+      if (!selectedDeviceIds.size) {
+        setSingleDeviceSelection(currentDevice || deviceId);
+      }
+
+      if (currentDevice && !selectedDeviceIds.has(currentDevice)) {
+        const [nextPrimaryDevice] = Array.from(selectedDeviceIds);
+        if (nextPrimaryDevice) {
+          await selectDevice(nextPrimaryDevice, false, { preserveSelection: true });
+          return;
+        }
+      }
+
+      syncFilesModeWithSelection();
+
+      refreshTvSelectionClasses();
+      const meta = document.getElementById('filesPaneMeta');
+      if (meta) {
+        meta.textContent = formatFilesMetaWithSelection(meta.textContent || '');
+      }
+    });
   });
+
+  refreshTvSelectionClasses();
 
   // Рендер пейджера под списком (теперь находится в HTML)
   const pager = document.getElementById('tvPager');
@@ -1851,9 +2113,18 @@ function showLivePreviewForTV(deviceId, force = false) {
 }
 
 /* Выбор устройства: обновляем подсветку и список файлов, не сбрасывая выбранный файл, если он ещё существует */
-async function selectDevice(id, resetPage = true) {
+async function selectDevice(id, resetPage = true, { preserveSelection = false } = {}) {
+  if (!id) return;
+
+  if (!preserveSelection) {
+    setSingleDeviceSelection(id);
+  } else {
+    selectedDeviceIds.add(id);
+  }
+
   const previousDevice = currentDevice;
   currentDevice = id;
+  syncFilesModeWithSelection({ skipLoad: true });
   const isDeviceSwitch = previousDevice && previousDevice !== id;
   if (isDeviceSwitch) {
     previewManuallyClosed = false;
@@ -1881,22 +2152,13 @@ async function selectDevice(id, resetPage = true) {
   const url = new URL(location.href);
   url.searchParams.set('device_id', id);
   history.replaceState(null, '', url.toString());
-  
-  tvList.querySelectorAll('.tvTile').forEach(li => li.classList.remove('active'));
-  const item = tvList.querySelector(`.tvTile[data-id="${id}"]`);
-  if (item) item.classList.add('active');
+  refreshTvSelectionClasses();
   
   // ИСПРАВЛЕНО: При явном выборе устройства снимаем подсветку файлов
   if (resetPage) {
     fileList.querySelectorAll('.file-item').forEach(item => item.classList.remove('active'));
   }
   
-  // КРИТИЧНО: При смене устройства возвращаемся в режим "Текущее"
-  // Но НЕ сбрасываем режим, если устройство не изменилось (например, при обновлении состояния)
-  if (isDeviceSwitch) {
-    setFilesMode('device', { skipLoad: true });
-  }
-
   // КРИТИЧНО: Обновляем кэш метаданных для нового устройства ДО загрузки файлов
   // Это гарантирует, что resolveFileDisplayData найдет правильные originalName
   const newDevice = devices.find(d => d.device_id === id);
@@ -1924,7 +2186,7 @@ async function loadFiles() {
   const deviceName = device ? (device.name || nodeNames[currentDevice] || currentDevice) : currentDevice;
   
   const meta = document.getElementById('filesPaneMeta');
-  if (meta) meta.textContent = 'Загрузка...';
+  if (meta) meta.textContent = formatFilesMetaWithSelection('Загрузка...');
   
   updatePlaybackInfoUI();
   
@@ -1933,7 +2195,7 @@ async function loadFiles() {
     if (!res.ok) {
       console.error('Не удалось загрузить файлы:', res.status);
       fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-xl)"><div class="meta">Ошибка загрузки файлов</div></li>';
-      if (meta) meta.textContent = '0 файлов';
+      if (meta) meta.textContent = formatFilesMetaWithSelection('0 файлов');
       return;
     }
     const filesData = await res.json();
@@ -1974,12 +2236,15 @@ async function loadFiles() {
     `;
     const pager = document.getElementById('filePager');
     if (pager) pager.innerHTML = '';
-    if (meta) meta.textContent = '0 файлов';
+    if (meta) meta.textContent = formatFilesMetaWithSelection('0 файлов');
     return;
   }
   
   const totalFilesCount = allFiles.length;
-  if (meta) meta.textContent = `${totalFilesCount} файл${totalFilesCount === 1 ? '' : totalFilesCount > 1 && totalFilesCount < 5 ? 'а' : 'ов'}`;
+  if (meta) {
+    const filesText = `${totalFilesCount} файл${totalFilesCount === 1 ? '' : totalFilesCount > 1 && totalFilesCount < 5 ? 'а' : 'ов'}`;
+    meta.textContent = formatFilesMetaWithSelection(filesText);
+  }
   
   updatePlaybackInfoUI();
 
@@ -2458,30 +2723,27 @@ async function loadFiles() {
   await syncPreviewWithPlayerState();
 }
 
-/* Агрегированный список файлов по всем устройствам с запуском на выбранное */
+/* Агрегированный список файлов по всем устройствам с запуском на выбранные устройства */
 async function loadAllFilesAggregated() {
   const title = document.getElementById('filesPaneTitle');
   const meta = document.getElementById('filesPaneMeta');
 
   if (!currentDevice) {
     if (title) title.textContent = 'Все файлы';
-    if (meta) meta.textContent = 'Выберите целевое устройство слева';
+    if (meta) meta.textContent = 'Выберите устройство слева';
     fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-xl)"><div class="meta">Выберите устройство слева</div></li>';
     return;
   }
 
-  const targetName = getDeviceDisplayName(currentDevice);
-  if (title) title.textContent = `Все файлы → на ${targetName}`;
-  if (meta) meta.textContent = 'Загрузка...';
+  if (title) title.textContent = 'Все файлы';
+  if (meta) meta.textContent = formatFilesMetaWithSelection('Загрузка...');
 
   try {
-    // Исключаем файлы выбранного устройства из списка "Все файлы"
-    const excludeParam = currentDevice ? `&excludeDevice=${encodeURIComponent(currentDevice)}` : '';
-    const res = await speakerFetch(`/api/devices/all/files?limit=${ALL_FILES_LIMIT}${excludeParam}`);
+    const res = await speakerFetch(`/api/devices/all/files?limit=${ALL_FILES_LIMIT}`);
     if (!res.ok) {
       console.error('Не удалось загрузить все файлы:', res.status);
       fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-xl)"><div class="meta">Ошибка загрузки файлов</div></li>';
-      if (meta) meta.textContent = '0 файлов';
+      if (meta) meta.textContent = formatFilesMetaWithSelection('0 файлов');
       return;
     }
     const data = await res.json();
@@ -2528,12 +2790,15 @@ async function loadAllFilesAggregated() {
       `;
       const pager = document.getElementById('filePager');
       if (pager) pager.innerHTML = '';
-      if (meta) meta.textContent = '0 файлов';
+      if (meta) meta.textContent = formatFilesMetaWithSelection('0 файлов');
       return;
     }
 
     const totalFilesCount = data.total || allFiles.length;
-    if (meta) meta.textContent = `${totalFilesCount} файл${totalFilesCount === 1 ? '' : totalFilesCount > 1 && totalFilesCount < 5 ? 'а' : 'ов'} · все устройства`;
+    if (meta) {
+      const filesText = `${totalFilesCount} файл${totalFilesCount === 1 ? '' : totalFilesCount > 1 && totalFilesCount < 5 ? 'а' : 'ов'} · все устройства`;
+      meta.textContent = formatFilesMetaWithSelection(filesText);
+    }
 
     const pageSize = getMobilePageSize('file');
     const totalPages = Math.max(1, Math.ceil(allFiles.length / pageSize));
@@ -2755,7 +3020,6 @@ async function loadAllFilesAggregated() {
     fileList.querySelectorAll('.playBtn').forEach(btn => {
       btn.onclick = async (e) => {
         e.stopPropagation();
-        if (!requireDeviceReady(currentDevice)) return;
         const safeName = decodeURIComponent(btn.getAttribute('data-safe'));
         const contentType = (btn.closest('.file-item')?.getAttribute('data-content-type')) || null;
         const streamProtocol = btn.getAttribute('data-stream-protocol') || '';
@@ -2777,19 +3041,19 @@ async function handlePlayAggregated({ sourceDeviceId, safeName, contentType, str
     return;
   }
 
-  // Целевое устройство: приоритет у выбранного онлайн, иначе источник
-  const targetDeviceId = (currentDevice && isDeviceReady(currentDevice)) ? currentDevice : sourceDeviceId;
-  if (!targetDeviceId) {
-    alert('Не найдено целевое устройство');
+  const selectedTargets = getSelectedDeviceIds();
+  const targetDeviceIds = selectedTargets.length
+    ? selectedTargets
+    : (currentDevice ? [currentDevice] : [sourceDeviceId]);
+  const readyTargetDeviceIds = targetDeviceIds.filter((deviceId) => isDeviceReady(deviceId));
+
+  if (!readyTargetDeviceIds.length) {
+    alert('Нет онлайн-устройств для запуска');
     return;
   }
-  // Проверяем только целевое устройство (источник может быть офлайн)
-  if (!requireDeviceReady(targetDeviceId)) return;
 
   setCurrentFileSelection(safeName, rowEl, sourceDeviceId);
   previewManuallyClosed = false;
-  stopFolderPlaylistIfNeeded('manual play button', { deviceId: targetDeviceId, file: safeName });
-  sendVolumeBeforePlay(targetDeviceId);
 
   // Определяем тип файла (приоритет contentType из БД)
   const normalizedType = resolveContentType({
@@ -2798,23 +3062,44 @@ async function handlePlayAggregated({ sourceDeviceId, safeName, contentType, str
     fallbackToFolder: true
   });
 
+  const useBatchSync = readyTargetDeviceIds.length > 1;
+  const emitPlayCommand = (payload = {}) => {
+    if (useBatchSync) {
+      socket.emit('control/play-batch', {
+        device_ids: readyTargetDeviceIds,
+        ...payload,
+        startDelayMs: 1800
+      });
+      return;
+    }
+
+    socket.emit('control/play', {
+      device_id: readyTargetDeviceIds[0],
+      ...payload
+    });
+  };
+
+  // Для нескольких выбранных устройств запускаем отправку максимально близко по времени
+  readyTargetDeviceIds.forEach((deviceId) => {
+    stopFolderPlaylistIfNeeded('manual play button', { deviceId, file: safeName });
+    sendVolumeBeforePlay(deviceId);
+  });
+
   // Стримы
   if (normalizedType === 'streaming') {
-    const payload = { 
-      device_id: targetDeviceId, 
-      file: safeName, 
-      type: 'streaming', 
+    emitPlayCommand({
+      file: safeName,
+      type: 'streaming',
       streamProtocol: streamProtocol || undefined,
       originDeviceId: sourceDeviceId // КРИТИЧНО: Указываем устройство-источник для поиска стрима
-    };
-    socket.emit('control/play', payload);
+    });
     return;
   }
 
   // Статический контент (папка/PDF/PPTX) — показываем превью как локальный клик
   const isStaticContent = STATIC_CONTENT_TYPES.has(normalizedType);
   if (isStaticContent) {
-    const previewDeviceId = sourceDeviceId || targetDeviceId;
+    const previewDeviceId = sourceDeviceId || readyTargetDeviceIds[0];
     const previewContentType = normalizedType || 'folder';
 
     const loadPreview = async () => {
@@ -2826,26 +3111,33 @@ async function handlePlayAggregated({ sourceDeviceId, safeName, contentType, str
       setTimeout(loadPreview, 0);
     }
 
-    // Воспроизводим напрямую на устройстве-источнике
-    socket.emit('control/play', { device_id: targetDeviceId, file: safeName, type: normalizedType || previewContentType || 'folder', page: 1, originDeviceId: sourceDeviceId });
+    emitPlayCommand({
+      file: safeName,
+      type: normalizedType || previewContentType || 'folder',
+      page: 1,
+      originDeviceId: sourceDeviceId
+    });
     return;
   }
 
   // Одиночные изображения
   if (normalizedType === 'image') {
-    socket.emit('control/play', { device_id: targetDeviceId, file: safeName, type: 'image', page: 1, originDeviceId: sourceDeviceId });
+    emitPlayCommand({
+      file: safeName,
+      type: 'image',
+      page: 1,
+      originDeviceId: sourceDeviceId
+    });
     return;
   }
 
   // Видео по умолчанию (без копирования)
-  const payload = {
-    device_id: targetDeviceId,
+  emitPlayCommand({
     file: safeName,
     type: normalizedType || 'video',
     streamProtocol: undefined,
     originDeviceId: sourceDeviceId
-  };
-  socket.emit('control/play', payload);
+  });
 }
 
 /* Установка выбранного файла и подсветка строки */
@@ -3834,49 +4126,49 @@ socket.on('player/progress', ({ device_id, type, file, currentTime, duration, pa
 // playBtn в head - ТОЛЬКО для снятия видео с паузы (resume)
 // Для запуска файла используется playBtn в списке файлов
 document.getElementById('playBtn').onclick = () => {
-  if (!requireDeviceReady(currentDevice)) return;
-  
-  const device = devices.find(d => d.device_id === currentDevice);
-  
-  // Если устройство на паузе - продолжаем воспроизведение (resume)
-  if (device && device.current && device.current.state === 'paused') {
-    // Отправляем громкость перед возобновлением
-    sendVolumeBeforePlay(currentDevice);
-    socket.emit('control/play', { device_id: currentDevice }); // Сервер отправит player/resume
-    // Обновляем локальное состояние
-    device.current.state = 'playing';
-  } 
-  // Иначе пробуем resume (если было что-то до перезапуска сервера, но состояние не обновилось)
-  else {
-    // Отправляем громкость перед возобновлением
-    sendVolumeBeforePlay(currentDevice);
-    socket.emit('control/play', { device_id: currentDevice }); // Сервер отправит player/resume если есть текущий контент
-  }
+  const targetDeviceIds = getPanelControlTargetDeviceIds();
+  if (!targetDeviceIds.length) return;
+
+  targetDeviceIds.forEach((deviceId) => {
+    const device = devices.find(d => d.device_id === deviceId);
+    sendVolumeBeforePlay(deviceId);
+    socket.emit('control/play', { device_id: deviceId }); // Сервер отправит player/resume
+    if (device && device.current && device.current.state === 'paused') {
+      device.current.state = 'playing';
+    }
+  });
   // КРИТИЧНО: НЕ запускаем файл из currentFile - для этого используется playBtn в списке файлов
 };
 
 document.getElementById('pauseBtn').onclick = () => {
-  if (!requireDeviceReady(currentDevice)) return;
-  
-  const device = devices.find(d => d.device_id === currentDevice);
-  
-  // Обновляем локальное состояние устройства на "пауза"
-  if (device && device.current) {
-    device.current.state = 'paused';
-  }
-  
-  socket.emit('control/pause', { device_id: currentDevice });
+  const targetDeviceIds = getPanelControlTargetDeviceIds();
+  if (!targetDeviceIds.length) return;
+
+  targetDeviceIds.forEach((deviceId) => {
+    const device = devices.find(d => d.device_id === deviceId);
+    if (device && device.current) {
+      device.current.state = 'paused';
+    }
+    socket.emit('control/pause', { device_id: deviceId });
+  });
 };
 document.getElementById('restartBtn').onclick = () => {
-  if (!requireDeviceReady(currentDevice)) return;
-  socket.emit('control/restart', { device_id: currentDevice });
+  const targetDeviceIds = getPanelControlTargetDeviceIds();
+  if (!targetDeviceIds.length) return;
+  targetDeviceIds.forEach((deviceId) => {
+    socket.emit('control/restart', { device_id: deviceId });
+  });
 };
 document.getElementById('stopBtn').onclick = () => {
-  if (!requireDeviceReady(currentDevice, true)) return; // Разрешаем стоп при наличии информации о воспроизведении
+  const targetDeviceIds = getPanelControlTargetDeviceIds({ allowWithPlayerInfo: true });
+  if (!targetDeviceIds.length) return; // Разрешаем стоп при наличии информации о воспроизведении
+
   stopFolderPlaylist('toolbar stop');
-  socket.emit('control/stop', { device_id: currentDevice });
-  // Мгновенно убираем таймер при стопе
-  playbackProgressByDevice.delete(currentDevice);
+  targetDeviceIds.forEach((deviceId) => {
+    socket.emit('control/playlistStop', { device_id: deviceId });
+    socket.emit('control/stop', { device_id: deviceId });
+    playbackProgressByDevice.delete(deviceId);
+  });
   updatePlaybackInfoUI();
 };
 
@@ -3929,8 +4221,8 @@ if (videoProgressBar) {
   });
   
   videoProgressBar.addEventListener('change', (e) => {
-    // КРИТИЧНО: Проверяем что устройство онлайн
-    if (!requireDeviceReady(currentDevice)) {
+    const targetDeviceIds = getPanelControlTargetDeviceIds();
+    if (!targetDeviceIds.length) {
       isVideoSeeking = false;
       if (videoProgressTooltip) videoProgressTooltip.style.display = 'none';
       return;
@@ -3958,14 +4250,16 @@ if (videoProgressBar) {
     const percent = parseFloat(progressBar.value);
     const targetTime = Math.floor((percent / 100) * duration);
     
-    socket.emit('control/seek', { 
-      device_id: currentDevice, 
-      file: file,
-      position: targetTime 
-    });
-    socket.emit('player/seek', { 
-      device_id: currentDevice, 
-      position: targetTime 
+    targetDeviceIds.forEach((deviceId) => {
+      socket.emit('control/seek', {
+        device_id: deviceId,
+        file: file,
+        position: targetTime
+      });
+      socket.emit('player/seek', {
+        device_id: deviceId,
+        position: targetTime
+      });
     });
     
     // Обновляем локальный прогресс только если файл совпадает
@@ -3986,26 +4280,29 @@ if (pdfPrevBtn) {
   pdfPrevBtn.onclick = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    // КРИТИЧНО: Проверяем только устройство, где воспроизводится (currentDevice), а не источник файла
-    // Источник может быть офлайн, но это не должно блокировать навигацию на целевом устройстве
-    if (!requireDeviceReady(currentDevice)) return;
+    const targetDeviceIds = getPanelControlTargetDeviceIds();
+    if (!targetDeviceIds.length) return;
     console.log('[Speaker] ◀ Назад clicked');
-    socket.emit('control/pdfPrev', { device_id: currentDevice });
+    targetDeviceIds.forEach((deviceId) => {
+      socket.emit('control/pdfPrev', { device_id: deviceId });
+    });
   };
 }
 if (pdfNextBtn) {
   pdfNextBtn.onclick = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    // КРИТИЧНО: Проверяем только устройство, где воспроизводится (currentDevice), а не источник файла
-    // Источник может быть офлайн, но это не должно блокировать навигацию на целевом устройстве
-    if (!requireDeviceReady(currentDevice)) return;
+    const targetDeviceIds = getPanelControlTargetDeviceIds();
+    if (!targetDeviceIds.length) return;
     console.log('[Speaker] Вперёд ▶ clicked');
-    socket.emit('control/pdfNext', { device_id: currentDevice });
+    targetDeviceIds.forEach((deviceId) => {
+      socket.emit('control/pdfNext', { device_id: deviceId });
+    });
   };
 }
 document.getElementById('pdfCloseBtn').onclick = () => {
-  if (!requireDeviceReady(currentDevice, true)) return; // Разрешаем закрыть при наличии информации о воспроизведении
+  const targetDeviceIds = getPanelControlTargetDeviceIds({ allowWithPlayerInfo: true });
+  if (!targetDeviceIds.length) return; // Разрешаем закрыть при наличии информации о воспроизведении
   
   // Устанавливаем флаг что пользователь ЯВНО закрыл превью
   previewManuallyClosed = true;
@@ -4044,10 +4341,12 @@ document.getElementById('pdfCloseBtn').onclick = () => {
     }
   }
   
-  // Останавливаем воспроизведение
-  if (requireDeviceReady(currentDevice, true)) { // Разрешаем при наличии информации о воспроизведении
-    socket.emit('control/stop', { device_id: currentDevice });
-  }
+  // Останавливаем воспроизведение и серверный плейлист на всех выбранных устройствах
+  targetDeviceIds.forEach((deviceId) => {
+    socket.emit('control/playlistStop', { device_id: deviceId });
+    socket.emit('control/stop', { device_id: deviceId });
+    playbackProgressByDevice.delete(deviceId);
+  });
   
   // Сбрасываем выбранный файл
   currentFile = null;
@@ -4076,7 +4375,7 @@ const onDevicesUpdated = debounce(async () => {
   
   if (prevDevice && devices.find(d => d.device_id === prevDevice)) {
     // ИСПРАВЛЕНО: НЕ сбрасываем страницу при обновлении (false)
-    await selectDevice(prevDevice, false);
+    await selectDevice(prevDevice, false, { preserveSelection: true });
     if (prevFile) {
       const btn = fileList.querySelector(`.previewBtn[data-safe='${encodeURIComponent(prevFile)}']`);
       if (btn) {
@@ -4543,10 +4842,12 @@ function attachTouchGestures() {
     const dx = t.clientX - startX;
     const dy = t.clientY - startY;
     if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) {
-      // КРИТИЧНО: Проверяем что устройство онлайн
-      if (!requireDeviceReady(currentDevice)) return;
-      if (dx < 0) socket.emit('control/pdfNext', { device_id: currentDevice });
-      else socket.emit('control/pdfPrev', { device_id: currentDevice });
+      const targetDeviceIds = getPanelControlTargetDeviceIds();
+      if (!targetDeviceIds.length) return;
+      targetDeviceIds.forEach((deviceId) => {
+        if (dx < 0) socket.emit('control/pdfNext', { device_id: deviceId });
+        else socket.emit('control/pdfPrev', { device_id: deviceId });
+      });
     }
   }, { passive: true });
 }
