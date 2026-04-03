@@ -15,7 +15,6 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   card.className = 'card';
   card.style.display = 'flex';
   card.style.flexDirection = 'column';
-  card.style.height = '100%';
   card.style.minHeight = '0';
   const name = d.name || nodeNames[d.device_id] || d.device_id;
   const playerUrl = `${window.location.origin}/player-videojs.html?device_id=${did}`;

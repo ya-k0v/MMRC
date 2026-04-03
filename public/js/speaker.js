@@ -673,8 +673,13 @@ function emitControlToSelected(eventName, payloadFactory, options = {}) {
 
 // --- Android Launch Button Logic ---
 const launchAndroidBtn = document.getElementById('launchAndroidBtn');
+let speakerInitialChecked = false; // После загрузки страницы через 2с разрешаем показывать кнопку
+
 function updateLaunchAndroidBtn() {
   if (!launchAndroidBtn) return;
+  // Пока не прошла первичная задержка после загрузки — не показываем кнопку
+  if (!speakerInitialChecked) return;
+
   let show = false;
   let disabled = true;
   let device = null;
@@ -751,7 +756,14 @@ if (origRenderTVList) {
 socket.on('devices/updated', triggerLaunchAndroidBtnUpdate);
 socket.on('devices/status', triggerLaunchAndroidBtnUpdate);
 // Первичная инициализация
-setTimeout(updateLaunchAndroidBtn, 0);
+if (launchAndroidBtn) {
+  // Скрываем кнопку сразу при загрузке и делаем первичную проверку через 2 секунды
+  launchAndroidBtn.style.display = 'none';
+  setTimeout(() => {
+    speakerInitialChecked = true;
+    updateLaunchAndroidBtn();
+  }, 2000);
+}
 const VOLUME_SOCKET_WAIT_MS = 1500;
 const volumeFallbackTimers = new Map();
 let isVideoSeeking = false;
@@ -4402,6 +4414,8 @@ socket.on('player/online', ({ device_id }) => {
   if (device_id === currentDevice) {
     updateVolumeUI();
     ensureVolumeState(device_id);
+    // Если устройство стало онлайн — скрываем кнопку сразу
+    updateLaunchAndroidBtn();
   }
 });
 socket.on('player/offline', ({ device_id }) => {
@@ -4409,6 +4423,13 @@ socket.on('player/offline', ({ device_id }) => {
   renderTVList();
   if (device_id === currentDevice) {
     updateVolumeUI();
+    // Ждём 3 секунды — если устройство всё ещё оффлайн, показываем кнопку
+    setTimeout(() => {
+      if (!readyDevices.has(device_id)) {
+        // Разрешаем показать (если первичная загрузка уже прошла)
+        if (speakerInitialChecked) updateLaunchAndroidBtn();
+      }
+    }, 3000);
   }
 });
 

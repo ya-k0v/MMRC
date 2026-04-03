@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5"/>
+  <meta http-equiv="refresh" content="5"/>
+  <title>MMRC запускается</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #08111f;
+      --bg2: #101c31;
+      --panel: rgba(12, 19, 32, 0.88);
+      --border: rgba(148, 163, 184, 0.18);
+      --text: #e5eefb;
+      --muted: #94a3b8;
+      --accent: #60a5fa;
+      --accent2: #34d399;
+      --shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      height: 100%;
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top, rgba(96, 165, 250, 0.18), transparent 36%),
+        radial-gradient(circle at bottom right, rgba(52, 211, 153, 0.12), transparent 28%),
+        linear-gradient(160deg, var(--bg) 0%, var(--bg2) 100%);
+      color: var(--text);
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+    }
+
+    .wrap {
+      width: min(720px, calc(100vw - 32px));
+      padding: 28px;
+    }
+
+    .card {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 28px;
+      background: linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(10, 15, 28, 0.96));
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+      padding: 34px;
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(96, 165, 250, 0.12), transparent 34%, rgba(52, 211, 153, 0.1));
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      border: 1px solid rgba(96, 165, 250, 0.22);
+      border-radius: 999px;
+      color: var(--accent);
+      background: rgba(96, 165, 250, 0.08);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 28px;
+      align-items: center;
+      position: relative;
+      z-index: 1;
+    }
+
+    h1 {
+      margin: 18px 0 12px;
+      font-size: clamp(34px, 5vw, 58px);
+      line-height: 0.98;
+      letter-spacing: -0.05em;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.7;
+      max-width: 56ch;
+    }
+
+    .status {
+      margin-top: 22px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 16px;
+      border-radius: 16px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      background: rgba(15, 23, 42, 0.7);
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent2);
+      box-shadow: 0 0 18px rgba(52, 211, 153, 0.7);
+      animation: pulse 1.4s ease-in-out infinite;
+    }
+
+    .loader {
+      width: min(100%, 280px);
+      aspect-ratio: 1;
+      border-radius: 28px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      background:
+        radial-gradient(circle at center, rgba(96, 165, 250, 0.14), transparent 48%),
+        rgba(15, 23, 42, 0.7);
+      display: grid;
+      place-items: center;
+      margin-left: auto;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .loader::before,
+    .loader::after {
+      content: "";
+      position: absolute;
+      inset: 16px;
+      border-radius: 22px;
+      border: 1px solid rgba(96, 165, 250, 0.2);
+    }
+
+    .loader::after {
+      inset: 34px;
+      border-color: rgba(52, 211, 153, 0.18);
+    }
+
+    .ring {
+      width: 92px;
+      height: 92px;
+      border-radius: 50%;
+      border: 6px solid rgba(148, 163, 184, 0.16);
+      border-top-color: var(--accent);
+      border-right-color: var(--accent2);
+      animation: spin 1.05s linear infinite;
+      position: relative;
+      z-index: 1;
+    }
+
+    .ring::after {
+      content: "";
+      position: absolute;
+      inset: 18px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .footer {
+      margin-top: 18px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 13px;
+      position: relative;
+      z-index: 1;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 0.8; }
+      50% { transform: scale(1.25); opacity: 1; }
+    }
+
+    @media (max-width: 780px) {
+      .wrap { padding: 16px; }
+      .card { padding: 24px; border-radius: 24px; }
+      .grid { grid-template-columns: 1fr; }
+      .loader { margin: 8px auto 0; width: min(100%, 220px); }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="card">
+      <div class="grid">
+        <div>
+          <div class="eyebrow">MMRC · запуск сервера</div>
+          <div class="status">
+            <div class="pill"><span class="dot"></span> Ожидание готовности</div>
+            <div class="pill">Автообновление каждые 5 секунд</div>
+          </div>
+        </div>
+        <div class="loader" aria-hidden="true">
+          <div class="ring"></div>
+        </div>
+      </div>
+      <div class="footer">
+        <span id="lastCheck">Проверка...</span>
+      </div>
+    </section>
+  </div>
+  <script>
+    const lastCheck = document.getElementById('lastCheck');
+    if (lastCheck) {
+      lastCheck.textContent = 'Автообновление включено';
+    }
+  </script>
+</body>
+</html>

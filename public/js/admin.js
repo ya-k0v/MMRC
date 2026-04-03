@@ -46,13 +46,18 @@ setupSocketListeners(socket, {
     const pageSize = getPageSize();
     const totalPages = Math.max(1, Math.ceil(devicesCache.length / pageSize));
     if (tvPage >= totalPages) tvPage = totalPages - 1;
+    let hasSelection = false;
     if (prev && devicesCache.find(d => d.device_id === prev)) {
       openDevice(prev);
       // ИСПРАВЛЕНО: Обновляем список файлов для текущего устройства
       await renderFilesPane(prev);
+      hasSelection = true;
     } else {
-      clearDetail();
-      clearFilesPane();
+      hasSelection = await ensureSelectedDevice();
+    }
+    if (!hasSelection) {
+      clearDetail('Нет устройств', 'Откройте плеер или добавьте устройство в системе.');
+      clearFilesPane('Нет устройств', 'Список файлов появится после подключения устройства.');
     }
     renderTVList();
   },
@@ -270,6 +275,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadDevices();
   renderLayout();
   updateDevicesCount(); // Обновляем счетчик после создания layout
+  clearDetail('Выберите устройство', 'Панель управления и кнопки появятся после выбора устройства из списка слева.');
+  clearFilesPane('Выберите устройство слева', 'Список файлов загрузится автоматически после выбора устройства.');
   
   // Обработчик кнопки Устройства (только для admin)
   const devicesBtn = document.getElementById('devicesBtn');
@@ -281,7 +288,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     devicesBtn.style.display = 'none'; // Speaker не может создавать устройства
   }
   
-  initSelectionFromUrl();
+  await initSelectionFromUrl();
   
   // Инициализируем систему уведомлений (только для админов)
   if (user.role === 'admin' || user.role === 'hero_admin') {
@@ -322,7 +329,7 @@ let resizeTimeout;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimeout);
   resizeTimeout = setTimeout(() => {
-    if (tvList) renderTVList();
+    if (document.getElementById('tvList')) renderTVList();
     // Также перерисовываем список файлов если он открыт
     if (currentDeviceId) renderFilesPane(currentDeviceId);
   }, 250);
@@ -333,7 +340,7 @@ async function loadAndSetNodeNames() {
 }
 function renderLayout() {
   grid.innerHTML = `
-    <div class="card" style="display:flex; flex-direction:column; min-height:0">
+    <div id="devicesPane" class="card admin-panel admin-panel-devices" style="display:flex; flex-direction:column; min-height:0">
       <div class="header" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-sm)">
         <div class="title" style="margin:0; font-size:var(--font-size-base)">Устройства</div>
         <div style="display:flex; align-items:center; gap:var(--space-sm);">
@@ -346,22 +353,22 @@ function renderLayout() {
           </button>
         </div>
       </div>
-      <div style="display:flex; flex-direction:column; gap:var(--space-md); flex:1 1 auto; min-height:0">
+      <div class="admin-panel-body" style="display:flex; flex-direction:column; gap:var(--space-md); flex:1 1 auto; min-height:0">
         <ul id="tvList" class="list" style="flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; display:flex; flex-direction:column; gap:var(--space-sm)"></ul>
         <div id="tvPager" class="meta" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); flex-wrap:wrap"></div>
       </div>
     </div>
 
-    <div id="detailPane" style="min-height:0; display:flex; flex-direction:column"></div>
+    <div id="detailPane" class="admin-panel admin-panel-detail" style="min-height:0; display:flex; flex-direction:column"></div>
 
-    <div id="filesPane" class="card" style="min-height:0; display:flex; flex-direction:column">
+    <div id="filesPane" class="card admin-panel admin-panel-files" style="min-height:0; display:flex; flex-direction:column">
       <div class="header" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-sm)">
         <div class="title" id="filesPaneTitle" style="margin:0; font-size:var(--font-size-base)">Файлы</div>
         <div style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap">
           <div class="meta" id="filesPaneMeta" style="margin:0; white-space:nowrap">Выберите устройство слева</div>
         </div>
       </div>
-      <div style="display:flex; flex-direction:column; gap:var(--space-md); flex:1 1 auto; min-height:0">
+      <div class="admin-panel-body" style="display:flex; flex-direction:column; gap:var(--space-md); flex:1 1 auto; min-height:0">
       <div id="filesPanel" style="flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden"></div>
         <div id="filePagerAdmin" class="meta" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); flex-wrap:wrap"></div>
       </div>
@@ -396,21 +403,79 @@ function guessStreamProtocolFromUrl(url = '') {
 // ------ Заполнение select ------
 /* removed obsolete populateSelect (dropdown was removed) */
 
-// ------ Старт из URL ?device_id ------
-function initSelectionFromUrl() {
-  const url = new URL(location.href);
-  let q = url.searchParams.get('device_id');
+function hasDeviceId(deviceId) {
+  return Boolean(resolveDeviceId(deviceId));
+}
 
-  if (!q && devicesCache.length > 0) {
-    // Если device_id нет в URL, берем первую ноду
-    q = devicesCache[0].device_id;
-    url.searchParams.set('device_id', q);
-    history.replaceState(null, '', url.toString());
+function normalizeDeviceId(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function resolveDeviceId(candidate) {
+  const normalized = normalizeDeviceId(candidate);
+  if (!normalized) return null;
+
+  const exact = devicesCache.find(d => d.device_id === normalized);
+  if (exact) return exact.device_id;
+
+  const lowered = normalized.toLowerCase();
+  const caseInsensitive = devicesCache.find(d => String(d.device_id || '').toLowerCase() === lowered);
+  return caseInsensitive ? caseInsensitive.device_id : null;
+}
+
+function getFallbackDeviceId() {
+  if (!devicesCache.length) return null;
+  const ready = devicesCache.find(d => readyDevices.has(d.device_id));
+  const fallback = ready || devicesCache[0];
+  return fallback && fallback.device_id ? fallback.device_id : null;
+}
+
+async function ensureSelectedDevice(preferredId = null) {
+  const url = new URL(location.href);
+  const queryDeviceId = normalizeDeviceId(url.searchParams.get('device_id'));
+
+  const candidates = [preferredId, queryDeviceId, currentDeviceId, getFallbackDeviceId()];
+  let targetDeviceId = null;
+  for (const candidate of candidates) {
+    const resolved = resolveDeviceId(candidate);
+    if (resolved) {
+      targetDeviceId = resolved;
+      break;
+    }
   }
 
-  if (q && devicesCache.find(d => d.device_id === q)) {
-    openDevice(q);
-    renderFilesPane(q);
+  if (!targetDeviceId && devicesCache.length) {
+    targetDeviceId = devicesCache[0].device_id;
+  }
+
+  if (!targetDeviceId) {
+    currentDeviceId = null;
+    return false;
+  }
+
+  if (queryDeviceId && queryDeviceId !== targetDeviceId) {
+    // Нормализуем URL, если параметр device_id невалиден или отличается регистром.
+    openDeviceHelper(targetDeviceId);
+  }
+
+  openDevice(targetDeviceId);
+  try {
+    await renderFilesPane(targetDeviceId);
+  } catch (err) {
+    console.warn('[Admin] Не удалось загрузить список файлов для выбранного устройства', targetDeviceId, err?.message || err);
+    clearFilesPane('Ошибка загрузки файлов', 'Повторите попытку позже или проверьте подключение к серверу.');
+  }
+  renderTVList();
+  return true;
+}
+
+// ------ Старт из URL ?device_id ------
+async function initSelectionFromUrl() {
+  const hasSelection = await ensureSelectedDevice();
+  if (!hasSelection) {
+    clearDetail('Нет устройств', 'Откройте плеер или добавьте устройство, чтобы начать управление.');
+    clearFilesPane('Нет устройств', 'Файлы появятся после подключения хотя бы одного устройства.');
+    renderTVList();
   }
 }
 
@@ -428,7 +493,11 @@ function openDevice(id) {
   const d = devicesCache.find(x => x.device_id === id);
   const pane = document.getElementById('detailPane');
   if (!pane) return;
-  if (!d) { clearDetail(); return; }
+  if (!d) {
+    clearDetail('Устройство не найдено', 'Выберите другое устройство в списке слева.');
+    clearFilesPane();
+    return;
+  }
   pane.innerHTML = '';
   pane.appendChild(renderDeviceCard(d));
   setupVolumePanel(d.device_id);

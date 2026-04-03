@@ -3,7 +3,7 @@ Description=MMRC Server v3.1.1
 After=network-online.target local-fs.target
 Wants=network-online.target
 StartLimitIntervalSec=60
-StartLimitBurst=10
+StartLimitBurst=5
 RequiresMountsFor=/mnt/videocontrol-data
 
 [Service]
@@ -11,9 +11,10 @@ Type=simple
 User=vcuser
 Group=vcgroup
 WorkingDirectory=/vid/videocontrol
+ExecStartPre=/usr/bin/node /vid/videocontrol/scripts/check-startup-compat.js
 ExecStart=/usr/bin/node /vid/videocontrol/server.js
-Restart=always
-RestartSec=5
+Restart=on-failure
+RestartSec=3
 TimeoutStartSec=120
 TimeoutStopSec=30
 StandardOutput=journal

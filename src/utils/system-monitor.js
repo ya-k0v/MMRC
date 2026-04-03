@@ -17,6 +17,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { timerRegistry } from './timer-registry.js';
 
 const execAsync = promisify(exec);
@@ -297,7 +298,7 @@ class SystemMonitor {
   async checkMemoryUsage() {
     try {
       const usage = process.memoryUsage();
-      const totalMemory = require('os').totalmem();
+      const totalMemory = os.totalmem();
       const usedMemory = usage.heapUsed + (usage.external || 0);
       const usagePercent = (usedMemory / totalMemory) * 100;
       

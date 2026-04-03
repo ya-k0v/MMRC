@@ -13,6 +13,13 @@ import { spawn } from 'child_process';
 
 const router = express.Router();
 
+function normalizeFileNameParam(paramValue) {
+  if (Array.isArray(paramValue)) {
+    return paramValue.join('/');
+  }
+  return typeof paramValue === 'string' ? paramValue : '';
+}
+
 /**
  * GET /api/files/resolve/:deviceId/:fileName
  * Резолвит виртуальный путь в физический и отдает файл
@@ -81,8 +88,8 @@ function sendFileWithRange(res, req, metadata, context = {}) {
 }
 
 // Новый эндпоинт для совместимости: поиск файла без привязки к устройству
-router.get('/resolve-all/:fileName(*)', (req, res) => {
-  const fileName = req.params.fileName;
+router.get('/resolve-all/*fileName', (req, res) => {
+  const fileName = normalizeFileNameParam(req.params.fileName);
   if (!fileName) return res.status(400).send('Invalid parameters');
 
   let metadata = getAnyFileMetadataBySafeName(fileName);
@@ -110,9 +117,9 @@ router.get('/resolve-all/:fileName(*)', (req, res) => {
 });
 
 // Старый эндпоинт с fallback на resolve-all
-router.get('/resolve/:deviceId/:fileName(*)', (req, res) => {
+router.get('/resolve/:deviceId/*fileName', (req, res) => {
   const deviceId = sanitizeDeviceId(req.params.deviceId);
-  const fileName = req.params.fileName;
+  const fileName = normalizeFileNameParam(req.params.fileName);
   
   if (!deviceId || !fileName) {
     return res.status(400).send('Invalid parameters');
@@ -149,9 +156,9 @@ router.get('/resolve/:deviceId/:fileName(*)', (req, res) => {
  * GET /api/files/trailer/:deviceId/:fileName
  * Отдаёт готовый трейлер (10s) если он сгенерирован
  */
-router.get('/trailer/:deviceId/:fileName(*)', (req, res) => {
+router.get('/trailer/:deviceId/*fileName', (req, res) => {
   const deviceId = sanitizeDeviceId(req.params.deviceId);
-  const fileName = req.params.fileName;
+  const fileName = normalizeFileNameParam(req.params.fileName);
   
   if (!deviceId || !fileName) {
     return res.status(400).send('Invalid parameters');
@@ -191,9 +198,9 @@ router.get('/trailer/:deviceId/:fileName(*)', (req, res) => {
  * Отдаёт превью-вырезку видео (по умолчанию первые 10 секунд) без полной загрузки файла
  * КРИТИЧНО: Для обычных файлов отдаем напрямую (без ffmpeg), для стримов используем ffmpeg
  */
-router.get('/preview/:deviceId/:fileName(*)', (req, res) => {
+router.get('/preview/:deviceId/*fileName', (req, res) => {
   const deviceId = sanitizeDeviceId(req.params.deviceId);
-  const fileName = req.params.fileName;
+  const fileName = normalizeFileNameParam(req.params.fileName);
   
   if (!deviceId || !fileName) {
     return res.status(400).send('Invalid parameters');

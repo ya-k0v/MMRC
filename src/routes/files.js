@@ -3427,7 +3427,7 @@ export function createFilesRouter(deps) {
   
   // POST /api/devices/:id/cleanup-missing-files - Очистка несуществующих файлов из БД
   // POST /api/devices/cleanup-missing-files - Очистка для всех устройств
-  router.post('/:id?/cleanup-missing-files', requireAdmin, express.json(), async (req, res) => {
+  const cleanupMissingFilesHandler = async (req, res) => {
     try {
       const deviceId = req.params.id ? sanitizeDeviceId(req.params.id) : null;
       const { dryRun = false } = req.body || {};
@@ -3481,7 +3481,10 @@ export function createFilesRouter(deps) {
         message: error.message 
       });
     }
-  });
+  };
+
+  router.post('/cleanup-missing-files', requireAdmin, express.json(), cleanupMissingFilesHandler);
+  router.post('/:id/cleanup-missing-files', requireAdmin, express.json(), cleanupMissingFilesHandler);
   
   return router;
 }

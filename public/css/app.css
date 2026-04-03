@@ -593,8 +593,10 @@ body.light .input {
 
 .tvTile:hover:not(.active) {
   border-color: var(--border-hover);
-  box-shadow: var(--shadow-md);
-  transform: translateY(-2px);
+  /* Убираем сдвиг и сильную тень — это предотвращает визуальные артефакты
+     когда внутри плитки наведены кнопки или элементы, которые сами имеют hover-эффекты. */
+  box-shadow: none;
+  transform: none;
 }
 
 .tvTile.active {
@@ -1528,6 +1530,415 @@ body.light ::-webkit-scrollbar-thumb:hover {
   background: var(--muted-2);
 }
 
+/* ===== Maintenance Theme (Admin + Speaker only) ===== */
+body.maintenance-ui {
+  color-scheme: dark;
+  --bg: #08111f;
+  --bg-2: #101c31;
+  --panel: rgba(15, 23, 42, 0.92);
+  --panel-2: rgba(10, 15, 28, 0.95);
+  --panel-hover: rgba(30, 41, 59, 0.92);
+  --text: #e5eefb;
+  --text-2: #d2def0;
+  --muted: #94a3b8;
+  --muted-2: #7f93b0;
+  --brand: #60a5fa;
+  --brand-2: #3b82f6;
+  --brand-hover: #93c5fd;
+  --brand-light: rgba(96, 165, 250, 0.18);
+  --danger: #f87171;
+  --danger-2: #ef4444;
+  --danger-light: rgba(248, 113, 113, 0.15);
+  --success: #34d399;
+  --warning: #f59e0b;
+  --text-primary: var(--text);
+  --text-secondary: var(--muted);
+  --card-bg: var(--panel);
+  --bg-secondary: var(--panel-2);
+  --border: 1px solid rgba(148, 163, 184, 0.22);
+  --border-2: 1px solid rgba(148, 163, 184, 0.3);
+  --border-hover: 1px solid rgba(148, 163, 184, 0.42);
+  --shadow-sm: 0 8px 22px rgba(2, 6, 23, 0.2);
+  --shadow-md: 0 16px 34px rgba(2, 6, 23, 0.32);
+  --shadow-lg: 0 26px 60px rgba(2, 6, 23, 0.44);
+  --font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at top, rgba(96, 165, 250, 0.16), transparent 36%),
+    radial-gradient(circle at bottom right, rgba(52, 211, 153, 0.12), transparent 30%),
+    linear-gradient(160deg, #08111f 0%, #101c31 100%);
+  position: relative;
+}
+
+body.maintenance-ui::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(96, 165, 250, 0.1), transparent 34%, rgba(52, 211, 153, 0.08));
+  z-index: 0;
+}
+
+body.maintenance-ui > header,
+body.maintenance-ui > main,
+body.maintenance-ui > #modalOverlay {
+  position: relative;
+  z-index: 1;
+}
+
+body.maintenance-ui.light {
+  color-scheme: light;
+  --bg: #dfeaf9;
+  --bg-2: #eef4fc;
+  --panel: rgba(255, 255, 255, 0.86);
+  --panel-2: rgba(245, 250, 255, 0.92);
+  --panel-hover: rgba(235, 243, 253, 0.95);
+  --text: #0f1e34;
+  --text-2: #1f3552;
+  --muted: #49627f;
+  --muted-2: #5f7894;
+  --brand: #2563eb;
+  --brand-2: #1d4ed8;
+  --brand-hover: #3b82f6;
+  --brand-light: rgba(37, 99, 235, 0.12);
+  --danger: #dc2626;
+  --danger-2: #b91c1c;
+  --danger-light: rgba(220, 38, 38, 0.12);
+  --success: #059669;
+  --border: 1px solid rgba(73, 98, 127, 0.26);
+  --border-2: 1px solid rgba(73, 98, 127, 0.34);
+  --border-hover: 1px solid rgba(73, 98, 127, 0.42);
+  --shadow-sm: 0 6px 20px rgba(15, 23, 42, 0.1);
+  --shadow-md: 0 14px 30px rgba(15, 23, 42, 0.14);
+  --shadow-lg: 0 22px 48px rgba(15, 23, 42, 0.18);
+  background:
+    radial-gradient(circle at top, rgba(37, 99, 235, 0.12), transparent 36%),
+    radial-gradient(circle at bottom right, rgba(16, 185, 129, 0.1), transparent 30%),
+    linear-gradient(160deg, #dfeaf9 0%, #eef4fc 100%);
+}
+
+body.maintenance-ui .toolbar {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(10, 15, 28, 0.88));
+  border-bottom: 1px solid rgba(148, 163, 184, 0.26);
+  backdrop-filter: blur(14px);
+}
+
+body.maintenance-ui.light .toolbar {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(245, 250, 255, 0.84));
+  border-bottom-color: rgba(73, 98, 127, 0.3);
+}
+
+body.maintenance-ui .card,
+body.maintenance-ui .panel,
+body.maintenance-ui .tvTile,
+body.maintenance-ui .file-item,
+body.maintenance-ui .uploadBox,
+body.maintenance-ui .dropZone,
+body.maintenance-ui .volume-panel,
+body.maintenance-ui .miniPreview {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(10, 15, 28, 0.96));
+  border-color: rgba(148, 163, 184, 0.24);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(16px);
+}
+
+body.maintenance-ui .file-item {
+  border: 1px solid rgba(148, 163, 184, 0.24) !important;
+}
+
+body.maintenance-ui.light .card,
+body.maintenance-ui.light .panel,
+body.maintenance-ui.light .tvTile,
+body.maintenance-ui.light .file-item,
+body.maintenance-ui.light .uploadBox,
+body.maintenance-ui.light .dropZone,
+body.maintenance-ui.light .volume-panel,
+body.maintenance-ui.light .miniPreview {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(245, 250, 255, 0.92));
+  border-color: rgba(73, 98, 127, 0.28);
+}
+
+body.maintenance-ui.light .file-item {
+  border: 1px solid rgba(73, 98, 127, 0.28) !important;
+}
+
+body.maintenance-ui .file-type-badge,
+body.maintenance-ui .resolution-badge {
+  border-color: rgba(148, 163, 184, 0.28) !important;
+  background: rgba(148, 163, 184, 0.1) !important;
+}
+
+body.maintenance-ui.light .file-type-badge,
+body.maintenance-ui.light .resolution-badge {
+  border-color: rgba(73, 98, 127, 0.28) !important;
+  background: rgba(73, 98, 127, 0.1) !important;
+}
+
+body.maintenance-ui button {
+  backdrop-filter: blur(8px);
+}
+
+body.maintenance-ui button.primary {
+  background: linear-gradient(135deg, #60a5fa, #3b82f6);
+  border-color: rgba(191, 219, 254, 0.72);
+  color: #f8fbff;
+}
+
+body.maintenance-ui button.primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #7cb5fb, #3b82f6);
+  border-color: rgba(191, 219, 254, 0.92);
+  box-shadow: 0 10px 24px rgba(59, 130, 246, 0.45);
+}
+
+body.maintenance-ui.light button.primary {
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  border-color: rgba(37, 99, 235, 0.75);
+  color: #fff;
+}
+
+body.maintenance-ui button.secondary {
+  background: rgba(15, 23, 42, 0.68);
+  border-color: rgba(148, 163, 184, 0.3);
+}
+
+body.maintenance-ui.light button.secondary {
+  background: rgba(255, 255, 255, 0.74);
+  border-color: rgba(73, 98, 127, 0.28);
+}
+
+body.maintenance-ui button.danger {
+  background: rgba(239, 68, 68, 0.22);
+  border-color: rgba(248, 113, 113, 0.7);
+  color: #fecaca;
+}
+
+body.maintenance-ui button.danger:hover:not(:disabled) {
+  background: rgba(220, 38, 38, 0.85);
+  border-color: rgba(248, 113, 113, 0.9);
+  color: #fff;
+}
+
+body.maintenance-ui .input {
+  background: rgba(15, 23, 42, 0.75);
+  border-color: rgba(148, 163, 184, 0.34);
+}
+
+body.maintenance-ui.light .input {
+  background: rgba(255, 255, 255, 0.88);
+  border-color: rgba(73, 98, 127, 0.3);
+}
+
+body.maintenance-ui .input:focus {
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.25);
+}
+
+body.maintenance-ui.light .input:focus {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+}
+
+body.maintenance-ui .tvTile:hover:not(.active),
+body.maintenance-ui .file-item:hover {
+  border-color: rgba(96, 165, 250, 0.52);
+}
+
+body.maintenance-ui .tvTile.active,
+body.maintenance-ui .file-item.active {
+  border: 1px solid rgba(96, 165, 250, 0.82) !important;
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.4), 0 12px 28px rgba(37, 99, 235, 0.3);
+}
+
+body.maintenance-ui.light .tvTile.active,
+body.maintenance-ui.light .file-item.active {
+
+  border: 1px solid rgba(37, 99, 235, 0.62) !important;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.28), 0 10px 24px rgba(37, 99, 235, 0.18);
+}
+
+body.maintenance-ui ::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.55);
+}
+
+body.maintenance-ui ::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.55);
+}
+
+body.maintenance-ui ::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.72);
+}
+
+body.maintenance-ui.light ::-webkit-scrollbar-track {
+  background: rgba(73, 98, 127, 0.14);
+}
+
+body.maintenance-ui.light ::-webkit-scrollbar-thumb {
+  background: rgba(73, 98, 127, 0.42);
+}
+
+body.maintenance-ui.light ::-webkit-scrollbar-thumb:hover {
+  background: rgba(73, 98, 127, 0.58);
+}
+
+/* ===== Admin Layout Stabilization ===== */
+body.admin-page {
+  overflow: hidden;
+}
+
+body.admin-page .admin-main {
+  min-height: 0;
+  overflow: hidden;
+}
+
+body.admin-page #grid {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  align-content: stretch;
+}
+
+body.admin-page #devicesPane,
+body.admin-page #detailPane,
+body.admin-page #filesPane {
+  min-height: 0;
+  height: 100%;
+  min-width: 0;
+}
+
+body.admin-page .admin-panel-body,
+body.admin-page #tvList,
+body.admin-page #filesPanel {
+  min-width: 0;
+}
+
+body.admin-page .admin-panel .header {
+  flex-wrap: wrap;
+}
+
+body.admin-page #devicesPane .admin-panel-body,
+body.admin-page #filesPane .admin-panel-body,
+body.admin-page #tvList,
+body.admin-page #filesPanel {
+  min-height: 0;
+}
+
+body.admin-page #tvList,
+body.admin-page #filesPanel {
+  overflow-y: auto !important;
+  overflow-x: hidden;
+}
+
+body.admin-page #detailPane > .card {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Убираем пустые поля по бокам на широких экранах */
+@media (min-width: 1024px) {
+  body.admin-page #grid {
+    grid-template-columns: minmax(240px, 300px) minmax(360px, 0.95fr) minmax(460px, 1.05fr);
+    grid-template-rows: minmax(0, 1fr);
+    max-width: none;
+    margin: 0;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  body.admin-page #devicesPane {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  body.admin-page #filesPane {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  body.admin-page #detailPane {
+    grid-column: 3;
+    grid-row: 1;
+  }
+}
+
+/* Планшет: стабильные панели без перекрытий */
+@media (min-width: 768px) and (max-width: 1023px) {
+  body.admin-page {
+    height: auto;
+    min-height: 100dvh;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  body.admin-page .admin-main {
+    overflow: visible;
+  }
+
+  body.admin-page #grid {
+    height: auto;
+    min-height: 0;
+    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  body.admin-page #devicesPane {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  body.admin-page #detailPane {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  body.admin-page #filesPane {
+    grid-column: 2;
+    grid-row: 2;
+  }
+}
+
+/* Мобильная компоновка: панели идут друг за другом, контент не скрывается */
+@media (max-width: 767px) {
+  body.admin-page {
+    height: auto;
+    min-height: 100dvh;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  body.admin-page .admin-main {
+    overflow: visible;
+  }
+
+  body.admin-page #grid {
+    height: auto;
+    min-height: 0;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+
+  body.admin-page #devicesPane,
+  body.admin-page #detailPane,
+  body.admin-page #filesPane {
+    height: auto;
+    min-height: auto;
+  }
+
+  body.admin-page #detailPane > .card {
+    height: auto;
+    overflow: visible;
+  }
+
+  body.admin-page #tvList,
+  body.admin-page #filesPanel {
+    overflow-y: visible !important;
+  }
+
+  body.admin-page .file-item {
+    height: auto;
+    min-height: var(--item-min-height);
+  }
+}
+
 /* ========================================
    КЛАССЫ ДЛЯ УПРАВЛЕНИЯ ВИДИМОСТЬЮ
    ======================================== */
@@ -1551,4 +1962,26 @@ body.light ::-webkit-scrollbar-thumb:hover {
 .on-top {
   z-index: 10 !important;
   position: relative;
+}
+
+/* Pastel green override for Android launch button (more pastel success) */
+button.meta-lg[title="Запустить Android-приложение"] {
+  background: rgba(16, 185, 129, 0.548) !important; /* pastel green */
+  color: var(--panel) !important; /* dark text for better contrast */
+  border: 1px solid rgba(16, 185, 129, 0.22) !important;
+  box-shadow: 0 2px 6px rgba(16, 185, 129, 0.12) !important;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+button.meta-lg[title="Запустить Android-приложение"]:hover:not(:disabled) {
+  background: rgba(16, 185, 129, 0.548) !important;
+  box-shadow: 0 4px 10px rgba(16, 185, 129, 0.14) !important;
+}
+
+/* Also allow using .android-pastel to opt-in from markup instead of relying on title */
+button.meta-lg.android-pastel {
+  background: rgba(16, 185, 129, 0.548) !important;
+  color: var(--panel) !important;
+  border: 1px solid rgba(16, 185, 129, 0.22) !important;
+  box-shadow: 0 2px 6px rgba(16, 185, 129, 0.12) !important;
 }
