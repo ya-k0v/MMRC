@@ -3,9 +3,12 @@
  * @module socket/index
  */
 
-import { getOnlineDevices } from './connection-manager.js';
+import { getOnlineDevices, startConnectionCleanup } from './connection-manager.js';
 import { setupDeviceHandlers, handleDisconnect } from './device-handlers.js';
 import { setupControlHandlers } from './control-handlers.js';
+import logger from '../utils/logger.js';
+
+let cleanupStarted = false;
 
 /**
  * Настраивает все Socket.IO обработчики
@@ -13,20 +16,27 @@ import { setupControlHandlers } from './control-handlers.js';
  * @param {Object} deps - Зависимости {devices, getPageSlideCount}
  */
 export function setupSocketHandlers(io, deps) {
-  const { devices, getPageSlideCount } = deps;
+  const { 
+    devices, 
+    getPageSlideCount,
+    deviceVolumeState,
+    getVolumeState,
+    persistVolumeState,
+    applyVolumeCommand
+  } = deps;
   
   io.on('connection', socket => {
     const transport = socket.conn?.transport?.name;
-    console.log(`[Socket.IO] 🔌 connection id=${socket.id} transport=${transport}`);
+    logger.debug(`[Socket.IO] 🔌 connection id=${socket.id}`, { socketId: socket.id, transport });
 
     // Логирование transport events
     if (socket.conn) {
       socket.conn.on('upgrade', () => {
-        console.log(`[Socket.IO] 🚀 transport upgraded for ${socket.id} → ${socket.conn.transport.name}`);
+        logger.debug(`[Socket.IO] 🚀 transport upgraded for ${socket.id}`, { socketId: socket.id, newTransport: socket.conn.transport.name });
       });
       
       socket.conn.on('close', (reason) => {
-        console.warn(`[Socket.IO] 🔌 connection closed id=${socket.id} reason=${reason}`);
+        logger.warn(`[Socket.IO] 🔌 connection closed id=${socket.id}`, { socketId: socket.id, reason });
       });
     }
 
@@ -35,13 +45,34 @@ export function setupSocketHandlers(io, deps) {
       const snapshot = getOnlineDevices();
       socket.emit('players/onlineSnapshot', snapshot);
     } catch (e) {
-      console.error(`[Socket.IO] ❌ Ошибка отправки snapshot:`, e);
+      logger.error(`[Socket.IO] ❌ Ошибка отправки snapshot`, { error: e.message, stack: e.stack, socketId: socket.id });
+    }
+
+    if (deviceVolumeState) {
+      try {
+        const volumeSnapshot = {};
+        for (const [deviceId, state] of Object.entries(deviceVolumeState)) {
+          volumeSnapshot[deviceId] = {
+            level: state.level,
+            muted: state.muted,
+            updated_at: state.updatedAt
+          };
+        }
+        socket.emit('devices/volume/stateBatch', volumeSnapshot);
+      } catch (e) {
+        logger.error(`[Socket.IO] ❌ Ошибка отправки volume snapshot`, { error: e.message, stack: e.stack, socketId: socket.id });
+      }
     }
     
     // Настраиваем обработчики
-    setupDeviceHandlers(socket, { devices, io });
-    setupControlHandlers(socket, { devices, io, getPageSlideCount });
+    setupDeviceHandlers(socket, { devices, io, getVolumeState, persistVolumeState });
+    setupControlHandlers(socket, { devices, io, getPageSlideCount, applyVolumeCommand, getVolumeState });
     handleDisconnect(socket, { io });
   });
+
+  if (!cleanupStarted) {
+    startConnectionCleanup(io);
+    cleanupStarted = true;
+  }
 }
 

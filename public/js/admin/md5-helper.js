@@ -12,7 +12,6 @@
 export async function calculateFileMD5(file, onProgress = null) {
   // Проверяем доступность SparkMD5
   if (typeof SparkMD5 === 'undefined') {
-    console.warn('[MD5] SparkMD5 not available, using fallback');
     return simpleHash(file);
   }
   

@@ -6,32 +6,56 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import { DEVICES } from '../config/constants.js';
+import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { deleteDevice as deleteDeviceFromDB, deleteDeviceFileNames } from '../database/database.js';
 import { createLimiter, deleteLimiter } from '../middleware/rate-limit.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import logger, { logDevice } from '../utils/logger.js';
-import { deleteDeviceFilesMetadata } from '../database/files-metadata.js';
+import { deleteDeviceFilesMetadata, getDeviceFilesMetadata } from '../database/files-metadata.js';
+import { removeStreamJob } from '../streams/stream-manager.js';
+import { requireAuth } from '../middleware/auth.js';
+import { getUserDevices, hasDeviceAccess } from '../middleware/device-access.js';
+import { launchAndroidApp } from '../utils/adb-launcher.js';
 
 const router = express.Router();
 
 /**
  * Настройка роутера для устройств
- * @param {Object} deps - Зависимости {devices, io, saveDevicesJson, fileNamesMap, saveFileNamesMap}
+ * @param {Object} deps - Зависимости {devices, io, saveDevicesJson, fileNamesMap, saveFileNamesMap, onDeviceCreated, onDeviceDeleted}
  * @returns {express.Router} Настроенный роутер
  */
 export function createDevicesRouter(deps) {
-  const { devices, io, saveDevicesJson, fileNamesMap, saveFileNamesMap, requireAdmin } = deps;
+  const { 
+    devices, 
+    io, 
+    saveDevicesJson, 
+    fileNamesMap, 
+    saveFileNamesMap, 
+    requireAdmin,
+    requireSpeaker,
+    onDeviceCreated,
+    onDeviceDeleted
+  } = deps;
   
-  // GET /api/devices - Получить список всех устройств (доступно speaker)
-  router.get('/', (req, res) => {
-    res.json(Object.entries(devices).map(([id, d]) => ({
+  // GET /api/devices - Получить список всех устройств
+  // Фильтрует устройства по доступу пользователя:
+  // - admin: видит все устройства
+  // - speaker: только назначенные устройства
+  // - hero_admin: не имеет доступа к устройствам (своя панель)
+  router.get('/', requireAuth, (req, res) => {
+    // HERO ADMIN не имеет доступа к устройствам
+    if (req.user.role === 'hero_admin') {
+      return res.json([]);
+    }
+
+    let devicesList = Object.entries(devices).map(([id, d]) => ({
       device_id: id, 
       name: d.name, 
       folder: d.folder, 
       files: d.files, 
       fileNames: d.fileNames || d.files,
+      fileMetadata: d.fileMetadata || [],
       current: d.current,
       deviceType: d.deviceType || 'browser',
       capabilities: d.capabilities || { 
@@ -43,8 +67,18 @@ export function createDevicesRouter(deps) {
         streaming: true 
       },
       platform: d.platform || 'Unknown',
-      lastSeen: d.lastSeen || null
-    })));
+      lastSeen: d.lastSeen || null,
+      ipAddress: d.ipAddress || null
+    }));
+
+    // Если пользователь не admin, фильтруем по назначенным устройствам
+    if (req.user.role !== 'admin') {
+      const allowedDevices = getUserDevices(req.user.userId);
+      const allowedDevicesSet = new Set(allowedDevices);
+      devicesList = devicesList.filter(d => allowedDevicesSet.has(d.device_id));
+    }
+
+    res.json(devicesList);
   });
   
   // POST /api/devices - Создать новое устройство (только admin)
@@ -52,14 +86,23 @@ export function createDevicesRouter(deps) {
     const { device_id, name } = req.body;
     
     if (!device_id) {
-      return res.status(400).json({ error: 'device_id required' });
+      return res.status(400).json({ error: 'Требуется device_id' });
     }
     
     if (devices[device_id]) {
-      return res.status(409).json({ error: 'exists' });
+      return res.status(409).json({ error: 'Устройство уже существует' });
     }
     
-    const devicePath = path.join(DEVICES, device_id);
+    // Проверяем уникальность имени устройства
+    const deviceName = name || device_id;
+    const existingDeviceWithSameName = Object.values(devices).find(d => d.name === deviceName);
+    if (existingDeviceWithSameName) {
+      return res.status(409).json({ error: 'Устройство с таким именем уже существует' });
+    }
+    
+    // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+    const devicesPath = getDevicesPath();
+    const devicePath = path.join(devicesPath, device_id);
     fs.mkdirSync(devicePath, { recursive: true });
     
     // КРИТИЧНО: Устанавливаем права 755 на папку устройства
@@ -77,6 +120,14 @@ export function createDevicesRouter(deps) {
       files: [], 
       current: { type: 'idle', file: null, state: 'idle' } 
     };
+    
+    if (typeof onDeviceCreated === 'function') {
+      try {
+        onDeviceCreated(device_id);
+      } catch (err) {
+        logger.warn('[Devices] onDeviceCreated hook failed', { deviceId: device_id, error: err.message });
+      }
+    }
     
     io.emit('devices/updated');
     saveDevicesJson(devices);
@@ -101,14 +152,24 @@ export function createDevicesRouter(deps) {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
-      return res.status(400).json({ error: 'invalid device id' });
+      return res.status(400).json({ error: 'Неверный ID устройства' });
     }
     
     if (!devices[id]) {
-      return res.status(404).json({ error: 'not found' });
+      return res.status(404).json({ error: 'Не найдено' });
     }
     
-    devices[id].name = req.body.name || id;
+    const newName = req.body.name || id;
+    
+    // Проверяем уникальность нового имени (исключая текущее устройство)
+    const existingDeviceWithSameName = Object.entries(devices).find(
+      ([deviceId, d]) => deviceId !== id && d.name === newName
+    );
+    if (existingDeviceWithSameName) {
+      return res.status(409).json({ error: 'Устройство с таким именем уже существует' });
+    }
+    
+    devices[id].name = newName;
     io.emit('devices/updated');
     saveDevicesJson(devices);
     res.json({ ok: true });
@@ -119,16 +180,26 @@ export function createDevicesRouter(deps) {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
-      return res.status(400).json({ error: 'invalid device id' });
+      return res.status(400).json({ error: 'Неверный ID устройства' });
     }
     
     const d = devices[id];
     if (!d) {
-      return res.status(404).json({ error: 'not found' });
+      return res.status(404).json({ error: 'Не найдено' });
     }
     
     logDevice('info', `Deleting device`, { deviceId: id, folder: d.folder });
     
+    // Останавливаем рестримы устройства
+    try {
+      const deviceMeta = getDeviceFilesMetadata(id);
+      deviceMeta
+        .filter(meta => meta.content_type === 'streaming')
+        .forEach(meta => removeStreamJob(id, meta.safe_name, 'device_deleted'));
+    } catch (err) {
+      logger.warn('[Devices] Failed to stop streams before delete', { deviceId: id, error: err.message });
+    }
+
     // 1. Удаляем из БД
     deleteDeviceFromDB(id);
     logDevice('info', `Device deleted from DB`, { deviceId: id });
@@ -138,14 +209,32 @@ export function createDevicesRouter(deps) {
     logDevice('info', `Device files metadata deleted`, { deviceId: id, filesCount: deletedMetadata });
     
     // 2. Удаляем папку устройства
-    const devicePath = path.join(DEVICES, d.folder);
+    // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+    const devicesPath = getDevicesPath();
+    const devicePath = path.join(devicesPath, d.folder);
     logDevice('info', `Deleting device folder`, { deviceId: id, path: devicePath });
-    fs.rmSync(devicePath, { recursive: true, force: true });
-    logDevice('info', `Device folder deleted`, { deviceId: id, path: devicePath });
+    try {
+      if (fs.existsSync(devicePath)) {
+        fs.rmSync(devicePath, { recursive: true, force: true });
+        logDevice('info', `Device folder deleted`, { deviceId: id, path: devicePath });
+      } else {
+        logDevice('warn', `Device folder does not exist, skipping`, { deviceId: id, path: devicePath });
+      }
+    } catch (err) {
+      logDevice('error', `Failed to delete device folder`, { deviceId: id, path: devicePath, error: err.message });
+      // Продолжаем удаление, даже если папка не удалилась
+    }
     
     // 3. Удаляем из devices (память)
     delete devices[id];
     logDevice('info', `Device removed from memory`, { deviceId: id });
+    if (typeof onDeviceDeleted === 'function') {
+      try {
+        onDeviceDeleted(id);
+      } catch (err) {
+        logger.warn('[Devices] onDeviceDeleted hook failed', { deviceId: id, error: err.message });
+      }
+    }
     
     // 4. Удаляем из fileNamesMap
     if (fileNamesMap[id]) {
@@ -176,6 +265,37 @@ export function createDevicesRouter(deps) {
     logDevice('warn', 'Device deleted completely', { deviceId: id, deletedBy: req.user.username });
     
     res.json({ ok: true });
+  });
+  
+  // POST /api/devices/:id/launch-app - Запустить Android-приложение на устройстве
+  router.post('/:id/launch-app', requireSpeaker, async (req, res) => {
+    const id = sanitizeDeviceId(req.params.id);
+    if (!id || !devices[id]) {
+      return res.status(404).json({ ok: false, error: 'Устройство не найдено' });
+    }
+
+    // Speaker может запускать только на назначенных ему устройствах.
+    if (!hasDeviceAccess(req.user.userId, id, req.user.role)) {
+      return res.status(403).json({ ok: false, error: 'Доступ к устройству запрещен' });
+    }
+
+    const device = devices[id];
+    if (!device.ipAddress) {
+      return res.status(400).json({ ok: false, error: 'IP адрес устройства не задан' });
+    }
+    // Для вашего приложения:
+    const packageName = 'com.videocontrol.mediaplayer'; // замените на актуальный packageName
+    const activity = 'com.videocontrol.mediaplayer.MainActivity'; // замените на актуальный activity
+    try {
+      const result = await launchAndroidApp(device.ipAddress, packageName, activity);
+      if (result.ok) {
+        return res.json({ ok: true });
+      } else {
+        return res.status(500).json({ ok: false, error: result.error });
+      }
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: e.message });
+    }
   });
   
   return router;

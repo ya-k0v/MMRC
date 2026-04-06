@@ -1,10 +1,10 @@
-// Service Worker для VideoControl - Production Ready
+// Service Worker для MMRC - Production Ready
 // Версия 7.0 - File permissions fix, cache invalidation
 
 const VERSION = 'v14';
-const CACHE_NAME = `videocontrol-static-${VERSION}`;
-const PLACEHOLDER_CACHE_NAME = `videocontrol-placeholder-${VERSION}`;
-const CONTENT_CACHE_NAME = `videocontrol-content-${VERSION}`;
+const CACHE_NAME = `mmrc-static-${VERSION}`;
+const PLACEHOLDER_CACHE_NAME = `mmrc-placeholder-${VERSION}`;
+const CONTENT_CACHE_NAME = `mmrc-content-${VERSION}`;
 
 // Лимиты кэша
 const MAX_STATIC_ITEMS = 50;      // Максимум 50 статических файлов
@@ -140,6 +140,15 @@ self.addEventListener('fetch', (event) => {
     );
     return;
   }
+
+  // Иконки и логотипы - всегда берём свежие версии (без кэша)
+  if (url.pathname.match(/\/(audio-logo\.svg|icon\.svg|favicon-\d+\.png|icon-\d+\.png|apple-touch-icon\.png)$/i)) {
+    const noCacheRequest = new Request(event.request.url, { cache: 'reload' });
+    event.respondWith(
+      fetch(noCacheRequest).catch(() => caches.match(event.request))
+    );
+    return;
+  }
   
   // Кэшируем статические ресурсы (JS, CSS, HTML) - Stale-While-Revalidate
   if (url.pathname.match(/\.(js|css|html|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot)$/i) ||
@@ -171,7 +180,7 @@ self.addEventListener('fetch', (event) => {
               <head>
                 <meta charset="utf-8">
                 <meta name="viewport" content="width=device-width,initial-scale=1">
-                <title>Офлайн - VideoControl</title>
+                <title>Офлайн - MMRC</title>
                 <style>
                   body {
                     margin:0; padding:0; height:100vh;
@@ -188,7 +197,7 @@ self.addEventListener('fetch', (event) => {
               <body>
                 <div>
                   <h1>📡 Офлайн режим</h1>
-                  <p>Сервер VideoControl недоступен</p>
+                  <p>Сервер MMRC недоступен</p>
                   <p>Ожидание подключения...</p>
                   <div class="status">Service Worker v${VERSION}</div>
                 </div>
@@ -311,8 +320,10 @@ async function precacheContent(urls) {
 
 // Обработка сообщений от клиента
 self.addEventListener('message', (event) => {
+  // КРИТИЧНО: Для синхронных ответов НЕ возвращаем true
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
+    return; // Синхронный ответ, не нужно возвращать true
   }
   
   // Команда очистки кэша
@@ -324,36 +335,84 @@ self.addEventListener('message', (event) => {
         );
       }).then(() => {
         console.log('[SW] All caches cleared');
+        // Отправляем подтверждение если есть порт
+        if (event.ports && event.ports[0]) {
+          event.ports[0].postMessage({ success: true });
+        }
+      }).catch(err => {
+        console.error('[SW] Error clearing cache:', err);
+        if (event.ports && event.ports[0]) {
+          event.ports[0].postMessage({ success: false, error: err.message });
+        }
       })
     );
+    // Асинхронный ответ - нужно вернуть true или использовать event.respondWith
+    // Но для message событий просто не возвращаем ничего
+    return;
   }
   
   // Команда предзагрузки контента
   if (event.data && event.data.type === 'PRECACHE_CONTENT') {
     const urls = event.data.urls || [];
+    // КРИТИЧНО: Используем waitUntil для асинхронных операций, но НЕ возвращаем true
+    // Это предотвратит ошибку "message channel closed"
     event.waitUntil(
       precacheContent(urls).then(result => {
-        // Отправляем результат обратно клиенту
-        event.ports[0]?.postMessage(result);
+        // Отправляем результат обратно клиенту только если порт еще открыт
+        if (event.ports && event.ports[0]) {
+          try {
+            event.ports[0].postMessage(result);
+          } catch (err) {
+            console.warn('[SW] Failed to post message (port closed):', err);
+          }
+        }
+      }).catch(err => {
+        console.error('[SW] Error precaching content:', err);
+        if (event.ports && event.ports[0]) {
+          try {
+            event.ports[0].postMessage({ cached: 0, skipped: 0, total: 0, error: err.message });
+          } catch (e) {
+            // Игнорируем если порт уже закрыт
+          }
+        }
       })
     );
+    return; // Не возвращаем true для message событий
   }
   
   // Получить статистику кэша
   if (event.data && event.data.type === 'GET_CACHE_STATS') {
     event.waitUntil(
       (async () => {
-        const cache = await caches.open(CONTENT_CACHE_NAME);
-        const keys = await cache.keys();
-        const urls = keys.map(req => req.url);
-        const size = await getCacheSize(CONTENT_CACHE_NAME);
-        
-        event.ports[0]?.postMessage({
-          count: keys.length,
-          size: size,
-          urls: urls
-        });
+        try {
+          const cache = await caches.open(CONTENT_CACHE_NAME);
+          const keys = await cache.keys();
+          const urls = keys.map(req => req.url);
+          const size = await getCacheSize(CONTENT_CACHE_NAME);
+          
+          if (event.ports && event.ports[0]) {
+            try {
+              event.ports[0].postMessage({
+                count: keys.length,
+                size: size,
+                urls: urls
+              });
+            } catch (err) {
+              console.warn('[SW] Failed to post cache stats (port closed):', err);
+            }
+          }
+        } catch (err) {
+          console.error('[SW] Error getting cache stats:', err);
+          if (event.ports && event.ports[0]) {
+            try {
+              event.ports[0].postMessage({ count: 0, size: 0, urls: [], error: err.message });
+            } catch (e) {
+              // Игнорируем если порт уже закрыт
+            }
+          }
+        }
       })()
     );
+    return; // Не возвращаем true для message событий
   }
 });

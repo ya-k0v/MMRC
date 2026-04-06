@@ -13,6 +13,7 @@ import { debounce } from '../shared/socket-base.js';
 export function setupSocketListeners(socket, callbacks) {
   const {
     onDevicesUpdated,
+    onDeviceUpdated,
     onFileProcessing,
     onFileProgress,
     onFileReady,
@@ -20,30 +21,33 @@ export function setupSocketListeners(socket, callbacks) {
     onPreviewRefresh,
     onPlayerOnline,
     onPlayerOffline,
-    onPlayersSnapshot
+    onPlayersSnapshot,
+    onVolumeBatch,
+    onVolumeUpdate
   } = callbacks;
   
   // devices/updated - Обновление списка устройств
   socket.on('devices/updated', debounce(async () => {
-    console.log('[Admin] 🔄 Устройства обновлены');
     if (onDevicesUpdated) await onDevicesUpdated();
   }, 150));
   
+  // device/updated - Обновление конкретного устройства (IP, platform и т.д.)
+  socket.on('device/updated', ({ device_id, device }) => {
+    if (onDeviceUpdated) onDeviceUpdated(device_id, device);
+  });
+  
   // file/processing - Файл начал обработку
   socket.on('file/processing', ({ device_id, file }) => {
-    console.log(`[Admin] ⏳ Файл в обработке: ${file} (${device_id})`);
     if (onFileProcessing) onFileProcessing(device_id, file);
   });
   
   // file/progress - Прогресс обработки файла
   socket.on('file/progress', ({ device_id, file, progress }) => {
-    console.log(`[Admin] 📊 Прогресс: ${file} - ${progress}% (${device_id})`);
     if (onFileProgress) onFileProgress(device_id, file, progress);
   });
   
   // file/ready - Файл готов
   socket.on('file/ready', ({ device_id, file }) => {
-    console.log(`[Admin] ✅ Файл готов: ${file} (${device_id})`);
     if (onFileReady) onFileReady(device_id, file);
   });
   
@@ -55,26 +59,30 @@ export function setupSocketListeners(socket, callbacks) {
   
   // preview/refresh - Обновить превью
   socket.on('preview/refresh', debounce(async () => {
-    console.log('[Admin] 🔄 Обновление превью');
     if (onPreviewRefresh) await onPreviewRefresh();
   }, 150));
   
   // player/online - Устройство онлайн
   socket.on('player/online', ({ device_id }) => {
-    console.log(`[Admin] 🟢 Устройство онлайн: ${device_id}`);
     if (onPlayerOnline) onPlayerOnline(device_id);
   });
   
   // player/offline - Устройство офлайн
   socket.on('player/offline', ({ device_id }) => {
-    console.log(`[Admin] 🔴 Устройство офлайн: ${device_id}`);
     if (onPlayerOffline) onPlayerOffline(device_id);
   });
   
   // players/onlineSnapshot - Снимок онлайн устройств
   socket.on('players/onlineSnapshot', (list) => {
-    console.log('[Admin] 📸 Snapshot онлайн устройств:', list);
     if (onPlayersSnapshot) onPlayersSnapshot(list);
+  });
+
+  socket.on('devices/volume/stateBatch', (snapshot) => {
+    if (onVolumeBatch) onVolumeBatch(snapshot);
+  });
+
+  socket.on('devices/volume/state', (payload) => {
+    if (onVolumeUpdate) onVolumeUpdate(payload);
   });
 }
 

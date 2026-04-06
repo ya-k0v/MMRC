@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Вход - VideoControl</title>
+  <title>Вход - MMRC Hub</title>
   <link rel="icon" type="image/svg+xml" href="/icon.svg"/>
   <link rel="stylesheet" href="/css/app.css"/>
 </head>
@@ -11,7 +11,7 @@
   <div style="display:flex; align-items:center; justify-content:center; min-height:100vh; padding:20px;">
     <div class="card" style="max-width:400px; width:100%;">
       <div class="header">
-        <div class="title">🔐 Вход в VideoControl</div>
+        <div class="title">Вход в MMRC Hub</div>
       </div>
       
       <form id="loginForm" style="display:flex; flex-direction:column; gap:16px;">
@@ -48,7 +48,6 @@
       </form>
       
       <div class="meta" style="margin-top:16px; text-align:center;">
-        Дефолтный логин: <code>admin</code> / <code>admin123</code>
       </div>
     </div>
   </div>
@@ -92,7 +91,9 @@
           localStorage.setItem('user', JSON.stringify(data.user));
           
           // Редирект в зависимости от роли
-          if (data.user.role === 'admin') {
+          if (data.user.role === 'hero_admin') {
+            window.location.href = '/hero/admin.html';
+          } else if (data.user.role === 'admin') {
             window.location.href = '/admin.html';
           } else if (data.user.role === 'speaker') {
             window.location.href = '/speaker.html';
@@ -139,9 +140,12 @@
           
           if (response.ok) {
             // Токен валидный - редирект по роли
-            console.log('[Index] Token valid, redirecting to', user.role === 'speaker' ? 'speaker' : 'admin');
       if (user.role === 'speaker') {
               window.location.replace('/speaker.html');
+            } else if (user.role === 'hero_admin') {
+              window.location.replace('/hero/admin.html');
+            } else if (user.role === 'admin') {
+              window.location.replace('/admin.html');
             } else {
               window.location.replace('/admin.html');
             }

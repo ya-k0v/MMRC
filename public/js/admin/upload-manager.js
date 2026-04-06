@@ -9,7 +9,6 @@ export async function uploadFiles(deviceId, files, onProgress) {
   
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    setXhrAuth(xhr);
     
     if (onProgress) {
       xhr.upload.addEventListener('progress', (e) => {
@@ -30,6 +29,7 @@ export async function uploadFiles(deviceId, files, onProgress) {
     
     xhr.addEventListener('error', () => reject(new Error('Network error')));
     xhr.open('POST', `/api/devices/${deviceId}/upload`);
+    setXhrAuth(xhr);
     xhr.send(formData);
   });
 }

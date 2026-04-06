@@ -10,11 +10,9 @@ export async function ensureAuth() {
   const token = localStorage.getItem('accessToken');
   const userStr = localStorage.getItem('user');
   
-  console.log('[Admin Auth] Checking auth - token:', !!token, 'user:', !!userStr);
   
   // ИСПРАВЛЕНО: Если нет токена - редирект на login
   if (!token || !userStr) {
-    console.log('[Admin Auth] No token or user - redirecting to /index.html');
     localStorage.clear();
     window.location.href = '/index.html';
     return false;
@@ -23,25 +21,21 @@ export async function ensureAuth() {
   // Проверяем роль
   try {
     const user = JSON.parse(userStr);
-    console.log('[Admin Auth] User role:', user.role);
   
     if (user.role === 'speaker') {
-      console.log('[Admin Auth] Speaker trying to access admin - redirecting to /speaker.html');
       window.location.href = '/speaker.html';
       return false;
     }
   
-    if (user.role !== 'admin') {
-      console.log('[Admin Auth] Invalid role - clearing and redirecting');
+    if (!['admin', 'hero_admin'].includes(user.role)) {
       localStorage.clear();
       window.location.href = '/index.html';
       return false;
     }
 
-    console.log('[Admin Auth] Access granted');
-    return true;
+    return user;
   } catch (e) {
-    console.error('[Admin Auth] Error parsing user data:', e);
+    console.error('[Admin Auth] Ошибка парсинга данных пользователя:', e);
     localStorage.clear();
     window.location.href = '/index.html';
     return false;
@@ -71,7 +65,7 @@ async function refreshAccessToken() {
       return true;
     }
   } catch (err) {
-    console.error('Refresh token failed:', err);
+    console.error('Не удалось обновить токен:', err);
   }
   
   return false;
@@ -85,7 +79,7 @@ export async function adminFetch(url, opts = {}) {
   
   if (!token) {
     window.location.href = '/index.html';
-    throw new Error('No token');
+    throw new Error('Отсутствует токен авторизации');
   }
   
   const init = {
@@ -109,7 +103,7 @@ export async function adminFetch(url, opts = {}) {
       // ИСПРАВЛЕНО: Не удалось обновить - редирект на login
       localStorage.clear();
       window.location.href = '/index.html';
-      throw new Error('Session expired');
+      throw new Error('Сессия истекла');
     }
   }
   

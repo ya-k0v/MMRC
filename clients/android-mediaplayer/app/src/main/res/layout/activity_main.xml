@@ -1,26 +1,52 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@android:color/black"
+    android:background="@color/bg_primary"
     tools:context=".MainActivity">
+
+    <!-- Бренд-фон (логотип или черный) - самый нижний слой -->
+    <ImageView
+        android:id="@+id/brandBg"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/bg_primary"
+        android:contentDescription="@string/app_name"
+        android:scaleType="centerInside"
+        android:src="@mipmap/ic_launcher"
+        android:alpha="1.0" />
 
     <!-- ExoPlayer View -->
     <com.google.android.exoplayer2.ui.StyledPlayerView
         android:id="@+id/playerView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@android:color/black" />
+        android:background="@android:color/transparent"
+        android:alpha="0.0"
+        app:surface_type="texture_view" />
+
+    <!-- Второй слой ExoPlayer для кроссфейда -->
+    <com.google.android.exoplayer2.ui.StyledPlayerView
+        android:id="@+id/playerViewBuffer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/transparent"
+        android:visibility="gone"
+        android:alpha="0.0"
+        app:surface_type="texture_view" />
 
     <!-- ImageView для изображений и заглушек -->
     <ImageView
         android:id="@+id/imageView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@android:color/black"
-        android:scaleType="centerInside"
-        android:visibility="gone" />
+        android:background="@android:color/transparent"
+        android:scaleType="fitCenter"
+        android:adjustViewBounds="true"
+        android:visibility="gone"
+        android:alpha="0.0" />
 
     <!-- TextView для статуса -->
     <TextView
@@ -29,9 +55,32 @@
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal"
         android:layout_margin="16dp"
-        android:textColor="@android:color/white"
+        android:textColor="@color/text_primary"
         android:textSize="14sp"
         android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/versionOverlay"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginBottom="2dp"
+        android:layout_marginEnd="2dp"
+        android:textColor="#9aa0a6"
+        android:textSize="7sp"
+        android:alpha="0.7"
+        android:gravity="end"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:shadowColor="#99000000"
+        android:shadowDx="0"
+        android:shadowDy="1"
+        android:shadowRadius="2"
+        android:padding="2dp"
+        android:importantForAccessibility="no"
+        android:focusable="false"
+        android:clickable="false"
+        android:translationZ="16dp" />
 
     <!-- Кнопка настроек убрана, доступ через длинное нажатие на экран -->
 

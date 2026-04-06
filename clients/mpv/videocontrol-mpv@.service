@@ -1,6 +1,6 @@
 [Unit]
-Description=VideoControl MPV Client for %i
-Documentation=https://github.com/ya-k0v/VideoControl
+Description=MMRC MPV Client for %i
+Documentation=https://github.com/ya-k0v/MMRC
 After=network-online.target sound.target
 Wants=network-online.target
 

@@ -6,13 +6,10 @@
 import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { getLogsDir } from '../config/settings-manager.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Директория для логов
-const LOG_DIR = path.join(__dirname, '../../logs');
+// Директория для логов (вычисляется динамически из настроек БД)
+const LOG_DIR = getLogsDir();
 
 // Форматирование логов
 const logFormat = winston.format.combine(
@@ -21,6 +18,20 @@ const logFormat = winston.format.combine(
   winston.format.splat(),
   winston.format.json()
 );
+
+// Нормализация уровня логирования из .env
+const rawLogLevel = (process.env.LOG_LEVEL || 'info').toString().trim().toLowerCase();
+const logLevelMap = {
+  off: 'off',
+  debug: 'debug',
+  info: 'info',
+  warning: 'error',
+  warn: 'warn',
+  error: 'error'
+};
+const normalizedLogLevel = logLevelMap[rawLogLevel] || 'info';
+const isLogSilent = normalizedLogLevel === 'off';
+const effectiveLogLevel = isLogSilent ? 'error' : normalizedLogLevel;
 
 // Форматирование для консоли (более читаемое)
 const consoleFormat = winston.format.combine(
@@ -42,7 +53,8 @@ const errorFileTransport = new DailyRotateFile({
   level: 'error',
   maxSize: '20m',
   maxFiles: '30d', // Хранить 30 дней
-  format: logFormat
+  format: logFormat,
+  silent: isLogSilent
 });
 
 // Транспорт: файлы с ротацией (combined - все уровни)
@@ -51,20 +63,24 @@ const combinedFileTransport = new DailyRotateFile({
   datePattern: 'YYYY-MM-DD',
   maxSize: '20m',
   maxFiles: '14d', // Хранить 14 дней
-  format: logFormat
+  format: logFormat,
+  silent: isLogSilent
 });
 
-// Транспорт: консоль (только в development)
+// Транспорт: консоль (уровень задается через LOG_LEVEL)
 const consoleTransport = new winston.transports.Console({
   format: consoleFormat,
-  level: process.env.NODE_ENV === 'production' ? 'info' : 'debug'
+  level: effectiveLogLevel,
+  // Опционально: полностью отключить консоль если нужно
+  silent: isLogSilent || process.env.SILENT_CONSOLE === 'true'
 });
 
 // Создаем основной logger
 const logger = winston.createLogger({
-  level: process.env.LOG_LEVEL || 'info',
+  level: effectiveLogLevel,
+  silent: isLogSilent,
   format: logFormat,
-  defaultMeta: { service: 'videocontrol' },
+  defaultMeta: { service: 'mmrc' },
   transports: [
     errorFileTransport,
     combinedFileTransport,
@@ -136,6 +152,13 @@ export const httpLoggerMiddleware = (req, res, next) => {
 
     const level = res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info';
     logAPI(level, `${req.method} ${req.originalUrl || req.url}`, logData);
+
+    // Записываем метрики (асинхронно, не блокируем ответ)
+    import('./metrics.js').then(({ recordRequest }) => {
+      recordRequest(req.method, req.originalUrl || req.url, duration, res.statusCode >= 400);
+    }).catch(() => {
+      // Ignore metrics errors
+    });
   });
 
   next();

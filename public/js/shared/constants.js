@@ -3,16 +3,57 @@
  * @module shared/constants
  */
 
-// Иконки для типов устройств
+import { 
+  getAndroidIcon, 
+  getTVIcon, 
+  getBrowserIcon, 
+  getMonitorIcon, 
+  getFilmIcon 
+} from './svg-icons.js';
+import {
+  AUDIO_EXTENSIONS,
+  VIDEO_EXTENSIONS,
+  IMAGE_EXTENSIONS,
+  DOCUMENT_EXTENSIONS,
+  FOLDER_EXTENSIONS,
+  resolveContentType
+} from './content-type-helper.js';
+
+/**
+ * Получить SVG иконку для типа устройства
+ * @param {string} deviceType - Тип устройства
+ * @returns {string} SVG код иконки
+ */
+export function getDeviceIcon(deviceType) {
+  switch (deviceType) {
+    case 'android':
+    case 'NATIVE_MEDIAPLAYER':
+      return getAndroidIcon();
+    case 'browser':
+      return getBrowserIcon();
+    case 'kodi':
+    case 'webos':
+    case 'tizen':
+      return getTVIcon();
+    case 'VJC':
+      return getFilmIcon();
+    case 'NATIVE_MPV':
+      return getMonitorIcon();
+    default:
+      return getTVIcon();
+  }
+}
+
+// Для обратной совместимости (используется как объект)
 export const DEVICE_ICONS = {
-  'browser': '🌐',
-  'android': '📱',
-  'kodi': '📺',
-  'webos': '📺',
-  'tizen': '📺',
-  'VJC': '🎬',
-  'NATIVE_MEDIAPLAYER': '📱',
-  'NATIVE_MPV': '🖥️'
+  'browser': getBrowserIcon(),
+  'android': getAndroidIcon(),
+  'kodi': getTVIcon(),
+  'webos': getTVIcon(),
+  'tizen': getTVIcon(),
+  'VJC': getFilmIcon(),
+  'NATIVE_MEDIAPLAYER': getAndroidIcon(),
+  'NATIVE_MPV': getMonitorIcon()
 };
 
 // Названия типов устройств
@@ -23,17 +64,17 @@ export const DEVICE_TYPE_NAMES = {
   'webos': 'WebOS',
   'tizen': 'Tizen',
   'VJC': 'Video.js Player',
-  'NATIVE_MEDIAPLAYER': 'Android MediaPlayer',
+  'NATIVE_MEDIAPLAYER': 'MMRC Player',
   'NATIVE_MPV': 'Linux MPV Player'
 };
 
 // Расширения файлов по типам
 export const FILE_EXTENSIONS = {
-  video: ['mp4', 'webm', 'ogg', 'mkv', 'mov', 'avi'],
-  audio: ['mp3', 'wav', 'm4a'],
-  image: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
-  document: ['pdf', 'pptx'],
-  folder: ['zip'] // ZIP архивы с изображениями - папки
+  video: VIDEO_EXTENSIONS,
+  audio: AUDIO_EXTENSIONS,
+  image: IMAGE_EXTENSIONS,
+  document: DOCUMENT_EXTENSIONS,
+  folder: FOLDER_EXTENSIONS // ZIP архивы с изображениями - папки
 };
 
 // Метки разрешения видео
@@ -64,15 +105,13 @@ export function getResolutionLabel(width, height) {
  * @returns {string} Тип файла (VID, IMG, PDF, PPTX, FOLDER)
  */
 export function getFileTypeLabel(fileName) {
-  const ext = fileName.split('.').pop().toLowerCase();
-  
-  if (ext === 'pdf') return 'PDF';
-  if (ext === 'pptx') return 'PPTX';
-  if (ext === 'zip') return 'FOLDER';
-  if (FILE_EXTENSIONS.image.includes(ext)) return 'IMG';
-  if (FILE_EXTENSIONS.video.includes(ext)) return 'VID';
-  if (FILE_EXTENSIONS.audio.includes(ext)) return 'AUD';
-  
+  const contentType = resolveContentType({ fileName });
+  if (contentType === 'pdf') return 'PDF';
+  if (contentType === 'pptx') return 'PPTX';
+  if (contentType === 'folder') return 'FOLDER';
+  if (contentType === 'image') return 'IMG';
+  if (contentType === 'video') return 'VID';
+  if (contentType === 'audio') return 'AUD';
   return 'FILE';
 }
 

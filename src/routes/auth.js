@@ -56,7 +56,7 @@ router.post('/login',
           status: 'failure'
         });
         logSecurity('warn', 'Failed login attempt: user not found', { username, ip: req.ip });
-        return res.status(401).json({ error: 'Invalid credentials' });
+        return res.status(401).json({ error: 'Неверный логин или пароль' });
       }
 
       if (!user.is_active) {
@@ -71,7 +71,7 @@ router.post('/login',
           status: 'failure'
         });
         logSecurity('warn', 'Failed login attempt: account disabled', { username, userId: user.id, ip: req.ip });
-        return res.status(403).json({ error: 'Account disabled' });
+        return res.status(403).json({ error: 'Аккаунт отключен' });
       }
 
       // Проверяем пароль
@@ -89,7 +89,7 @@ router.post('/login',
           status: 'failure'
         });
         logSecurity('warn', 'Failed login attempt: invalid password', { username, userId: user.id, ip: req.ip });
-        return res.status(401).json({ error: 'Invalid credentials' });
+        return res.status(401).json({ error: 'Неверный логин или пароль' });
       }
 
       // Генерируем токены
@@ -138,7 +138,7 @@ router.post('/login',
       });
     } catch (err) {
       logger.error('Login error', { error: err.message, stack: err.stack, username });
-      res.status(500).json({ error: 'Internal server error' });
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
     }
   }
 );
@@ -168,18 +168,18 @@ router.post('/refresh',
       `).get(refreshToken);
 
       if (!tokenRecord) {
-        return res.status(401).json({ error: 'Invalid refresh token' });
+        return res.status(401).json({ error: 'Неверный токен обновления' });
       }
 
       if (!tokenRecord.is_active) {
-        return res.status(403).json({ error: 'Account disabled' });
+        return res.status(403).json({ error: 'Аккаунт отключен' });
       }
 
       // Проверяем срок действия
       if (new Date(tokenRecord.expires_at) < new Date()) {
         // Удаляем истекший токен
         db.prepare('DELETE FROM refresh_tokens WHERE token = ?').run(refreshToken);
-        return res.status(401).json({ error: 'Refresh token expired' });
+        return res.status(401).json({ error: 'Токен обновления истек' });
       }
 
       // Генерируем новый access token
@@ -201,8 +201,8 @@ router.post('/refresh',
         expiresIn: 900 // 15 минут в секундах
       });
     } catch (err) {
-      console.error('[Auth] Refresh error:', err);
-      res.status(500).json({ error: 'Internal server error' });
+      logger.error('Refresh error', { error: err.message, stack: err.stack });
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
     }
   }
 );
@@ -223,7 +223,7 @@ router.post('/logout', requireAuth, async (req, res) => {
 
     // Логируем выход
     await auditLog({
-      userId: req.user.id,
+      userId: req.user.userId,
       action: AuditAction.LOGOUT,
       resource: req.user.username,
       details: { role: req.user.role },
@@ -231,12 +231,12 @@ router.post('/logout', requireAuth, async (req, res) => {
       userAgent: req.get('user-agent'),
       status: 'success'
     });
-    logAuth('info', 'User logged out', { username: req.user.username, userId: req.user.id, ip: req.ip });
+    logAuth('info', 'User logged out', { username: req.user.username, userId: req.user.userId, ip: req.ip });
 
     res.json({ message: 'Logged out successfully' });
   } catch (err) {
-    logger.error('Logout error', { error: err.message, stack: err.stack, userId: req.user.id });
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error('Logout error', { error: err.message, stack: err.stack, userId: req.user.userId });
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 });
 
@@ -255,13 +255,13 @@ router.get('/me', requireAuth, async (req, res) => {
     `).get(req.user.userId);
 
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: 'Пользователь не найден' });
     }
 
     res.json(user);
   } catch (err) {
-    console.error('[Auth] Me error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error('Me error', { error: err.message, stack: err.stack });
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 });
 
@@ -276,7 +276,7 @@ router.post('/register',
   body('username').trim().isLength({ min: 3, max: 50 }),
   body('full_name').trim().isLength({ min: 1, max: 100 }),
   body('password').isLength({ min: 8 }),
-  body('role').isIn(['admin', 'speaker']),
+  body('role').isIn(['admin', 'speaker', 'hero_admin']),
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -293,7 +293,7 @@ router.post('/register',
       `).get(username);
 
       if (existing) {
-        return res.status(409).json({ error: 'Username already exists' });
+        return res.status(409).json({ error: 'Пользователь с таким логином уже существует' });
       }
 
       // Хешируем пароль
@@ -309,7 +309,7 @@ router.post('/register',
 
       // Логируем создание
       await auditLog({
-        userId: req.user.id,
+        userId: req.user.userId,
         action: AuditAction.USER_CREATE,
         resource: `user:${newUserId}`,
         details: { username, full_name, role, createdBy: req.user.username },
@@ -332,7 +332,7 @@ router.post('/register',
       });
     } catch (err) {
       logger.error('Register error', { error: err.message, stack: err.stack, username });
-      res.status(500).json({ error: 'Internal server error' });
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
     }
   }
 );
@@ -353,8 +353,8 @@ router.get('/users', requireAuth, requireAdmin, async (req, res) => {
 
     res.json(users);
   } catch (err) {
-    console.error('[Auth] Users list error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error('Users list error', { error: err.message, stack: err.stack });
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 });
 
@@ -373,7 +373,7 @@ router.post('/users/:id/toggle',
     try {
       // Нельзя отключить себя
       if (userId === req.user.userId) {
-        return res.status(400).json({ error: 'Cannot disable yourself' });
+        return res.status(400).json({ error: 'Нельзя отключить свой аккаунт' });
       }
 
       // Обновляем статус
@@ -382,20 +382,23 @@ router.post('/users/:id/toggle',
       `).run(is_active ? 1 : 0, userId);
 
       // Логируем
-      db.prepare(`
-        INSERT INTO audit_log (user_id, action, resource_type, resource_id)
-        VALUES (?, ?, ?, ?)
-      `).run(
-        req.user.userId,
-        is_active ? 'ENABLE_USER' : 'DISABLE_USER',
-        'user',
-        userId
-      );
+      await auditLog({
+        userId: req.user.userId,
+        action: is_active ? AuditAction.USER_ENABLE : AuditAction.USER_DISABLE,
+        resource: `user:${userId}`,
+        details: { 
+          targetUserId: userId,
+          targetUsername: db.prepare('SELECT username FROM users WHERE id = ?').get(userId)?.username || 'unknown'
+        },
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent'),
+        status: 'success'
+      });
 
       res.json({ success: true });
     } catch (err) {
-      console.error('[Auth] Toggle user error:', err);
-      res.status(500).json({ error: 'Internal server error' });
+      logger.error('Toggle user error', { error: err.message, stack: err.stack, userId: req.params.id });
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
     }
   }
 );
@@ -410,20 +413,20 @@ router.delete('/users/:id', requireAuth, requireAdmin, deleteLimiter, async (req
 
   try {
     // Нельзя удалить себя
-    if (userId === req.user.id) {
-      return res.status(400).json({ error: 'Cannot delete yourself' });
+    if (userId === req.user.userId) {
+      return res.status(400).json({ error: 'Нельзя удалить свой аккаунт' });
     }
 
     // Нельзя удалить первого admin
     if (userId === 1) {
-      return res.status(400).json({ error: 'Cannot delete default admin' });
+      return res.status(400).json({ error: 'Нельзя удалить администратора по умолчанию' });
     }
 
     // Получаем информацию о пользователе перед удалением
     const userToDelete = db.prepare('SELECT username, role FROM users WHERE id = ?').get(userId);
     
     if (!userToDelete) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: 'Пользователь не найден' });
     }
 
     // Удаляем пользователя (каскадно удалятся refresh_tokens)
@@ -431,7 +434,7 @@ router.delete('/users/:id', requireAuth, requireAdmin, deleteLimiter, async (req
 
     // Логируем удаление
     await auditLog({
-      userId: req.user.id,
+      userId: req.user.userId,
       action: AuditAction.USER_DELETE,
       resource: `user:${userId}`,
       details: { 
@@ -452,7 +455,7 @@ router.delete('/users/:id', requireAuth, requireAdmin, deleteLimiter, async (req
     res.json({ success: true });
   } catch (err) {
     logger.error('Delete user error', { error: err.message, stack: err.stack, userId });
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 });
 
@@ -479,7 +482,7 @@ router.post('/users/:id/reset-password',
       const userToUpdate = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(userId);
       
       if (!userToUpdate) {
-        return res.status(404).json({ error: 'User not found' });
+        return res.status(404).json({ error: 'Пользователь не найден' });
       }
 
       // Хешируем новый пароль
@@ -497,7 +500,7 @@ router.post('/users/:id/reset-password',
 
       // Логируем сброс пароля
       await auditLog({
-        userId: req.user.id,
+        userId: req.user.userId,
         action: AuditAction.PASSWORD_RESET,
         resource: `user:${userId}`,
         details: { 
@@ -514,7 +517,7 @@ router.post('/users/:id/reset-password',
         targetUserId: userId, 
         targetUsername: userToUpdate.username,
         resetBy: req.user.username,
-        resetById: req.user.id
+        resetById: req.user.userId
       });
 
       res.json({ 
@@ -523,12 +526,135 @@ router.post('/users/:id/reset-password',
       });
     } catch (err) {
       logger.error('Reset password error', { error: err.message, stack: err.stack, userId });
-      res.status(500).json({ error: 'Internal server error' });
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
     }
   }
 );
 
-export function createAuthRouter() {
+/**
+ * GET /api/auth/users/:id/devices
+ * Получить список устройств пользователя (только admin)
+ */
+router.get('/users/:id/devices', requireAuth, requireAdmin, async (req, res) => {
+  const userId = parseInt(req.params.id);
+  const db = getDatabase();
+
+  try {
+    const devices = db.prepare(`
+      SELECT device_id
+      FROM user_devices
+      WHERE user_id = ?
+      ORDER BY created_at DESC
+    `).all(userId);
+
+    res.json(devices.map(d => d.device_id));
+  } catch (err) {
+    logger.error('Get user devices error', { error: err.message, stack: err.stack, userId });
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+  }
+});
+
+/**
+ * POST /api/auth/users/:id/devices
+ * Назначить устройства пользователю (только admin)
+ */
+router.post('/users/:id/devices',
+  requireAuth,
+  requireAdmin,
+  body('deviceIds').isArray(),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const userId = parseInt(req.params.id);
+    const { deviceIds } = req.body;
+    const db = getDatabase();
+
+    try {
+      // Проверяем существование пользователя
+      const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(userId);
+      if (!user) {
+        return res.status(404).json({ error: 'Пользователь не найден' });
+      }
+
+      // Начинаем транзакцию
+      const transaction = db.transaction((userId, deviceIds) => {
+        // Удаляем все существующие назначения
+        db.prepare('DELETE FROM user_devices WHERE user_id = ?').run(userId);
+
+        // Добавляем новые назначения
+        const insertStmt = db.prepare(`
+          INSERT INTO user_devices (user_id, device_id)
+          VALUES (?, ?)
+        `);
+
+        for (const deviceId of deviceIds) {
+          try {
+            insertStmt.run(userId, deviceId);
+          } catch (insertErr) {
+            // Игнорируем ошибки дубликатов (UNIQUE constraint)
+            if (!insertErr.message.includes('UNIQUE constraint')) {
+              throw insertErr;
+            }
+          }
+        }
+      });
+
+      transaction(userId, deviceIds);
+
+      // Логируем назначение
+      await auditLog({
+        userId: req.user.userId,
+        action: AuditAction.USER_UPDATE,
+        resource: `user:${userId}`,
+        details: { 
+          targetUsername: user.username,
+          deviceCount: deviceIds.length,
+          deviceIds: deviceIds,
+          updatedBy: req.user.username
+        },
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent'),
+        status: 'success'
+      });
+
+      // Отправляем Socket.IO событие для обновления панели спикера в реальном времени
+      if (router.io) {
+        try {
+          // Отправляем событие всем подключениям (панель спикера обновит список через API)
+          router.io.emit('user/devices/updated', { userId });
+          logger.info('User devices updated event sent', { userId, deviceCount: deviceIds.length });
+        } catch (socketErr) {
+          logger.error('Failed to send user devices updated event', { 
+            error: socketErr.message, 
+            userId 
+          });
+        }
+      }
+
+      res.json({ 
+        success: true,
+        deviceCount: deviceIds.length
+      });
+    } catch (err) {
+      logger.error('Set user devices error', { error: err.message, stack: err.stack, userId });
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+    }
+  }
+);
+
+/**
+ * Создает роутер аутентификации
+ * @param {Server} io - Socket.IO сервер (опционально)
+ * @returns {express.Router}
+ */
+export function createAuthRouter(io = null) {
+  // Сохраняем io для использования в роутерах
+  if (io) {
+    router.io = io;
+  }
   return router;
 }
 

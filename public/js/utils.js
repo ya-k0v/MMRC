@@ -30,22 +30,32 @@ export function getStringPriority(str) {
   return getCharPriority(firstChar);
 }
 
-// Функция сортировки устройств: сначала по приоритету первого символа, затем по алфавиту
+// Функция проверки, начинается ли строка с цифры
+function startsWithDigit(str) {
+  if (!str || str.length === 0) return false;
+  const firstChar = str[0];
+  const code = firstChar.charCodeAt(0);
+  return code >= 48 && code <= 57; // Цифры 0-9
+}
+
+// Функция сортировки устройств: сначала элементы с цифрами, потом без цифр, внутри каждой группы - по алфавиту
 export function sortDevices(devices, nodeNames = {}) {
   return [...devices].sort((a, b) => {
     const nameA = (a.name || nodeNames[a.device_id] || a.device_id).trim();
     const nameB = (b.name || nodeNames[b.device_id] || b.device_id).trim();
     
-    // Сначала сравниваем по приоритету первого символа
-    const priorityA = getStringPriority(nameA);
-    const priorityB = getStringPriority(nameB);
+    // Проверяем, начинается ли имя с цифры
+    const aStartsWithDigit = startsWithDigit(nameA);
+    const bStartsWithDigit = startsWithDigit(nameB);
     
-    if (priorityA !== priorityB) {
-      return priorityA - priorityB;
+    // Сначала идут элементы с цифрами (aStartsWithDigit = true имеет приоритет 0)
+    // Потом элементы без цифр (aStartsWithDigit = false имеет приоритет 1)
+    if (aStartsWithDigit !== bStartsWithDigit) {
+      return aStartsWithDigit ? -1 : 1; // Элементы с цифрами идут первыми
     }
     
-    // Если приоритет одинаковый, сортируем по алфавиту
-    // Для правильной сортировки используем localeCompare с русской локалью
+    // Если обе строки начинаются с цифр или обе не начинаются с цифр - сортируем по алфавиту
+    // Для правильной сортировки используем localeCompare с русской локалью и numeric: true
     return nameA.localeCompare(nameB, 'ru', { numeric: true, sensitivity: 'base' });
   });
 }
@@ -61,29 +71,55 @@ export function debounce(fn, ms = 200) {
 
 // Динамический расчет размера страницы по высоте экрана
 // Рассчитывает сколько элементов влезает на страницу
-export function getPageSize() {
+// @param {number|string} itemHeight - Опциональная высота элемента в пикселях или тип элемента ('device'|'file')
+export function getPageSize(itemHeight = null) {
   try {
-    // Получаем высоту элемента из CSS переменной
-    const rootStyles = getComputedStyle(document.documentElement);
-    const itemMinHeight = parseInt(rootStyles.getPropertyValue('--item-min-height')) || 100;
-    const itemGap = parseInt(rootStyles.getPropertyValue('--item-gap')) || 8;
+    let ITEM_HEIGHT;
     
-    // Высота одного элемента + gap
-    const ITEM_HEIGHT = itemMinHeight + itemGap;
+    if (typeof itemHeight === 'number') {
+      // Если передана конкретная высота
+      ITEM_HEIGHT = itemHeight;
+    } else if (itemHeight === 'file') {
+      // Для файлов используем меньшую высоту (60px + gap 6px)
+      // Gap уменьшен на 2px для компактности в панели спикера
+      ITEM_HEIGHT = 60 + 6; // Высота файла 60px + gap 6px в панели спикера
+    } else {
+      // По умолчанию используем высоту устройств из CSS переменной
+      // Учитываем, что реальная высота .tvTile = calc(var(--item-min-height) - 8px)
+      const rootStyles = getComputedStyle(document.documentElement);
+      const itemMinHeight = parseInt(rootStyles.getPropertyValue('--item-min-height')) || 100;
+      const itemGap = parseInt(rootStyles.getPropertyValue('--item-gap')) || 8;
+      // Реальная высота устройства уменьшена на 8px (см. CSS .tvTile)
+      ITEM_HEIGHT = (itemMinHeight - 8) + itemGap;
+    }
     
     // Получаем высоту видимой области
     const viewportHeight = window.innerHeight;
     
-    // Вычитаем высоту header/toolbar (примерно 60-80px) и пагинации (примерно 50px)
-    // Оставляем запас для комфортного отображения
-    const HEADER_HEIGHT = 80;
-    const PAGINATION_HEIGHT = 60;
-    const PADDING = 16; // Отступы
+    // Вычитаем высоту header/toolbar, header панели, отступы и пагинации
+    // Уменьшены отступы для более точного расчета
+    const HEADER_HEIGHT = 80; // Верхний toolbar
+    const PANEL_HEADER_HEIGHT = itemHeight === 'file' ? 50 : 50; // Header панели файлов/устройств
+    const PANEL_HEADER_MARGIN = 8; // margin-bottom header
+    const PANEL_GAP = itemHeight === 'file' ? 8 : 4; // gap между header и списком, и между списком и пагинацией (уменьшено)
+    const PAGINATION_HEIGHT = 40; // Высота пагинации
+    const PADDING = 8; // Внешние отступы (уменьшено с 16)
     
-    const availableHeight = viewportHeight - HEADER_HEIGHT - PAGINATION_HEIGHT - PADDING;
+    const availableHeight = viewportHeight 
+      - HEADER_HEIGHT 
+      - PANEL_HEADER_HEIGHT 
+      - PANEL_HEADER_MARGIN 
+      - (PANEL_GAP * 2) // gap сверху и снизу списка
+      - PAGINATION_HEIGHT 
+      - PADDING;
     
     // Рассчитываем сколько элементов влезает
-    const itemsPerPage = Math.floor(availableHeight / ITEM_HEIGHT);
+    const itemsPerPageFloat = availableHeight / ITEM_HEIGHT;
+    
+    // Если остается больше 60% высоты элемента - округляем вверх, иначе вниз
+    // Это позволит показывать элемент, если для него есть достаточно места
+    const remainder = itemsPerPageFloat - Math.floor(itemsPerPageFloat);
+    const itemsPerPage = remainder > 0.6 ? Math.ceil(itemsPerPageFloat) : Math.floor(itemsPerPageFloat);
     
     // Минимум 3 элемента, максимум 20
     const result = Math.max(3, Math.min(20, itemsPerPage));
@@ -96,9 +132,18 @@ export function getPageSize() {
 }
 
 // Загрузка маппинга имен устройств из API
-export async function loadNodeNames() {
+// @param {Function} fetchFn - Опциональная функция для выполнения запроса (speakerFetch, adminFetch и т.д.)
+//                            Если не передана, используется обычный fetch
+export async function loadNodeNames(fetchFn = null) {
   try {
-    const res = await fetch('/api/devices');
+    const fetchFunction = fetchFn || fetch;
+    const res = await fetchFunction('/api/devices');
+    
+    if (!res.ok) {
+      // Если запрос не успешен, возвращаем пустой объект
+      return {};
+    }
+    
     const devices = await res.json();
     
     // Преобразуем массив устройств в маппинг {device_id: name}
@@ -111,7 +156,6 @@ export async function loadNodeNames() {
     
     return nodeNames;
   } catch (e) {
-    console.warn('Не удалось загрузить имена устройств из API', e);
     return {};
   }
 }

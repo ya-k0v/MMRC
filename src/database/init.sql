@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
   username TEXT UNIQUE NOT NULL,
   full_name TEXT NOT NULL,
   password_hash TEXT NOT NULL,
-  role TEXT DEFAULT 'speaker' CHECK(role IN ('admin', 'speaker')),
+  role TEXT DEFAULT 'speaker' CHECK(role IN ('admin', 'speaker', 'hero_admin')),
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_login DATETIME,
@@ -97,6 +97,12 @@ CREATE TABLE IF NOT EXISTS files_metadata (
   
   -- Заглушки (placeholders)
   is_placeholder BOOLEAN DEFAULT 0,
+  content_type TEXT DEFAULT 'file', -- file | folder | streaming | pdf | pptx
+  stream_url TEXT,
+  stream_protocol TEXT DEFAULT 'auto',
+  
+  -- Метаданные статического контента (папки, PDF, PPTX)
+  pages_count INTEGER,  -- Количество слайдов/страниц/изображений
   
   -- Timestamps
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -147,6 +153,7 @@ CREATE TABLE IF NOT EXISTS devices (
   folder TEXT NOT NULL,
   device_type TEXT DEFAULT 'browser',
   platform TEXT,
+  ip_address TEXT,
   capabilities TEXT, -- JSON строка
   last_seen DATETIME,
   current_state TEXT, -- JSON строка с current: {type, file, state}
@@ -157,6 +164,17 @@ CREATE TABLE IF NOT EXISTS devices (
 CREATE INDEX IF NOT EXISTS idx_devices_type ON devices(device_type);
 CREATE INDEX IF NOT EXISTS idx_devices_folder ON devices(folder);
 CREATE INDEX IF NOT EXISTS idx_devices_last_seen ON devices(last_seen);
+
+-- ========================================
+-- DEVICE VOLUME STATE
+-- ========================================
+CREATE TABLE IF NOT EXISTS device_volume (
+  device_id TEXT PRIMARY KEY,
+  volume_level INTEGER NOT NULL DEFAULT 50 CHECK (volume_level BETWEEN 0 AND 100),
+  is_muted BOOLEAN NOT NULL DEFAULT 0,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE
+);
 
 -- ========================================
 -- FILE NAMES TABLE (маппинг safe_name -> original_name)
@@ -205,6 +223,23 @@ CREATE TABLE IF NOT EXISTS placeholders (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE
 );
+
+-- ========================================
+-- USER DEVICES TABLE (назначение устройств пользователям)
+-- ========================================
+CREATE TABLE IF NOT EXISTS user_devices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  device_id TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE,
+  UNIQUE(user_id, device_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_devices_user ON user_devices(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_devices_device ON user_devices(device_id);
+CREATE INDEX IF NOT EXISTS idx_user_devices_user_device ON user_devices(user_id, device_id);
 
 -- ========================================
 -- SETTINGS TABLE (настройки системы)

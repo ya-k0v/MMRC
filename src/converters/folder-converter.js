@@ -7,8 +7,10 @@ import fs from 'fs';
 import path from 'path';
 import { exec as execCallback } from 'child_process';
 import util from 'util';
-import { DEVICES, CONVERTED_CACHE } from '../config/constants.js';
+import { getDevicesPath, getConvertedCache } from '../config/settings-manager.js';
+import { getAnyFileMetadataBySafeName } from '../database/files-metadata.js';
 import { makeSafeFolderName } from '../utils/transliterate.js';
+import logger from '../utils/logger.js';
 
 const exec = util.promisify(execCallback);
 
@@ -16,11 +18,14 @@ const exec = util.promisify(execCallback);
  * Распаковать ZIP архив с изображениями в папку
  * @param {string} deviceId - ID устройства
  * @param {string} zipFileName - Имя ZIP файла
- * @returns {Promise<{success: boolean, error?: string, imagesCount?: number}>}
+ * @param {string} deviceFolderName - Имя папки устройства (опционально, по умолчанию deviceId)
+ * @returns {Promise<{success: boolean, error?: string, imagesCount?: number, folderName?: string, originalFolderName?: string}>}
  */
-export async function extractZipToFolder(deviceId, zipFileName) {
+export async function extractZipToFolder(deviceId, zipFileName, deviceFolderName = null) {
   try {
-    const deviceFolder = path.join(DEVICES, deviceId);
+    // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+    const devicesPath = getDevicesPath();
+    const deviceFolder = path.join(devicesPath, deviceFolderName || deviceId);
     const zipPath = path.join(deviceFolder, zipFileName);
     
     if (!fs.existsSync(zipPath)) {
@@ -32,7 +37,7 @@ export async function extractZipToFolder(deviceId, zipFileName) {
     const folderName = makeSafeFolderName(originalFolderName); // Транслитерация
     const outputFolder = path.join(deviceFolder, folderName);
     
-    console.log(`[FolderConverter] 📝 Имя папки: "${originalFolderName}" → "${folderName}"`);
+    logger.info(`[FolderConverter] 📝 Имя папки: "${originalFolderName}" → "${folderName}"`, { deviceId, zipFileName, originalFolderName, folderName });
     
     // Если папка уже существует, удаляем её
     if (fs.existsSync(outputFolder)) {
@@ -42,14 +47,14 @@ export async function extractZipToFolder(deviceId, zipFileName) {
     // Создаем новую папку
     fs.mkdirSync(outputFolder, { recursive: true });
     
-    console.log(`[FolderConverter] 📦 Распаковка ZIP: ${zipFileName} -> ${folderName}/`);
+    logger.info(`[FolderConverter] 📦 Распаковка ZIP: ${zipFileName} -> ${folderName}/`, { deviceId, zipFileName, folderName });
     
     // Распаковываем ZIP с помощью unzip (доступен на большинстве Linux систем)
     try {
       await exec(`unzip -q "${zipPath}" -d "${outputFolder}"`);
     } catch (err) {
       // Если unzip недоступен, пробуем 7z
-      console.log('[FolderConverter] unzip недоступен, пробую 7z...');
+      logger.info('[FolderConverter] unzip недоступен, пробую 7z...', { deviceId, zipFileName });
       await exec(`7z x "${zipPath}" -o"${outputFolder}" -y`);
     }
     
@@ -109,7 +114,7 @@ export async function extractZipToFolder(deviceId, zipFileName) {
     }
     
     if (movedCount > 0) {
-      console.log(`[FolderConverter] 📁 Перемещено файлов из подпапок: ${movedCount}`);
+      logger.info(`[FolderConverter] 📁 Перемещено файлов из подпапок: ${movedCount}`, { deviceId, zipFileName, movedCount });
       
       // Удаляем пустые подпапки
       const subdirs = fs.readdirSync(outputFolder, { withFileTypes: true })
@@ -120,7 +125,7 @@ export async function extractZipToFolder(deviceId, zipFileName) {
         try {
           fs.rmSync(subdir, { recursive: true, force: true });
         } catch (e) {
-          console.warn(`[FolderConverter] ⚠️ Не удалось удалить подпапку ${subdir}:`, e);
+          logger.warn(`[FolderConverter] ⚠️ Не удалось удалить подпапку ${subdir}`, { error: e.message, deviceId, zipFileName, subdir });
         }
       }
     }
@@ -131,14 +136,14 @@ export async function extractZipToFolder(deviceId, zipFileName) {
       try {
         fs.chmodSync(file, 0o644);
       } catch (e) {
-        console.warn(`[FolderConverter] ⚠️ Не удалось установить права на ${file}:`, e);
+        logger.warn(`[FolderConverter] ⚠️ Не удалось установить права на ${file}`, { error: e.message, deviceId, zipFileName, file });
       }
     });
     
     // Удаляем исходный ZIP файл
     fs.unlinkSync(zipPath);
     
-    console.log(`[FolderConverter] ✅ ZIP распакован: ${allFiles.length} изображений`);
+    logger.info(`[FolderConverter] ✅ ZIP распакован: ${allFiles.length} изображений`, { deviceId, zipFileName, imagesCount: allFiles.length, folderName });
     
     return { 
       success: true, 
@@ -148,7 +153,7 @@ export async function extractZipToFolder(deviceId, zipFileName) {
     };
     
   } catch (error) {
-    console.error('[FolderConverter] ❌ Ошибка распаковки ZIP:', error);
+    logger.error('[FolderConverter] ❌ Ошибка распаковки ZIP', { error: error.message, stack: error.stack, deviceId, zipFileName });
     return { success: false, error: error.message };
   }
 }
@@ -159,34 +164,65 @@ export async function extractZipToFolder(deviceId, zipFileName) {
  * @param {string} folderName - Имя папки
  * @returns {Promise<string[]>} Список файлов изображений
  */
+export function resolveFolderPath(deviceId, folderName) {
+  const devicesPath = getDevicesPath();
+  const candidates = [];
+  if (deviceId) {
+    candidates.push(path.join(devicesPath, deviceId, folderName));
+  }
+  // общий корень
+  candidates.push(path.join(devicesPath, folderName));
+  // fallback: поиск по всем устройствам (одноуровневый обход)
+  try {
+    const entries = fs.readdirSync(devicesPath, { withFileTypes: true });
+    entries
+      .filter(e => e.isDirectory())
+      .forEach(e => {
+        candidates.push(path.join(devicesPath, e.name, folderName));
+      });
+  } catch (e) {
+    // ignore
+  }
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+        return candidate;
+      }
+    } catch (e) {
+      // ignore candidate
+    }
+  }
+
+  // Fallback: ищем по метаданным (любое устройство)
+  try {
+    const meta = getAnyFileMetadataBySafeName(folderName);
+    if (meta?.file_path && fs.existsSync(meta.file_path) && fs.statSync(meta.file_path).isDirectory()) {
+      return meta.file_path;
+    }
+  } catch (e) {
+    // ignore
+  }
+  return null;
+}
+
 export async function getFolderImages(deviceId, folderName) {
   try {
-    const folderPath = path.join(DEVICES, deviceId, folderName);
-    
-    if (!fs.existsSync(folderPath)) {
-      return [];
-    }
-    
-    const stat = fs.statSync(folderPath);
-    if (!stat.isDirectory()) {
-      return [];
-    }
-    
+    const folderPath = resolveFolderPath(deviceId, folderName);
+    if (!folderPath) return { files: [], folderPath: null };
+
     const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
     const files = fs.readdirSync(folderPath)
       .filter(file => {
         const ext = path.extname(file).toLowerCase();
         return imageExtensions.includes(ext);
       })
-      .sort((a, b) => {
-        // Сортировка с учетом чисел
-        return a.localeCompare(b, undefined, { numeric: true });
-      });
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
     
-    return files;
+    return { files, folderPath };
   } catch (error) {
-    console.error('[FolderConverter] ❌ Ошибка чтения папки:', error);
-    return [];
+    logger.error('[FolderConverter] ❌ Ошибка чтения папки', { error: error.message, stack: error.stack, deviceId, folderName });
+    return { files: [], folderPath: null };
   }
 }
 
@@ -197,8 +233,8 @@ export async function getFolderImages(deviceId, folderName) {
  * @returns {Promise<number>} Количество изображений
  */
 export async function getFolderImagesCount(deviceId, folderName) {
-  const images = await getFolderImages(deviceId, folderName);
-  return images.length;
+  const { files } = await getFolderImages(deviceId, folderName);
+  return files.length;
 }
 
 /**
@@ -209,9 +245,11 @@ export async function getFolderImagesCount(deviceId, folderName) {
  */
 export function findImageFolder(deviceId, fileName) {
   try {
+    // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+    const devicesPath = getDevicesPath();
     // Убираем расширение .zip если есть
     const baseName = fileName.replace(/\.zip$/i, '');
-    const folderPath = path.join(DEVICES, deviceId, baseName);
+    const folderPath = path.join(devicesPath, deviceId, baseName);
     
     if (fs.existsSync(folderPath)) {
       const stat = fs.statSync(folderPath);

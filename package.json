@@ -1,26 +1,30 @@
 {
-  "name": "videocontrol",
-  "version": "2.6.3",
+  "name": "mmrc",
+  "version": "3.1.1",
+  "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "doctor:start": "node scripts/check-startup-compat.js",
+    "ytdlp:install": "bash ./scripts/install-yt-dlp-local.sh",
+    "ytdlp:version": "./bin/yt-dlp --version"
   },
   "dependencies": {
-    "bcrypt": "^5.1.1",
-    "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^11.10.0",
-    "express": "^4.19.2",
-    "express-rate-limit": "^8.2.1",
-    "express-slow-down": "^3.0.1",
-    "express-validator": "^7.3.0",
-    "file-type": "^21.1.0",
-    "jsonwebtoken": "^9.0.2",
+    "bcrypt": "^6.0.0",
+    "better-sqlite3": "^12.8.0",
+    "dotenv": "^17.4.0",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.3.2",
+    "express-slow-down": "^3.1.0",
+    "express-validator": "^7.3.2",
+    "file-type": "^21.3.4",
+    "jsonwebtoken": "^9.0.3",
     "mime": "^4.0.4",
-    "multer": "^2.0.2",
+    "multer": "^2.1.1",
     "pdf-lib": "^1.17.1",
     "pdf2pic": "^3.2.0",
-    "socket.io": "^4.7.5",
-    "winston": "^3.18.3",
+    "socket.io": "^4.8.3",
+    "winston": "^3.19.0",
     "winston-daily-rotate-file": "^5.0.0"
   }
 }

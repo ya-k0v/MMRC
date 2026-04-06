@@ -11,8 +11,11 @@ import { uploadFiles, copyFile } from './admin/upload-manager.js';
 import { clearDetail, clearFilesPane, openDevice as openDeviceHelper } from './admin/ui-helpers.js';
 import { renderDeviceCard as renderDeviceCardModule } from './admin/device-card.js';
 import { setupUploadUI as setupUploadUIModule } from './admin/upload-ui.js';
-import { initSystemMonitor } from './admin/system-monitor.js';
-import { showDevicesModal, showUsersModal } from './admin/modal.js';
+import { showDevicesModal, showUsersModal, showSettingsModal } from './admin/modal.js';
+import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon } from './shared/svg-icons.js';
+import { escapeHtml } from './shared/utils.js';
+import { initNotifications } from './admin/notifications.js';
+import { showNotificationsModal } from './admin/notifications-modal.js';
 
 const socket = io();
 const grid = document.getElementById('grid');
@@ -22,23 +25,59 @@ let devicesCache = [];
 let currentDeviceId = null;
 let tvPage = 0;
 let filePage = 0;
+// ИСПРАВЛЕНО: Сохраняем пагинацию для каждого устройства отдельно
+const filePageByDevice = new Map();
 let nodeNames = {};
+let user = null;
+const volumeStateByDevice = new Map();
+const VOLUME_STEP = 5;
+
+async function reportAdminUiNotification(payload = {}) {
+  try {
+    await adminFetch('/api/notifications/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: payload.type || 'admin_ui_event',
+        severity: payload.severity || 'info',
+        title: payload.title || 'Уведомление',
+        message: payload.message || '',
+        details: payload.details || {},
+        key: payload.key || null,
+        source: 'admin-main'
+      })
+    });
+  } catch (error) {
+    console.error('[Admin UI] Failed to report notification:', error);
+  }
+}
 
 // Настройка Socket.IO обработчиков
 setupSocketListeners(socket, {
   onDevicesUpdated: async () => {
+    // КРИТИЧНО: Не обновляем UI во время активной загрузки файлов (избегаем сброса очереди)
+    if (window.isUploadingFiles && window.isUploadingFiles()) {
+      return; // Пропускаем обновление во время загрузки
+    }
+    
     const prev = currentDeviceId;
     await loadDevices();
+    updateDevicesCount(); // Обновляем счетчик после загрузки устройств
     const pageSize = getPageSize();
     const totalPages = Math.max(1, Math.ceil(devicesCache.length / pageSize));
     if (tvPage >= totalPages) tvPage = totalPages - 1;
+    let hasSelection = false;
     if (prev && devicesCache.find(d => d.device_id === prev)) {
       openDevice(prev);
       // ИСПРАВЛЕНО: Обновляем список файлов для текущего устройства
       await renderFilesPane(prev);
+      hasSelection = true;
     } else {
-      clearDetail();
-      clearFilesPane();
+      hasSelection = await ensureSelectedDevice();
+    }
+    if (!hasSelection) {
+      clearDetail('Нет устройств', 'Откройте плеер или добавьте устройство в системе.');
+      clearFilesPane('Нет устройств', 'Список файлов появится после подключения устройства.');
     }
     renderTVList();
   },
@@ -60,14 +99,30 @@ setupSocketListeners(socket, {
     if (currentDeviceId === device_id) {
       const panel = document.getElementById('filesPanel');
       // ИСПРАВЛЕНО: Обновляем панель с сохранением текущей страницы
-      if (panel) refreshFilesPanel(device_id, panel);
+      if (panel) {
+        const savedPage = filePageByDevice.get(device_id) || 0;
+        refreshFilesPanel(device_id, panel).then(updatedPage => {
+          if (updatedPage !== undefined) {
+            filePageByDevice.set(device_id, updatedPage);
+            filePage = updatedPage;
+          }
+        });
+      }
     }
   },
   onFileError: (device_id, file, error) => {
     if (currentDeviceId === device_id) {
       const panel = document.getElementById('filesPanel');
       // ИСПРАВЛЕНО: Обновляем панель с сохранением текущей страницы
-      if (panel) refreshFilesPanel(device_id, panel);
+      if (panel) {
+        const savedPage = filePageByDevice.get(device_id) || 0;
+        refreshFilesPanel(device_id, panel).then(updatedPage => {
+          if (updatedPage !== undefined) {
+            filePageByDevice.set(device_id, updatedPage);
+            filePage = updatedPage;
+          }
+        });
+      }
     }
   },
   onPreviewRefresh: async () => {
@@ -91,6 +146,73 @@ setupSocketListeners(socket, {
     }
     renderTVList();
     if (currentDeviceId) openDevice(currentDeviceId);
+  },
+  onVolumeBatch: handleVolumeBatch,
+  onVolumeUpdate: handleVolumeUpdate,
+  onDeviceUpdated: (device_id, device) => {
+    // КРИТИЧНО: Обновляем информацию об устройстве без перезагрузки страницы
+    const deviceIndex = devicesCache.findIndex(d => d.device_id === device_id);
+    if (deviceIndex !== -1) {
+      // Обновляем данные устройства в кэше
+      devicesCache[deviceIndex] = {
+        ...devicesCache[deviceIndex],
+        ...device
+      };
+      
+      // Обновляем отображение в списке устройств (tvTile)
+      const tvList = document.getElementById('tvList');
+      if (tvList) {
+        const tile = tvList.querySelector(`[data-id="${device_id}"]`);
+        if (tile) {
+          const metaEl = tile.querySelector('.tvTile-meta');
+          if (metaEl) {
+            metaEl.textContent = `ID: ${device_id}${device.ipAddress ? ` • IP: ${device.ipAddress}` : ''}`;
+          }
+        }
+      }
+      
+      // Обновляем отображение в карточке устройства, если оно открыто
+      if (currentDeviceId === device_id) {
+        const pane = document.getElementById('detailPane');
+        if (pane) {
+          const metaEl = pane.querySelector('.meta');
+          if (metaEl) {
+            // Обновляем строку с IP адресом в карточке устройства
+            // Используем DOM методы для безопасного обновления
+            const safeIp = device.ipAddress ? escapeHtml(device.ipAddress) : null;
+            
+            // Ищем существующий span с IP адресом
+            const existingIpSpan = Array.from(metaEl.querySelectorAll('span')).find(
+              span => span.textContent && span.textContent.includes('IP:')
+            );
+            
+            if (safeIp) {
+              if (existingIpSpan) {
+                // Обновляем существующий span через textContent (безопасно)
+                existingIpSpan.textContent = `• IP: ${safeIp}`;
+              } else {
+                // Создаем новый span для IP адреса
+                const ipSpan = document.createElement('span');
+                ipSpan.textContent = `• IP: ${safeIp}`;
+                
+                // Находим span с ID и вставляем IP перед ним
+                const idSpan = Array.from(metaEl.querySelectorAll('span')).find(
+                  span => span.textContent && span.textContent.includes('ID:')
+                );
+                if (idSpan && idSpan.parentNode) {
+                  idSpan.parentNode.insertBefore(ipSpan, idSpan);
+                } else {
+                  metaEl.appendChild(ipSpan);
+                }
+              }
+            } else if (existingIpSpan) {
+              // Удаляем IP span если IP адрес отсутствует
+              existingIpSpan.remove();
+            }
+          }
+        }
+      }
+    }
   }
 });
 
@@ -98,14 +220,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   initThemeToggle(document.getElementById('themeBtn'), 'vc_theme_admin');
   
   try {
-    const authorized = await ensureAuth();
-    if (!authorized) return;
+    user = await ensureAuth();
+    if (!user) return;
+    if (user.role === 'hero_admin') {
+      window.location.href = '/hero/admin.html';
+      return;
+    }
   } catch (err) {
     return;
   }
-  
+
   // Показываем ФИО пользователя
-  const user = JSON.parse(localStorage.getItem('user') || '{}');
   const userFullName = document.getElementById('userFullName');
   if (userFullName && user.full_name) {
     userFullName.textContent = user.full_name;
@@ -113,22 +238,47 @@ document.addEventListener('DOMContentLoaded', async () => {
     userFullName.textContent = user.username; // Fallback
   }
   
-  // Обработчик кнопки Устройства (только для admin)
-  const devicesBtn = document.getElementById('devicesBtn');
-  if (devicesBtn && user.role === 'admin') {
-    devicesBtn.onclick = () => {
-      showDevicesModal(adminFetch, loadDevices, renderTVList, openDevice, renderFilesPane);
-    };
-  } else if (devicesBtn) {
-    devicesBtn.style.display = 'none'; // Speaker не может создавать устройства
-  }
   
+  // Обработчик кнопки Спикер (в toolbar)
+  const speakerBtn = document.getElementById('speakerBtn');
+  if (speakerBtn) {
+    speakerBtn.onclick = () => {
+      window.open('/speaker.html', '_blank');
+    };
+  }
+
   // Обработчик кнопки Пользователи (только для admin)
   const usersBtn = document.getElementById('usersBtn');
   if (usersBtn && user.role === 'admin') {
     usersBtn.onclick = () => {
       showUsersModal(adminFetch);
     };
+  } else if (usersBtn) {
+    usersBtn.style.display = 'none';
+  }
+  
+  // Обработчик кнопки Настройки (только для admin)
+  const settingsBtn = document.getElementById('settingsBtn');
+  const heroBtn = document.getElementById('heroBtn');
+  if (heroBtn) {
+    if (user.role === 'admin') {
+      heroBtn.onclick = () => {
+        window.open('/hero/admin.html', '_blank');
+      };
+    } else {
+      heroBtn.style.display = 'none';
+    }
+  }
+  if (settingsBtn) {
+    // Заменяем эмодзи на SVG иконку
+    settingsBtn.innerHTML = getSettingsIcon(20);
+    if (user.role === 'admin') {
+      settingsBtn.onclick = () => {
+        showSettingsModal();
+      };
+    } else {
+      settingsBtn.style.display = 'none'; // Speaker не может открывать настройки
+    }
   }
   
   // Обработчик выхода (теперь это span)
@@ -140,18 +290,53 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     logoutBtn.style.cursor = 'pointer';
   }
-  
+
   await loadAndSetNodeNames();
   await loadDevices();
   renderLayout();
-  initSelectionFromUrl();
+  updateDevicesCount(); // Обновляем счетчик после создания layout
+  clearDetail('Выберите устройство', 'Панель управления и кнопки появятся после выбора устройства из списка слева.');
+  clearFilesPane('Выберите устройство слева', 'Список файлов загрузится автоматически после выбора устройства.');
   
-  // Инициализируем системный монитор (теперь в специальном контейнере)
-  initSystemMonitor(adminFetch);
+  // Обработчик кнопки Устройства (только для admin)
+  const devicesBtn = document.getElementById('devicesBtn');
+  if (devicesBtn && user.role === 'admin') {
+    devicesBtn.onclick = () => {
+      showDevicesModal(adminFetch, loadDevices, renderTVList, openDevice, renderFilesPane);
+    };
+  } else if (devicesBtn) {
+    devicesBtn.style.display = 'none'; // Speaker не может создавать устройства
+  }
+  
+  await initSelectionFromUrl();
+  
+  // Инициализируем систему уведомлений (только для админов)
+  if (user.role === 'admin' || user.role === 'hero_admin') {
+    window.user = user; // Сохраняем user в window для доступа из notifications.js
+    initNotifications(socket);
+  }
+  
+  // Системный монитор теперь отображается в модальном окне настроек
 });
 
 async function loadDevices() {
   devicesCache = await loadDevicesModule(adminFetch, sortDevices, nodeNames);
+  updateDevicesCount();
+}
+
+// Обновление количества устройств в заголовке панели
+function updateDevicesCount() {
+  const devicesMeta = document.getElementById('devicesMeta');
+  if (devicesMeta) {
+    const count = devicesCache.length;
+    devicesMeta.textContent = count > 0 ? `${count}` : '0';
+  }
+  // Обновляем счетчик в header
+  const devicesCount = document.getElementById('devicesCount');
+  if (devicesCount) {
+    const count = devicesCache.length;
+    devicesCount.textContent = count > 0 ? `${count}` : '0';
+  }
 }
 
 // renderTVList перенесена в devices-manager.js  
@@ -164,59 +349,159 @@ let resizeTimeout;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimeout);
   resizeTimeout = setTimeout(() => {
-    if (tvList) renderTVList();
+    if (document.getElementById('tvList')) renderTVList();
     // Также перерисовываем список файлов если он открыт
     if (currentDeviceId) renderFilesPane(currentDeviceId);
   }, 250);
 });
 
 async function loadAndSetNodeNames() {
-  nodeNames = await loadNodeNames();
+  nodeNames = await loadNodeNames(adminFetch);
 }
 function renderLayout() {
   grid.innerHTML = `
-    <div class="card" style="display:flex; flex-direction:column; min-height:0">
-      <div class="header">
-        <div class="title">Устройства</div>
+    <div id="devicesPane" class="card admin-panel admin-panel-devices" style="display:flex; flex-direction:column; min-height:0">
+      <div class="header" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-sm)">
+        <div class="title" style="margin:0; font-size:var(--font-size-base)">Устройства</div>
+        <div style="display:flex; align-items:center; gap:var(--space-sm);">
+          <div class="meta" id="devicesMeta" style="margin:0; white-space:nowrap">0</div>
+          <button id="devicesBtn" class="meta-lg" type="button" style="padding:6px; display:flex; align-items:center; justify-content:center; min-width:28px; height:28px; border:none; background:transparent;" title="Добавить устройство">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </button>
+        </div>
       </div>
-      <div style="display:flex; flex-direction:column; gap:var(--space-md); flex:1 1 auto; min-height:0">
+      <div class="admin-panel-body" style="display:flex; flex-direction:column; gap:var(--space-md); flex:1 1 auto; min-height:0">
         <ul id="tvList" class="list" style="flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; display:flex; flex-direction:column; gap:var(--space-sm)"></ul>
         <div id="tvPager" class="meta" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); flex-wrap:wrap"></div>
       </div>
     </div>
 
-    <div id="detailPane" style="min-height:0; display:flex; flex-direction:column"></div>
+    <div id="detailPane" class="admin-panel admin-panel-detail" style="min-height:0; display:flex; flex-direction:column"></div>
 
-    <div id="filesPane" class="card" style="min-height:0; display:flex; flex-direction:column">
+    <div id="filesPane" class="card admin-panel admin-panel-files" style="min-height:0; display:flex; flex-direction:column">
       <div class="header" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-sm)">
         <div class="title" id="filesPaneTitle" style="margin:0; font-size:var(--font-size-base)">Файлы</div>
-        <div class="meta" id="filesPaneMeta" style="margin:0; white-space:nowrap">Выберите устройство слева</div>
+        <div style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap">
+          <div class="meta" id="filesPaneMeta" style="margin:0; white-space:nowrap">Выберите устройство слева</div>
+        </div>
       </div>
+      <div class="admin-panel-body" style="display:flex; flex-direction:column; gap:var(--space-md); flex:1 1 auto; min-height:0">
       <div id="filesPanel" style="flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden"></div>
+        <div id="filePagerAdmin" class="meta" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); flex-wrap:wrap"></div>
+      </div>
     </div>
   `;
 
   renderTVList();
 }
 
+async function promptAddStream() {
+  if (!currentDeviceId) {
+    await reportAdminUiNotification({
+      type: 'stream_add_no_device',
+      severity: 'info',
+      title: 'Сначала выберите устройство',
+      message: 'Для добавления стрима выберите устройство слева',
+      key: 'stream-add-no-device'
+    });
+    return;
+  }
+  const { showStreamModal } = await import('./admin/files-manager.js');
+  await showStreamModal({
+    deviceId: currentDeviceId,
+    mode: 'add',
+    onSuccess: async () => {
+      await renderFilesPane(currentDeviceId);
+    }
+  });
+}
+
+function guessStreamProtocolFromUrl(url = '') {
+  const lower = url.toLowerCase();
+  if (lower.includes('.m3u8') || lower.includes('format=m3u8')) return 'hls';
+  if (lower.includes('.mpd') || lower.includes('format=mpd') || lower.includes('dash')) return 'dash';
+  return 'mpegts';
+}
+
 // ------ Заполнение select ------
 /* removed obsolete populateSelect (dropdown was removed) */
 
-// ------ Старт из URL ?device_id ------
-function initSelectionFromUrl() {
-  const url = new URL(location.href);
-  let q = url.searchParams.get('device_id');
+function hasDeviceId(deviceId) {
+  return Boolean(resolveDeviceId(deviceId));
+}
 
-  if (!q && devicesCache.length > 0) {
-    // Если device_id нет в URL, берем первую ноду
-    q = devicesCache[0].device_id;
-    url.searchParams.set('device_id', q);
-    history.replaceState(null, '', url.toString());
+function normalizeDeviceId(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function resolveDeviceId(candidate) {
+  const normalized = normalizeDeviceId(candidate);
+  if (!normalized) return null;
+
+  const exact = devicesCache.find(d => d.device_id === normalized);
+  if (exact) return exact.device_id;
+
+  const lowered = normalized.toLowerCase();
+  const caseInsensitive = devicesCache.find(d => String(d.device_id || '').toLowerCase() === lowered);
+  return caseInsensitive ? caseInsensitive.device_id : null;
+}
+
+function getFallbackDeviceId() {
+  if (!devicesCache.length) return null;
+  const ready = devicesCache.find(d => readyDevices.has(d.device_id));
+  const fallback = ready || devicesCache[0];
+  return fallback && fallback.device_id ? fallback.device_id : null;
+}
+
+async function ensureSelectedDevice(preferredId = null) {
+  const url = new URL(location.href);
+  const queryDeviceId = normalizeDeviceId(url.searchParams.get('device_id'));
+
+  const candidates = [preferredId, queryDeviceId, currentDeviceId, getFallbackDeviceId()];
+  let targetDeviceId = null;
+  for (const candidate of candidates) {
+    const resolved = resolveDeviceId(candidate);
+    if (resolved) {
+      targetDeviceId = resolved;
+      break;
+    }
   }
 
-  if (q && devicesCache.find(d => d.device_id === q)) {
-    openDevice(q);
-    renderFilesPane(q);
+  if (!targetDeviceId && devicesCache.length) {
+    targetDeviceId = devicesCache[0].device_id;
+  }
+
+  if (!targetDeviceId) {
+    currentDeviceId = null;
+    return false;
+  }
+
+  if (queryDeviceId && queryDeviceId !== targetDeviceId) {
+    // Нормализуем URL, если параметр device_id невалиден или отличается регистром.
+    openDeviceHelper(targetDeviceId);
+  }
+
+  openDevice(targetDeviceId);
+  try {
+    await renderFilesPane(targetDeviceId);
+  } catch (err) {
+    console.warn('[Admin] Не удалось загрузить список файлов для выбранного устройства', targetDeviceId, err?.message || err);
+    clearFilesPane('Ошибка загрузки файлов', 'Повторите попытку позже или проверьте подключение к серверу.');
+  }
+  renderTVList();
+  return true;
+}
+
+// ------ Старт из URL ?device_id ------
+async function initSelectionFromUrl() {
+  const hasSelection = await ensureSelectedDevice();
+  if (!hasSelection) {
+    clearDetail('Нет устройств', 'Откройте плеер или добавьте устройство, чтобы начать управление.');
+    clearFilesPane('Нет устройств', 'Файлы появятся после подключения хотя бы одного устройства.');
+    renderTVList();
   }
 }
 
@@ -225,7 +510,8 @@ function initSelectionFromUrl() {
 // ------ Открыть выбранную ноду ------
 function openDevice(id) {
   currentDeviceId = id;
-  filePage = 0; // Сброс пагинации файлов при смене устройства
+  // ИСПРАВЛЕНО: Восстанавливаем сохраненную страницу для устройства или сбрасываем на 0
+  filePage = filePageByDevice.get(id) || 0;
   
   // Обновляем URL при переключении устройства
   openDeviceHelper(id);
@@ -233,9 +519,14 @@ function openDevice(id) {
   const d = devicesCache.find(x => x.device_id === id);
   const pane = document.getElementById('detailPane');
   if (!pane) return;
-  if (!d) { clearDetail(); return; }
+  if (!d) {
+    clearDetail('Устройство не найдено', 'Выберите другое устройство в списке слева.');
+    clearFilesPane();
+    return;
+  }
   pane.innerHTML = '';
   pane.appendChild(renderDeviceCard(d));
+  setupVolumePanel(d.device_id);
 }
 
 // renderDeviceCard перенесена в device-card.js
@@ -260,7 +551,14 @@ async function renderFilesPane(deviceId) {
   if (meta) meta.textContent = `${filesCount} файл${filesCount === 1 ? '' : filesCount > 1 && filesCount < 5 ? 'а' : 'ов'}`;
   
   panel.innerHTML = `<div class="meta">Загрузка списка...</div>`;
-  await refreshFilesPanel(deviceId, panel);
+  // ИСПРАВЛЕНО: Восстанавливаем сохраненную страницу для устройства
+  const savedPage = filePageByDevice.get(deviceId) || 0;
+  filePage = savedPage;
+  const updatedPage = await refreshFilesPanel(deviceId, panel);
+  if (updatedPage !== undefined) {
+    filePageByDevice.set(deviceId, updatedPage);
+    filePage = updatedPage;
+  }
   
   // Обновляем счетчик файлов после загрузки
   const updatedDevice = devicesCache.find(d => d.device_id === deviceId);
@@ -271,8 +569,20 @@ async function renderFilesPane(deviceId) {
 
 // refreshFilesPanel перенесена в files-manager.js
 async function refreshFilesPanel(deviceId, panelEl) {
-  // ИСПРАВЛЕНО: Передаем текущее значение filePage
-  return await refreshFilesPanelModule(deviceId, panelEl, adminFetch, getPageSize, filePage, socket);
+  // ИСПРАВЛЕНО: Используем сохраненную страницу для устройства или текущую глобальную
+  const savedPage = filePageByDevice.get(deviceId) ?? filePage;
+  // ИСПРАВЛЕНО: Передаем callback для обновления страницы при пагинации
+  const onPageUpdate = (updatedPage) => {
+    filePageByDevice.set(deviceId, updatedPage);
+    filePage = updatedPage;
+  };
+  const updatedPage = await refreshFilesPanelModule(deviceId, panelEl, adminFetch, getPageSize, savedPage, socket, onPageUpdate);
+  // ИСПРАВЛЕНО: Сохраняем обновленную страницу для устройства
+  if (updatedPage !== undefined) {
+    filePageByDevice.set(deviceId, updatedPage);
+    filePage = updatedPage;
+  }
+  return updatedPage;
 }
 
 // НОВАЯ: Функция для обновления только прогресса файла без перерисовки всей панели
@@ -325,6 +635,190 @@ function setupUploadUI(card, deviceId, filesPanelEl) {
   return setupUploadUIModule(card, deviceId, filesPanelEl, renderFilesPane, socket);
 }
 
+function clampVolumePercent(value) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return null;
+  const clamped = Math.max(0, Math.min(100, Math.round(value)));
+  return Math.max(0, Math.min(100, Math.round(clamped / VOLUME_STEP) * VOLUME_STEP));
+}
+
+function storeVolumeState(deviceId, state = {}) {
+  if (!deviceId) return;
+  const prev = volumeStateByDevice.get(deviceId) || { level: 50, muted: false, updatedAt: null };
+  const levelCandidate = typeof state.level === 'number' ? clampVolumePercent(state.level) : null;
+  const nextLevel = levelCandidate !== null ? levelCandidate : prev.level;
+  const nextMuted = typeof state.muted === 'boolean' ? state.muted : prev.muted;
+  volumeStateByDevice.set(deviceId, {
+    level: nextLevel,
+    muted: nextMuted,
+    updatedAt: state.updated_at || prev.updatedAt || null
+  });
+  if (deviceId === currentDeviceId) {
+    updateVolumePanel(deviceId);
+  }
+}
+
+function handleVolumeBatch(snapshot = {}) {
+  if (!snapshot || typeof snapshot !== 'object') return;
+  Object.entries(snapshot).forEach(([deviceId, state]) => {
+    storeVolumeState(deviceId, state || {});
+  });
+}
+
+function handleVolumeUpdate(payload = {}) {
+  const deviceId = payload.device_id || payload.deviceId;
+  if (!deviceId) return;
+  storeVolumeState(deviceId, payload);
+}
+
+function sendVolumeCommand(deviceId, params = {}) {
+  if (!deviceId) return;
+  const payload = {
+    device_id: deviceId,
+    ...params
+  };
+  const hasLevelChange = typeof payload.level === 'number' && !Number.isNaN(payload.level);
+  const hasDeltaChange = typeof payload.delta === 'number' && !Number.isNaN(payload.delta);
+  if (typeof payload.muted === 'undefined' && (hasLevelChange || hasDeltaChange)) {
+    payload.muted = false;
+  }
+  socket.emit('control/volume', payload);
+
+  // Оптимистично обновляем локальное состояние, чтобы UI сразу реагировал
+  const current = volumeStateByDevice.get(deviceId) || {};
+  const nextLevel = hasLevelChange
+    ? clampVolumePercent(payload.level)
+    : hasDeltaChange && typeof current.level === 'number'
+      ? clampVolumePercent(current.level + payload.delta)
+      : current.level;
+  const nextMuted = typeof payload.muted === 'boolean' ? payload.muted : current.muted;
+  if (typeof nextLevel === 'number' || typeof nextMuted === 'boolean') {
+    storeVolumeState(deviceId, {
+      level: typeof nextLevel === 'number' ? nextLevel : current.level,
+      muted: typeof nextMuted === 'boolean' ? nextMuted : current.muted
+    });
+  }
+}
+
+function updateVolumePanel(deviceId = currentDeviceId) {
+  const slider = document.getElementById('adminVolumeSlider');
+  const valueEl = document.getElementById('adminVolumeValue');
+  const statusEl = document.getElementById('adminVolumeStatus');
+  const muteBtn = document.getElementById('adminVolumeMute');
+  const panel = document.getElementById('adminVolumePanel');
+  if (!panel) return;
+  
+  const hasDevice = Boolean(deviceId);
+  const state = deviceId ? volumeStateByDevice.get(deviceId) : null;
+  const isReady = deviceId ? readyDevices.has(deviceId) : false;
+  const disabled = !state;
+  const isOffline = hasDevice && !isReady;
+  
+  if (slider) {
+    slider.disabled = disabled;
+    if (state && typeof state.level === 'number') {
+      slider.value = clampVolumePercent(state.level) ?? slider.value;
+    }
+  }
+  if (muteBtn) muteBtn.disabled = disabled;
+  
+  // Обновляем иконку кнопки mute
+  if (muteBtn) {
+    const iconEl = muteBtn.querySelector('.volume-btn-icon');
+    let iconHtml;
+    let actionLabel;
+    let iconColor = 'currentColor';
+    
+    if (!state) {
+      iconHtml = getVolumeUnknownIcon(20, iconColor);
+      actionLabel = hasDevice ? 'Нет данных' : 'Выберите устройство';
+    } else {
+      const isMuted = state.muted;
+      // Определяем цвет иконки: красный для muted, зеленый для unmuted
+      iconColor = isMuted ? 'var(--danger)' : 'var(--success)';
+      iconHtml = isMuted ? getVolumeMutedIcon(20, iconColor) : getVolumeOnIcon(20, iconColor);
+      actionLabel = isMuted ? 'Включить звук' : 'Заглушить звук';
+      if (isOffline) {
+        actionLabel += ' · применится при подключении';
+      }
+    }
+    
+    if (iconEl) {
+      iconEl.innerHTML = iconHtml;
+    } else {
+      muteBtn.innerHTML = `<span class="volume-btn-icon" aria-hidden="true">${iconHtml}</span>`;
+    }
+    muteBtn.setAttribute('aria-label', actionLabel);
+    muteBtn.setAttribute('title', actionLabel);
+  }
+  
+  if (!state) {
+    if (valueEl) valueEl.textContent = '--%';
+    if (statusEl) {
+      statusEl.textContent = hasDevice
+        ? 'Нет данных'
+        : 'Выберите устройство';
+    }
+    return;
+  }
+  
+  const level = clampVolumePercent(state.level) ?? 0;
+  if (valueEl) valueEl.textContent = `${level}%`;
+  if (statusEl) {
+    let statusText = state.muted ? 'Звук выключен' : 'Звук включен';
+    if (isOffline) {
+      statusText += ' · применится при подключении';
+    }
+    statusEl.textContent = statusText;
+  }
+}
+
+async function ensureVolumeState(deviceId) {
+  if (!deviceId) return;
+  if (!volumeStateByDevice.has(deviceId)) {
+    await fetchVolumeState(deviceId);
+  } else {
+    updateVolumePanel(deviceId);
+  }
+}
+
+async function fetchVolumeState(deviceId) {
+  if (!deviceId) return;
+  try {
+    const res = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/volume`);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    storeVolumeState(deviceId, data);
+  } catch (err) {
+    console.warn('[Admin] Не удалось получить громкость устройства', deviceId, err.message);
+  }
+}
+
+function setupVolumePanel(deviceId) {
+  const slider = document.getElementById('adminVolumeSlider');
+  const muteBtn = document.getElementById('adminVolumeMute');
+  const valueEl = document.getElementById('adminVolumeValue');
+  const statusEl = document.getElementById('adminVolumeStatus');
+  if (!slider || !muteBtn || !statusEl || !valueEl) return;
+  
+  slider.addEventListener('input', () => {
+    valueEl.textContent = `${slider.value}%`;
+  });
+  slider.addEventListener('change', () => {
+    if (slider.disabled) return;
+    sendVolumeCommand(deviceId, { level: Number(slider.value) });
+  });
+  muteBtn.addEventListener('click', () => {
+    if (muteBtn.disabled) return;
+    const state = volumeStateByDevice.get(deviceId);
+    sendVolumeCommand(deviceId, { muted: !(state && state.muted) });
+  });
+  
+  updateVolumePanel(deviceId);
+  ensureVolumeState(deviceId);
+}
+
 // ------ Периодическая проверка статусов файлов в обработке ------
 setInterval(async () => {
   if (!currentDeviceId) return;
@@ -343,11 +837,14 @@ setInterval(async () => {
     if (hasProcessing) {
       const panel = document.getElementById('filesPanel');
       if (panel) {
-        await refreshFilesPanel(currentDeviceId, panel);
+        const updatedPage = await refreshFilesPanel(currentDeviceId, panel);
+        if (updatedPage !== undefined) {
+          filePageByDevice.set(currentDeviceId, updatedPage);
+          filePage = updatedPage;
+        }
       }
     }
   } catch (e) {
     // Игнорируем ошибки (например если устройство удалено)
-    console.debug('[Admin] Ошибка проверки статусов (игнорируем):', e);
   }
 }, 3000); // Проверяем каждые 3 секунды

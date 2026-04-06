@@ -6,8 +6,9 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import { DEVICES } from '../config/constants.js';
+import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
+import logger from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -24,11 +25,11 @@ export function createVideoInfoRouter(deps) {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
-      return res.status(400).json({ error: 'invalid device id' });
+      return res.status(400).json({ error: 'Неверный ID устройства' });
     }
     
     if (!devices[id]) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
     const fileName = decodeURIComponent(req.params.name);
@@ -51,27 +52,29 @@ export function createVideoInfoRouter(deps) {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
-      return res.status(400).json({ error: 'invalid device id' });
+      return res.status(400).json({ error: 'Неверный ID устройства' });
     }
     
     const d = devices[id];
     
     if (!d) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
+    // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+    const devicesPath = getDevicesPath();
     const fileName = decodeURIComponent(req.params.name);
-    const filePath = path.join(DEVICES, d.folder, fileName);
+    const filePath = path.join(devicesPath, d.folder, fileName);
     
     if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: 'file not found' });
+      return res.status(404).json({ error: 'Файл не найден' });
     }
     
     try {
       const params = await checkVideoParameters(filePath);
       
       if (!params) {
-        return res.status(500).json({ error: 'cannot read video parameters' });
+        return res.status(500).json({ error: 'Не удалось прочитать параметры видео' });
       }
       
       res.json({
@@ -80,9 +83,9 @@ export function createVideoInfoRouter(deps) {
       });
       
     } catch (error) {
-      console.error(`[video-info] ❌ Ошибка:`, error);
+      logger.error(`[video-info] ❌ Ошибка`, { error: error.message, stack: error.stack, deviceId: id, fileName });
       res.status(500).json({ 
-        error: 'failed to get video info', 
+        error: 'Не удалось получить информацию о видео', 
         detail: error.message 
       });
     }
@@ -93,17 +96,17 @@ export function createVideoInfoRouter(deps) {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
-      return res.status(400).json({ error: 'invalid device id' });
+      return res.status(400).json({ error: 'Неверный ID устройства' });
     }
     
     const fileName = decodeURIComponent(req.params.name);
     const d = devices[id];
     
     if (!d) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
-    console.log(`[API] 🎬 Ручная оптимизация: ${fileName}`);
+    logger.info(`[API] 🎬 Ручная оптимизация: ${fileName}`, { deviceId: id, fileName });
     
     try {
       const result = await autoOptimizeVideoWrapper(id, fileName);
@@ -116,7 +119,7 @@ export function createVideoInfoRouter(deps) {
       }
       
     } catch (error) {
-      console.error(`[optimize] ❌ Ошибка:`, error);
+      logger.error(`[optimize] ❌ Ошибка`, { error: error.message, stack: error.stack, deviceId: id, fileName });
       res.status(500).json({ 
         success: false, 
         message: error.message 

@@ -5,6 +5,7 @@
 
 import { getDatabase } from '../database/database.js';
 import logger from './logger.js';
+import { withRetrySync, isRetryableDatabaseError } from './retry.js';
 
 /**
  * Типы аудируемых действий
@@ -73,21 +74,38 @@ export async function auditLog({
 }) {
   try {
     const db = getDatabase();
-    const stmt = db.prepare(`
-      INSERT INTO audit_log 
-      (user_id, action, resource, details, ip_address, user_agent, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
+    
+    // КРИТИЧНО: Используем retry для критических операций записи audit log
+    withRetrySync(() => {
+      const stmt = db.prepare(`
+        INSERT INTO audit_log 
+        (user_id, action, resource, details, ip_address, user_agent, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
 
-    stmt.run(
-      userId,
-      action,
-      resource,
-      JSON.stringify(details),
-      ipAddress,
-      userAgent,
-      status
-    );
+      stmt.run(
+        userId,
+        action,
+        resource,
+        JSON.stringify(details),
+        ipAddress,
+        userAgent,
+        status
+      );
+    }, {
+      maxRetries: 3,
+      delay: 100,
+      shouldRetry: isRetryableDatabaseError,
+      onRetry: (error, attempt, maxRetries) => {
+        logger.warn('Retrying audit log', {
+          action,
+          userId,
+          attempt,
+          maxRetries,
+          error: error.message
+        });
+      }
+    });
 
     // Дублируем в winston для файловых логов
     logger.info('Audit log entry', {
@@ -102,8 +120,9 @@ export async function auditLog({
 
   } catch (error) {
     // Если audit log не удался, всё равно записываем в файл
-    logger.error('Failed to write audit log to database', {
+    logger.error('Failed to write audit log to database after retries', {
       error: error.message,
+      stack: error.stack,
       action,
       userId,
       resource,
@@ -191,16 +210,21 @@ export function getResourceAuditHistory(resource, limit = 100) {
  * @param {number} limit
  */
 export function getSecurityEvents(hours = 24, limit = 100) {
+  // Валидируем и нормализуем hours для безопасности
+  const safeHours = Math.max(0, Math.min(Number.parseInt(hours, 10) || 24, 720)); // Максимум 30 дней
+  
   const db = getDatabase();
+  // Используем параметризованный запрос: вычисляем дату в JavaScript и передаем как параметр
+  const cutoffDate = new Date(Date.now() - safeHours * 60 * 60 * 1000).toISOString();
   const stmt = db.prepare(`
     SELECT * FROM audit_log 
     WHERE action LIKE 'security.%'
-      AND created_at >= datetime('now', '-${hours} hours')
+      AND created_at >= ?
     ORDER BY created_at DESC
     LIMIT ?
   `);
   
-  return stmt.all(limit);
+  return stmt.all(cutoffDate, limit);
 }
 
 /**
@@ -208,18 +232,23 @@ export function getSecurityEvents(hours = 24, limit = 100) {
  * @param {number} hours - За последние N часов
  */
 export function getFailedLogins(hours = 1) {
+  // Валидируем и нормализуем hours для безопасности
+  const safeHours = Math.max(0, Math.min(Number.parseInt(hours, 10) || 1, 168)); // Максимум 7 дней
+  
   const db = getDatabase();
+  // Используем параметризованный запрос: вычисляем дату в JavaScript и передаем как параметр
+  const cutoffDate = new Date(Date.now() - safeHours * 60 * 60 * 1000).toISOString();
   const stmt = db.prepare(`
     SELECT ip_address, COUNT(*) as attempts, MAX(created_at) as last_attempt
     FROM audit_log 
     WHERE action = 'auth.login_failed'
-      AND created_at >= datetime('now', '-${hours} hours')
+      AND created_at >= ?
     GROUP BY ip_address
     HAVING attempts >= 3
     ORDER BY attempts DESC
   `);
   
-  return stmt.all();
+  return stmt.all(cutoffDate);
 }
 
 export default auditLog;

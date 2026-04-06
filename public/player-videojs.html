@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5,user-scalable=no"/>
-  <title>Player - Video Control</title>
+  <title>MMRC Player</title>
   
   <!-- Favicons -->
   <link rel="icon" type="image/svg+xml" href="/icon.svg"/>
@@ -16,12 +16,12 @@
   <meta name="theme-color" content="#000000"/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-status-bar-style" content="black-fullscreen"/>
-  <meta name="apple-mobile-web-app-title" content="VideoControl"/>
+  <meta name="apple-mobile-web-app-title" content="MMRC Player"/>
   
   <!-- Video.js для надежного воспроизведения (локальная версия) -->
   <link href="/vendor/videojs/video-js.css" rel="stylesheet" />
   
-  <link rel="stylesheet" href="/css/app.css?v=2.0.0"/>
+  <link rel="stylesheet" href="/css/app.css"/>
   <style>
     html, body {
       height: 100%;
@@ -105,6 +105,16 @@
       contain: strict;
       backface-visibility: hidden;
       -webkit-backface-visibility: hidden;
+      /* КРИТИЧНО: display управляется через классы, не через inline стили */
+      display: block;
+    }
+    
+    /* КРИТИЧНО: Скрытые слои должны быть полностью невидимы и не мешать */
+    .layer:not(.visible):not(.preloading) {
+      opacity: 0 !important;
+      z-index: 1;
+      pointer-events: none !important;
+      visibility: visible; /* Оставляем visible для плавных переходов, но opacity = 0 */
     }
     
     .layer.visible {
@@ -119,6 +129,22 @@
       z-index: 1;
       visibility: visible;
       pointer-events: none;
+    }
+    
+    /* КРИТИЧНО: videoContainer может иметь display:none для полного скрытия видео */
+    #videoContainer[style*="display: none"] {
+      display: none !important;
+    }
+    
+    /* КРИТИЧНО: Когда videoContainer видим, display должен быть block */
+    #videoContainer.visible {
+      display: block !important;
+    }
+    
+    /* КРИТИЧНО: videoContainer должен быть видим при загрузке видео (даже без класса visible) */
+    /* Это нужно для того, чтобы Video.js мог загрузить видео в видимый элемент */
+    #videoContainer[style*="display: block"] {
+      display: block !important;
     }
     
     video, img, iframe {
@@ -210,6 +236,30 @@
     #unmute.hidden {
       display: none;
     }
+
+    #playerBadge {
+      position: fixed;
+      bottom: 12px;
+      right: 12px;
+      z-index: 9999;
+      color: rgba(200, 200, 200, 0.65);
+      font-size: 12px;
+      line-height: 1.3;
+      text-align: right;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+      letter-spacing: 0.02em;
+      pointer-events: none;
+      user-select: none;
+      max-width: min(60vw, 480px);
+    }
+
+    @media (max-width: 767px) {
+      #playerBadge {
+        bottom: 8px;
+        right: 8px;
+        font-size: 10px;
+      }
+    }
     
     @media (max-width: 767px) {
       #unmute {
@@ -230,7 +280,27 @@
   <script src="/socket.io/socket.io.js"></script>
   <!-- Video.js library (локальная версия) -->
   <script src="/vendor/videojs/video.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.5/dist/hls.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dashjs@4.7.3/dist/dash.all.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/videojs-contrib-dash@2.11.0/dist/videojs-dash.min.js"></script>
   <script>
+    // КРИТИЧНО: Обработка ошибок от расширений браузера, чтобы они не мешали работе плеера
+    window.addEventListener('error', (event) => {
+      // Игнорируем ошибки из content.js (расширения браузера)
+      if (event.filename && event.filename.includes('content.js')) {
+        console.debug('[Player] ⚠️ Игнорируем ошибку из расширения браузера:', event.message);
+        event.preventDefault();
+        return true;
+      }
+      // Игнорируем ошибки связанные с undefined переменными в расширениях
+      if (event.message && event.message.includes('is not defined') && event.filename && !event.filename.includes('player-videojs.js')) {
+        console.debug('[Player] ⚠️ Игнорируем ошибку из внешнего скрипта:', event.message);
+        event.preventDefault();
+        return true;
+      }
+    }, true);
+    
     // Регистрация Service Worker для кэширования заглушки
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
@@ -262,7 +332,7 @@
       } catch {}
     });
   </script>
-  <script type="module" src="/js/player-videojs.js?v=2.8.0"></script>
+  <script type="module" src="/js/player-videojs.js"></script>
 </head>
 <body>
   <div id="stage">
@@ -275,6 +345,7 @@
     <img id="img2" class="layer img-buffer" alt="image" decoding="async"/>
     <iframe id="pdf" class="layer" title="pdf" allowfullscreen></iframe>
   </div>
+  <div id="playerBadge" aria-hidden="true"></div>
   <button id="unmute" class="hidden" type="button" aria-label="Включить звук">Включить звук</button>
 </body>
 </html>

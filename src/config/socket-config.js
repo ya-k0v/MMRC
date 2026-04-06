@@ -4,6 +4,7 @@
  */
 
 import { Server } from 'socket.io';
+import logger from '../utils/logger.js';
 
 /**
  * Создает и настраивает Socket.IO сервер
@@ -26,8 +27,9 @@ export function createSocketServer(httpServer) {
 
   // Обработка ошибок подключения
   io.engine.on('connection_error', (err) => {
-    console.warn(
-      `[Socket.IO] connection_error code=${err.code} message=${err.message} transport=${err.context?.transport || 'n/a'}`
+    logger.warn(
+      `[Socket.IO] connection_error code=${err.code} message=${err.message} transport=${err.context?.transport || 'n/a'}`,
+      { code: err.code, message: err.message, transport: err.context?.transport || 'n/a' }
     );
   });
 

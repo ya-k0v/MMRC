@@ -6,7 +6,7 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import { DEVICES, ALLOWED_EXT } from '../config/constants.js';
+import { ALLOWED_EXT } from '../config/constants.js';
 import { sanitizeDeviceId, isSystemFile } from '../utils/sanitize.js';
 import { scanDeviceFiles } from '../utils/file-scanner.js';
 import { getDatabase } from '../database/database.js';
@@ -28,19 +28,19 @@ export function createPlaceholderRouter(deps) {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
-      return res.status(400).json({ error: 'invalid device id' });
+      return res.status(400).json({ error: 'Неверный ID устройства' });
     }
     
     const d = devices[id];
     if (!d) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
     try {
       // Ищем файл с флагом is_placeholder в БД
       const db = getDatabase();
       const placeholder = db.prepare(`
-        SELECT safe_name, file_path FROM files_metadata 
+        SELECT safe_name, file_path, mime_type FROM files_metadata 
         WHERE device_id = ? AND is_placeholder = 1
         LIMIT 1
       `).get(id);
@@ -48,9 +48,13 @@ export function createPlaceholderRouter(deps) {
       if (placeholder && fs.existsSync(placeholder.file_path)) {
         logger.info('[placeholder] ✅ Placeholder found in DB', { 
           deviceId: id, 
-          fileName: placeholder.safe_name 
+          fileName: placeholder.safe_name,
+          mimeType: placeholder.mime_type
         });
-        return res.json({ placeholder: placeholder.safe_name });
+        return res.json({ 
+          placeholder: placeholder.safe_name,
+          mimeType: placeholder.mime_type
+        });
       }
       
       logger.info('[placeholder] ℹ️ No placeholder set', { deviceId: id });
@@ -71,28 +75,28 @@ export function createPlaceholderRouter(deps) {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
-      return res.status(400).json({ error: 'invalid device id' });
+      return res.status(400).json({ error: 'Неверный ID устройства' });
     }
     
     const { file } = req.body || {};
     const d = devices[id];
     
     if (!d) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
     if (!file || typeof file !== 'string') {
-      return res.status(400).json({ error: 'file required' });
+      return res.status(400).json({ error: 'Требуется файл' });
     }
     
     const ext = (path.extname(file) || '').toLowerCase();
     
     if (!ALLOWED_EXT.test(ext)) {
-      return res.status(400).json({ error: 'unsupported type' });
+      return res.status(400).json({ error: 'Неподдерживаемый тип' });
     }
     
     if (ext === '.pdf' || ext === '.pptx') {
-      return res.status(400).json({ error: 'pdf_pptx_not_allowed_as_placeholder' });
+      return res.status(400).json({ error: 'PDF и PPTX нельзя использовать как заглушку' });
     }
 
     try {
@@ -113,7 +117,7 @@ export function createPlaceholderRouter(deps) {
       `).run(id, file);
       
       if (result.changes === 0) {
-        return res.status(404).json({ error: 'file not found in database' });
+        return res.status(404).json({ error: 'Файл не найден в базе данных' });
       }
       
       logger.info('[make-default] ✅ Placeholder set instantly via DB', { 
@@ -122,7 +126,7 @@ export function createPlaceholderRouter(deps) {
       });
 
     io.emit('devices/updated');
-    io.to(`device:${id}`).emit('player/stop');
+    io.to(`device:${id}`).emit('player/stop', { reason: 'placeholder_refresh' });
     
       // Возвращаем успешный ответ
       res.json({ ok: true, placeholder: file, instant: true });
@@ -140,7 +144,7 @@ export function createPlaceholderRouter(deps) {
         deviceId: id, 
         file 
       });
-      return res.status(500).json({ error: 'failed to set placeholder', detail: e.message });
+      return res.status(500).json({ error: 'Не удалось установить заглушку', detail: e.message });
     }
   });
   

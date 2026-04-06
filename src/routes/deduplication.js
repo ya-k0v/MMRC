@@ -6,12 +6,12 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import { DEVICES } from '../config/constants.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { findDuplicateFile, saveFileMetadata, getFileMetadata } from '../database/files-metadata.js';
 import { getDatabase } from '../database/database.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import logger, { logFile } from '../utils/logger.js';
+import { VIDEO_EXTENSIONS } from '../config/file-types.js';
 
 const router = express.Router();
 
@@ -25,17 +25,34 @@ export function createDeduplicationRouter(deps) {
   /**
    * POST /api/devices/:id/check-duplicate
    * Проверить есть ли файл с таким MD5/размером на других устройствах
+   * Дедупликация применяется ТОЛЬКО для видео файлов
    */
   router.post('/:id/check-duplicate', async (req, res) => {
     const targetDeviceId = sanitizeDeviceId(req.params.id);
     const { md5, size, filename } = req.body;
     
     if (!targetDeviceId || !md5 || !size) {
-      return res.status(400).json({ error: 'device_id, md5, and size required' });
+      return res.status(400).json({ error: 'Требуются device_id, md5 и size' });
     }
     
     if (!devices[targetDeviceId]) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
+    }
+    
+    // Определяем тип файла по расширению
+    const ext = path.extname(filename || '').toLowerCase().slice(1); // удаляем точку
+    const isVideoFile = VIDEO_EXTENSIONS.includes(ext);
+    
+    // Дедупликация применяется ТОЛЬКО для видео файлов
+    if (!isVideoFile) {
+      logFile('info', 'Skipping deduplication check for non-video file', {
+        targetDevice: targetDeviceId,
+        filename,
+        extension: ext,
+        fileType: 'presentation/image/other'
+      });
+      
+      return res.json({ duplicate: false });
     }
     
     const isBigFile = size > 100 * 1024 * 1024;
@@ -82,20 +99,34 @@ export function createDeduplicationRouter(deps) {
   /**
    * POST /api/devices/:id/copy-from-duplicate
    * Мгновенное копирование файла через дедупликацию (только запись в БД)
+   * Дедупликация применяется ТОЛЬКО для видео файлов
    */
   router.post('/:id/copy-from-duplicate', async (req, res) => {
     const targetDeviceId = sanitizeDeviceId(req.params.id);
     const { sourceDevice, sourceFile, targetFilename, originalName, md5, size } = req.body;
     
     if (!targetDeviceId || !sourceDevice || !sourceFile || !targetFilename) {
-      return res.status(400).json({ error: 'missing required parameters' });
+      return res.status(400).json({ error: 'Отсутствуют обязательные параметры' });
+    }
+    
+    // Проверяем тип файла - дедупликация только для видео
+    const ext = path.extname(targetFilename || '').toLowerCase().slice(1); // удаляем точку
+    const isVideoFile = VIDEO_EXTENSIONS.includes(ext);
+    
+    if (!isVideoFile) {
+      logFile('warn', 'Attempt to copy non-video file via deduplication - rejected', {
+        targetDevice: targetDeviceId,
+        targetFilename,
+        extension: ext
+      });
+      return res.status(400).json({ error: 'Дедупликация разрешена только для видеофайлов' });
     }
     
     const targetDevice = devices[targetDeviceId];
     const srcDevice = devices[sourceDevice];
     
     if (!targetDevice || !srcDevice) {
-      return res.status(404).json({ error: 'device not found' });
+      return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
     try {
@@ -103,7 +134,7 @@ export function createDeduplicationRouter(deps) {
       const sourceMetadata = getFileMetadata(sourceDevice, sourceFile);
       
       if (!sourceMetadata) {
-        return res.status(404).json({ error: 'source metadata not found' });
+        return res.status(404).json({ error: 'Метаданные исходного файла не найдены' });
       }
       
       // НОВОЕ: Проверяем существование физического файла
@@ -113,7 +144,7 @@ export function createDeduplicationRouter(deps) {
           sourceFile,
           expectedPath: sourceMetadata.file_path
         });
-        return res.status(404).json({ error: 'source file not found' });
+        return res.status(404).json({ error: 'Исходный файл не найден' });
       }
       
       const stats = fs.statSync(sourceMetadata.file_path);
@@ -205,7 +236,7 @@ export function createDeduplicationRouter(deps) {
         sourceFile,
         targetDevice: targetDeviceId
       });
-      res.status(500).json({ error: 'failed to copy file' });
+      res.status(500).json({ error: 'Не удалось скопировать файл' });
     }
   });
   
@@ -221,7 +252,7 @@ export function createDeduplicationRouter(deps) {
       res.json(duplicates);
     } catch (error) {
       logger.error('Failed to get duplicates list', { error: error.message });
-      res.status(500).json({ error: 'failed to get duplicates' });
+      res.status(500).json({ error: 'Не удалось получить дубликаты' });
     }
   });
   

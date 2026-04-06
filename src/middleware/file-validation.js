@@ -5,6 +5,7 @@
 
 import { fileTypeFromFile } from 'file-type';
 import fs from 'fs';
+import logger from '../utils/logger.js';
 
 /**
  * Разрешенные MIME types по категориям
@@ -91,9 +92,100 @@ export async function validateFileMimeType(filePath, expectedCategory = null) {
       valid
     };
   } catch (err) {
-    console.error('[File Validation] Error:', err);
+    logger.error('[File Validation] Error', { error: err.message, stack: err.stack, filePath });
     throw new Error(`File validation failed: ${err.message}`);
   }
+}
+
+/**
+ * Async функция для валидации файлов (для использования внутри async функций)
+ * @param {Array} files - Массив файлов из multer (req.files)
+ * @returns {Promise<{valid: boolean, invalid?: Array, results?: Array}>}
+ */
+export async function validateFilesAsync(files) {
+  if (!files || files.length === 0) {
+    return { valid: true, results: [] };
+  }
+  
+  logger.debug('[File Validation] Starting MIME type validation', {
+    filesCount: files.length,
+    filenames: files.map(f => f.originalname)
+  });
+  
+  const validationPromises = files.map(async (file) => {
+    try {
+      const result = await validateFileMimeType(file.path);
+      
+      if (!result.valid) {
+        logger.warn('[File Validation] Invalid file type detected', {
+          filename: file.originalname,
+          detectedMime: result.mime,
+          detectedExt: result.ext,
+          filePath: file.path
+        });
+        
+        // Удаляем невалидный файл
+        fs.unlinkSync(file.path);
+        return {
+          filename: file.originalname,
+          valid: false,
+          reason: `Invalid file type: ${result.mime || 'unknown'}`
+        };
+      }
+      
+      logger.debug('[File Validation] File validated', {
+        filename: file.originalname,
+        mime: result.mime,
+        ext: result.ext
+      });
+      
+      return {
+        filename: file.originalname,
+        valid: true,
+        mime: result.mime
+      };
+    } catch (err) {
+      logger.error('[File Validation] Validation error for file', {
+        filename: file.originalname,
+        error: err.message,
+        stack: err.stack,
+        filePath: file.path
+      });
+      
+      // Удаляем файл при ошибке
+      if (fs.existsSync(file.path)) {
+        fs.unlinkSync(file.path);
+      }
+      return {
+        filename: file.originalname,
+        valid: false,
+        reason: err.message
+      };
+    }
+  });
+  
+  const results = await Promise.all(validationPromises);
+  const invalid = results.filter(r => !r.valid);
+  
+  if (invalid.length > 0) {
+    // Удаляем все валидные файлы тоже (транзакция отменяется)
+    files.forEach(file => {
+      if (fs.existsSync(file.path)) {
+        fs.unlinkSync(file.path);
+      }
+    });
+    
+    return {
+      valid: false,
+      invalid: invalid.map(i => ({ file: i.filename, reason: i.reason })),
+      results
+    };
+  }
+  
+  return {
+    valid: true,
+    results
+  };
 }
 
 /**
@@ -161,8 +253,8 @@ export function validateUploadedFiles(req, res, next) {
       next();
     })
     .catch((err) => {
-      console.error('[File Validation] Middleware error:', err);
-      res.status(500).json({ error: 'File validation failed' });
+      logger.error('[File Validation] Middleware error', { error: err.message, stack: err.stack });
+      res.status(500).json({ error: 'Ошибка валидации файла' });
     });
 }
 

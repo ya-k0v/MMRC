@@ -1,0 +1,1500 @@
+/* ========================================
+   HERO MODULE - PUBLIC PANEL STYLES
+   ======================================== */
+
+@keyframes heroFadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes heroFadeOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-10px); }
+}
+
+@keyframes heroCrossfade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Изолируем стили только для страниц героев */
+body.hero-page {
+  --hero-scale: 1;
+  --hero-offset-x: 0px;
+  --hero-offset-y: 0px;
+  height: 100%;
+  min-height: 100vh;
+  margin: 0;
+  background: radial-gradient(circle at top, rgba(255,255,255,0.06), transparent 55%), #050505;
+  color: var(--text, #f7f7f7);
+  overflow: hidden;
+  /* 
+   * Рекомендуемый шрифт для панелей героев:
+   * - Системные шрифты с отличной поддержкой кириллицы (Segoe UI, Roboto)
+   * - PT Sans и Open Sans как fallback (хорошая кириллица, если установлены)
+   * 
+   * Альтернатива: подключить веб-шрифт через Google Fonts:
+   * <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=PT+Sans:wght@400;700&display=swap" rel="stylesheet">
+   * И использовать: font-family: 'Inter', 'PT Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+   */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'PT Sans', 'Open Sans', sans-serif;
+  position: fixed;
+  inset: 0;
+}
+
+.hero-stage {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+/* Адаптивный контейнер без привязки к разрешению */
+.hero-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  box-sizing: border-box;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  opacity: 1;
+  transition: opacity 0.15s ease-out;
+  pointer-events: auto;
+}
+
+.hero-frame {
+  width: 100%;
+  max-width: 1880px;
+  height: calc(100% - 16px);
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 8px 12px 16px 12px;
+  box-sizing: border-box;
+  position: relative;
+  overflow: hidden;
+}
+
+.hero-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 16px;
+  flex-shrink: 0;
+  width: 100%;
+}
+
+.hero-title h1 {
+  margin: 0;
+  font-size: 2.5rem;
+}
+
+.hero-title p {
+  margin: 4px 0 0;
+  color: var(--muted, rgba(255,255,255,0.6));
+}
+
+.search-panel-wrapper {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.search-panel {
+  position: relative;
+  max-width: 600px;
+  width: 100%;
+}
+
+#searchInput {
+  width: 100%;
+  padding: 16px 20px;
+  font-size: 1.25rem;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: var(--radius-md);
+  background: rgba(255,255,255,0.05);
+  backdrop-filter: blur(10px);
+  color: var(--text);
+  transition: all 0.2s;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  box-sizing: border-box;
+}
+
+#searchInput::placeholder {
+  color: var(--muted, rgba(255,255,255,0.5));
+}
+
+#searchInput:focus {
+  outline: none;
+  border-color: var(--brand);
+  background: rgba(255,255,255,0.08);
+  box-shadow: 0 4px 16px rgba(59,130,246,0.2);
+}
+
+.suggestions-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  background: rgba(10,10,10,0.95);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: var(--radius-lg);
+  max-height: 400px;
+  overflow-y: auto;
+  z-index: 1000;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3), 0 0 0 1px rgba(255,255,255,0.05) inset;
+}
+
+.suggestion-item {
+  padding: 16px 20px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  transition: all 0.2s;
+  color: var(--text);
+  background: transparent;
+}
+
+.suggestion-item:first-child {
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+}
+
+.suggestion-item:last-child {
+  border-bottom: none;
+  border-bottom-left-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-lg);
+}
+
+.suggestion-item:hover {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.1);
+}
+
+.suggestion-item strong {
+  display: block;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.suggestion-item span {
+  font-size: 0.95rem;
+  color: var(--muted, rgba(255,255,255,0.6));
+  display: block;
+}
+
+.suggestion-item--empty,
+.suggestion-item--error {
+  text-align: center;
+  padding: 20px;
+  font-size: 1rem;
+  pointer-events: none;
+}
+
+.suggestion-item--error {
+  color: var(--danger, #ef4444) !important;
+}
+
+.hero-content-wrapper {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 32px;
+  background: rgba(10,10,10,0.7);
+  backdrop-filter: blur(10px);
+  padding: 24px 32px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.35);
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.hero-content {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  opacity: 1;
+  overflow: hidden;
+  transition: opacity 0.5s ease-in-out;
+}
+
+.hero-content.fade-out {
+  opacity: 0;
+  animation: heroFadeOut 0.5s ease-in-out forwards;
+}
+
+.hero-view {
+  width: 100%;
+  height: 100%;
+  opacity: 1;
+  transition: opacity 0.5s ease-in-out;
+}
+
+.hero-view.fade-in {
+  animation: heroCrossfade 0.5s ease-in-out forwards;
+}
+
+#heroContent:empty {
+  display: none;
+}
+
+.hero-empty-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--muted, rgba(255,255,255,0.6));
+  gap: 16px;
+  pointer-events: none;
+}
+
+.hero-empty-state svg {
+  opacity: 0.5;
+}
+
+.hero-view {
+  width: 100%;
+  height: 100%;
+}
+
+.hero-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 25%) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 48px;
+  height: 100%;
+  align-items: stretch;
+}
+
+.hero-portrait {
+  border-radius: 28px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.02);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 20px;
+  gap: 12px;
+  overflow: hidden;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  min-width: 0;
+  max-width: 100%;
+  position: relative;
+  box-sizing: border-box;
+}
+
+.hero-photo {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  max-height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  border-radius: 24px;
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+  box-sizing: border-box;
+  flex-shrink: 1;
+  flex-grow: 1;
+}
+
+.hero-card-right {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border-radius: 28px;
+  border: 1px solid rgba(255,255,255,0.05);
+  padding: 20px 24px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01));
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.25);
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.hero-info {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hero-info-header {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hero-info h1 {
+  font-size: 3rem;
+  margin: 0;
+  line-height: 1.2;
+}
+
+.hero-info-item {
+  display: flex;
+  gap: 8px;
+  font-size: 1.25rem;
+}
+
+.hero-rank-years {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.hero-rank,
+.hero-years {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.hero-info-item strong {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.hero-info-item span {
+  color: var(--text);
+}
+
+/* Стили для placeholder полей (даты и звание) */
+.hero-field-placeholder {
+  color: var(--muted, rgba(255,255,255,0.5)) !important;
+  font-style: italic;
+}
+
+.hero-scroll {
+  flex: 1;
+  padding: 12px 16px;
+  border-radius: 20px;
+  background: rgba(0,0,0,0.42);
+  font-size: 1.25rem;
+  line-height: 1.8;
+  min-height: 400px; /* Минимальная высота для комфортного просмотра */
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  /* Улучшаем отображение контента */
+}
+
+.hero-scroll__bio {
+  color: rgba(255,255,255,0.95);
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  flex: 1; /* Занимает доступное пространство */
+  min-height: 0; /* Важно для flex контейнера */
+  display: block; /* Явно указываем display */
+  /* Книжное оформление текста */
+  text-align: justify; /* Выравнивание по ширине */
+  text-justify: inter-word; /* Равномерное распределение пробелов */
+  hyphens: auto; /* Автоматическая расстановка переносов */
+  -webkit-hyphens: auto;
+  -moz-hyphens: auto;
+  -ms-hyphens: auto;
+  /* Улучшенная читаемость */
+  word-spacing: 0.05em; /* Небольшое увеличение расстояния между словами */
+  letter-spacing: 0.01em; /* Небольшое увеличение расстояния между буквами */
+  cursor: text; /* Указываем что можно редактировать */
+  transition: background-color 0.2s;
+}
+
+/* Абзацы с красной строкой (книжное оформление) */
+.hero-scroll__bio p {
+  margin: 0 0 1.2em 0; /* Отступ между абзацами */
+  text-indent: 1.5em; /* Красная строка (отступ первой строки) - для всех абзацев, включая первый */
+  text-align: justify;
+  text-justify: inter-word;
+  line-height: 1.8; /* Сохраняем хорошую читаемость */
+}
+
+.hero-scroll__bio p:first-child {
+  margin-top: 0; /* Убираем верхний отступ у первого абзаца */
+}
+
+.hero-scroll__bio p:last-child {
+  margin-bottom: 0; /* Убираем нижний отступ у последнего абзаца */
+}
+
+/* Для текста без тегов p (fallback, если биография - просто текст) */
+.hero-scroll__bio:not(:has(p)) {
+  white-space: pre-wrap;
+  text-indent: 0;
+}
+
+/* Стили для вложенных элементов */
+.hero-scroll__bio em {
+  font-style: italic;
+  color: var(--muted, rgba(255,255,255,0.7));
+}
+
+/* Стили для админ-панели (при редактировании) - наследуют книжное оформление */
+
+/* Миниатюры медиа под основным фото - адаптивная сетка с вертикальным скроллом */
+.hero-media-thumbnails {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+  gap: 10px;
+  width: 100%;
+  padding: 12px 0 0 0;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex-shrink: 0;
+  flex-grow: 0;
+  min-height: 0;
+  max-height: 25%;
+  align-content: flex-start;
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.2) transparent;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Стилизация скроллбара для миниатюр */
+.hero-media-thumbnails::-webkit-scrollbar {
+  width: 6px;
+}
+
+.hero-media-thumbnails::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.hero-media-thumbnails::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.2);
+  border-radius: 3px;
+}
+
+.hero-media-thumbnails::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.3);
+}
+
+.media-thumbnail {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+  background: var(--panel-2);
+  box-sizing: border-box;
+}
+
+.media-thumbnail:hover {
+  border-color: var(--brand);
+  box-shadow: 0 4px 12px rgba(59,130,246,0.4);
+}
+
+.media-thumbnail img,
+.media-thumbnail video {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: cover;
+  display: block;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* Переопределяем стили из player-videojs.html для панели героев */
+/* Убеждаемся, что стили из player-videojs.html не применяются к панели героев */
+/* Исключаем изображения лайтбокса из общих правил */
+.hero-page img:not(.hero-photo):not(.media-thumbnail img):not(.lightbox-content img),
+.hero-admin-page img:not(.hero-photo):not(.media-thumbnail img):not(.lightbox-content img),
+.hero-page video:not(.media-thumbnail video):not(.lightbox-content video),
+.hero-admin-page video:not(.media-thumbnail video):not(.lightbox-content video),
+.hero-page iframe,
+.hero-admin-page iframe {
+  height: auto !important;
+  max-height: 100% !important;
+  width: auto !important;
+  max-width: 100% !important;
+}
+
+/* Специфично для миниатюр и превью в панели героев */
+.hero-page .media-thumbnail img,
+.hero-admin-page .media-thumbnail img {
+  height: 100% !important;
+  max-height: 100% !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  object-fit: cover;
+  box-sizing: border-box;
+}
+
+.hero-page .hero-photo,
+.hero-admin-page .hero-photo {
+  max-width: 100% !important;
+  max-height: 100% !important;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  object-position: center top !important;
+  box-sizing: border-box;
+}
+
+/* Убеждаемся, что элементы с классами layer и img-buffer не применяются на страницах героев */
+.hero-page .layer,
+.hero-admin-page .layer,
+.hero-page .img-buffer,
+.hero-admin-page .img-buffer {
+  height: auto !important;
+  width: auto !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+}
+
+/* Стили для превью изображений в панели героев - не растягиваются */
+.hero-page .previewHolder img,
+.hero-page .preview-image-grid img,
+.hero-admin-page .previewHolder img,
+.hero-admin-page .preview-image-grid img {
+  width: auto !important;
+  height: auto !important;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* Стили для сетки миниатюр изображений в панели героев */
+.hero-page .previewHolder .preview-image-grid,
+.hero-admin-page .previewHolder .preview-image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--panel);
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.hero-page .previewHolder .preview-image-grid > div,
+.hero-admin-page .previewHolder .preview-image-grid > div {
+  aspect-ratio: 16 / 9;
+  background: var(--panel-2);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.hero-page .previewHolder .preview-image-grid > div img,
+.hero-admin-page .previewHolder .preview-image-grid > div img {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: cover;
+  display: block;
+  box-sizing: border-box;
+}
+
+.lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  animation: heroFadeIn 0.2s;
+  cursor: pointer;
+}
+
+.lightbox-close {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  background: rgba(0,0,0,0.7);
+  color: white;
+  border: 2px solid rgba(255,255,255,0.3);
+  padding: 10px 14px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 1.5rem;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  z-index: 10000;
+}
+
+.lightbox-close:hover {
+  background: rgba(255,255,255,0.2);
+  border-color: rgba(255,255,255,0.6);
+  transform: scale(1.1);
+}
+
+.lightbox-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(0,0,0,0.7);
+  color: white;
+  border: 2px solid rgba(255,255,255,0.3);
+  padding: 16px 20px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 1.5rem;
+  transition: all 0.2s;
+  z-index: 10000;
+}
+
+.lightbox-nav:hover {
+  background: rgba(255,255,255,0.2);
+  border-color: rgba(255,255,255,0.6);
+}
+
+.lightbox-nav.prev {
+  left: 20px;
+}
+
+.lightbox-nav.next {
+  right: 20px;
+}
+
+.lightbox-content {
+  max-width: 90vw !important;
+  max-height: 90vh !important;
+  cursor: pointer;
+  box-sizing: border-box;
+  overflow: hidden;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 20px;
+  margin: 0 auto;
+}
+
+.lightbox-content img,
+.lightbox-content video {
+  max-width: calc(90vw - 40px) !important;
+  max-height: calc(90vh - 40px) !important;
+  width: auto !important;
+  height: auto !important;
+  object-fit: contain !important;
+  border-radius: var(--radius-md);
+  box-sizing: border-box;
+  display: block;
+  margin: 0 auto;
+}
+
+/* Дополнительная защита для лайтбокса - гарантируем ограничения */
+.lightbox-overlay .lightbox-content img,
+.lightbox-overlay .lightbox-content video {
+  max-width: calc(90vw - 40px) !important;
+  max-height: calc(90vh - 40px) !important;
+  width: auto !important;
+  height: auto !important;
+  object-fit: contain !important;
+}
+
+.lightbox-caption {
+  text-align: center;
+  color: white;
+  margin-top: 16px;
+  font-size: 1rem;
+  display: none; /* Скрываем названия файлов на публичной панели */
+}
+
+.lightbox-counter {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: white;
+  font-size: 0.9rem;
+  background: rgba(0,0,0,0.7);
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  z-index: 10000;
+}
+
+/* Адаптивные улучшения для больших экранов */
+@media (min-width: 1400px) {
+  .hero-container {
+    padding: 12px;
+  }
+
+  .hero-frame {
+    padding: 12px 16px 24px 16px;
+    gap: 24px;
+  }
+
+  .search-panel {
+    max-width: 700px;
+  }
+
+  #searchInput {
+    padding: 18px 24px;
+    font-size: 1.375rem;
+  }
+
+  .suggestions-dropdown {
+    max-height: 450px;
+    box-shadow: 0 12px 48px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05) inset;
+  }
+
+  .suggestion-item {
+    padding: 20px 24px;
+  }
+
+  .suggestion-item strong {
+    font-size: 1.25rem;
+    margin-bottom: 6px;
+  }
+
+  .suggestion-item span {
+    font-size: 1rem;
+  }
+
+  .hero-layout {
+    gap: 56px;
+  }
+
+  .hero-info-header {
+    gap: 16px;
+  }
+
+  .hero-info h1 {
+    font-size: 3.5rem;
+  }
+
+  .hero-info-item {
+    font-size: 1.375rem;
+  }
+
+  .hero-rank-years {
+    gap: 32px;
+  }
+
+  .hero-scroll {
+    font-size: 1.375rem;
+    padding: 16px 20px;
+  }
+
+  /* Миниатюры адаптивные, размер определяется grid-template-columns */
+  .hero-media-thumbnails {
+    grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+  }
+
+  /* Лайтбокс для большого экрана */
+  .lightbox-close {
+    top: 32px;
+    right: 32px;
+    width: 56px;
+    height: 56px;
+    font-size: 1.875rem;
+  }
+
+  .lightbox-nav {
+    padding: 20px 28px;
+    font-size: 1.875rem;
+  }
+
+  .lightbox-nav.prev {
+    left: 32px;
+  }
+
+  .lightbox-nav.next {
+    right: 32px;
+  }
+
+  .lightbox-caption {
+    font-size: 1.25rem;
+    margin-top: 24px;
+  }
+
+  .lightbox-counter {
+    font-size: 1.125rem;
+    padding: 12px 24px;
+    bottom: 32px;
+  }
+}
+
+@media (max-width: 768px) {
+  .hero-frame {
+    padding: 8px;
+  }
+
+  .hero-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .hero-photo {
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+    object-position: center top;
+  }
+
+  .hero-media__grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+}
+
+/* ========================================
+   HERO MODULE - ADMIN PANEL STYLES
+   ======================================== */
+
+.hero-admin-page {
+  /* Используем стандартный фон из app.css */
+  background: var(--bg);
+  min-height: 100vh;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Переопределяем --panel и --bg-2 для приватной панели */
+.hero-admin-page {
+  --panel: var(--bg);
+  --bg-2: var(--bg);
+  --panel-2: var(--bg);
+}
+
+/* Стили toolbar - используем стандартные стили из app.css */
+.hero-admin-page .toolbar {
+  background: linear-gradient(180deg, var(--panel), var(--panel-2));
+  border-bottom: var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+.hero-admin-layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: var(--space-lg);
+  padding: var(--space-lg);
+  box-sizing: border-box;
+}
+
+.hero-admin-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-height: 0;
+  background: rgba(10,10,10,0.65);
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(255,255,255,0.05);
+  padding: var(--space-md);
+}
+
+.hero-admin-list__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.hero-admin-search input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.05);
+  color: var(--text);
+}
+
+.hero-admin-list__items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.hero-list__item {
+  border: 1px solid transparent;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: rgba(255,255,255,0.02);
+  cursor: pointer;
+  transition: border 0.2s, background 0.2s;
+}
+
+.hero-list__item:hover {
+  border-color: rgba(255,255,255,0.15);
+}
+
+.hero-list__item.is-active {
+  border-color: var(--brand);
+  background: rgba(59,130,246,0.12);
+}
+
+.hero-list__empty {
+  cursor: default;
+  text-align: center;
+  color: var(--muted);
+}
+
+.hero-list__name {
+  font-weight: 600;
+}
+
+.hero-list__meta {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.hero-admin-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-height: 0;
+  height: 100%; /* Добавляем высоту для правильного отображения */
+  background: rgba(10,10,10,0.65);
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(255,255,255,0.05);
+  position: relative;
+  padding: var(--space-md);
+  overflow: hidden; /* Предотвращаем выход контента за границы */
+}
+
+.hero-admin-detail__content {
+  flex: 1;
+  min-height: 0;
+  display: none; /* Скрыт по умолчанию, показывается при выборе героя */
+  flex-direction: column;
+  gap: var(--space-md);
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  overflow-y: auto; /* Добавляем прокрутку если контент не помещается */
+}
+
+.hero-admin-detail__content[style*="display: flex"] {
+  display: flex !important; /* Принудительно flex когда показывается */
+}
+
+.hero-admin-detail__placeholder {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--muted);
+  text-align: center;
+  z-index: 1;
+  padding: var(--space-md);
+  box-sizing: border-box;
+  background: rgba(10,10,10,0.65);
+  border-radius: var(--radius-lg);
+}
+
+.hero-admin-page .hero-admin-status,
+.hero-admin-detail .hero-admin-status,
+.hero-card-right .hero-admin-status {
+  position: absolute;
+  top: 6px;
+  left: 28px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  z-index: 10;
+  white-space: nowrap;
+  background: transparent;
+  padding: 0;
+  border: none;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+/* Inline editing styles */
+.hero-inline-input {
+  font-family: inherit;
+  color: var(--text);
+  box-sizing: border-box;
+  margin: 0;
+  outline: none;
+}
+
+/* Стили для ФИО */
+.hero-inline-input--full-name {
+  font-size: 3rem;
+  font-weight: inherit;
+  line-height: 1.2;
+  width: auto;
+  min-width: 200px; /* Минимальная ширина для комфортного редактирования */
+  max-width: 100%; /* Ограничиваем максимальную ширину */
+  padding: 4px 0; /* Небольшой вертикальный отступ для визуального комфорта */
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  white-space: nowrap;
+  border-bottom: 2px dashed rgba(59,130,246,0.6); /* Более заметная линия */
+  transition: border-color 0.2s;
+}
+
+.hero-inline-input--full-name:focus {
+  border-bottom-color: var(--brand);
+}
+
+/* Стили для звания */
+.hero-inline-input--rank {
+  font-size: 1.25rem;
+  font-weight: inherit;
+  line-height: inherit;
+  width: auto;
+  min-width: 120px; /* Минимальная ширина для комфортного редактирования */
+  max-width: 100%; /* Ограничиваем максимальную ширину */
+  padding: 2px 0; /* Небольшой вертикальный отступ */
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  white-space: nowrap;
+  border-bottom: 2px dashed rgba(59,130,246,0.6); /* Более заметная линия */
+  transition: border-color 0.2s;
+}
+
+.hero-inline-input--rank:focus {
+  border-bottom-color: var(--brand);
+}
+
+/* Стили для дат (год рождения/смерти) */
+.hero-inline-input--year {
+  font-size: 1.25rem;
+  font-weight: inherit;
+  line-height: inherit;
+  width: auto;
+  min-width: 4ch; /* Минимум 4 символа */
+  max-width: none; /* Убираем ограничение максимума - поле будет расширяться по содержимому */
+  padding: 2px 4px; /* Небольшой отступ для комфорта */
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  white-space: nowrap;
+  border-bottom: 2px dashed rgba(59,130,246,0.6); /* Более заметная линия */
+  box-sizing: content-box;
+  text-align: center; /* Центрируем текст для дат */
+  transition: border-color 0.2s;
+}
+
+.hero-inline-input--year:focus {
+  border-bottom-color: var(--brand);
+}
+
+/* Стили для биографии */
+.hero-inline-input--biography {
+  font-size: 1.25rem;
+  font-weight: inherit;
+  line-height: 1.8;
+  width: 100%;
+  min-height: 400px; /* Минимальная высота для комфортного редактирования */
+  height: 100%;
+  max-height: calc(100vh - 300px); /* Ограничиваем максимальную высоту */
+  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--brand); /* Более заметная граница */
+  background: rgba(0,0,0,0.75); /* Более темный фон для контраста */
+  box-shadow: 0 0 0 1px rgba(59,130,246,0.3), 
+              0 4px 12px rgba(0,0,0,0.3); /* Добавляем тень для глубины */
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  resize: vertical; /* Разрешаем изменение размера по вертикали */
+  overflow-y: auto;
+  overflow-x: hidden;
+  box-sizing: border-box; /* Учитываем padding в размерах */
+  transition: border-color 0.2s, box-shadow 0.2s;
+  font-family: inherit; /* Наследуем шрифт */
+}
+
+.hero-inline-input--biography:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.4), 
+              0 4px 16px rgba(0,0,0,0.4); /* Усиливаем тень при фокусе */
+  outline: none; /* Убираем стандартный outline */
+}
+
+.hero-inline-hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 8px;
+  padding: 4px 8px;
+  background: rgba(0,0,0,0.3);
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+
+/* Avatar upload стили для админ панели */
+.hero-admin-page .hero-portrait[data-avatar],
+.hero-admin-page .hero-portrait [data-avatar] {
+  position: relative;
+  cursor: pointer;
+  width: 100%;
+  border-radius: 24px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: transparent;
+  transition: border-color 0.2s, background 0.2s;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.hero-admin-page .hero-portrait [data-avatar]:has(.hero-photo) {
+  display: block;
+  height: clamp(320px, 60vh, 520px);
+  min-height: clamp(320px, 60vh, 520px);
+  max-height: clamp(320px, 60vh, 520px);
+  padding: 0;
+  border: 1px solid rgba(255,255,255,0.08);
+  line-height: 0;
+  overflow: hidden;
+}
+
+/* Гарантируем, что фото заполняет контейнер по размеру рамки */
+.hero-admin-page .hero-portrait [data-avatar] .hero-photo {
+  width: 100% !important;
+  max-width: 100% !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  object-fit: cover !important;
+  display: block;
+  border-radius: 24px;
+  box-sizing: border-box;
+}
+
+.hero-admin-page .hero-portrait [data-avatar]:not(:has(.hero-photo)) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: clamp(320px, 60vh, 520px);
+  padding: 0;
+}
+
+.hero-admin-page .hero-portrait[data-avatar]:hover,
+.hero-admin-page .hero-portrait [data-avatar]:hover {
+  border-color: rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.04);
+}
+
+.hero-admin-media-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.hero-admin-media__empty {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.hero-media-add {
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  border: 1px dashed rgba(255,255,255,0.35);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.hero-media-add:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.hero-media__item {
+  position: relative;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: rgba(0,0,0,0.4);
+}
+
+.hero-media__remove,
+.hero-media-thumbnail-delete,
+.hero-avatar-delete {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(0,0,0,0.75);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: rgba(255,255,255,0.9);
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  max-width: 28px;
+  max-height: 28px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1;
+  transition: all 0.2s;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  padding: 0;
+  margin: 0;
+}
+
+.hero-media__remove:hover,
+.hero-media-thumbnail-delete:hover,
+.hero-avatar-delete:hover {
+  background: rgba(0,0,0,0.9);
+  border-color: rgba(255,255,255,0.25);
+  color: #fff;
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+
+.hero-avatar-delete {
+  top: 12px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  max-width: 36px;
+  max-height: 36px;
+  font-size: 1.25rem;
+}
+
+@media (max-width: 1024px) {
+  .hero-admin-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: 320px minmax(0, 1fr);
+  }
+}
+
+/* ========================================
+   HERO CARD STYLES (используются в админ панели)
+   ======================================== */
+.hero-card {
+  background: var(--panel);
+  border: var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: var(--shadow-md);
+}
+
+.hero-card__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.hero-card__identity {
+  display: flex;
+  gap: 16px;
+}
+
+.hero-card__avatar {
+  width: 120px;
+  height: 120px;
+  border-radius: 24px;
+  overflow: hidden;
+  border: var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-2);
+}
+
+.hero-card__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.hero-card__avatar--placeholder {
+  font-size: 48px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.hero-card__title {
+  display: flex;
+  flex-direction: column;
+}
+
+.hero-card__dates {
+  display: flex;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.hero-card__meta {
+  text-align: right;
+}
+
+.hero-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hero-card__bio p {
+  margin: 0 0 8px;
+}
+
+.hero-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.hero-card__tag {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.hero-card__media {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.hero-card__media-card {
+  border: var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--panel-2);
+  display: flex;
+  flex-direction: column;
+}
+
+.hero-card__media-preview {
+  min-height: 160px;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.hero-card__media-preview img,
+.hero-card__media-preview video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.hero-card__media-info {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hero-card__media-type {
+  font-size: 12px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.hero-card__media-link {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.hero-card--editable [data-editable] {
+  cursor: text;
+  transition: background var(--transition-fast);
+  border-radius: 8px;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  display: inline-block;
+}
+
+.hero-card--editable [data-editable][data-multiline="true"] {
+  display: block;
+}
+
+.hero-card--editable [data-editable]:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.hero-card__avatar[data-avatar-trigger="true"] {
+  position: relative;
+  cursor: pointer;
+}
+
+.hero-card__avatar-hint {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  pointer-events: none;
+}
+
+.hero-card__inline-editor {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--primary);
+  background: rgba(0, 0, 0, 0.7);
+  color: var(--text);
+  font: inherit;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.hero-card__field--editing {
+  position: relative;
+}
+
+.hero-card__field--editing::after {
+  position: absolute;
+  bottom: -18px;
+  right: 0;
+  font-size: 10px;
+  color: var(--muted);
+}
+

@@ -1,285 +1,112 @@
-# 📺 VideoControl
+# 📺 MMRC 3.1.1
 
 **Система управления медиаконтентом для цифровых дисплеев**
 
-![Version](https://img.shields.io/badge/version-2.6.3-blue)
+![Version](https://img.shields.io/badge/version-3.1.1-blue)
 ![Node](https://img.shields.io/badge/node-20.x-green)
-![License](https://img.shields.io/badge/license-MIT-orange)
+![License](https://img.shields.io/badge/license-Personal_Use_Only-red)
 
 ---
 
 ## 🚀 Быстрый старт
 
-### Требования
-- **Node.js** 20.x+
-- **FFmpeg** + **FFprobe**
-- **LibreOffice** (для PDF/PPTX)
-- **SQLite3**
-
-### Установка
+### Установка одной командой
 
 ```bash
-# 1. Клонируем репозиторий
-git clone https://github.com/ya-k0v/VideoControl.git
-cd VideoControl
+# Production установка с Nginx и systemd
+sudo bash dev/scripts/quick-install.sh
+```
 
-# 2. Устанавливаем зависимости
+### Ручная установка
+
+```bash
+# 1. Установите зависимости
 npm install
 
-# 3. Создаем конфигурацию
-mkdir -p config public/content logs
+# 2. Создайте конфигурацию .env
+cp .env.example .env
+nano .env  # Настройте переменные окружения
 
-# 4. Запускаем
+# 3. Создайте структуру директорий
+mkdir -p config config/hero data/{content,streams,converted,logs,temp}
+
+# 4. Запустите сервер
 node server.js
 ```
 
 **По умолчанию:**
 - Сервер: `http://localhost:3000`
-- Админ: `admin / admin123`
-
-### Быстрая установка (production, с Nginx и systemd)
-
-```bash
-sudo bash scripts/quick-install.sh
-# Во время установки можно выбрать режим хранения контента:
-# - local (public/content)
-# - external (symlink → CONTENT_DIR)
-# - external_fstab (запись в /etc/fstab + symlink)
-```
-
-См. также: `docs/MANUAL.md` — полезные команды (SQLite, systemd, Nginx, бэкапы).
-
-### Systemd (для production)
-
-```bash
-sudo cp videocontrol.service /etc/systemd/system/
-sudo systemctl enable videocontrol
-sudo systemctl start videocontrol
-```
+- Админ: `admin / admin123` (⚠️ **ОБЯЗАТЕЛЬНО СМЕНИТЬ** после первого входа!)
 
 ---
 
-## 📱 Android клиент
+## 📚 Документация
 
-### Быстрая установка
+Вся документация для администраторов, разработчиков и инструкции по установке находятся в папке [`dev/`](dev/):
 
-```bash
-cd scripts
-./quick-setup-android.sh
-```
-
-**Скрипт автоматически:**
-- Подключается к устройству через ADB
-- Устанавливает APK
-- Настраивает server URL и device ID
-- Отключает энергосбережение
-- Запускает приложение
-
-**Вручную:**
-
-```bash
-# 1. Установить APK
-adb install -r VCMplayer-v2.5.5.apk
-
-# 2. Запустить
-adb shell am start -n com.videocontrol.mediaplayer/.MainActivity
-
-# 3. Настроить через админ панель
-# Server URL: http://your-server:3000
-# Device ID: DEVICE001
-```
+- [`dev/README.md`](dev/README.md) — полное описание проекта, архитектура и возможности
+- [`dev/INSTALL.md`](dev/INSTALL.md) — подробная инструкция по установке на новую ОС
+- [`dev/QUICK-START.md`](dev/QUICK-START.md) — быстрый старт и настройка
+- [`dev/DEPLOYMENT.md`](dev/DEPLOYMENT.md) — развертывание в продакшене
+- [`dev/MANUAL.md`](dev/MANUAL.md) — эксплуатация, мониторинг, бэкапы
+- [`dev/ANDROID_README.md`](dev/ANDROID_README.md) — Android клиент и ADB инструкции
+- И другие документы в папке `dev/`
 
 ---
 
-## 🎯 Возможности
+## 🎯 Основные возможности
 
-### Backend
-- **SQLite** - быстрая БД с WAL mode
-- **JWT Auth** - 12h access + 30d refresh tokens
-- **MD5 Deduplication** - экономия места на диске
-- **FFmpeg** - автооптимизация видео (720p/1080p)
-- **PDF/PPTX → изображения** - автоконвертация
-- **Graceful Shutdown** - корректное завершение
-- **Winston Logging** - структурированные логи
-- **Rate Limiting** - защита от brute-force
-
-### Frontend
-- **Админ панель** - управление устройствами и файлами
-- **Спикер панель** - воспроизведение контента
-- **JWT Auth UI** - безопасная авторизация
-- **Drag & Drop** - перемещение файлов между устройствами
-- **Live Preview** - предпросмотр контента
-- **PWA** - работает offline
-
-### Android Player
-- **ExoPlayer** - стабильное воспроизведение + кэш 500 MB
-- **Glide** - плавная загрузка изображений
-- **Презентации** - PDF/PPTX слайды
-- **Папки** - навигация по изображениям
-- **Заглушка** - автовоспроизведение при отсутствии контента
+- ✅ **SQLite** — быстрая БД с WAL mode
+- ✅ **JWT Auth** — безопасная аутентификация
+- ✅ **MD5 Deduplication** — экономия места на диске
+- ✅ **FFmpeg** — автооптимизация видео и HLS стриминг
+- ✅ **PDF/PPTX → изображения** — автоконвертация
+- ✅ **Graceful Shutdown** — корректное завершение
+- ✅ **Winston Logging** — структурированные логи
+- ✅ **Rate Limiting** — защита от brute-force
+- ✅ **Health Check** — мониторинг состояния
 
 ---
 
-## 📁 Структура
+## 🔧 Требования
 
-```
-videocontrol/
-├── server.js                    # Точка входа
-├── src/
-│   ├── routes/                  # 10 роутеров (auth, devices, files...)
-│   ├── database/                # SQLite (БД + metadata)
-│   ├── video/                   # FFmpeg обработка
-│   ├── converters/              # PDF/PPTX → изображения
-│   ├── socket/                  # Socket.IO handlers
-│   ├── middleware/              # Auth, rate limit
-│   └── utils/                   # Helpers
-├── public/
-│   ├── js/                      # Frontend (модульный)
-│   │   ├── admin/               # 13 модулей админ панели
-│   │   └── speaker/             # Спикер панель
-│   ├── content/                 # Медиафайлы (shared storage)
-│   └── sw.js                    # Service Worker
-├── clients/android-mediaplayer/ # Android приложение
-├── config/
-│   └── main.db                  # SQLite база
-├── logs/                        # Winston логи
-└── scripts/
-    └── quick-setup-android.sh   # Быстрая установка Android
-```
-
----
-
-## 🔧 API
-
-### Аутентификация
-```http
-POST /api/auth/login
-POST /api/auth/refresh
-POST /api/auth/logout
-GET  /api/auth/me
-```
-
-### Устройства
-```http
-GET    /api/devices
-POST   /api/devices
-DELETE /api/devices/:id
-```
-
-### Файлы
-```http
-POST   /api/devices/:id/upload
-GET    /api/devices/:id/files-with-status
-POST   /api/devices/:id/files/:name/rename
-DELETE /api/devices/:id/files/:name
-GET    /api/files/resolve/:deviceId/:fileName
-```
-
-### Заглушка
-```http
-GET  /api/devices/:id/placeholder
-POST /api/devices/:id/placeholder
-```
+- **Node.js** 20.x+
+- **FFmpeg** + **FFprobe**
+- **LibreOffice** (для PDF/PPTX)
+- **SQLite3**
 
 ---
 
 ## 🔐 Безопасность
 
-- ✅ **JWT** - access (12h) + refresh tokens (30d)
-- ✅ **Rate Limiting** - защита от brute-force
-- ✅ **SQL Prepared Statements** - защита от injection
-- ✅ **Sanitization** - все device ID очищаются
-- ✅ **Audit Logging** - все операции логируются
-- ✅ **Password Reset** - только admin
+После установки:
+1. **Измените пароль администратора** (по умолчанию: `admin / admin123`)
+2. **Настройте JWT_SECRET** в `.env` файле
+3. **Настройте файрвол** (используйте только Nginx)
+4. **Настройте SSL/TLS** (через Nginx)
 
 ---
 
-## 📊 Производительность
+## 📱 Клиенты
 
-- **Дедупликация:** 33% экономия места (в среднем)
-- **FFmpeg timeout:** 30 мин (защита от зависания)
-- **Upload limit:** 5 GB на файл
-- **ExoPlayer cache:** 500 MB
-- **TCP buffers:** 16 MB (быстрая загрузка)
-
----
-
-## 🐛 Troubleshooting
-
-### Видео не воспроизводится
-```bash
-# Очистить кэш браузера
-Ctrl + Shift + R
-
-# Очистить кэш Android
-adb shell pm clear com.videocontrol.mediaplayer
-```
-
-### Заглушка не показывается
-```bash
-# Проверить БД
-sqlite3 config/main.db "SELECT * FROM files_metadata WHERE is_placeholder=1;"
-
-# Проверить логи
-sudo journalctl -u videocontrol -f
-```
-
-### Файлы не загружаются
-```bash
-# Проверить место на диске
-df -h /vid/videocontrol/public/content
-
-# Проверить права
-ls -la public/content/
-```
-
----
-
-## 📝 Логи
-
-```bash
-# Server логи
-sudo journalctl -u videocontrol -f
-
-# Android логи
-adb logcat | grep -iE "VCMedia|VideoControl"
-
-# Winston логи
-tail -f logs/error.log
-tail -f logs/combined.log
-```
-
----
-
-## 🔄 Обновление
-
-```bash
-# 1. Остановить сервер
-sudo systemctl stop videocontrol
-
-# 2. Обновить код
-git pull origin main
-
-# 3. Установить зависимости
-npm install
-
-# 4. Запустить
-sudo systemctl start videocontrol
-
-# 5. Обновить Android APK
-adb install -r VCMplayer-v2.5.5.apk
-```
+- **Android TV / Media Player** — APK в корне проекта
+- **MPV Player (Linux)** — нативный медиаплеер
+- **Browser** — веб-плеер через Video.js
 
 ---
 
 ## 📄 Лицензия
 
-MIT License - свободное использование
+Используется кастомная лицензия: только личное (персональное) использование физическими лицами.
+
+- Использование юридическими лицами, ИП, госорганизациями и любыми организациями запрещено без письменного разрешения правообладателя.
+- Полный текст: [LICENSE](LICENSE)
 
 ---
 
 ## 👤 Автор
 
-**ya-k0v** - [GitHub](https://github.com/ya-k0v/VideoControl)
+**ya-k0v** - [GitHub](https://github.com/ya-k0v/MMRC)
 
-**Версия:** 2.6.3
+**Версия:** 3.1.1
+

@@ -1,6 +1,245 @@
 // upload-ui.js - ПОЛНЫЙ код setupUploadUI из admin.js
 import { setXhrAuth, adminFetch } from './auth.js';
 import { calculateFileMD5 } from './md5-helper.js';
+import { getFolderIcon, getSuccessIcon } from '../shared/svg-icons.js';
+
+const YTDLP_ACTIVE_STATUSES = new Set(['queued', 'waiting_resources', 'preparing', 'downloading', 'processing']);
+const ytDownloadRuntimeByDevice = new Map();
+const ytDownloadUiByDevice = new Map();
+
+async function reportUploadNotification(payload = {}) {
+  try {
+    await adminFetch('/api/notifications/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: payload.type || 'upload_ui_event',
+        severity: payload.severity || 'info',
+        title: payload.title || 'Уведомление загрузки',
+        message: payload.message || '',
+        details: payload.details || {},
+        key: payload.key || null,
+        source: 'admin-upload-ui'
+      })
+    });
+  } catch (error) {
+    console.error('[Upload UI] Failed to report notification:', error);
+  }
+}
+
+function getYtRuntime(deviceId) {
+  if (!ytDownloadRuntimeByDevice.has(deviceId)) {
+    ytDownloadRuntimeByDevice.set(deviceId, {
+      deviceId,
+      jobId: null,
+      status: 'idle',
+      progress: 0,
+      speed: null,
+      eta: null,
+      fileName: null,
+      title: null,
+      error: null,
+      visible: false,
+      synced: false,
+      pollTimer: null,
+      updatedAt: Date.now()
+    });
+  }
+
+  return ytDownloadRuntimeByDevice.get(deviceId);
+}
+
+function notifyYtRuntimeChanged(deviceId) {
+  const render = ytDownloadUiByDevice.get(deviceId);
+  if (typeof render === 'function') {
+    render();
+  }
+}
+
+function setYtRuntime(deviceId, patch = {}) {
+  const runtime = getYtRuntime(deviceId);
+  const next = {
+    ...runtime,
+    ...patch,
+    updatedAt: Date.now()
+  };
+
+  ytDownloadRuntimeByDevice.set(deviceId, next);
+  notifyYtRuntimeChanged(deviceId);
+  return next;
+}
+
+function clearYtPollTimer(deviceId) {
+  const runtime = getYtRuntime(deviceId);
+  if (runtime.pollTimer) {
+    clearInterval(runtime.pollTimer);
+    runtime.pollTimer = null;
+    ytDownloadRuntimeByDevice.set(deviceId, runtime);
+  }
+}
+
+function normalizeYtProgress(progress = 0) {
+  return Math.max(0, Math.min(100, Math.round(Number(progress) || 0)));
+}
+
+function getYtStatusLabel(status) {
+  return {
+    queued: 'В очереди',
+    waiting_resources: 'Ожидание ресурсов',
+    preparing: 'Подготовка',
+    downloading: 'Загрузка',
+    processing: 'Обработка',
+    completed: 'Готово',
+    failed: 'Ошибка',
+    cancelled: 'Отменено'
+  }[status] || 'Загрузка';
+}
+
+function buildYtStatusText(runtime) {
+  if (!runtime) return '';
+
+  const progress = normalizeYtProgress(runtime.progress);
+  const speedText = runtime.speed ? ` • ${runtime.speed}` : '';
+  const etaText = runtime.eta ? ` • ETA ${runtime.eta}` : '';
+
+  if (runtime.status === 'completed') {
+    return `Загрузка завершена: ${runtime.fileName || runtime.title || 'файл готов'}`;
+  }
+
+  if (runtime.status === 'failed') {
+    return `Ошибка загрузки: ${runtime.error || 'неизвестная ошибка'}`;
+  }
+
+  if (runtime.status === 'cancelled') {
+    return runtime.error || 'Загрузка отменена';
+  }
+
+  if (runtime.status === 'idle') {
+    return '';
+  }
+
+  return `${getYtStatusLabel(runtime.status)}: ${progress}%${speedText}${etaText}`;
+}
+
+function buildYtInlineText(runtime) {
+  if (!runtime) return '';
+
+  const progress = normalizeYtProgress(runtime.progress);
+  const speedText = runtime.speed ? ` • ${runtime.speed}` : '';
+  const etaText = runtime.eta ? ` • ETA ${runtime.eta}` : '';
+
+  if (YTDLP_ACTIVE_STATUSES.has(runtime.status)) {
+    return `${getYtStatusLabel(runtime.status)}: ${progress}%${speedText}${etaText}`;
+  }
+
+  if (runtime.status === 'completed') {
+    return 'Готово';
+  }
+
+  if (runtime.status === 'cancelled') {
+    return 'Отменено';
+  }
+
+  if (runtime.status === 'failed') {
+    return 'Ошибка';
+  }
+
+  return '';
+}
+
+function getYtVisualState(runtime) {
+  if (!runtime) return 'downloading';
+  if (runtime.status === 'completed') return 'completed';
+  if (runtime.status === 'failed' || runtime.status === 'cancelled') return 'failed';
+  return 'downloading';
+}
+
+async function pollYtDownloadStatusForDevice(deviceId) {
+  const runtime = getYtRuntime(deviceId);
+  if (!runtime.jobId) {
+    clearYtPollTimer(deviceId);
+    return;
+  }
+
+  try {
+    const statusRes = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/download-url/${encodeURIComponent(runtime.jobId)}`);
+    const statusData = await statusRes.json();
+
+    if (!statusRes.ok || !statusData?.ok) {
+      throw new Error(statusData?.error || 'Не удалось получить статус загрузки');
+    }
+
+    const job = statusData.job || {};
+    const patch = {
+      status: job.status || runtime.status,
+      progress: typeof job.progress === 'number' ? job.progress : runtime.progress,
+      speed: job.speed || null,
+      eta: job.eta || null,
+      fileName: job.fileName || runtime.fileName,
+      title: job.title || runtime.title,
+      error: job.error || null,
+      visible: true
+    };
+
+    if (job.status === 'completed') {
+      Object.assign(patch, {
+        progress: 100,
+        speed: null,
+        eta: null,
+        jobId: null,
+        error: null,
+        synced: false
+      });
+      clearYtPollTimer(deviceId);
+    }
+
+    if (job.status === 'failed' || job.status === 'cancelled') {
+      Object.assign(patch, {
+        speed: null,
+        eta: null,
+        jobId: null,
+        synced: false
+      });
+      clearYtPollTimer(deviceId);
+    }
+
+    setYtRuntime(deviceId, patch);
+  } catch (error) {
+    const current = getYtRuntime(deviceId);
+    if (current.status === 'cancelled') {
+      clearYtPollTimer(deviceId);
+      setYtRuntime(deviceId, { jobId: null, visible: true });
+      return;
+    }
+
+    clearYtPollTimer(deviceId);
+    setYtRuntime(deviceId, {
+      status: 'failed',
+      error: `Ошибка статуса: ${error.message}`,
+      speed: null,
+      eta: null,
+      jobId: null,
+      visible: true,
+      synced: false
+    });
+  }
+}
+
+function ensureYtDownloadPolling(deviceId) {
+  const runtime = getYtRuntime(deviceId);
+  if (!runtime.jobId || runtime.pollTimer) return;
+
+  runtime.pollTimer = setInterval(() => {
+    pollYtDownloadStatusForDevice(deviceId);
+  }, 1200);
+
+  ytDownloadRuntimeByDevice.set(deviceId, runtime);
+  pollYtDownloadStatusForDevice(deviceId);
+}
+
+function stopYtDownloadPolling(deviceId) {
+  clearYtPollTimer(deviceId);
+}
 
 export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, socket) {
   const dropZone = card.querySelector('.dropZone');
@@ -11,13 +250,108 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
   const clearBtn = card.querySelector('.clearBtn');
   const uploadBtn = card.querySelector('.uploadBtn');
   const queue = card.querySelector('.queue');
+  const ytDownloadBtn = card.querySelector('.ytDownloadBtn');
+  const ytDownloadStatus = card.querySelector('.ytDownloadStatus');
+  const ytDownloadStatusText = card.querySelector('.ytDownloadStatusText');
+  const ytDownloadProgressFill = card.querySelector('.ytDownloadProgressFill');
+  const uploadStatusInline = card.querySelector('.uploadStatusInline');
   if (!fileInput || !pickBtn || !clearBtn || !uploadBtn || !queue) return;
 
   let pending = [];
   let folderName = null; // Имя выбранной папки
+  let isUploading = false; // Флаг активной загрузки (предотвращает обновление UI)
+  let isClearingUploads = false;
+  const activeUploadRequests = new Set();
   const allowed = /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp|pdf|pptx|zip)$/i;
   const imageExtensions = /\.(png|jpg|jpeg|gif|webp)$/i;
   const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024; // 5GB
+  
+  // Экспортируем функцию для проверки состояния загрузки
+  window.isUploadingFiles = () => isUploading;
+
+  function trackUploadRequest(xhr) {
+    activeUploadRequests.add(xhr);
+    xhr.addEventListener('loadend', () => {
+      activeUploadRequests.delete(xhr);
+    }, { once: true });
+    return xhr;
+  }
+
+  function updateYtDownloadStatusUI({ visible = false, text = '', progress = 0, state = 'downloading', inlineText = '' } = {}) {
+    if (ytDownloadStatus && ytDownloadStatusText && ytDownloadProgressFill) {
+      ytDownloadStatus.style.display = visible ? 'block' : 'none';
+      ytDownloadStatusText.textContent = text;
+
+      const normalizedProgress = normalizeYtProgress(progress);
+      ytDownloadProgressFill.style.width = `${normalizedProgress}%`;
+
+      if (state === 'failed') {
+        ytDownloadProgressFill.style.background = 'linear-gradient(90deg, #ef5350, #e53935)';
+      } else if (state === 'completed') {
+        ytDownloadProgressFill.style.background = 'linear-gradient(90deg, #4CAF50, #8BC34A)';
+      } else {
+        ytDownloadProgressFill.style.background = 'linear-gradient(90deg, #42a5f5, #1e88e5)';
+      }
+    }
+
+    if (uploadStatusInline) {
+      uploadStatusInline.style.display = inlineText ? 'inline' : 'none';
+      uploadStatusInline.textContent = inlineText;
+      if (state === 'failed') {
+        uploadStatusInline.style.color = '#e53935';
+      } else if (state === 'completed') {
+        uploadStatusInline.style.color = '#43a047';
+      } else {
+        uploadStatusInline.style.color = 'var(--text-dim)';
+      }
+    }
+  }
+
+  function syncYtDownloadUI() {
+    if (!document.body.contains(card)) {
+      if (ytDownloadUiByDevice.get(deviceId) === syncYtDownloadUI) {
+        ytDownloadUiByDevice.delete(deviceId);
+      }
+      return;
+    }
+
+    const runtime = getYtRuntime(deviceId);
+    const state = getYtVisualState(runtime);
+    const text = buildYtStatusText(runtime);
+    const inlineText = buildYtInlineText(runtime);
+
+    updateYtDownloadStatusUI({
+      visible: Boolean(text),
+      state,
+      progress: runtime.progress,
+      text,
+      inlineText
+    });
+
+    if (ytDownloadBtn) {
+      const hasActiveYtJob = Boolean(runtime.jobId && YTDLP_ACTIVE_STATUSES.has(runtime.status));
+      ytDownloadBtn.disabled = hasActiveYtJob || isUploading;
+    }
+
+    if (runtime.status === 'completed' && !runtime.synced) {
+      runtime.synced = true;
+      ytDownloadRuntimeByDevice.set(deviceId, runtime);
+
+      Promise.resolve().then(async () => {
+        await renderFilesPane(deviceId);
+        socket.emit('devices/updated');
+      }).catch((error) => {
+        console.error('[Upload] Ошибка обновления списка после yt-dlp:', error);
+      });
+    }
+  }
+
+  ytDownloadUiByDevice.set(deviceId, syncYtDownloadUI);
+  const runtime = getYtRuntime(deviceId);
+  if (runtime.jobId && YTDLP_ACTIVE_STATUSES.has(runtime.status)) {
+    ensureYtDownloadPolling(deviceId);
+  }
+  syncYtDownloadUI();
 
   function renderQueue() {
     if (!pending.length) { 
@@ -26,23 +360,68 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       return; 
     }
     
+    // Используем DOM методы вместо innerHTML для безопасности
+    queue.innerHTML = '';
+    
     // Если это папка с изображениями, показываем специальное сообщение
     if (folderName) {
       const imageCount = pending.filter(f => imageExtensions.test(f.name)).length;
       const totalSize = pending.reduce((sum, f) => sum + f.size, 0);
-      queue.innerHTML = `
-        <li style="display:flex; justify-content:space-between; align-items:center; padding:8px; background:var(--panel-2); border-radius:var(--radius-sm)">
-          <span>📁 <strong>${folderName}</strong> <span class="meta">(${imageCount} изображений, ${(totalSize/1024/1024).toFixed(2)} MB)</span></span>
-          <span class="meta" id="p_${deviceId}_folder">0%</span>
-        </li>
-      `;
+      
+      const li = document.createElement('li');
+      li.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:8px; background:var(--panel-2); border-radius:var(--radius-sm)';
+      
+      const leftSpan = document.createElement('span');
+      leftSpan.style.cssText = 'display:flex; align-items:center; gap:4px;';
+      // getFolderIcon возвращает безопасную SVG иконку из константы
+      // Используем временный контейнер для безопасного парсинга
+      const iconTemp = document.createElement('span');
+      iconTemp.insertAdjacentHTML('beforeend', getFolderIcon(16));
+      while (iconTemp.firstChild) {
+        leftSpan.appendChild(iconTemp.firstChild);
+      }
+      
+      const folderNameStrong = document.createElement('strong');
+      folderNameStrong.textContent = folderName; // Используем textContent для безопасности
+      leftSpan.appendChild(folderNameStrong);
+      
+      const metaSpan = document.createElement('span');
+      metaSpan.className = 'meta';
+      metaSpan.textContent = `(${imageCount} изображений, ${(totalSize/1024/1024).toFixed(2)} MB)`;
+      leftSpan.appendChild(metaSpan);
+      
+      const progressSpan = document.createElement('span');
+      progressSpan.className = 'meta';
+      progressSpan.id = `p_${deviceId}_folder`;
+      progressSpan.textContent = '0%';
+      
+      li.appendChild(leftSpan);
+      li.appendChild(progressSpan);
+      queue.appendChild(li);
     } else {
-      queue.innerHTML = pending.map((f,i) => `
-        <li style="display:flex; justify-content:space-between; align-items:center; padding:6px 0">
-          <span>${f.name} <span class="meta">(${(f.size/1024/1024).toFixed(2)} MB)</span></span>
-          <span class="meta" id="p_${deviceId}_${i}">0%</span>
-        </li>
-      `).join('');
+      pending.forEach((f, i) => {
+        const li = document.createElement('li');
+        li.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border-2);';
+        
+        const nameSpan = document.createElement('span');
+        nameSpan.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+        nameSpan.textContent = f.name; // Используем textContent для безопасности
+        
+        const sizeMetaSpan = document.createElement('span');
+        sizeMetaSpan.className = 'meta';
+        sizeMetaSpan.textContent = `(${(f.size/1024/1024).toFixed(2)} MB)`;
+        nameSpan.appendChild(sizeMetaSpan);
+        
+        const progressSpan = document.createElement('span');
+        progressSpan.className = 'meta';
+        progressSpan.id = `p_${deviceId}_${i}`;
+        progressSpan.style.cssText = 'flex-shrink:0; margin-left:var(--space-sm);';
+        progressSpan.textContent = '0%';
+        
+        li.appendChild(nameSpan);
+        li.appendChild(progressSpan);
+        queue.appendChild(li);
+      });
     }
   }
 
@@ -70,7 +449,18 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
     // Показываем предупреждение о отклоненных файлах
     if (rejected.length > 0) {
       const messages = rejected.map(r => `• ${r.name}\n  ${r.reason}`).join('\n\n');
-      alert(`⚠️ Следующие файлы не были добавлены:\n\n${messages}`);
+      reportUploadNotification({
+        type: 'upload_rejected_files',
+        severity: 'warning',
+        title: 'Часть файлов отклонена',
+        message: 'Некоторые файлы не были добавлены в очередь загрузки',
+        key: `upload-rejected:${deviceId}`,
+        details: {
+          deviceId,
+          rejectedCount: rejected.length,
+          rejected
+        }
+      });
     }
     
     renderQueue();
@@ -82,10 +472,76 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       folderInput.click();
     }
   };
-  clearBtn.onclick = () => { 
-    pending = []; 
+  clearBtn.onclick = async () => {
+    pending = [];
     folderName = null;
-    renderQueue(); 
+    renderQueue();
+
+    isClearingUploads = true;
+
+    if (activeUploadRequests.size > 0) {
+      for (const xhr of Array.from(activeUploadRequests)) {
+        try {
+          xhr.abort();
+        } catch (error) {
+          console.warn('[Upload] Не удалось прервать XMLHttpRequest:', error);
+        }
+      }
+      activeUploadRequests.clear();
+    }
+
+    if (isUploading) {
+      isUploading = false;
+      uploadBtn.disabled = false;
+      uploadBtn.textContent = 'Загрузить';
+    }
+
+    try {
+      const cancelRes = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/download-url/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ all: true })
+      });
+      const cancelData = await cancelRes.json();
+
+      if (!cancelRes.ok || !cancelData?.ok) {
+        throw new Error(cancelData?.error || 'Не удалось отменить задачи загрузки');
+      }
+
+      const runtime = getYtRuntime(deviceId);
+      if (cancelData.cancelled > 0 || (runtime.jobId && YTDLP_ACTIVE_STATUSES.has(runtime.status))) {
+        stopYtDownloadPolling(deviceId);
+        setYtRuntime(deviceId, {
+          jobId: null,
+          status: 'cancelled',
+          error: 'Загрузка отменена пользователем',
+          speed: null,
+          eta: null,
+          visible: true,
+          synced: false
+        });
+      } else {
+        stopYtDownloadPolling(deviceId);
+        setYtRuntime(deviceId, {
+          jobId: null,
+          status: 'idle',
+          progress: 0,
+          speed: null,
+          eta: null,
+          fileName: null,
+          title: null,
+          error: null,
+          visible: false,
+          synced: false
+        });
+      }
+    } catch (error) {
+      console.warn('[Upload] Не удалось отменить задачи загрузки:', error);
+      syncYtDownloadUI();
+    } finally {
+      isClearingUploads = false;
+      syncYtDownloadUI();
+    }
   };
   fileInput.onchange = e => { 
     folderName = null; // Сбрасываем режим папки
@@ -95,7 +551,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
   
   // Обработка выбора папки
   if (folderInput) {
-    folderInput.onchange = e => {
+    folderInput.onchange = async (e) => {
       const files = Array.from(e.target.files || []);
       if (files.length === 0) return;
       
@@ -103,7 +559,17 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       const imageFiles = files.filter(f => imageExtensions.test(f.name));
       
       if (imageFiles.length === 0) {
-        alert('В выбранной папке нет изображений! Поддерживаются форматы: PNG, JPG, JPEG, GIF, WEBP');
+        await reportUploadNotification({
+          type: 'folder_without_images',
+          severity: 'warning',
+          title: 'В папке нет изображений',
+          message: 'Поддерживаются форматы: PNG, JPG, JPEG, GIF, WEBP',
+          key: `folder-no-images:${deviceId}`,
+          details: {
+            deviceId,
+            selectedCount: files.length
+          }
+        });
         folderInput.value = '';
         return;
       }
@@ -133,12 +599,34 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       }
       
       if (rejected.length > 0) {
-        const messages = rejected.map(r => `• ${r.name}\n  ${r.reason}`).join('\n\n');
-        alert(`⚠️ Следующие файлы из папки не будут загружены:\n\n${messages}`);
+        await reportUploadNotification({
+          type: 'folder_rejected_files',
+          severity: 'warning',
+          title: 'Часть файлов из папки отклонена',
+          message: 'Некоторые изображения превышают лимит 5 GB и не будут загружены',
+          key: `folder-rejected:${deviceId}`,
+          details: {
+            deviceId,
+            folderName,
+            rejectedCount: rejected.length,
+            rejected
+          }
+        });
       }
       
       if (validFiles.length === 0) {
-        alert('❌ Нет файлов для загрузки (все файлы превышают лимит 5 GB)');
+        await reportUploadNotification({
+          type: 'folder_no_valid_files',
+          severity: 'warning',
+          title: 'Нет файлов для загрузки',
+          message: 'Все файлы превышают лимит 5 GB',
+          key: `folder-no-valid:${deviceId}`,
+          details: {
+            deviceId,
+            folderName,
+            imageFiles: imageFiles.length
+          }
+        });
         folderInput.value = '';
         return;
       }
@@ -193,12 +681,34 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
                 }
                 
                 if (rejected.length > 0) {
-                  const messages = rejected.map(r => `• ${r.name}\n  ${r.reason}`).join('\n\n');
-                  alert(`⚠️ Следующие файлы из папки не будут загружены:\n\n${messages}`);
+                  await reportUploadNotification({
+                    type: 'drop_folder_rejected_files',
+                    severity: 'warning',
+                    title: 'Часть файлов из папки отклонена',
+                    message: 'Некоторые изображения превышают лимит 5 GB и не будут загружены',
+                    key: `drop-folder-rejected:${deviceId}`,
+                    details: {
+                      deviceId,
+                      folderName,
+                      rejectedCount: rejected.length,
+                      rejected
+                    }
+                  });
                 }
                 
                 if (validFiles.length === 0) {
-                  alert('❌ Нет файлов для загрузки (все файлы превышают лимит 5 GB)');
+                  await reportUploadNotification({
+                    type: 'drop_folder_no_valid_files',
+                    severity: 'warning',
+                    title: 'Нет файлов для загрузки',
+                    message: 'Все файлы превышают лимит 5 GB',
+                    key: `drop-folder-no-valid:${deviceId}`,
+                    details: {
+                      deviceId,
+                      folderName,
+                      imageFiles: imageFiles.length
+                    }
+                  });
                   return;
                 }
                 
@@ -245,6 +755,93 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
     return files;
   }
 
+  if (ytDownloadBtn) {
+    ytDownloadBtn.onclick = async () => {
+      const runtime = getYtRuntime(deviceId);
+      if (runtime.jobId && YTDLP_ACTIVE_STATUSES.has(runtime.status)) {
+        await reportUploadNotification({
+          type: 'yt_dlp_conflict',
+          severity: 'warning',
+          title: 'Загрузка по ссылке уже выполняется',
+          message: `Для устройства ${deviceId} уже идет загрузка по ссылке`,
+          key: `yt-dlp-conflict:${deviceId}`,
+          details: {
+            deviceId,
+            status: runtime.status,
+            jobId: runtime.jobId
+          }
+        });
+        return;
+      }
+
+      if (isUploading) {
+        await reportUploadNotification({
+          type: 'upload_busy',
+          severity: 'warning',
+          title: 'Идет загрузка файлов',
+          message: 'Дождитесь завершения текущей загрузки файлов перед запуском загрузки по ссылке',
+          key: `upload-busy:${deviceId}`,
+          details: {
+            deviceId
+          }
+        });
+        return;
+      }
+
+      const inputUrl = prompt('Вставьте ссылку на видео для загрузки через yt-dlp:');
+      const targetUrl = (inputUrl || '').trim();
+      if (!targetUrl) return;
+
+      setYtRuntime(deviceId, {
+        status: 'preparing',
+        progress: 0,
+        speed: null,
+        eta: null,
+        fileName: null,
+        title: null,
+        error: null,
+        visible: true,
+        synced: false
+      });
+
+      try {
+        const startRes = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/download-url`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: targetUrl })
+        });
+        const startData = await startRes.json();
+
+        if (!startRes.ok || !startData?.ok || !startData?.jobId) {
+          throw new Error(startData?.error || 'Не удалось запустить загрузку');
+        }
+
+        setYtRuntime(deviceId, {
+          jobId: startData.jobId,
+          status: startData.status || 'queued',
+          progress: 0,
+          speed: null,
+          eta: null,
+          error: null,
+          visible: true,
+          synced: false
+        });
+        ensureYtDownloadPolling(deviceId);
+      } catch (error) {
+        setYtRuntime(deviceId, {
+          jobId: null,
+          status: 'failed',
+          progress: 0,
+          speed: null,
+          eta: null,
+          error: `Ошибка запуска: ${error.message}`,
+          visible: true,
+          synced: false
+        });
+      }
+    };
+  }
+
   uploadBtn.onclick = async () => {
     if (!pending.length) return;
     
@@ -262,7 +859,6 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
         const progressEl = queue.querySelector(`#p_${deviceId}_${i}`);
         fileIndexMap.set(file, i); // Запоминаем индекс
         
-        console.log(`[Upload] Processing file ${i+1}/${pending.length}: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`);
         
         // Вычисляем MD5 (первые 10MB для больших файлов)
         if (progressEl) progressEl.textContent = 'MD5...';
@@ -272,11 +868,9 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
         });
         const md5Time = Date.now() - startTime;
         
-        console.log(`[Upload] MD5 calculated in ${md5Time}ms: ${md5} (file: ${file.name})`);
         
         // Проверяем дубликат на сервере
         if (progressEl) progressEl.textContent = 'Проверка...';
-        console.log(`[Upload] Checking duplicate: md5=${md5}, size=${file.size}`);
         
         const checkRes = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/check-duplicate`, {
           method: 'POST',
@@ -289,7 +883,6 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
         });
         
         const checkData = await checkRes.json();
-        console.log(`[Upload] Server response:`, checkData);
         
         if (checkData.duplicate) {
           // Дубликат найден! Копируем с другого устройства
@@ -316,7 +909,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
               from: checkData.sourceDevice,
               savedMB: copyData.savedTrafficMB
             });
-            if (progressEl) progressEl.textContent = '✅ Скопирован';
+            if (progressEl) progressEl.innerHTML = `${getSuccessIcon(14)} Скопирован`;
           }
         } else {
           // Уникальный файл - добавляем в очередь загрузки
@@ -325,14 +918,18 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
         }
       }
       
-      // STEP 2: Загружаем только уникальные файлы
+      // STEP 2: Загружаем только уникальные файлы ПО ОЧЕРЕДИ (последовательно)
       if (filesToUpload.length > 0) {
-        uploadBtn.textContent = `Загрузка (${filesToUpload.length})...`;
+        isUploading = true; // Устанавливаем флаг активной загрузки
+        syncYtDownloadUI();
+        uploadBtn.textContent = `Загрузка (0/${filesToUpload.length})...`;
         
-        const form = new FormData();
+        let uploadedCount = 0;
         
-        // Если это папка, добавляем метаданные
+        // КРИТИЧНО: Если это папка, загружаем все файлы одним запросом
+        // (папка должна создаваться со всеми файлами сразу)
         if (folderName) {
+          const form = new FormData();
           form.append('folderName', folderName);
           
           // КРИТИЧНО: Передаем ПОЛНЫЙ список файлов которые должны быть в папке
@@ -343,46 +940,90 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
             return relativePath.includes('/') ? relativePath.split('/').pop() : relativePath;
           });
           form.append('expectedFiles', JSON.stringify(allFileNamesInFolder));
-          console.log('[Upload] 📝 Ожидаемые файлы в папке:', allFileNamesInFolder);
           
           filesToUpload.forEach(f => {
             const relativePath = f.webkitRelativePath || f.name;
             form.append('files', f, relativePath);
           });
-        } else {
-          filesToUpload.forEach(f => form.append('files', f));
-        }
 
-        await new Promise((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open('POST', `/api/devices/${encodeURIComponent(deviceId)}/upload`);
-          setXhrAuth(xhr);
-          xhr.upload.onprogress = e => {
-            if (!e.lengthComputable) return;
-            const percent = Math.round((e.loaded / e.total) * 100);
-            if (folderName) {
-              const el = queue.querySelector(`#p_${deviceId}_folder`);
-              if (el) el.textContent = `${percent}%`;
-            } else {
-              // Обновляем только для файлов которые грузятся
-              filesToUpload.forEach((f) => {
-                const origIdx = fileIndexMap.get(f);
-                const el = queue.querySelector(`#p_${deviceId}_${origIdx}`);
-                if (el) el.textContent = `${percent}%`;
-              });
-            }
-          };
-          xhr.onload = () => xhr.status<300 ? resolve() : reject(new Error(xhr.statusText));
-          xhr.onerror = () => reject(new Error('Network error'));
-          xhr.send(form);
-        });
+          const folderProgressEl = queue.querySelector(`#p_${deviceId}_folder`);
+          await new Promise((resolve, reject) => {
+            const xhr = trackUploadRequest(new XMLHttpRequest());
+            xhr.open('POST', `/api/devices/${encodeURIComponent(deviceId)}/upload`);
+            setXhrAuth(xhr);
+            xhr.upload.onprogress = e => {
+              if (!e.lengthComputable) return;
+              const percent = Math.round((e.loaded / e.total) * 100);
+              if (folderProgressEl) folderProgressEl.textContent = `${percent}%`;
+            };
+            xhr.onload = () => xhr.status<300 ? resolve() : reject(new Error(xhr.statusText || 'Ошибка загрузки'));
+            xhr.onerror = () => reject(new Error('Ошибка сети'));
+            xhr.onabort = () => reject(new Error('Загрузка отменена пользователем'));
+            xhr.send(form);
+          });
+          
+          uploadedCount = filesToUpload.length;
+        } else {
+          // КРИТИЧНО: Загружаем файлы ПО ОЧЕРЕДИ (один за другим)
+          for (let i = 0; i < filesToUpload.length; i++) {
+            const file = filesToUpload[i];
+            const origIdx = fileIndexMap.get(file);
+            const progressEl = queue.querySelector(`#p_${deviceId}_${origIdx}`);
+            
+            if (progressEl) progressEl.textContent = 'Подготовка...';
+            uploadBtn.textContent = `Загрузка (${i + 1}/${filesToUpload.length})...`;
+            
+            const form = new FormData();
+            form.append('files', file);
+            
+            await new Promise((resolve, reject) => {
+              const xhr = trackUploadRequest(new XMLHttpRequest());
+              xhr.open('POST', `/api/devices/${encodeURIComponent(deviceId)}/upload`);
+              setXhrAuth(xhr);
+              
+              xhr.upload.onprogress = e => {
+                if (!e.lengthComputable) return;
+                const percent = Math.round((e.loaded / e.total) * 100);
+                if (progressEl) progressEl.textContent = `${percent}%`;
+              };
+              
+              xhr.onload = () => {
+                if (xhr.status < 300) {
+                  if (progressEl) progressEl.innerHTML = getSuccessIcon(14);
+                  resolve();
+                } else {
+                  let errorMsg = xhr.statusText || `HTTP ${xhr.status}`;
+                  try {
+                    const response = JSON.parse(xhr.responseText);
+                    if (response.error) errorMsg = response.error;
+                  } catch (e) {
+                    // Игнорируем ошибку парсинга, используем statusText
+                  }
+                  reject(new Error(errorMsg));
+                }
+              };
+              
+              xhr.onerror = () => reject(new Error('Ошибка сети'));
+              xhr.onabort = () => reject(new Error('Загрузка отменена пользователем'));
+              xhr.send(form);
+            }).catch(err => {
+              // Обрабатываем ошибку для текущего файла
+              if (progressEl) progressEl.textContent = `❌ ${err.message}`;
+              throw err; // Пробрасываем дальше, чтобы остановить загрузку
+            });
+            
+            uploadedCount++;
+          }
+        }
+        
+        uploadBtn.innerHTML = `${getSuccessIcon(16)} Загружено (${uploadedCount})`;
       }
       
       // STEP 3: Показываем сводку дедупликации
       if (duplicates.length > 0) {
         const totalSavedMB = duplicates.reduce((sum, d) => sum + parseFloat(d.savedMB), 0);
         const message = duplicates.map(d => 
-          `✅ ${d.name}\n   Скопирован с ${d.from} (${d.savedMB} MB)`
+          `${getSuccessIcon(14)} ${d.name}\n   Скопирован с ${d.from} (${d.savedMB} MB)`
         ).join('\n\n');
       }
       
@@ -390,16 +1031,42 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       folderName = null;
       renderQueue();
       
+      // Сбрасываем флаг загрузки ПЕРЕД обновлением UI
+      isUploading = false;
+      syncYtDownloadUI();
+      
       // После загрузки — обновить правую колонку файлов
       await renderFilesPane(deviceId);
       socket.emit('devices/updated');
       
     } catch (error) {
-      console.error('[Upload] Error:', error);
-      alert(`❌ Ошибка загрузки: ${error.message}`);
+      console.error('[Upload] Ошибка:', error);
+      // Переводим стандартные сообщения об ошибках на русский
+      let errorMessage = error.message;
+      if (errorMessage === 'Network error' || errorMessage === 'Ошибка сети') {
+        errorMessage = 'Ошибка сети';
+      } else if (errorMessage === 'Upload failed' || errorMessage === 'Ошибка загрузки') {
+        errorMessage = 'Ошибка загрузки';
+      }
+
+      if (errorMessage !== 'Загрузка отменена пользователем' || !isClearingUploads) {
+        await reportUploadNotification({
+          type: 'file_upload_error',
+          severity: 'warning',
+          title: 'Ошибка загрузки файлов',
+          message: errorMessage,
+          details: {
+            deviceId,
+            pendingCount: pending.length,
+            folderName: folderName || null
+          }
+        });
+      }
     } finally {
+      isUploading = false; // Сбрасываем флаг в любом случае
       uploadBtn.disabled = false;
       uploadBtn.textContent = 'Загрузить';
+      syncYtDownloadUI();
     }
   };
 }

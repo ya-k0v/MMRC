@@ -206,7 +206,7 @@ class MPVClient:
         
         # === Состояния (как в Android) ===
         self.current_video_file: Optional[str] = None
-        self.saved_position: float = 0.0  # Позиция в секундах
+        self.saved_position: float = 0.0  # Позиция в миллисекундах (как Android)
         self.current_pdf_file: Optional[str] = None
         self.current_pdf_page: int = 1
         self.current_pptx_file: Optional[str] = None
@@ -214,6 +214,12 @@ class MPVClient:
         self.current_folder_name: Optional[str] = None
         self.current_folder_image: int = 1
         self.is_playing_placeholder: bool = False
+        self.content_device_id: str = device_id  # Устройство, с которого берем контент (важно для All Files)
+        
+        # === КРИТИЧНО: Флаги управления (как Android и Video.js) ===
+        self.skipPlaceholderOnVideoEnd: bool = False  # Предотвращает показ заглушки при переключении
+        self.isSwitchingFromPlaceholder: bool = False  # Флаг переключения с заглушки
+        self.currentFileState: Dict[str, Any] = {'type': None, 'file': None, 'page': 1}  # Текущее состояние контента
         
         # === Кэш заглушки (как в Android) ===
         self.cached_placeholder_file: Optional[str] = None
@@ -221,10 +227,19 @@ class MPVClient:
         
         # === Error retry (как в Android) ===
         self.error_retry_count: int = 0
-        self.max_retry_attempts: int = 3
+        self.max_retry_attempts: int = 3  # Для заглушки
+        self.max_retry_attempts_content: int = 10  # Для контента (как Android)
+        self.retry_timer: Optional[threading.Timer] = None
+        self.last_error_file: Optional[str] = None  # Файл, при загрузке которого произошла ошибка
         
         # === Флаг первого запуска (как в Android) ===
         self.is_first_launch: bool = True
+        
+        # === Прогресс воспроизведения (для отправки на сервер) ===
+        self.progress_interval: Optional[threading.Timer] = None
+        self.last_progress_emit_ts: float = 0.0
+        self.is_streaming: bool = False
+        self.stream_protocol: Optional[str] = None
         
         # Удаляем старый socket если есть
         if os.path.exists(self.ipc_socket):
@@ -300,6 +315,15 @@ class MPVClient:
             sys.exit(1)
         
         print(f"[MPV] ✅ MPV запущен (PID: {self.mpv_process.pid})")
+        
+        # КРИТИЧНО: Устанавливаем сохранение пропорций по умолчанию для всех изображений
+        # Это гарантирует, что изображения не будут растягиваться на весь экран
+        try:
+            self.send_command('set_property', 'video-aspect', '-1')  # -1 = сохранять оригинальные пропорции
+            print(f"[MPV] ✅ Установлено сохранение пропорций изображений по умолчанию")
+        except Exception as e:
+            print(f"[MPV] ⚠️ Не удалось установить video-aspect: {e}")
+        
         self._check_hardware_acceleration()
         
         # Socket.IO клиент
@@ -410,10 +434,33 @@ class MPVClient:
             file_type = data.get('type', 'video')
             file_name = data.get('file')
             page = data.get('page', 1)
+            stream_url = data.get('stream_url')
+            stream_protocol = data.get('stream_protocol')
+            # НОВОЕ: Запоминаем устройство, с которого нужно брать контент (для статических файлов из "Все файлы")
+            origin_device_id = data.get('originDeviceId')
+            if origin_device_id:
+                self.content_device_id = origin_device_id
+                print(f"[MPV] 📡 Установлен content_device_id: {self.content_device_id} (для файла из другого устройства)")
+            else:
+                # Если originDeviceId не передан, используем текущее устройство
+                self.content_device_id = self.device_id
             
-            print(f"[MPV] ▶️ PLAY: type={file_type}, file={file_name}, page={page}")
+            print(f"[MPV] ▶️ PLAY: type={file_type}, file={file_name}, page={page}, content_device_id={self.content_device_id}")
             
-            if file_type == 'video' and file_name:
+            # КРИТИЧНО: Останавливаем заглушку при любой команде play (как Android)
+            was_placeholder = self.is_playing_placeholder
+            if was_placeholder:
+                print('[MPV] 🛑 Останавливаем заглушку, воспроизводим контент')
+                self.isSwitchingFromPlaceholder = True
+                # Останавливаем заглушку
+                self.send_command('stop')
+            
+            # КРИТИЧНО: Устанавливаем флаг ДО загрузки контента (как Android)
+            self.skipPlaceholderOnVideoEnd = True
+            
+            if file_type == 'streaming' and stream_url:
+                self._handle_streaming(stream_url, file_name, stream_protocol)
+            elif file_type == 'video' and file_name:
                 self._play_video(file_name, is_placeholder=False)
             elif file_type == 'image' and file_name:
                 self._play_image(file_name, is_placeholder=False)
@@ -423,6 +470,9 @@ class MPVClient:
                 self._show_pptx_slide(file_name, page)
             elif file_type == 'folder' and file_name:
                 self._show_folder_image(file_name, page)
+            elif file_type == 'video' and not file_name:
+                # Resume текущего видео (как Android)
+                self._resume_video()
         
         @self.sio.on('player/pause')
         def on_pause():
@@ -431,13 +481,15 @@ class MPVClient:
                 print('[MPV] ⏸️ Pause игнорируется - играет заглушка')
                 return
             
-            # КРИТИЧНО: Сохраняем позицию перед паузой (как Android)
+            # КРИТИЧНО: Сохраняем позицию перед паузой в миллисекундах (как Android)
             result = self.send_command('get_property', 'time-pos')
             if result and result.get('error') == 'success':
-                self.saved_position = result.get('data', 0.0)
-                print(f'[MPV] ⏸️ Пауза на позиции: {self.saved_position:.2f} сек')
+                time_pos_seconds = result.get('data', 0.0)
+                self.saved_position = time_pos_seconds * 1000.0  # Конвертируем в миллисекунды
+                print(f'[MPV] ⏸️ Пауза на позиции: {self.saved_position:.0f} ms ({time_pos_seconds:.2f} сек)')
             
             self.send_command('set_property', 'pause', True)
+            self._stop_progress_updates()  # Останавливаем отправку прогресса
         
         @self.sio.on('player/resume')
         def on_resume():
@@ -446,23 +498,103 @@ class MPVClient:
                 print('[MPV] ▶️ Resume игнорируется - играет заглушка')
                 return
             
-            # Продолжаем с сохраненной позиции (как Android)
+            # Продолжаем с сохраненной позиции в миллисекундах (как Android)
             if self.saved_position > 0:
-                print(f'[MPV] ▶️ Resume с позиции: {self.saved_position:.2f} сек')
-                self.send_command('seek', self.saved_position, 'absolute')
+                time_pos_seconds = self.saved_position / 1000.0  # Конвертируем из миллисекунд
+                print(f'[MPV] ▶️ Resume с позиции: {self.saved_position:.0f} ms ({time_pos_seconds:.2f} сек)')
+                self.send_command('seek', time_pos_seconds, 'absolute')
             
             self.send_command('set_property', 'pause', False)
+            self._start_progress_updates()  # Возобновляем отправку прогресса
         
         @self.sio.on('player/restart')
         def on_restart():
+            # КРИТИЧНО: Заглушка НЕ реагирует на restart (как Android)
+            if self.is_playing_placeholder:
+                print('[MPV] 🔄 Restart игнорируется - играет заглушка')
+                return
+            
             print('[MPV] 🔄 RESTART')
             self.send_command('seek', 0, 'absolute')
             self.send_command('set_property', 'pause', False)
             self.saved_position = 0.0
         
+        @self.sio.on('player/seek')
+        def on_seek(data):
+            # КРИТИЧНО: Заглушка НЕ реагирует на seek (как Android)
+            if self.is_playing_placeholder:
+                print('[MPV] 🎯 Seek игнорируется - играет заглушка')
+                return
+            
+            # КРИТИЧНО: Seek работает только для видео
+            if not self.current_video_file:
+                print('[MPV] 🎯 Seek игнорируется - не играет видео')
+                return
+            
+            position = data.get('position') if isinstance(data, dict) else data
+            if position is None:
+                print('[MPV] 🎯 Seek: нет позиции')
+                return
+            
+            # position уже в секундах (как в Video.js)
+            target_time = float(position)
+            print(f'[MPV] 🎯 Seek на позицию: {target_time:.2f} сек')
+            
+            # КРИТИЧНО: Проверяем состояние плеера перед seek (как Android)
+            pause_result = self.send_command('get_property', 'pause')
+            if pause_result and pause_result.get('error') == 'success':
+                # Плеер готов - выполняем seek
+                self.send_command('seek', target_time, 'absolute')
+                self.saved_position = target_time * 1000.0  # Сохраняем в миллисекундах
+                print(f'[MPV] 🎯 Перемотка выполнена: {target_time:.2f} сек ({self.saved_position:.0f} ms)')
+            else:
+                # Плеер не готов - откладываем seek (как Android)
+                print('[MPV] 🎯 Seek отложен - плеер не готов')
+                def delayed_seek():
+                    time.sleep(0.2)
+                    if self.current_video_file:  # Проверяем что состояние не изменилось
+                        self.send_command('seek', target_time, 'absolute')
+                        self.saved_position = target_time * 1000.0
+                        print(f'[MPV] 🎯 Отложенный seek выполнен: {target_time:.2f} сек')
+                threading.Thread(target=delayed_seek, daemon=True).start()
+        
         @self.sio.on('player/stop')
-        def on_stop():
-            print('[MPV] ⏹️ STOP')
+        def on_stop(data=None):
+            reason = ''
+            if isinstance(data, dict):
+                reason = data.get('reason') or ''
+            elif isinstance(data, str):
+                reason = data
+            
+            # КРИТИЧНО: Заглушка НЕ реагирует на stop (кроме placeholder_refresh, как Android)
+            if self.is_playing_placeholder and reason != 'placeholder_refresh':
+                print('[MPV] ⏹️ Stop игнорируется - играет заглушка')
+                return
+            
+            print(f'[MPV] ⏹️ STOP reason={reason or "n/a"}')
+            
+            # Обработка switch_content - просто паузим без показа заглушки (как Android)
+            if reason == 'switch_content':
+                print('[MPV] ⏹️ Stop (switch_content) - ждем следующий контент без заглушки')
+                self.skipPlaceholderOnVideoEnd = True  # Устанавливаем флаг
+                self.send_command('set_property', 'pause', True)
+                self._stop_progress_updates()
+                return
+            
+            # Обычный stop - возврат на заглушку (как Android)
+            print(f'[MPV] ⏹️ Stop - возврат на заглушку (reason={reason})')
+            
+            # КРИТИЧНО: Полностью очищаем состояние (как Android)
+            self._stop_progress_updates()
+            self._emit_progress_stop()
+            self.currentFileState = {'type': None, 'file': None, 'page': 1}
+            self.current_video_file = None
+            self.saved_position = 0.0
+            self.skipPlaceholderOnVideoEnd = False
+            self.isSwitchingFromPlaceholder = False
+            self.is_streaming = False
+            self.stream_protocol = None
+            
             self._load_placeholder()
         
         @self.sio.on('player/pdfPage')
@@ -470,8 +602,8 @@ class MPVClient:
             if self.current_pdf_file:
                 self._show_pdf_page(self.current_pdf_file, page_num)
         
-        @self.sio.on('player/pptxSlide')
-        def on_pptx_slide(slide_num):
+        @self.sio.on('player/pptxPage')
+        def on_pptx_page(slide_num):
             if self.current_pptx_file:
                 self._show_pptx_slide(self.current_pptx_file, slide_num)
         
@@ -483,12 +615,194 @@ class MPVClient:
         @self.sio.on('placeholder/refresh')
         def on_placeholder_refresh():
             print('[MPV] 🔄 PLACEHOLDER REFRESH')
-            if self.is_playing_placeholder:
-                self._load_placeholder()
+            # КРИТИЧНО: Всегда загружаем новую заглушку с force refresh (как Android)
+            self._load_placeholder(force_refresh=True)
         
         @self.sio.on('player/pong')
         def on_pong():
             pass
+    
+    def _is_mpv_playing(self) -> bool:
+        """Проверка что MPV воспроизводит контент (не на паузе)"""
+        try:
+            pause_result = self.send_command('get_property', 'pause')
+            if pause_result and pause_result.get('error') == 'success':
+                is_paused = pause_result.get('data', True)
+                return not is_paused
+        except:
+            pass
+        return False
+    
+    def _cancel_retry(self):
+        """Отмена retry механизма (как Android)"""
+        if self.retry_timer:
+            self.retry_timer.cancel()
+            self.retry_timer = None
+        self.error_retry_count = 0
+        self.last_error_file = None
+    
+    def _handle_load_error(self, filename: str, is_placeholder: bool = False, error_msg: str = ""):
+        """Обработка ошибки загрузки с retry механизмом (как Android)"""
+        print(f'[MPV] ❌ Ошибка загрузки: {filename} (isPlaceholder={is_placeholder}, attempt={self.error_retry_count})')
+        
+        # Определяем максимальное количество попыток
+        max_attempts = self.max_retry_attempts if is_placeholder else self.max_retry_attempts_content
+        
+        if self.error_retry_count < max_attempts:
+            self.error_retry_count += 1
+            print(f'[MPV] 🔄 Retry загрузки (попытка {self.error_retry_count}/{max_attempts})...')
+            
+            # Сохраняем информацию об ошибке для retry
+            self.last_error_file = filename
+            
+            # КРИТИЧНО: Экспоненциальная задержка (5 секунд для первого retry, как Android)
+            delay = 5.0  # 5 секунд (как Android)
+            
+            def retry_load():
+                if not self.running:
+                    return
+                
+                # Проверяем что файл не изменился
+                if self.last_error_file != filename:
+                    print(f'[MPV] ⚠️ Retry отменен - файл изменился')
+                    return
+                
+                try:
+                    # Повторная попытка загрузки
+                    if is_placeholder:
+                        self._play_video(filename, is_placeholder=True)
+                    else:
+                        # Определяем тип файла по расширению
+                        ext = filename.split('.')[-1].lower() if '.' in filename else ''
+                        if ext in ['mp4', 'webm', 'ogg', 'mkv', 'mov', 'avi']:
+                            self._play_video(filename, is_placeholder=False)
+                        elif ext in ['png', 'jpg', 'jpeg', 'gif', 'webp']:
+                            self._play_image(filename, is_placeholder=False)
+                        else:
+                            print(f'[MPV] ⚠️ Неизвестный тип файла для retry: {ext}')
+                            self._load_placeholder()
+                except Exception as e:
+                    print(f'[MPV] ❌ Retry failed: {e}')
+                    # Если retry не удался, пробуем еще раз или показываем заглушку
+                    if self.error_retry_count >= max_attempts:
+                        print(f'[MPV] ❌ Все попытки исчерпаны, показываем заглушку')
+                        if not is_placeholder:
+                            self._load_placeholder()
+            
+            # Планируем retry
+            self.retry_timer = threading.Timer(delay, retry_load)
+            self.retry_timer.daemon = True
+            self.retry_timer.start()
+        else:
+            # Все попытки исчерпаны
+            print(f'[MPV] ❌ Все попытки загрузки исчерпаны ({max_attempts}), показываем заглушку')
+            self._cancel_retry()
+            if not is_placeholder:
+                self._load_placeholder()
+    
+    def _stop_progress_updates(self):
+        """Остановка отправки прогресса (как Android stopProgressUpdates)"""
+        if self.progress_interval:
+            self.progress_interval.cancel()
+            self.progress_interval = None
+    
+    def _emit_progress_stop(self):
+        """Отправка сигнала об остановке прогресса (очистка информации на панели спикера)"""
+        if not self.sio.connected:
+            return
+        try:
+            self.sio.emit('player/progress', {
+                'device_id': self.device_id,
+                'type': 'idle',
+                'file': None,
+                'currentTime': 0,
+                'duration': 0
+            })
+        except Exception as e:
+            print(f'[MPV] ⚠️ Ошибка отправки progress stop: {e}')
+    
+    def _emit_progress(self):
+        """Отправка прогресса воспроизведения (как Android emitProgress)"""
+        if not self.sio.connected:
+            return
+        
+        # КРИТИЧНО: Не отправляем прогресс для заглушки
+        if self.is_playing_placeholder:
+            return
+        
+        # КРИТИЧНО: Троттлинг - не чаще раза в 0.5 секунды
+        now = time.time()
+        if now - self.last_progress_emit_ts < 0.5:
+            return
+        self.last_progress_emit_ts = now
+        
+        try:
+            # Получаем текущее состояние MPV
+            pause_result = self.send_command('get_property', 'pause')
+            if pause_result and pause_result.get('data') == True:
+                # На паузе - не отправляем прогресс
+                return
+            
+            file_state = self.currentFileState
+            content_type = file_state.get('type')
+            
+            if content_type == 'video' and self.current_video_file:
+                # Прогресс видео
+                time_pos_result = self.send_command('get_property', 'time-pos')
+                duration_result = self.send_command('get_property', 'duration')
+                
+                current_time = time_pos_result.get('data', 0.0) if time_pos_result and time_pos_result.get('error') == 'success' else 0.0
+                duration = duration_result.get('data', 0.0) if duration_result and duration_result.get('error') == 'success' else 0.0
+                
+                self.sio.emit('player/progress', {
+                    'device_id': self.device_id,
+                    'type': 'video',
+                    'file': self.current_video_file,
+                    'currentTime': int(current_time),
+                    'duration': int(duration)
+                })
+                
+            elif content_type == 'streaming' and file_state.get('file'):
+                # Прогресс streaming (live стрим)
+                self.sio.emit('player/progress', {
+                    'device_id': self.device_id,
+                    'type': 'streaming',
+                    'file': file_state.get('file'),
+                    'currentTime': 0,
+                    'duration': 0,
+                    'stream_protocol': self.stream_protocol
+                })
+                
+            elif content_type in ['pdf', 'pptx', 'folder'] and file_state.get('file'):
+                # Прогресс статического контента (страницы/слайды)
+                page = file_state.get('page', 1)
+                self.sio.emit('player/progress', {
+                    'device_id': self.device_id,
+                    'type': content_type,
+                    'file': file_state.get('file'),
+                    'currentTime': page,
+                    'duration': 0,
+                    'page': page
+                })
+                
+        except Exception as e:
+            print(f'[MPV] ⚠️ Ошибка отправки прогресса: {e}')
+    
+    def _start_progress_updates(self):
+        """Запуск периодической отправки прогресса (как Android startProgressUpdates)"""
+        self._stop_progress_updates()
+        
+        def emit_periodic():
+            if not self.running:
+                return
+            self._emit_progress()
+            # Планируем следующую отправку через 1 секунду
+            self.progress_interval = threading.Timer(1.0, emit_periodic)
+            self.progress_interval.daemon = True
+            self.progress_interval.start()
+        
+        # Первая отправка сразу
+        emit_periodic()
     
     def _setup_signal_handlers(self):
         """Обработка сигналов для graceful shutdown"""
@@ -536,16 +850,62 @@ class MPVClient:
                             self.running = False
                             break
                     
-                    # Проверяем eof-reached
+                    # КРИТИЧНО: Проверяем eof-reached с проверкой isActuallyEnded (как Android и Video.js)
                     if time.time() - last_eof_check > 10.0:  # Раз в 10 сек
                         eof_result = self.send_command('get_property', 'eof-reached')
                         last_eof_check = time.time()
                         
                         if eof_result and eof_result.get('data') == True:
-                            print('[MPV] 🏁 Файл закончился')
-                            if not self.is_playing_placeholder:
-                                print('[MPV] 🔄 Возврат к заглушке')
+                            # КРИТИЧНО: Проверяем что видео ДЕЙСТВИТЕЛЬНО закончилось (как Android)
+                            time_pos_result = self.send_command('get_property', 'time-pos')
+                            duration_result = self.send_command('get_property', 'duration')
+                            
+                            current_time = time_pos_result.get('data', 0.0) if time_pos_result and time_pos_result.get('error') == 'success' else 0.0
+                            duration = duration_result.get('data', 0.0) if duration_result and duration_result.get('error') == 'success' else 0.0
+                            
+                            # КРИТИЧНО: Проверяем isActuallyEnded (currentTime >= duration - 0.5)
+                            is_actually_ended = duration > 0 and current_time >= duration - 0.5
+                            
+                            # КРИТИЧНО: Проверяем loop (заглушка зациклена)
+                            loop_result = self.send_command('get_property', 'loop-file')
+                            is_looping = loop_result and loop_result.get('data') in ['inf', 'yes', True]
+                            
+                            # КРИТИЧНО: Игнорируем ended для streaming и loop
+                            if self.is_streaming:
+                                print('[MPV] ⚠️ Ignoring ended event for live stream')
+                                return
+                            
+                            if is_looping and is_actually_ended:
+                                print('[MPV] 🔄 Loop видео, начинаем сначала БЕЗ черного экрана')
+                                self.send_command('seek', 0, 'absolute')
+                                self.send_command('set_property', 'pause', False)
+                                return
+                            
+                            # КРИТИЧНО: Показываем заглушку ТОЛЬКО если:
+                            # 1. Видео действительно закончилось (isActuallyEnded)
+                            # 2. Текущий контент - это видео (не placeholder, не изображение, не папка/PDF/PPTX)
+                            # 3. НЕ установлен флаг skipPlaceholderOnVideoEnd
+                            is_video = self.currentFileState.get('type') == 'video' or self.currentFileState.get('type') is None
+                            is_placeholder = self.is_playing_placeholder
+                            
+                            if is_actually_ended and is_video and not is_placeholder and not self.skipPlaceholderOnVideoEnd:
+                                print('[MPV] ✅ Видео закончилось, останавливаем и показываем заглушку')
+                                
+                                # Останавливаем отправку прогресса
+                                self._stop_progress_updates()
+                                self._emit_progress_stop()
+                                
+                                # Останавливаем видео
+                                self.send_command('stop')
+                                self.current_video_file = None
+                                self.saved_position = 0.0
+                                self.currentFileState = {'type': None, 'file': None, 'page': 1}
+                                
                                 self._load_placeholder()
+                            elif not is_actually_ended:
+                                print('[MPV] ⚠️ Ложное ended событие, игнорируем')
+                            else:
+                                print(f'[MPV] ⚠️ Не показываем заглушку: isActuallyEnded={is_actually_ended}, isVideo={is_video}, isPlaceholder={is_placeholder}, skipPlaceholder={self.skipPlaceholderOnVideoEnd}')
                     
                     # Проверяем жив ли MPV процесс
                     if self.mpv_process.poll() is not None:
@@ -561,11 +921,98 @@ class MPVClient:
         thread = threading.Thread(target=monitor, daemon=True)
         thread.start()
     
+    def _resume_video(self):
+        """Resume текущего видео с сохраненной позиции (как Android)"""
+        if not self.current_video_file:
+            print('[MPV] ⚠️ Resume: нет активного видео для продолжения')
+            return
+        
+        print(f'[MPV] ⏯️ Resume с текущей позиции: {self.current_video_file}')
+        
+        # КРИТИЧНО: Восстанавливаем позицию если была сохранена
+        if self.saved_position > 0:
+            time_pos_seconds = self.saved_position / 1000.0
+            print(f'[MPV] ⏯️ Resume с позиции: {self.saved_position:.0f} ms ({time_pos_seconds:.2f} сек)')
+            self.send_command('seek', time_pos_seconds, 'absolute')
+        
+        self.send_command('set_property', 'pause', False)
+        self._start_progress_updates()
+        self.isSwitchingFromPlaceholder = False
+        self.skipPlaceholderOnVideoEnd = False
+    
+    def _handle_streaming(self, stream_url: str, file_name: str, stream_protocol: Optional[str] = None):
+        """Обработка streaming (HLS/DASH/MPEG-TS) - как Android и Video.js"""
+        print(f'[MPV] 🌐 Streaming playback: {file_name}, protocol={stream_protocol}, url={stream_url}')
+        
+        # КРИТИЧНО: Сбрасываем счетчик ошибок при начале нового контента (как Android)
+        self._cancel_retry()
+        
+        # Определяем протокол из URL если не указан
+        if not stream_protocol:
+            if '.m3u8' in stream_url.lower() or 'format=m3u8' in stream_url.lower():
+                stream_protocol = 'hls'
+            elif stream_url.lower().endswith('.mpd') or 'format=mpd' in stream_url.lower() or 'dash-live' in stream_url.lower():
+                stream_protocol = 'dash'
+            else:
+                stream_protocol = 'mpegts'
+        
+        # КРИТИЧНО: Останавливаем заглушку и предыдущий контент
+        self.send_command('stop')
+        self._stop_progress_updates()
+        
+        # Обновляем состояние
+        self.currentFileState = {'type': 'streaming', 'file': file_name, 'page': 1}
+        self.is_streaming = True
+        self.stream_protocol = stream_protocol
+        self.is_playing_placeholder = False
+        self.current_video_file = None
+        self.saved_position = 0.0
+        
+        # КРИТИЧНО: Для HLS добавляем cache-busting параметр (как Video.js)
+        if stream_protocol == 'hls' or '.m3u8' in stream_url.lower():
+            separator = '&' if '?' in stream_url else '?'
+            stream_url = f"{stream_url}{separator}_t={int(time.time() * 1000)}"
+            print(f'[MPV] 🔄 HLS URL с cache-busting: {stream_url}')
+        
+        # Определяем MIME type
+        mime_type = 'application/x-mpegURL' if stream_protocol == 'hls' else \
+                   'application/dash+xml' if stream_protocol == 'dash' else \
+                   'video/mp2t'
+        
+        # Загружаем стрим
+        print(f'[MPV] 📤 Загрузка стрима: {stream_url}')
+        result = self.send_command('loadfile', stream_url, 'replace')
+        
+        if result and result.get('error') == 'success':
+            # Сбрасываем флаги после успешной загрузки
+            self.isSwitchingFromPlaceholder = False
+            self.skipPlaceholderOnVideoEnd = False
+            
+            # Запускаем воспроизведение
+            time.sleep(0.3)  # Даем MPV загрузить метаданные
+            self.send_command('set_property', 'pause', False)
+            
+            # Запускаем отправку прогресса
+            self._start_progress_updates()
+            
+            print(f'[MPV] ✅ Стрим запущен: {stream_protocol}')
+            # КРИТИЧНО: Сбрасываем счетчик ошибок при успешной загрузке (как Android)
+            self._cancel_retry()
+        else:
+            # Ошибка загрузки - используем retry механизм
+            error_msg = result.get('error', 'unknown') if result else 'no response'
+            print(f'[MPV] ❌ Ошибка загрузки стрима: {error_msg}')
+            # Для стримов не используем retry - сразу показываем заглушку (как Android)
+            self._load_placeholder()
+    
     def _play_video(self, filename: str, is_placeholder: bool = False):
         """Воспроизведение видео (идентично Android)"""
         try:
             encoded_filename = quote(filename, safe='')
-            url = f"{self.server_url}/content/{self.device_id}/{encoded_filename}"
+            # НОВОЕ: Используем API resolver для поддержки shared storage (дедупликация)
+            # КРИТИЧНО: Используем content_device_id для поддержки файлов из других устройств
+            device_id_for_content = self.content_device_id if self.content_device_id else self.device_id
+            url = f"{self.server_url}/api/files/resolve/{device_id_for_content}/{encoded_filename}"
             
             print(f"[MPV] 🎬 Playing video: {filename} (isPlaceholder={is_placeholder})")
             print(f"[MPV] 🔗 URL: {url}")
@@ -574,16 +1021,26 @@ class MPVClient:
             is_same_file = (self.current_video_file == filename)
             
             if is_same_file and not is_placeholder and self.saved_position > 0:
-                # Тот же файл - продолжаем с сохраненной позиции (как Android!)
-                print(f"[MPV] ⏯️ Тот же файл, продолжаем с позиции: {self.saved_position:.2f} сек")
-                self.send_command('seek', self.saved_position, 'absolute')
+                # Тот же файл - продолжаем с сохраненной позиции в миллисекундах (как Android!)
+                time_pos_seconds = self.saved_position / 1000.0  # Конвертируем из миллисекунд
+                print(f"[MPV] ⏯️ Тот же файл, продолжаем с позиции: {self.saved_position:.0f} ms ({time_pos_seconds:.2f} сек)")
+                self.send_command('seek', time_pos_seconds, 'absolute')
                 self.send_command('set_property', 'pause', False)
+                self._start_progress_updates()  # Возобновляем отправку прогресса
+                # Сбрасываем флаг переключения - контент загрузился
+                self.isSwitchingFromPlaceholder = False
+                self.skipPlaceholderOnVideoEnd = False
                 return
             
             # Новый файл - загружаем с начала (как Android)
             print(f"[MPV] 🎬 Загрузка НОВОГО видео: {filename}")
+            
+            # КРИТИЧНО: Сбрасываем счетчик ошибок при начале нового контента (как Android)
+            self._cancel_retry()
+            
             self.current_video_file = filename
             self.saved_position = 0.0
+            self.currentFileState = {'type': 'video', 'file': filename, 'page': 1}
             
             # Загрузка файла
             print(f"[MPV] 📤 Отправка команды loadfile...")
@@ -606,29 +1063,45 @@ class MPVClient:
                 # Обновление состояния
                 self.is_playing_placeholder = is_placeholder
                 
+                # КРИТИЧНО: Сбрасываем флаг переключения после успешной загрузки
+                if not is_placeholder:
+                    self.isSwitchingFromPlaceholder = False
+                    self.skipPlaceholderOnVideoEnd = False
+                    self._start_progress_updates()  # Запускаем отправку прогресса
+                    # КРИТИЧНО: Сбрасываем счетчик ошибок при успешной загрузке (как Android)
+                    self._cancel_retry()
+                
                 print(f"[MPV] ✅ Видео загружено и воспроизводится (loop={is_placeholder})")
             else:
-                print(f"[MPV] ❌ Ошибка загрузки видео, result={result}")
-                if not is_placeholder:
-                    self._load_placeholder()
+                # Ошибка загрузки - используем retry механизм
+                error_msg = result.get('error', 'unknown') if result else 'no response'
+                self._handle_load_error(filename, is_placeholder, error_msg)
                     
         except Exception as e:
             print(f"[MPV] ❌ Exception в _play_video: {e}")
-            if not is_placeholder:
-                self._load_placeholder()
+            self._handle_load_error(filename, is_placeholder, str(e))
     
     def _play_image(self, filename: str, is_placeholder: bool = False):
         """Показ изображения (идентично Android)"""
         try:
             encoded_filename = quote(filename, safe='')
-            url = f"{self.server_url}/content/{self.device_id}/{encoded_filename}"
+            # НОВОЕ: Используем API resolver для поддержки shared storage (дедупликация)
+            # КРИТИЧНО: Используем content_device_id для поддержки файлов из других устройств
+            device_id_for_content = self.content_device_id if self.content_device_id else self.device_id
+            url = f"{self.server_url}/api/files/resolve/{device_id_for_content}/{encoded_filename}"
             
             print(f"[MPV] 🖼️ Showing image: {filename} (isPlaceholder={is_placeholder})")
             print(f"[MPV] 🔗 URL: {url}")
             
+            # КРИТИЧНО: Сбрасываем счетчик ошибок при начале нового контента (как Android)
+            if not is_placeholder:
+                self._cancel_retry()
+            
             # КРИТИЧНО: Сбрасываем currentVideoFile (как Android)
             self.current_video_file = None
             self.saved_position = 0.0
+            self.currentFileState = {'type': 'image', 'file': filename, 'page': 1}
+            self._stop_progress_updates()  # Останавливаем отправку прогресса для видео
             
             # КРИТИЧНО для MPV 0.32: Установить image-display-duration ДО loadfile!
             if is_placeholder:
@@ -637,6 +1110,9 @@ class MPVClient:
             else:
                 duration_result = self.send_command('set_property', 'image-display-duration', 10)
                 print(f"[MPV] ⏱️ Set image-display-duration=10: {duration_result}")
+            
+            # КРИТИЧНО: Сохраняем пропорции изображения (не растягиваем на весь экран)
+            self.send_command('set_property', 'video-aspect', '-1')  # -1 = сохранять оригинальные пропорции
             
             time.sleep(0.1)  # Даем MPV применить настройку
             
@@ -653,23 +1129,41 @@ class MPVClient:
                 print(f"[MPV] ▶️ Unpause: {pause_result}")
                 
                 self.is_playing_placeholder = is_placeholder
+                
+                # КРИТИЧНО: Сбрасываем флаги после успешной загрузки
+                if not is_placeholder:
+                    self.isSwitchingFromPlaceholder = False
+                    self.skipPlaceholderOnVideoEnd = False
+                    # Отправляем прогресс для изображения
+                    self._emit_progress()
+                
                 print(f"[MPV] ✅ Изображение загружено и показано")
+                
+                # КРИТИЧНО: Сбрасываем счетчик ошибок при успешной загрузке (как Android)
+                if not is_placeholder:
+                    self._cancel_retry()
             else:
-                print(f"[MPV] ❌ Ошибка загрузки изображения, result={result}")
+                # Ошибка загрузки - используем retry механизм
+                error_msg = result.get('error', 'unknown') if result else 'no response'
+                self._handle_load_error(filename, is_placeholder, error_msg)
                 
         except Exception as e:
             print(f"[MPV] ❌ Exception в _play_image: {e}")
-            import traceback
-            traceback.print_exc()
+            self._handle_load_error(filename, is_placeholder, str(e))
     
     def _show_pdf_page(self, filename: str, page: int):
         """Показ страницы PDF (идентично Android)"""
         try:
             folder_name = filename.replace('.pdf', '')
             encoded_folder = quote(folder_name, safe='')
-            url = f"{self.server_url}/api/devices/{self.device_id}/converted/{encoded_folder}/page/{page}"
+            # КРИТИЧНО: Используем content_device_id для поддержки файлов из других устройств
+            device_id_for_content = self.content_device_id if self.content_device_id else self.device_id
+            url = f"{self.server_url}/api/devices/{device_id_for_content}/converted/{encoded_folder}/page/{page}"
             
             print(f"[MPV] 📄 PDF страница: {filename} - {page}")
+            
+            # КРИТИЧНО: Сбрасываем счетчик ошибок при начале нового контента (как Android)
+            self._cancel_retry()
             
             # КРИТИЧНО: Останавливаем видео (как Android)
             if self.current_video_file:
@@ -677,8 +1171,14 @@ class MPVClient:
                 self.current_video_file = None
                 self.saved_position = 0.0
             
+            # КРИТИЧНО: Устанавливаем флаг ДО остановки видео (как Android)
+            self.skipPlaceholderOnVideoEnd = True
+            self._stop_progress_updates()
+            
             # КРИТИЧНО для MPV 0.32: image-display-duration ДО loadfile!
             self.send_command('set_property', 'image-display-duration', 'inf')
+            # КРИТИЧНО: Сохраняем пропорции изображения (не растягиваем на весь экран)
+            self.send_command('set_property', 'video-aspect', '-1')  # -1 = сохранять оригинальные пропорции
             time.sleep(0.1)
             
             # Загрузка страницы
@@ -692,13 +1192,25 @@ class MPVClient:
                 self.current_pdf_file = filename
                 self.current_pdf_page = page
                 self.is_playing_placeholder = False
+                self.currentFileState = {'type': 'pdf', 'file': filename, 'page': page}
+                
+                # КРИТИЧНО: Сбрасываем флаги после успешной загрузки
+                self.isSwitchingFromPlaceholder = False
+                self.skipPlaceholderOnVideoEnd = False
+                
+                # Отправляем прогресс сразу после показа
+                self._emit_progress()
                 
                 print(f"[MPV] ✅ PDF страница {page} показана")
                 
                 # КРИТИЧНО: Предзагрузка соседних слайдов (как Android!)
                 self._preload_adjacent_slides(filename, page, 999, 'pdf')
+                
+                # КРИТИЧНО: Сбрасываем счетчик ошибок при успешной загрузке (как Android)
+                self._cancel_retry()
             else:
                 print(f"[MPV] ❌ Ошибка загрузки PDF страницы")
+                # Для PDF/PPTX не используем retry - просто логируем ошибку
                 
         except Exception as e:
             print(f"[MPV] ❌ Exception в _show_pdf_page: {e}")
@@ -708,18 +1220,29 @@ class MPVClient:
         try:
             folder_name = filename.replace('.pptx', '')
             encoded_folder = quote(folder_name, safe='')
-            url = f"{self.server_url}/api/devices/{self.device_id}/converted/{encoded_folder}/slide/{slide}"
+            # КРИТИЧНО: Используем content_device_id для поддержки файлов из других устройств
+            device_id_for_content = self.content_device_id if self.content_device_id else self.device_id
+            url = f"{self.server_url}/api/devices/{device_id_for_content}/converted/{encoded_folder}/slide/{slide}"
             
             print(f"[MPV] 📊 PPTX слайд: {filename} - {slide}")
             
-            # Останавливаем видео (как Android)
+            # КРИТИЧНО: Сбрасываем счетчик ошибок при начале нового контента (как Android)
+            self._cancel_retry()
+            
+            # КРИТИЧНО: Останавливаем видео (как Android)
             if self.current_video_file:
                 self.send_command('stop')
                 self.current_video_file = None
                 self.saved_position = 0.0
             
+            # КРИТИЧНО: Устанавливаем флаг ДО остановки видео (как Android)
+            self.skipPlaceholderOnVideoEnd = True
+            self._stop_progress_updates()
+            
             # КРИТИЧНО для MPV 0.32: image-display-duration ДО loadfile!
             self.send_command('set_property', 'image-display-duration', 'inf')
+            # КРИТИЧНО: Сохраняем пропорции изображения (не растягиваем на весь экран)
+            self.send_command('set_property', 'video-aspect', '-1')  # -1 = сохранять оригинальные пропорции
             time.sleep(0.1)
             
             result = self.send_command('loadfile', url, 'replace')
@@ -732,13 +1255,25 @@ class MPVClient:
                 self.current_pptx_file = filename
                 self.current_pptx_slide = slide
                 self.is_playing_placeholder = False
+                self.currentFileState = {'type': 'pptx', 'file': filename, 'page': slide}
+                
+                # КРИТИЧНО: Сбрасываем флаги после успешной загрузки
+                self.isSwitchingFromPlaceholder = False
+                self.skipPlaceholderOnVideoEnd = False
+                
+                # Отправляем прогресс сразу после показа
+                self._emit_progress()
                 
                 print(f"[MPV] ✅ PPTX слайд {slide} показан")
                 
                 # Предзагрузка соседних слайдов (как Android!)
                 self._preload_adjacent_slides(filename, slide, 999, 'pptx')
+                
+                # КРИТИЧНО: Сбрасываем счетчик ошибок при успешной загрузке (как Android)
+                self._cancel_retry()
             else:
                 print(f"[MPV] ❌ Ошибка загрузки PPTX слайда")
+                # Для PDF/PPTX не используем retry - просто логируем ошибку
                 
         except Exception as e:
             print(f"[MPV] ❌ Exception в _show_pptx_slide: {e}")
@@ -748,18 +1283,29 @@ class MPVClient:
         try:
             clean_folder = folder_name.replace('.zip', '')
             encoded_folder = quote(clean_folder, safe='')
-            url = f"{self.server_url}/api/devices/{self.device_id}/folder/{encoded_folder}/image/{image_num}"
+            # КРИТИЧНО: Используем content_device_id для поддержки файлов из других устройств
+            device_id_for_content = self.content_device_id if self.content_device_id else self.device_id
+            url = f"{self.server_url}/api/devices/{device_id_for_content}/folder/{encoded_folder}/image/{image_num}"
             
             print(f"[MPV] 📁 Папка: {folder_name} - изображение {image_num}")
             
-            # Останавливаем видео (как Android)
+            # КРИТИЧНО: Сбрасываем счетчик ошибок при начале нового контента (как Android)
+            self._cancel_retry()
+            
+            # КРИТИЧНО: Останавливаем видео (как Android)
             if self.current_video_file:
                 self.send_command('stop')
                 self.current_video_file = None
                 self.saved_position = 0.0
             
+            # КРИТИЧНО: Устанавливаем флаг ДО остановки видео (как Android)
+            self.skipPlaceholderOnVideoEnd = True
+            self._stop_progress_updates()
+            
             # КРИТИЧНО для MPV 0.32: image-display-duration ДО loadfile!
             self.send_command('set_property', 'image-display-duration', 'inf')
+            # КРИТИЧНО: Сохраняем пропорции изображения (не растягиваем на весь экран)
+            self.send_command('set_property', 'video-aspect', '-1')  # -1 = сохранять оригинальные пропорции
             time.sleep(0.1)
             
             result = self.send_command('loadfile', url, 'replace')
@@ -772,13 +1318,25 @@ class MPVClient:
                 self.current_folder_name = folder_name
                 self.current_folder_image = image_num
                 self.is_playing_placeholder = False
+                self.currentFileState = {'type': 'folder', 'file': folder_name, 'page': image_num}
+                
+                # КРИТИЧНО: Сбрасываем флаги после успешной загрузки
+                self.isSwitchingFromPlaceholder = False
+                self.skipPlaceholderOnVideoEnd = False
+                
+                # Отправляем прогресс сразу после показа
+                self._emit_progress()
                 
                 print(f"[MPV] ✅ Изображение {image_num} из папки показано")
                 
                 # Предзагрузка соседних изображений (как Android!)
                 self._preload_adjacent_slides(folder_name, image_num, 999, 'folder')
+                
+                # КРИТИЧНО: Сбрасываем счетчик ошибок при успешной загрузке (как Android)
+                self._cancel_retry()
             else:
                 print(f"[MPV] ❌ Ошибка загрузки изображения из папки")
+                # Для папок не используем retry - просто логируем ошибку
                 
         except Exception as e:
             print(f"[MPV] ❌ Exception в _show_folder_image: {e}")
@@ -796,13 +1354,16 @@ class MPVClient:
             if current_page < total_pages:
                 pages_to_preload.append(current_page + 1)  # Следующий
             
+            # КРИТИЧНО: Используем content_device_id для поддержки файлов из других устройств
+            device_id_for_content = self.content_device_id if self.content_device_id else self.device_id
+            
             for page in pages_to_preload:
                 if slide_type == 'pdf':
-                    url = f"{self.server_url}/api/devices/{self.device_id}/converted/{quote(file, safe='')}/page/{page}"
+                    url = f"{self.server_url}/api/devices/{device_id_for_content}/converted/{quote(file, safe='')}/page/{page}"
                 elif slide_type == 'pptx':
-                    url = f"{self.server_url}/api/devices/{self.device_id}/converted/{quote(file, safe='')}/slide/{page}"
+                    url = f"{self.server_url}/api/devices/{device_id_for_content}/converted/{quote(file, safe='')}/slide/{page}"
                 elif slide_type == 'folder':
-                    url = f"{self.server_url}/api/devices/{self.device_id}/folder/{quote(file, safe='')}/image/{page}"
+                    url = f"{self.server_url}/api/devices/{device_id_for_content}/folder/{quote(file, safe='')}/image/{page}"
                 else:
                     continue
                 
@@ -819,18 +1380,27 @@ class MPVClient:
         except Exception as e:
             print(f"[MPV] ⚠️ Preload error: {e}")
     
-    def _load_placeholder(self):
+    def _load_placeholder(self, force_refresh: bool = False):
         """
         Загрузка заглушки (идентично Android loadPlaceholder)
         С кэшированием - не запрашивает сервер каждый раз!
         """
-        print(f"[MPV] 🔍 Loading placeholder...")
+        print(f"[MPV] 🔍 Loading placeholder... (force_refresh={force_refresh})")
         
         # Останавливаем текущее воспроизведение (как Android)
         self.send_command('stop')
+        self._stop_progress_updates()
+        self._emit_progress_stop()
+        
+        # КРИТИЧНО: При force refresh очищаем кэш (как Android placeholder/refresh)
+        if force_refresh:
+            print(f"[MPV] 🔄 Force refresh: очищаем кэш заглушки")
+            self.cached_placeholder_file = None
+            self.cached_placeholder_type = None
+            self.currentFileState = {'type': None, 'file': None, 'page': 1}
         
         # КРИТИЧНО: Проверяем кэш (как Android!)
-        if self.cached_placeholder_file and self.cached_placeholder_type:
+        if self.cached_placeholder_file and self.cached_placeholder_type and not force_refresh:
             print(f"[MPV] ✅ Using cached placeholder: {self.cached_placeholder_file} ({self.cached_placeholder_type})")
             
             if self.cached_placeholder_type == 'video':
@@ -975,6 +1545,12 @@ class MPVClient:
         print("[MPV] 🧹 Очистка ресурсов...")
         
         self.running = False
+        
+        # Остановка отправки прогресса
+        self._stop_progress_updates()
+        
+        # Отмена retry механизма
+        self._cancel_retry()
         
         # Остановка ping (как Android)
         self._stop_ping_timer()

@@ -1,26 +1,42 @@
 [Unit]
-Description=VCServer
-After=network.target
+Description=MMRC Server v3.1.1
+After=network-online.target local-fs.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+RequiresMountsFor=/mnt/videocontrol-data
 
 [Service]
 Type=simple
-User=YOUR_USERNAME
+User=vcuser
 Group=vcgroup
 WorkingDirectory=/vid/videocontrol
+ExecStartPre=/usr/bin/node /vid/videocontrol/scripts/check-startup-compat.js
 ExecStart=/usr/bin/node /vid/videocontrol/server.js
-Restart=always
-RestartSec=10
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=120
+TimeoutStopSec=30
 StandardOutput=journal
 StandardError=journal
+SyslogIdentifier=mmrc
 
 # Security
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/vid/videocontrol/public/content /vid/videocontrol/config /vid/videocontrol/logs /vid/videocontrol/temp /vid/videocontrol/.converted /home/YOUR_USERNAME/.cache /home/YOUR_USERNAME/.config
+# ReadWritePaths настраиваются динамически в зависимости от contentRoot из настроек
+# По умолчанию: /vid/videocontrol/data и /vid/videocontrol/config
+# Если используется внешний диск, добавьте его путь сюда
+ReadWritePaths=/vid/videocontrol/data /vid/videocontrol/config /mnt/videocontrol-data
+
+# Resource limits
+LimitNOFILE=65535
 
 # Environment
 Environment=NODE_ENV=production
+# Загружаем переменные из .env файла
+EnvironmentFile=-/vid/videocontrol/.env
 
 [Install]
 WantedBy=multi-user.target

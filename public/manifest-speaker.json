@@ -1,7 +1,7 @@
 {
-  "name": "VideoControl Speaker",
-  "short_name": "VC Speaker",
-  "description": "Speaker control panel for VideoControl system - manage presentations",
+  "name": "MMRC Speaker",
+  "short_name": "MMRC Speaker",
+  "description": "Speaker control panel for MMRC system - manage presentations",
   "start_url": "/speaker.html",
   "scope": "/",
   "display": "fullscreen",
@@ -11,9 +11,15 @@
   "categories": ["productivity", "utilities"],
   "icons": [
     {
-      "src": "/favicon.ico",
-      "sizes": "64x64",
-      "type": "image/x-icon",
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "any"
     }
   ]

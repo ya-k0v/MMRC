@@ -11,8 +11,8 @@ android {
         applicationId "com.videocontrol.mediaplayer"
         minSdk 21
         targetSdk 34
-        versionCode 254
-        versionName "2.5.4"
+        versionCode 271
+        versionName "3.1.1"
     }
 
     buildTypes {
@@ -33,6 +33,7 @@ android {
 
     buildFeatures {
         viewBinding true
+        buildConfig true
     }
 }
 
@@ -45,11 +46,26 @@ dependencies {
     // Socket.IO клиент для Kotlin
     implementation 'io.socket:socket.io-client:2.1.0'
 
+    // Security fix: Force okhttp to secure version (overrides transitive dependency)
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    
+    // Security fix: Force okio to secure version (overrides transitive dependency)
+    implementation 'com.squareup.okio:okio:3.6.0'
+    
+    // Security fix: Force org.json to secure version (overrides transitive dependency)
+    // Updated to 20231013 to fix CVE-2023-5072 (DoS vulnerability)
+    implementation 'org.json:json:20231013'
+
     // ExoPlayer для стабильного воспроизведения
     implementation 'com.google.android.exoplayer:exoplayer:2.19.1'
+    // ExoPlayer HLS для поддержки стримов
+    implementation 'com.google.android.exoplayer:exoplayer-hls:2.19.1'
 
     // Coroutines
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    
+    // Lifecycle для lifecycleScope (предотвращение утечек памяти)
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.6.2'
 
     // Gson для JSON
     implementation 'com.google.code.gson:gson:2.10.1'
@@ -57,5 +73,8 @@ dependencies {
     // Glide для плавной загрузки изображений с кэшем
     implementation 'com.github.bumptech.glide:glide:4.16.0'
     annotationProcessor 'com.github.bumptech.glide:compiler:4.16.0'
+
+    // SVG decoding for server-hosted logos
+    implementation 'com.caverock:androidsvg:1.4'
 }
 

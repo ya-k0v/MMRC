@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5"/>
-  <title>Speaker - Video Control</title>
+  <title>MMRC Speaker</title>
   
   <!-- Favicons -->
   <link rel="icon" type="image/svg+xml" href="/icon.svg"/>
@@ -16,10 +16,10 @@
   <meta name="theme-color" content="#3b82f6"/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
-  <meta name="apple-mobile-web-app-title" content="VC Speaker"/>
+  <meta name="apple-mobile-web-app-title" content="MMRC Speaker"/>
   
-  <link rel="stylesheet" href="/css/app.css?v=2.0.0"/>
-  <link rel="stylesheet" href="/css/tablet-improvements.css?v=1.4.0"/>
+  <link rel="stylesheet" href="/css/app.css"/>
+  <link rel="stylesheet" href="/css/tablet-improvements.css"/>
   <style>
     /* Speaker-specific adjustments */
     /* По умолчанию (<1024px): всё вертикально */
@@ -50,14 +50,17 @@
     
     /* Минимальные высоты для вертикального режима */
     .sidebar {
-      min-height: 280px;
-      max-height: 400px;
+      min-height: auto;
+      max-height: none;
+      display: flex;
+      flex-direction: column;
     }
     
     #tvList {
-      overflow-y: auto;
-      max-height: 320px;
-      min-height: 220px;
+      overflow-y: visible;
+      overflow-x: hidden;
+      max-height: none;
+      min-height: auto;
     }
     
     .speaker-main > .panel:first-child {
@@ -93,52 +96,240 @@
         min-height: 0;
         max-height: none;
       }
+      
+      /* Убираем скролл у списка устройств на десктопе */
+      #tvList {
+        overflow-y: visible;
+        overflow-x: hidden;
+      }
     }
     
+    .volume-panel {
+      margin-top: var(--space-md);
+      padding: var(--space-md);
+      background: var(--panel-2);
+      border-radius: var(--radius-md);
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-sm);
+    }
+    
+    .preview-panel {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-md);
+    }
+    
+    .preview-panel .volume-panel {
+      margin-top: auto;
+    }
+    
+    .volume-panel .volume-slider-row {
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm);
+      margin-top: auto;
+    }
+    
+    .volume-panel input[type="range"] {
+      flex: 1;
+      accent-color: var(--brand);
+    }
+    
+    .volume-panel .volume-value {
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: var(--text);
+      min-width: 64px;
+      text-align: right;
+    }
+    
+    #videoProgressContainer {
+      margin: 0 0 var(--space-sm) 0;
+    }
+    
+    #videoProgressBar {
+      width: 100%;
+      height: 8px;
+      cursor: pointer;
+      accent-color: var(--brand);
+      background: var(--panel-2);
+      border-radius: var(--radius-sm);
+    }
+    
+    #videoProgressBar:hover {
+      accent-color: var(--brand-hover, var(--brand));
+    }
+    
+    #videoProgressBar:active {
+      cursor: grabbing;
+    }
+    
+    .meta-value-player {
+      color: var(--success, #22c55e); /* зеленый - duration от плеера */
+    }
+    
+    .meta-value-db {
+      color: var(--danger, #ef4444); /* красный - duration из базы данных */
+    }
+    
+    #videoProgressBar:disabled {
+      cursor: not-allowed !important;
+      opacity: 0.6;
+    }
+    
+    /* ===== Мобильная версия ===== */
+    @media (max-width: 767px) {
+      /* Увеличиваем высоту плиток устройств на мобильных */
+      .speaker-layout .tvTile {
+        height: 90px !important;
+        min-height: 90px !important;
+      }
+      
+      /* Скрываем видео превью на мобильных */
+      .speaker-layout .preview-panel #filePreview > iframe,
+      .speaker-layout .preview-panel #filePreview > video {
+        display: none !important;
+      }
+      
+      /* Отключаем клики по превью на мобильных (кроме папок/PPTX/PDF) */
+      /* Миниатюры (thumbnail-preview) остаются кликабельными */
+      .speaker-layout .preview-panel #filePreview:has(> iframe) {
+        pointer-events: none !important;
+      }
+      
+      .speaker-layout .preview-panel #filePreview:has(> video) {
+        pointer-events: none !important;
+      }
+      
+      /* Разрешаем клики по миниатюрам папок/PPTX/PDF */
+      .speaker-layout .preview-panel #filePreview:has(.thumbnail-preview),
+      .speaker-layout .preview-panel #filePreview:has(.static-preview-layout) {
+        pointer-events: auto !important;
+      }
+      
+      /* Скрываем весь контейнер превью, если внутри только iframe (видео превью) */
+      .speaker-layout .preview-panel #filePreview:has(> iframe:only-child),
+      .speaker-layout .preview-panel #filePreview:has(> video:only-child) {
+        display: none !important;
+      }
+      
+      /* Показываем превью папок (миниатюры) */
+      .speaker-layout .preview-panel #filePreview:has(.thumbnail-preview),
+      .speaker-layout .preview-panel #filePreview:has(.static-preview-layout) {
+        display: flex !important;
+      }
+      
+      /* Убираем скролл у списка устройств на мобильных */
+      .speaker-layout #tvList {
+        overflow-y: visible !important;
+        overflow-x: hidden !important;
+        max-height: none !important;
+        min-height: auto !important;
+      }
+      
+      /* Убираем фиксированные высоты у панели устройств на мобильных */
+      .speaker-layout .sidebar.devices-panel {
+        min-height: auto !important;
+        max-height: none !important;
+      }
+      
+      /* Превью папок на мобильных: показываем только 6 картинок с фиксированной высотой и скроллом */
+      .speaker-layout .preview-panel #filePreview .static-preview-layout {
+        display: flex !important;
+        flex-direction: column !important;
+      }
+      
+      .speaker-layout .preview-panel #filePreview .static-preview-scroll {
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        /* Фиксированная высота для показа ровно 3 рядов (6 картинок по 2 в ряду) */
+        /* Картинки с aspect-ratio 16/9, на мобильных в 2 колонки */
+        /* Примерная высота: (ширина/2 * 9/16) * 3 ряда + gap * 2 = ~300px */
+        max-height: 300px !important;
+        min-height: 300px !important;
+      }
+      
+      /* На мобильных 2 колонки для миниатюр */
+      .speaker-layout .preview-panel #filePreview .thumbnail-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+      }
+    }
   </style>
   <script src="/socket.io/socket.io.js"></script>
-  <script type="module" src="/js/speaker.js?v=3.7.0"></script>
+  <script type="module" src="/js/speaker.js"></script>
 </head>
-<body>
+<body class="maintenance-ui">
   <header class="toolbar">
     <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; flex:1;">
-      <button id="themeBtn" class="secondary" type="button" style="padding:8px 12px; display:flex; align-items:center; justify-content:center;" aria-label="Переключить тему"></button>
-      <strong class="title">Панель спикера</strong>
+      <button id="themeBtn" class="meta-lg" type="button" style="padding:8px 12px; display:flex; align-items:center; justify-content:center;" aria-label="Переключить тему"></button>
+      <strong class="meta">Панель спикера</strong>
       <div style="display:flex; align-items:center; gap:8px;">
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
         <span id="userFullName" class="meta" style="font-weight:500; color:var(--text);"></span>
         <span class="meta" style="color:var(--muted);">•</span>
         <span id="logoutBtn" class="meta" style="font-weight:500; color:var(--text); text-decoration:underline; cursor:pointer;">Выйти</span>
       </div>
-    </div>
-    <div class="button-group" style="display:flex; gap:8px; flex-shrink:0;">
-      <button id="playBtn" class="primary" type="button">▶ Play</button>
-      <button id="pauseBtn" class="secondary" type="button">⏸ Pause</button>
-      <button id="restartBtn" class="secondary" type="button">⏮ Restart</button>
-      <button id="stopBtn" class="danger" type="button">⏹ Stop</button>
+      <div style="flex:1 1 auto;"></div>
+      <button id="launchAndroidBtn" class="meta-lg" type="button" style="min-width:36px; width:36px; height:36px; padding:0; border-radius:var(--radius-sm); flex-shrink:0; align-items:center; justify-content:center; font-size:var(--font-size-lg); line-height:1; transition:all 0.2s; box-shadow:var(--shadow-sm); background:#4caf50; color:#fff; display:none; margin-left:auto;" title="Запустить Android-приложение">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:block"><polygon points="6,4 20,12 6,20"></polygon></svg>
+      </button>
     </div>
   </header>
 
   <main class="speaker-layout">
     <aside class="sidebar panel devices-panel">
-      <h3 class="title">Устройства</h3>
-      <ul id="tvList" class="list"></ul>
+      <div class="header" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-sm)">
+        <h3 class="title" style="margin:0; font-size:var(--font-size-base)">Устройства</h3>
+        <div class="meta" id="devicesMeta" style="margin:0; white-space:nowrap">0</div>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:var(--space-md); flex:1 1 auto; min-height:0">
+        <ul id="tvList" class="list" style="flex:1 1 auto; min-height:0; overflow-y:visible; overflow-x:hidden; display:flex; flex-direction:column; gap:var(--space-sm)"></ul>
+        <div id="tvPager" class="meta" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); flex-wrap:wrap"></div>
+      </div>
     </aside>
     <section class="speaker-main">
-      <div class="panel files-panel">
-        <div class="header" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-sm)">
-          <h3 class="title" id="filesPaneTitle" style="margin:0">Файлы</h3>
+      <div class="panel files-panel" style="min-height:0; display:flex; flex-direction:column">
+        <div class="header" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-sm); flex-wrap:wrap">
+          <div style="display:flex; align-items:flex-end; gap:2px; flex-wrap:wrap">
+            <div id="filesModeSwitch" style="display:flex; align-items:flex-end; gap:2px;">
+              <button id="filesModeDevice" class="secondary" type="button" style="padding:8px 14px; border-radius:8px 8px 0 0; border:1px solid var(--border); background:var(--panel-2);">Файлы на устройстве</button>
+              <button id="filesModeAll" class="secondary" type="button" style="padding:8px 14px; border-radius:8px 8px 0 0; border:1px solid var(--border); background:var(--panel-2);">Все файлы</button>
+            </div>
+          </div>
           <div class="meta" id="filesPaneMeta" style="margin:0; white-space:nowrap">Выберите устройство слева</div>
         </div>
-        <ul id="fileList" class="list"></ul>
+        <div style="display:flex; flex-direction:column; gap:var(--space-md); flex:1 1 auto; min-height:0">
+          <ul id="fileList" class="list" style="flex:1 1 auto; min-height:0; overflow:hidden"></ul>
+          <div id="filePager" class="meta" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); flex-wrap:wrap"></div>
+        </div>
       </div>
       <div class="panel preview-panel">
         <h3 class="title">Превью</h3>
+        <div id="previewPlaybackInfo" class="meta" style="margin:6px 0 8px 0; min-height:1.2em; color: var(--text);"></div>
+        <div id="videoProgressContainer" style="display:none; margin:0 0 8px 0;">
+          <input type="range" id="videoProgressBar" min="0" max="100" step="0.1" value="0" style="width:100%; cursor:pointer;" />
+        </div>
         <div id="filePreview" class="miniPreview"></div>
         <div class="preview-controls">
           <button id="pdfPrevBtn" class="secondary" type="button">◀ Назад</button>
           <button id="pdfNextBtn" class="secondary" type="button">Вперёд ▶</button>
-          <button id="pdfCloseBtn" class="secondary" type="button">✕ Закрыть</button>
+          <button id="pdfCloseBtn" class="danger" type="button">✕</button>
+        </div>
+        <div class="volume-panel" id="volumePanel">
+          <div class="volume-slider-row">
+            <input type="range" id="volumeSlider" min="0" max="100" step="5" value="50" disabled />
+            <div class="volume-value" id="volumeLevelLabel">--%</div>
+            <button id="volumeMuteBtn" class="secondary" type="button" disabled>
+              <span class="volume-btn-icon" aria-hidden="true">🔇</span>
+            </button>
+          </div>
+          <div class="player-controls" id="playerControls" style="display:flex; gap:8px; flex-wrap:wrap; margin-top:var(--space-md);">
+            <button id="playBtn" class="primary" type="button" style="flex:1; min-width:90px;">▶ Play</button>
+            <button id="pauseBtn" class="secondary" type="button" style="flex:1; min-width:90px;">⏸ Pause</button>
+            <button id="restartBtn" class="secondary" type="button" style="flex:1; min-width:90px;">⏮ Restart</button>
+            <button id="stopBtn" class="danger" type="button" style="flex:1; min-width:90px;">⏹ Stop</button>
+          </div>
         </div>
       </div>
     </section>

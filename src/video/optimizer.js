@@ -6,19 +6,22 @@
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
-import { DEVICES, VIDEO_OPTIMIZATION_CONFIG_PATH } from '../config/constants.js';
+import { VIDEO_OPTIMIZATION_CONFIG_PATH } from '../config/constants.js';
+import { getDevicesPath } from '../config/settings-manager.js';
 import { checkVideoParameters } from './ffmpeg-wrapper.js';
 import { setFileStatus, deleteFileStatus } from './file-status.js';
+import { needsFaststart } from './mp4-faststart.js';
+import logger from '../utils/logger.js';
 
 // Загрузка конфигурации оптимизации
 let videoOptConfig = {};
 try {
   if (fs.existsSync(VIDEO_OPTIMIZATION_CONFIG_PATH)) {
     videoOptConfig = JSON.parse(fs.readFileSync(VIDEO_OPTIMIZATION_CONFIG_PATH, 'utf-8'));
-    console.log('[VideoOpt] ✅ Конфигурация загружена');
+    logger.info('[VideoOpt] ✅ Конфигурация загружена');
   }
 } catch (e) {
-  console.warn('[VideoOpt] ⚠️ Ошибка загрузки конфигурации, используем defaults');
+  logger.warn('[VideoOpt] ⚠️ Ошибка загрузки конфигурации, используем defaults', { error: e.message, stack: e.stack });
   videoOptConfig = { enabled: false };
 }
 
@@ -30,6 +33,153 @@ export function getVideoOptConfig() {
   return videoOptConfig;
 }
 
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.webm', '.ogg', '.mkv', '.mov', '.avi']);
+const MP4_LIKE_EXTENSIONS = new Set(['.mp4', '.m4v']);
+const UNSUPPORTED_PROFILES = new Set(['High 10', 'High 4:2:2', 'High 4:4:4 Predictive']);
+const SUPPORTED_AUDIO_CODECS = new Set(['aac', 'mp3']);
+const SUPPORTED_PIXEL_FORMATS = new Set(['yuv420p', 'yuvj420p']);
+
+function normalizeCodecName(codec = '') {
+  const normalized = String(codec || '').trim().toLowerCase();
+  if (normalized === 'h.264') return 'h264';
+  return normalized;
+}
+
+function normalizePixelFormat(pixFmt = '') {
+  return String(pixFmt || '').trim().toLowerCase();
+}
+
+function getThresholds() {
+  const thresholds = videoOptConfig.thresholds || {};
+  return {
+    maxWidth: Number(thresholds.maxWidth) || 3840,
+    maxHeight: Number(thresholds.maxHeight) || 2160,
+    maxFps: Number(thresholds.maxFps) || 60,
+    maxBitrate: Number(thresholds.maxBitrate) || 25000000
+  };
+}
+
+function isAudioCodecCompatible(codec) {
+  if (!codec) return true;
+  return SUPPORTED_AUDIO_CODECS.has(normalizeCodecName(codec));
+}
+
+function resolveTargetProfile(params = {}) {
+  const profiles = videoOptConfig.profiles || {};
+
+  const fallbackProfile =
+    profiles['1080p'] ||
+    profiles['2160p'] ||
+    profiles['720p'] || {
+      width: 1920,
+      height: 1080,
+      fps: 30,
+      bitrate: '4000k',
+      maxrate: '5000k',
+      bufsize: '8000k',
+      profile: 'main',
+      level: '4.0',
+      audioBitrate: '192k'
+    };
+
+  if (params.width <= 1280 && params.height <= 720 && profiles['720p']) {
+    return { key: '720p', profile: profiles['720p'] };
+  }
+
+  if (params.width <= 1920 && params.height <= 1080 && profiles['1080p']) {
+    return { key: '1080p', profile: profiles['1080p'] };
+  }
+
+  if (params.width <= 3840 && params.height <= 2160 && profiles['2160p']) {
+    return { key: '2160p', profile: profiles['2160p'] };
+  }
+
+  if (profiles['2160p']) {
+    return { key: '2160p', profile: profiles['2160p'] };
+  }
+
+  return { key: 'fallback', profile: fallbackProfile };
+}
+
+async function runFfmpegWithProgress({ deviceId, fileName, ffmpegArgs, io, timeoutMs = 30 * 60 * 1000 }) {
+  await new Promise((resolve, reject) => {
+    const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+
+    let duration = 0;
+    let stderr = '';
+    let isResolved = false;
+    let lastProgress = -1;
+
+    const timeout = setTimeout(() => {
+      if (!isResolved) {
+        logger.error('[VideoOpt] ⏱️ FFmpeg timeout', { deviceId, fileName, timeoutMs });
+        ffmpegProcess.kill('SIGKILL');
+        reject(new Error('FFmpeg timeout'));
+      }
+    }, timeoutMs);
+
+    ffmpegProcess.stderr.on('data', (data) => {
+      const output = data.toString();
+      stderr += output;
+
+      if (duration === 0) {
+        const durationMatch = output.match(/Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})/);
+        if (durationMatch) {
+          const hours = parseInt(durationMatch[1], 10);
+          const minutes = parseInt(durationMatch[2], 10);
+          const seconds = parseFloat(durationMatch[3]);
+          duration = hours * 3600 + minutes * 60 + seconds;
+        }
+      }
+
+      if (duration > 0) {
+        const timeMatch = output.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d{2})/);
+        if (timeMatch) {
+          const hours = parseInt(timeMatch[1], 10);
+          const minutes = parseInt(timeMatch[2], 10);
+          const seconds = parseFloat(timeMatch[3]);
+          const currentTime = hours * 3600 + minutes * 60 + seconds;
+
+          const rawProgress = (currentTime / duration) * 100;
+          const progress = Math.min(90, Math.max(10, 10 + Math.round(rawProgress * 0.8)));
+
+          if (progress !== lastProgress) {
+            lastProgress = progress;
+            setFileStatus(deviceId, fileName, { status: 'processing', progress, canPlay: false });
+
+            if (progress % 2 === 0) {
+              io.emit('file/progress', { device_id: deviceId, file: fileName, progress });
+            }
+          }
+        }
+      }
+    });
+
+    ffmpegProcess.on('close', (code) => {
+      clearTimeout(timeout);
+      isResolved = true;
+
+      if (code === 0) {
+        resolve();
+      } else {
+        logger.error('[VideoOpt] ❌ FFmpeg exited with error', {
+          deviceId,
+          fileName,
+          code,
+          stderr: stderr.substring(Math.max(0, stderr.length - 700))
+        });
+        reject(new Error(`FFmpeg exited with code ${code}`));
+      }
+    });
+
+    ffmpegProcess.on('error', (err) => {
+      clearTimeout(timeout);
+      isResolved = true;
+      reject(err);
+    });
+  });
+}
+
 /**
  * Проверяем нужна ли оптимизация видео
  * @param {Object} params - Параметры видео {codec, width, height, fps, bitrate, profile}
@@ -37,20 +187,25 @@ export function getVideoOptConfig() {
  */
 export function needsOptimization(params) {
   if (!params || !videoOptConfig.enabled) return false;
-  
-  const thresholds = videoOptConfig.thresholds || {};
-  
-  const needsOpt = 
-    params.width > (thresholds.maxWidth || 1920) ||
-    params.height > (thresholds.maxHeight || 1080) ||
-    params.fps > (thresholds.maxFps || 30) ||
-    params.bitrate > (thresholds.maxBitrate || 6000000) ||
-    params.profile === 'High 10' ||
-    params.profile === 'High 4:2:2' ||  // ИСПРАВЛЕНО: Добавлена проверка High 4:2:2
-    params.profile === 'High 4:4:4 Predictive' ||
-    (params.codec !== 'h264' && params.codec !== 'H.264');
-  
-  return needsOpt;
+
+  const thresholds = getThresholds();
+  const width = Number(params.width) || 0;
+  const height = Number(params.height) || 0;
+  const fps = Number(params.fps) || 0;
+  const bitrate = Number(params.bitrate) || 0;
+  const profile = String(params.profile || '').trim();
+  const codec = normalizeCodecName(params.codec);
+  const pixFmt = normalizePixelFormat(params.pixFmt);
+
+  return (
+    width > thresholds.maxWidth ||
+    height > thresholds.maxHeight ||
+    fps > thresholds.maxFps ||
+    (bitrate > 0 && bitrate > thresholds.maxBitrate) ||
+    UNSUPPORTED_PROFILES.has(profile) ||
+    codec !== 'h264' ||
+    (pixFmt && !SUPPORTED_PIXEL_FORMATS.has(pixFmt))
+  );
 }
 
 /**
@@ -66,117 +221,192 @@ export function needsOptimization(params) {
 export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNamesMap, saveFileNamesMapFn) {
   const d = devices[deviceId];
   if (!d) return { success: false, message: 'Device not found' };
-  
+
   if (!videoOptConfig.enabled) {
     return { success: false, message: 'Video optimization disabled' };
   }
-  
+
   // ИСПРАВЛЕНО: Получаем путь из БД для новой архитектуры storage
   const { getFileMetadata } = await import('../database/files-metadata.js');
   const metadata = getFileMetadata(deviceId, fileName);
-  
+
   let filePath;
   if (metadata && metadata.file_path) {
     // Медиафайл из БД (в /content/)
     filePath = metadata.file_path;
   } else {
     // Fallback для PDF/PPTX/folders (в /content/{device}/)
-  const deviceFolder = path.join(DEVICES, d.folder);
+    // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+    const devicesPath = getDevicesPath();
+    const deviceFolder = path.join(devicesPath, d.folder);
     filePath = path.join(deviceFolder, fileName);
   }
-  
+
   if (!fs.existsSync(filePath)) {
     return { success: false, message: 'File not found' };
   }
-  
+
   const ext = path.extname(fileName).toLowerCase();
-  if (!['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) {
+  if (!VIDEO_EXTENSIONS.has(ext)) {
     return { success: false, message: 'Not a video file' };
   }
-  
-  console.log(`[VideoOpt] 🔍 Проверка: ${fileName}`);
-  
+
+  logger.info(`[VideoOpt] 🔍 Проверка: ${fileName}`, { deviceId, fileName });
+
   // Устанавливаем статус "проверка"
   setFileStatus(deviceId, fileName, { status: 'checking', progress: 0, canPlay: false });
-  
-  // НОВОЕ: Сначала проверяем метаданные из БД (быстрее чем FFmpeg!)
-  let params;
-  if (metadata && metadata.video_width && metadata.video_profile) {
-    params = {
+
+  // 1) Быстрый старт: берем из БД что есть
+  let params = metadata
+    ? {
       codec: metadata.video_codec,
-      width: metadata.video_width,
-      height: metadata.video_height,
-      fps: 30,  // Приблизительно
+      width: metadata.video_width || 0,
+      height: metadata.video_height || 0,
+      fps: 0,
       bitrate: metadata.video_bitrate || 0,
-      profile: metadata.video_profile  // КРИТИЧНО!
-    };
-    console.log(`[VideoOpt] 📊 Параметры из БД: ${params.width}x${params.height}, ${params.codec}/${params.profile}`);
-  } else {
-    // Fallback: получаем через FFmpeg если нет в БД
-    params = await checkVideoParameters(filePath);
-  if (!params) {
+      profile: metadata.video_profile || 'unknown',
+      level: 0,
+      duration: metadata.video_duration || 0,
+      pixFmt: null,
+      audioCodec: metadata.audio_codec || null,
+      audioBitrate: metadata.audio_bitrate || 0,
+      audioChannels: metadata.audio_channels || 0
+    }
+    : null;
+
+  // 2) Дозаполняем через ffprobe только если нужно
+  const shouldProbe =
+    !params ||
+    !params.codec ||
+    !params.width ||
+    !params.height ||
+    !params.fps ||
+    !params.pixFmt ||
+    !params.audioCodec;
+
+  if (shouldProbe) {
+    const probed = await checkVideoParameters(filePath);
+    if (probed) {
+      params = { ...(params || {}), ...probed };
+    }
+  }
+
+  if (!params || !params.codec) {
     deleteFileStatus(deviceId, fileName);
     return { success: false, message: 'Cannot read video parameters' };
   }
-    console.log(`[VideoOpt] 📊 Параметры через FFmpeg: ${params.width}x${params.height} @ ${params.fps}fps, ${Math.round(params.bitrate/1000)}kbps, ${params.codec}/${params.profile}`);
+
+  logger.info('[VideoOpt] 📊 Итоговые параметры файла', {
+    deviceId,
+    fileName,
+    width: params.width,
+    height: params.height,
+    fps: params.fps,
+    bitrate: params.bitrate,
+    codec: params.codec,
+    profile: params.profile,
+    pixFmt: params.pixFmt,
+    audioCodec: params.audioCodec
+  });
+
+  const isMp4Like = MP4_LIKE_EXTENSIONS.has(ext);
+  const videoNeedsTranscode = needsOptimization(params);
+  const audioNeedsTranscode = !isAudioCodecCompatible(params.audioCodec);
+  const containerNeedsRewrite = !isMp4Like;
+
+  let seekRisk = false;
+  if (isMp4Like) {
+    try {
+      seekRisk = await needsFaststart(filePath);
+    } catch (error) {
+      logger.warn('[VideoOpt] ⚠️ Не удалось проверить seek-структуру, включаем безопасный режим', {
+        deviceId,
+        fileName,
+        error: error.message
+      });
+      seekRisk = true;
+    }
   }
-  
-  // Проверяем нужна ли оптимизация
-  if (!needsOptimization(params)) {
-    console.log(`[VideoOpt] ✅ Видео оптимально: ${fileName}`);
+
+  const requiresWork =
+    videoNeedsTranscode ||
+    audioNeedsTranscode ||
+    containerNeedsRewrite ||
+    seekRisk;
+
+  if (!requiresWork) {
+    logger.info(`[VideoOpt] ✅ Видео оптимально: ${fileName}`, { deviceId, fileName });
     setFileStatus(deviceId, fileName, { status: 'ready', progress: 100, canPlay: true });
-    
+
     // КРИТИЧНО: Отправляем событие клиентам даже если оптимизация не требуется
     io.emit('devices/updated');
     io.emit('file/ready', { device_id: deviceId, file: fileName });
-    
+
     return { success: true, message: 'Already optimized', optimized: false };
   }
-  
-  console.log(`[VideoOpt] ⚠️ Требуется оптимизация: ${fileName}`);
-  
+
+  logger.info(`[VideoOpt] ⚠️ Требуется оптимизация: ${fileName}`, { deviceId, fileName });
+
   // Устанавливаем статус "обработка"
   setFileStatus(deviceId, fileName, { status: 'processing', progress: 5, canPlay: false });
   io.emit('file/processing', { device_id: deviceId, file: fileName });
-  
-  // Определяем целевой профиль
-  const profiles = videoOptConfig.profiles || {};
-  let targetProfile = profiles['1080p'];
-  
-  // Если видео меньше 1080p - используем 720p
-  if (params.width <= 1280 && params.height <= 720) {
-    targetProfile = profiles['720p'];
-  }
-  
-  // Если видео больше 1080p (4K) - конвертируем в 1080p
-  if (params.width > 1920 || params.height > 1080) {
-    targetProfile = profiles['1080p'];
-    console.log(`[VideoOpt] 📉 4K → 1080p конвертация`);
-  }
-  
+  io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 5 });
+  logger.info(`[VideoOpt] 📊 Начало обработки: ${fileName} (5%)`, {
+    deviceId,
+    fileName,
+    videoNeedsTranscode,
+    audioNeedsTranscode,
+    containerNeedsRewrite,
+    seekRisk
+  });
+
+  const { key: targetProfileKey, profile: targetProfile } = resolveTargetProfile(params);
   const optConfig = videoOptConfig.optimization || {};
-  
+
   // КРИТИЧНО: Всегда конвертируем в MP4 (даже если оригинал WebM/MKV/AVI)
   const outputExt = '.mp4';
-  
+
   // ИСПРАВЛЕНО: Временный файл сохраняем в той же папке что и оригинал
   const fileDir = path.dirname(filePath);
-  const tempPath = path.join(fileDir, `.optimizing_${Date.now()}${outputExt}`);
-  
+  let tempPath = path.join(fileDir, `.optimizing_${Date.now()}${outputExt}`);
+
   // Определяем финальное имя файла
   const baseFileName = path.basename(fileName, ext);
   const finalFileName = ext === '.mp4' ? fileName : `${baseFileName}.mp4`;
   const finalPath = path.join(fileDir, finalFileName);
-  
-  console.log(`[VideoOpt] 🎬 Начало конвертации: ${fileName}`);
-  if (ext !== '.mp4') {
-    console.log(`[VideoOpt] 🔄 Конвертация ${ext} → .mp4: ${finalFileName}`);
-  }
-  console.log(`[VideoOpt] 🎯 Профиль: ${targetProfile.width}x${targetProfile.height} @ ${targetProfile.fps}fps, ${targetProfile.bitrate}`);
-  
-  try {
-    // FFmpeg аргументы
-    const ffmpegArgs = [
+
+  let ffmpegArgs = [];
+  let processingMode = 'transcode';
+
+  if (!videoNeedsTranscode) {
+    if (seekRisk && isMp4Like && !audioNeedsTranscode) {
+      processingMode = 'faststart';
+    } else {
+      processingMode = 'remux';
+    }
+
+    ffmpegArgs = [
+      '-i', filePath,
+      '-map', '0:v:0',
+      '-map', '0:a:0?',
+      '-c:v', 'copy'
+    ];
+
+    if (audioNeedsTranscode) {
+      ffmpegArgs.push(
+        '-c:a', optConfig.audioCodec || 'aac',
+        '-b:a', targetProfile.audioBitrate || '192k',
+        '-ar', String(optConfig.audioSampleRate || '44100'),
+        '-ac', String(optConfig.audioChannels || 2)
+      );
+    } else {
+      ffmpegArgs.push('-c:a', 'copy');
+    }
+
+    ffmpegArgs.push('-movflags', '+faststart', '-y', tempPath);
+  } else {
+    processingMode = 'transcode';
+    ffmpegArgs = [
       '-i', filePath,
       '-c:v', 'libx264',
       '-profile:v', targetProfile.profile,
@@ -196,161 +426,58 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       '-movflags', '+faststart',
       '-y', tempPath
     ];
-    
-    console.log(`[VideoOpt] 🔧 FFmpeg команда: ffmpeg ${ffmpegArgs.join(' ')}`);
-    
-    // Запускаем FFmpeg с отслеживанием прогресса
-    await new Promise((resolve, reject) => {
-      const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
-      
-      let duration = 0;
-      let stderr = '';
-      let isResolved = false;
-      
-      // ИСПРАВЛЕНО: Timeout 30 минут для предотвращения зависания
-      const timeout = setTimeout(() => {
-        if (!isResolved) {
-          console.error(`[VideoOpt] ⏱️ FFmpeg timeout (30 мин)`);
-          ffmpegProcess.kill('SIGKILL');
-          reject(new Error('FFmpeg timeout'));
-        }
-      }, 30 * 60 * 1000);
-      
-      // Парсим вывод FFmpeg для прогресса
-      ffmpegProcess.stderr.on('data', (data) => {
-        const output = data.toString();
-        stderr += output;
-        
-        // Извлекаем длительность видео (только один раз)
-        if (duration === 0) {
-          const durationMatch = output.match(/Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})/);
-          if (durationMatch) {
-            const hours = parseInt(durationMatch[1]);
-            const minutes = parseInt(durationMatch[2]);
-            const seconds = parseFloat(durationMatch[3]);
-            duration = hours * 3600 + minutes * 60 + seconds;
-            console.log(`[VideoOpt] ⏱️ Длительность видео: ${duration.toFixed(1)}s`);
-          }
-        }
-        
-        // Извлекаем текущее время обработки
-        if (duration > 0) {
-          const timeMatch = output.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d{2})/);
-          if (timeMatch) {
-            const hours = parseInt(timeMatch[1]);
-            const minutes = parseInt(timeMatch[2]);
-            const seconds = parseFloat(timeMatch[3]);
-            const currentTime = hours * 3600 + minutes * 60 + seconds;
-            
-            // Вычисляем прогресс (10% - 90%)
-            const rawProgress = (currentTime / duration) * 100;
-            const progress = Math.min(90, Math.max(10, 10 + Math.round(rawProgress * 0.8)));
-            
-            // Обновляем статус
-            setFileStatus(deviceId, fileName, { status: 'processing', progress, canPlay: false });
-            
-            // Отправляем событие клиентам каждые 5%
-            if (progress % 5 === 0) {
-              io.emit('file/progress', { device_id: deviceId, file: fileName, progress });
-              console.log(`[VideoOpt] 📊 Прогресс: ${progress}% (${currentTime.toFixed(1)}s / ${duration.toFixed(1)}s)`);
-            }
-          }
-        }
-      });
-      
-      ffmpegProcess.on('close', (code) => {
-        clearTimeout(timeout); // ИСПРАВЛЕНО: Очищаем timeout
-        isResolved = true;
-        
-        if (code === 0) {
-          console.log(`[VideoOpt] ✅ FFmpeg завершен успешно`);
-          resolve();
-        } else {
-          console.error(`[VideoOpt] ❌ FFmpeg завершен с кодом ${code}`);
-          console.error(`[VideoOpt] Stderr: ${stderr.substring(stderr.length - 500)}`); // Последние 500 символов
-          reject(new Error(`FFmpeg exited with code ${code}`));
-        }
-      });
-      
-      ffmpegProcess.on('error', (err) => {
-        clearTimeout(timeout); // ИСПРАВЛЕНО: Очищаем timeout
-        isResolved = true;
-        
-        console.error(`[VideoOpt] ❌ Ошибка запуска FFmpeg: ${err}`);
-        reject(err);
-      });
-    });
-    
+  }
+
+  logger.info('[VideoOpt] 🎬 Выбран режим обработки', {
+    deviceId,
+    fileName,
+    processingMode,
+    targetProfile: targetProfileKey,
+    outputFile: finalFileName
+  });
+
+  try {
+    await runFfmpegWithProgress({ deviceId, fileName, ffmpegArgs, io });
+
     setFileStatus(deviceId, fileName, { status: 'processing', progress: 90, canPlay: false });
-    console.log(`[VideoOpt] ✅ Конвертация завершена: ${fileName}`);
-    
+    io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 90 });
+    logger.info(`[VideoOpt] ✅ Конвертация завершена: ${fileName} (90%)`, { deviceId, fileName });
+
     // Проверяем что файл создан и не пустой
     const stats = fs.statSync(tempPath);
     if (stats.size === 0) {
       throw new Error('Converted file is empty');
     }
-    
+
+    let resultingSafeName = fileName;
+    let resultingPath = filePath;
+
     // КРИТИЧНО: Удаляем оригинал и заменяем оптимизированным
-    // Если конвертация изменила формат (webm→mp4) - переименовываем файл
+    // Если конвертация изменила формат (webm→mp4, m4v→mp4) - переименовываем файл
     if (ext !== '.mp4') {
-      console.log(`[VideoOpt] 🔄 Замена формата: ${fileName} → ${finalFileName}`);
-      
+      logger.info(`[VideoOpt] 🔄 Замена формата: ${fileName} → ${finalFileName}`, { deviceId, fileName, finalFileName });
+
       // Удаляем оригинал (.webm, .mkv, etc)
       fs.unlinkSync(filePath);
-      
+
       // Переименовываем временный → финальное имя с .mp4
       fs.renameSync(tempPath, finalPath);
-      
+
+      resultingSafeName = finalFileName;
+      resultingPath = finalPath;
+
       // Обновляем маппинг имен (оригинальное имя сохраняем)
       if (fileNamesMap[deviceId] && fileNamesMap[deviceId][fileName]) {
         const originalName = fileNamesMap[deviceId][fileName];
         delete fileNamesMap[deviceId][fileName];
         fileNamesMap[deviceId][finalFileName] = originalName;
         saveFileNamesMapFn(fileNamesMap);
-        console.log(`[VideoOpt] 📝 Маппинг обновлен: ${fileName} → ${finalFileName}`);
+        logger.info(`[VideoOpt] 📝 Маппинг обновлен: ${fileName} → ${finalFileName}`, { deviceId, fileName, finalFileName, originalName });
       }
-      
+
       // Устанавливаем права
       fs.chmodSync(finalPath, 0o644);
-      
-      // НОВОЕ: Обновляем метаданные в БД (удаляем старую запись, создаем новую)
-      if (metadata) {
-        const { deleteFileMetadata, saveFileMetadata } = await import('../database/files-metadata.js');
-        const newStats = fs.statSync(finalPath);
-        const newParams = await checkVideoParameters(finalPath);
-        
-        // Удаляем старую запись (.webm)
-        deleteFileMetadata(deviceId, fileName);
-        
-        // Создаем новую запись (.mp4)
-        saveFileMetadata({
-          deviceId,
-          safeName: finalFileName,
-          originalName: fileNamesMap[deviceId]?.[finalFileName] || finalFileName,
-          filePath: finalPath,
-          fileSize: newStats.size,
-          md5Hash: metadata.md5_hash,
-          partialMd5: metadata.partial_md5,
-          mimeType: 'video/mp4',
-          videoParams: {
-            width: newParams.width,
-            height: newParams.height,
-            duration: newParams.duration,
-            codec: newParams.codec,
-            profile: newParams.profile,  // КРИТИЧНО: Сохраняем новый profile!
-            bitrate: newParams.bitrate
-          },
-          audioParams: {
-            codec: metadata.audio_codec,
-            bitrate: metadata.audio_bitrate,
-            channels: metadata.audio_channels
-          },
-          fileMtime: newStats.mtimeMs
-        });
-        
-        console.log(`[VideoOpt] 📊 Метаданные обновлены в БД (${fileName} → ${finalFileName})`);
-      }
-      
+
       // Обновляем список файлов устройства
       const fileIndex = d.files.indexOf(fileName);
       if (fileIndex >= 0) {
@@ -359,108 +486,112 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
           // fileNames уже правильное из маппинга
         }
       }
-      
-      console.log(`[VideoOpt] 🎉 Видео конвертировано: ${fileName} → ${finalFileName}`);
-      console.log(`[VideoOpt] 📊 Размер: ${Math.round(stats.size / 1024 / 1024)}MB`);
-      
-      // Статус для НОВОГО имени файла (.mp4)
-      deleteFileStatus(deviceId, fileName); // Удаляем статус старого файла (.webm)
-      setFileStatus(deviceId, finalFileName, { status: 'ready', progress: 100, canPlay: true });
-      
-      // КРИТИЧНО: Сначала обновляем devices, затем уведомляем о готовности файла
-      io.emit('devices/updated');
-      io.emit('file/ready', { device_id: deviceId, file: finalFileName });
-      
+
+      logger.info(`[VideoOpt] 🎉 Видео конвертировано: ${fileName} → ${finalFileName}`, { deviceId, fileName, finalFileName, sizeMB: Math.round(stats.size / 1024 / 1024) });
     } else {
       // MP4 → MP4 (просто замена на оптимизированный)
       fs.unlinkSync(filePath);
       fs.renameSync(tempPath, filePath);
-      
+
       // Устанавливаем права
       fs.chmodSync(filePath, 0o644);
-      
-      // НОВОЕ: Обновляем метаданные в БД после оптимизации
-      if (metadata) {
-        const { saveFileMetadata } = await import('../database/files-metadata.js');
-        const newStats = fs.statSync(filePath);
-        const newParams = await checkVideoParameters(filePath);
-        
-        saveFileMetadata({
-          deviceId,
-          safeName: fileName,
-          originalName: metadata.original_name,
-          filePath,
-          fileSize: newStats.size,
-          md5Hash: metadata.md5_hash,  // MD5 сохраняем старый (т.к. для дедупликации)
-          partialMd5: metadata.partial_md5,
-          mimeType: 'video/mp4',
-          videoParams: {
-            width: newParams.width,
-            height: newParams.height,
-            duration: newParams.duration,
-            codec: newParams.codec,
-            profile: newParams.profile,  // КРИТИЧНО: Сохраняем новый profile!
-            bitrate: newParams.bitrate
-          },
-          audioParams: {
-            codec: metadata.audio_codec,
-            bitrate: metadata.audio_bitrate,
-            channels: metadata.audio_channels
-          },
-          fileMtime: newStats.mtimeMs
-        });
-        
-        console.log(`[VideoOpt] 📊 Метаданные обновлены в БД`);
-      }
-      
-      // Устанавливаем статус "готово"
-      setFileStatus(deviceId, fileName, { status: 'ready', progress: 100, canPlay: true });
-      
-      // КРИТИЧНО: Сначала обновляем devices, затем уведомляем о готовности файла
-      io.emit('devices/updated');
-      io.emit('file/ready', { device_id: deviceId, file: fileName });
-      
-      console.log(`[VideoOpt] 🎉 Видео оптимизировано: ${fileName}`);
-      console.log(`[VideoOpt] 📊 Размер: ${Math.round(stats.size / 1024 / 1024)}MB`);
+
+      logger.info(`[VideoOpt] 🎉 Видео оптимизировано: ${fileName}`, { deviceId, fileName, sizeMB: Math.round(stats.size / 1024 / 1024) });
     }
-    
+
+    const finalStats = fs.statSync(resultingPath);
+    const finalParams = (await checkVideoParameters(resultingPath)) || params;
+
+    // Обновляем метаданные в БД после обработки
+    if (metadata) {
+      const { deleteFileMetadata, saveFileMetadata } = await import('../database/files-metadata.js');
+
+      if (resultingSafeName !== fileName) {
+        deleteFileMetadata(deviceId, fileName);
+      }
+
+      saveFileMetadata({
+        deviceId,
+        safeName: resultingSafeName,
+        originalName: fileNamesMap[deviceId]?.[resultingSafeName] || metadata.original_name || resultingSafeName,
+        filePath: resultingPath,
+        fileSize: finalStats.size,
+        md5Hash: metadata.md5_hash,
+        partialMd5: metadata.partial_md5,
+        mimeType: 'video/mp4',
+        videoParams: {
+          width: finalParams.width,
+          height: finalParams.height,
+          duration: finalParams.duration,
+          codec: finalParams.codec,
+          profile: finalParams.profile,
+          bitrate: finalParams.bitrate
+        },
+        audioParams: {
+          codec: finalParams.audioCodec || metadata.audio_codec,
+          bitrate: finalParams.audioBitrate || metadata.audio_bitrate,
+          channels: finalParams.audioChannels || metadata.audio_channels
+        },
+        fileMtime: finalStats.mtimeMs
+      });
+
+      logger.info('[VideoOpt] 📊 Метаданные обновлены в БД', {
+        deviceId,
+        originalFile: fileName,
+        finalFile: resultingSafeName,
+        mode: processingMode
+      });
+    }
+
+    if (resultingSafeName !== fileName) {
+      deleteFileStatus(deviceId, fileName);
+    }
+
+    setFileStatus(deviceId, resultingSafeName, { status: 'ready', progress: 100, canPlay: true });
+    io.emit('file/progress', { device_id: deviceId, file: resultingSafeName, progress: 100 });
+    io.emit('devices/updated');
+    io.emit('file/ready', { device_id: deviceId, file: resultingSafeName });
+
     return { 
       success: true, 
       message: 'Optimized successfully', 
       optimized: true,
+      mode: processingMode,
       originalFile: fileName,
-      finalFile: ext !== '.mp4' ? finalFileName : fileName,
-      formatChanged: ext !== '.mp4',
-      sizeBytes: stats.size,
+      finalFile: resultingSafeName,
+      formatChanged: resultingSafeName !== fileName,
+      sizeBytes: finalStats.size,
       params: {
         before: params,
         after: {
-          width: targetProfile.width,
-          height: targetProfile.height,
-          fps: targetProfile.fps,
-          bitrate: targetProfile.bitrate
+          width: finalParams.width,
+          height: finalParams.height,
+          fps: finalParams.fps,
+          bitrate: finalParams.bitrate,
+          codec: finalParams.codec,
+          profile: finalParams.profile
         }
       }
     };
-    
+
   } catch (error) {
-    console.error(`[VideoOpt] ❌ Ошибка конвертации: ${error.message}`);
-    
+    logger.error(`[VideoOpt] ❌ Ошибка конвертации`, { error: error.message, stack: error.stack, deviceId, fileName });
+
     // Очищаем временный файл
-    if (fs.existsSync(tempPath)) {
+    if (tempPath && fs.existsSync(tempPath)) {
       fs.unlinkSync(tempPath);
     }
-    
+
     // Определяем причину ошибки для понятного сообщения
     let errorMessage = error.message;
-    
+
     if (params && params.codec && params.codec.toLowerCase() === 'av1') {
       errorMessage = `Кодек AV1 не поддерживается вашей версией FFmpeg. Файл воспроизводится как WebM, но может тормозить на Android. Рекомендация: конвертируйте файл в H.264 вручную или обновите FFmpeg.`;
-      console.warn(`[VideoOpt] ⚠️ AV1 кодек не поддерживается`);
+      logger.warn(`[VideoOpt] ⚠️ AV1 кодек не поддерживается`, { deviceId, fileName });
     } else if (params && params.codec && params.codec.toLowerCase() === 'vp9') {
       errorMessage = `Кодек VP9 может не поддерживаться. Файл воспроизводится как WebM, но может тормозить на Android.`;
     }
-    
+
     // Устанавливаем статус "ошибка" но файл можно воспроизвести (оригинал)
     setFileStatus(deviceId, fileName, { 
       status: 'error', 
@@ -468,8 +599,9 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       canPlay: true,  // Оригинал можно воспроизвести
       error: errorMessage 
     });
+    io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 0 });
     io.emit('file/error', { device_id: deviceId, file: fileName, error: errorMessage });
-    
+
     return { success: false, message: errorMessage };
   }
 }

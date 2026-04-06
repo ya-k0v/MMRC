@@ -1,4 +1,5 @@
 // devices-manager.js - ПОЛНЫЙ код управления устройствами из admin.js
+import { escapeHtml } from '../shared/utils.js';
 
 export async function loadDevices(adminFetch, sortDevices, nodeNames) {
   const res = await adminFetch('/api/devices');
@@ -12,14 +13,23 @@ export function renderTVList(devicesCache, readyDevices, currentDeviceId, nodeNa
   if (!tvList) return;
 
   if (!devicesCache.length) {
-    tvList.innerHTML = `
-      <li class="item" style="text-align:center; padding:var(--space-xl)">
-        <div style="width:100%">
-          <div class="title">Нет устройств</div>
-          <div class="meta">Откройте плеер или добавьте устройство</div>
-        </div>
-      </li>
-    `;
+    // Используем DOM методы вместо innerHTML
+    tvList.innerHTML = '';
+    const emptyItem = document.createElement('li');
+    emptyItem.className = 'item';
+    emptyItem.style.cssText = 'text-align:center; padding:var(--space-xl)';
+    const emptyDiv = document.createElement('div');
+    emptyDiv.style.width = '100%';
+    const emptyTitle = document.createElement('div');
+    emptyTitle.className = 'title';
+    emptyTitle.textContent = 'Нет устройств';
+    const emptyMeta = document.createElement('div');
+    emptyMeta.className = 'meta';
+    emptyMeta.textContent = 'Откройте плеер или добавьте устройство';
+    emptyDiv.appendChild(emptyTitle);
+    emptyDiv.appendChild(emptyMeta);
+    emptyItem.appendChild(emptyDiv);
+    tvList.appendChild(emptyItem);
     const pager = document.getElementById('tvPager');
     if (pager) pager.innerHTML = '';
     return;
@@ -33,26 +43,56 @@ export function renderTVList(devicesCache, readyDevices, currentDeviceId, nodeNa
   const end = Math.min(start + pageSize, sortedDevices.length);
   const pageItems = sortedDevices.slice(start, end);
 
-  tvList.innerHTML = pageItems.map(d => {
+  // Используем DOM методы вместо innerHTML для безопасности
+  tvList.innerHTML = '';
+  pageItems.forEach(d => {
     const name = d.name || nodeNames[d.device_id] || d.device_id;
     const filesCount = d.files?.length ?? 0;
     const isActive = d.device_id === currentDeviceId;
     const isReady = readyDevices.has(d.device_id);
-    return `
-      <li class="tvTile${isActive ? ' active' : ''}" data-id="${d.device_id}">
-        <div class="tvTile-content">
-          <div class="tvTile-header">
-            <div class="title tvTile-name">${name}</div>
-            <span class="tvTile-status ${isReady ? 'online' : 'offline'}" 
-                  title="${isReady ? 'Готов' : 'Не готов'}" 
-                  aria-label="${isReady ? 'online' : 'offline'}"></span>
-          </div>
-          <div class="meta tvTile-meta">ID: ${d.device_id}</div>
-          <div class="meta">Файлов: ${filesCount}</div>
-        </div>
-      </li>
-    `;
-  }).join('');
+    
+    // Экранируем пользовательские данные
+    const safeName = escapeHtml(name);
+    const safeDeviceId = escapeHtml(d.device_id);
+    const safeIpAddress = d.ipAddress ? escapeHtml(d.ipAddress) : null;
+    
+    const li = document.createElement('li');
+    li.className = `tvTile${isActive ? ' active' : ''}`;
+    li.setAttribute('data-id', d.device_id);
+    
+    const content = document.createElement('div');
+    content.className = 'tvTile-content';
+    
+    const header = document.createElement('div');
+    header.className = 'tvTile-header';
+    
+    const nameDiv = document.createElement('div');
+    nameDiv.className = 'title tvTile-name';
+    nameDiv.textContent = name; // Используем textContent для безопасности
+    
+    const statusSpan = document.createElement('span');
+    statusSpan.className = `tvTile-status ${isReady ? 'online' : 'offline'}`;
+    statusSpan.title = isReady ? 'Готов' : 'Не готов';
+    statusSpan.setAttribute('aria-label', isReady ? 'online' : 'offline');
+    
+    header.appendChild(nameDiv);
+    header.appendChild(statusSpan);
+    
+    const metaDiv = document.createElement('div');
+    metaDiv.className = 'meta tvTile-meta';
+    const metaText = `ID: ${d.device_id}${safeIpAddress ? ` • IP: ${d.ipAddress}` : ''}`;
+    metaDiv.textContent = metaText; // Используем textContent для безопасности
+    
+    const filesDiv = document.createElement('div');
+    filesDiv.className = 'meta';
+    filesDiv.textContent = `Файлов: ${filesCount}`;
+    
+    content.appendChild(header);
+    content.appendChild(metaDiv);
+    content.appendChild(filesDiv);
+    li.appendChild(content);
+    tvList.appendChild(li);
+  });
 
   tvList.querySelectorAll('.tvTile').forEach(item => {
     const targetDeviceId = item.dataset.id;
@@ -94,12 +134,10 @@ export function renderTVList(devicesCache, readyDevices, currentDeviceId, nodeNa
         const move = !e.ctrlKey;
         
         if (!sourceDeviceId || !fileName) {
-          console.warn('[DragDrop] ⚠️ Неверные данные');
           return;
         }
         
         if (sourceDeviceId === targetDeviceId) {
-          console.log('[DragDrop] ℹ️ Источник и цель совпадают');
           return;
         }
         
@@ -110,7 +148,6 @@ export function renderTVList(devicesCache, readyDevices, currentDeviceId, nodeNa
         
         const action = move ? 'Переместить' : 'Скопировать';
         
-        console.log(`[DragDrop] 📦 ${action}: ${fileName} (${sourceDeviceId} → ${targetDeviceId})`);
         
         const response = await adminFetch(`/api/devices/${encodeURIComponent(targetDeviceId)}/copy-file`, {
           method: 'POST',
@@ -125,7 +162,6 @@ export function renderTVList(devicesCache, readyDevices, currentDeviceId, nodeNa
         const result = await response.json();
         
         if (result.ok) {
-          console.log(`[DragDrop] ✅ Файл ${result.action === 'moved' ? 'перемещен' : 'скопирован'}: "${decodeURIComponent(fileName)}" → "${targetName}"`);
           
           // КРИТИЧНО: Перезагружаем список устройств через Socket.IO событие
           // Socket.IO сервер отправит devices/updated, который обновит devicesCache
@@ -160,13 +196,30 @@ export function renderTVList(devicesCache, readyDevices, currentDeviceId, nodeNa
     pager.style.gap = '8px';
     tvList.parentElement && tvList.parentElement.appendChild(pager);
   }
-  pager.innerHTML = `
-    <button class="secondary" id="tvPrev" ${tvPage<=0?'disabled':''} style="min-width:80px">Назад</button>
-    <span style="white-space:nowrap">Стр. ${tvPage+1} из ${totalPages}</span>
-    <button class="secondary" id="tvNext" ${tvPage>=totalPages-1?'disabled':''} style="min-width:80px">Вперёд</button>
-  `;
-  const prev = document.getElementById('tvPrev');
-  const next = document.getElementById('tvNext');
-  if (prev) prev.onclick = () => { if (tvPage>0) { tvPage--; renderTVList(devicesCache, readyDevices, currentDeviceId, nodeNames, tvPage, getPageSize, sortDevices, openDevice, renderFilesPane, adminFetch); } };
-  if (next) next.onclick = () => { if (tvPage<totalPages-1) { tvPage++; renderTVList(devicesCache, readyDevices, currentDeviceId, nodeNames, tvPage, getPageSize, sortDevices, openDevice, renderFilesPane, adminFetch); } };
+  // Используем DOM методы вместо innerHTML для безопасности
+  pager.innerHTML = '';
+  const prevBtn = document.createElement('button');
+  prevBtn.className = 'secondary';
+  prevBtn.id = 'tvPrev';
+  prevBtn.disabled = tvPage <= 0;
+  prevBtn.style.cssText = 'min-width:80px';
+  prevBtn.textContent = 'Назад';
+  
+  const pageSpan = document.createElement('span');
+  pageSpan.style.cssText = 'white-space:nowrap';
+  pageSpan.textContent = `Стр. ${tvPage+1} из ${totalPages}`;
+  
+  const nextBtn = document.createElement('button');
+  nextBtn.className = 'secondary';
+  nextBtn.id = 'tvNext';
+  nextBtn.disabled = tvPage >= totalPages - 1;
+  nextBtn.style.cssText = 'min-width:80px';
+  nextBtn.textContent = 'Вперёд';
+  
+  pager.appendChild(prevBtn);
+  pager.appendChild(pageSpan);
+  pager.appendChild(nextBtn);
+  // Используем уже созданные элементы
+  prevBtn.onclick = () => { if (tvPage>0) { tvPage--; renderTVList(devicesCache, readyDevices, currentDeviceId, nodeNames, tvPage, getPageSize, sortDevices, openDevice, renderFilesPane, adminFetch); } };
+  nextBtn.onclick = () => { if (tvPage<totalPages-1) { tvPage++; renderTVList(devicesCache, readyDevices, currentDeviceId, nodeNames, tvPage, getPageSize, sortDevices, openDevice, renderFilesPane, adminFetch); } };
 }
