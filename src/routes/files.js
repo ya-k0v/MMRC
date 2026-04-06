@@ -7,10 +7,11 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { spawn } from 'child_process';
 import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { extractZipToFolder, getFolderImagesCount } from '../converters/folder-converter.js';
-import { makeSafeFolderName } from '../utils/transliterate.js';
+import { makeSafeFolderName, makeSafeFilename } from '../utils/transliterate.js';
 import { uploadLimiter, deleteLimiter } from '../middleware/rate-limit.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import logger, { logFile, logSecurity } from '../utils/logger.js';
@@ -24,9 +25,12 @@ import { requireSpeaker } from '../middleware/auth.js';
 import { validateUploadSize } from '../middleware/multer-config.js';
 import { validateFilesAsync } from '../middleware/file-validation.js';
 import { getDatabase } from '../database/database.js';
-import { resolveContentType, STATIC_CONTENT_TYPES } from '../config/file-types.js';
+import { resolveContentType, STATIC_CONTENT_TYPES, VIDEO_EXTENSIONS } from '../config/file-types.js';
+import { ensureLocalYtDlpBinary } from '../utils/yt-dlp.js';
 
 const STREAM_PROTOCOLS = new Set(['auto', 'hls', 'dash', 'mpegts']);
+const YTDLP_FINAL_PATH_MARKER = '__VC_FINAL_PATH__';
+const YTDLP_TITLE_MARKER = '__VC_TITLE__';
 
 function detectStreamProtocolFromUrl(url = '') {
   const lower = (url || '').toLowerCase();
@@ -65,6 +69,60 @@ function normalizeStreamProtocol(protocol, url, mimeType) {
     return byMime;
   }
   return detectStreamProtocolFromUrl(url);
+}
+
+function stripWrappingQuotes(value = '') {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith('\'') && trimmed.endsWith('\''))) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function extractMarkerValue(line = '', marker = '') {
+  if (!line || !marker) return null;
+  const markerIndex = line.indexOf(marker);
+  if (markerIndex < 0) return null;
+  const value = line.slice(markerIndex + marker.length).trim();
+  return value || null;
+}
+
+function extractYtDlpPathCandidate(line = '') {
+  if (!line) return null;
+
+  const fromMarker = extractMarkerValue(line, YTDLP_FINAL_PATH_MARKER);
+  if (fromMarker) return stripWrappingQuotes(fromMarker);
+
+  const destinationMatch = line.match(/\[download\]\s+Destination:\s+(.+)$/i);
+  if (destinationMatch) return stripWrappingQuotes(destinationMatch[1]);
+
+  const mergedMatch = line.match(/\[Merger\]\s+Merging formats into\s+(.+)$/i);
+  if (mergedMatch) return stripWrappingQuotes(mergedMatch[1]);
+
+  const downloadedMatch = line.match(/\[download\]\s+(.+?)\s+has already been downloaded/i);
+  if (downloadedMatch) return stripWrappingQuotes(downloadedMatch[1]);
+
+  return null;
+}
+
+function parseYtDlpProgress(line = '') {
+  if (!line) return null;
+
+  const percentMatch = line.match(/(\d{1,3}(?:\.\d+)?)%/);
+  const speedMatch = line.match(/\bat\s+([^\s]+\/?s)\b/i);
+  const etaMatch = line.match(/\bETA\s+([^\s]+)/i);
+
+  if (!percentMatch && !speedMatch && !etaMatch) {
+    return null;
+  }
+
+  const percent = percentMatch ? Number(percentMatch[1]) : null;
+  return {
+    percent: Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : null,
+    speed: speedMatch ? speedMatch[1] : null,
+    eta: etaMatch ? etaMatch[1] : null
+  };
 }
 
 const router = express.Router();
@@ -644,6 +702,157 @@ export function createFilesRouter(deps) {
     getFileStatus,
     requireAdmin = (_req, _res, next) => next()
   } = deps;
+
+  const ytDlpJobs = new Map();
+  const YTDLP_JOB_TTL_MS = 6 * 60 * 60 * 1000;
+  const YTDLP_JOB_HISTORY_LIMIT = 100;
+
+  function pruneFinishedYtDlpJobs() {
+    if (ytDlpJobs.size <= YTDLP_JOB_HISTORY_LIMIT) return;
+
+    const finishedJobs = Array.from(ytDlpJobs.values())
+      .filter((job) => job.status === 'completed' || job.status === 'failed')
+      .sort((a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime());
+
+    while (ytDlpJobs.size > YTDLP_JOB_HISTORY_LIMIT && finishedJobs.length > 0) {
+      const oldest = finishedJobs.shift();
+      ytDlpJobs.delete(oldest.id);
+    }
+  }
+
+  function scheduleYtDlpJobCleanup(jobId) {
+    const timer = setTimeout(() => {
+      ytDlpJobs.delete(jobId);
+    }, YTDLP_JOB_TTL_MS);
+
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+  }
+
+  function updateYtDlpJob(jobId, patch = {}) {
+    const current = ytDlpJobs.get(jobId);
+    if (!current) return null;
+
+    const next = {
+      ...current,
+      ...patch,
+      updatedAt: new Date().toISOString()
+    };
+
+    ytDlpJobs.set(jobId, next);
+    return next;
+  }
+
+  function createYtDlpJob({ deviceId, url, username }) {
+    const id = typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : crypto.randomBytes(16).toString('hex');
+    const now = new Date().toISOString();
+
+    const job = {
+      id,
+      deviceId,
+      url,
+      status: 'queued',
+      progress: 0,
+      speed: null,
+      eta: null,
+      fileName: null,
+      title: null,
+      error: null,
+      lastLogLine: null,
+      startedBy: username || 'anonymous',
+      createdAt: now,
+      updatedAt: now
+    };
+
+    ytDlpJobs.set(id, job);
+    pruneFinishedYtDlpJobs();
+    return job;
+  }
+
+  async function registerYtDlpDownloadedFile(deviceId, downloadedPath, preferredOriginalName = null) {
+    if (!downloadedPath) {
+      throw new Error('Файл не найден после загрузки');
+    }
+
+    const devicesPath = getDevicesPath();
+    const resolvedDevicesPath = path.resolve(devicesPath);
+    let finalPath = path.resolve(downloadedPath);
+
+    if (!fs.existsSync(finalPath)) {
+      throw new Error('Загруженный файл отсутствует на диске');
+    }
+
+    let safeName = makeSafeFilename(path.basename(finalPath));
+    if (!safeName) {
+      safeName = `video_${Date.now()}.mp4`;
+    }
+
+    const ext = path.extname(safeName).toLowerCase().replace('.', '');
+    if (!VIDEO_EXTENSIONS.includes(ext)) {
+      throw new Error(`Неподдерживаемый формат загруженного файла: .${ext || 'unknown'}`);
+    }
+
+    if (safeName.toLowerCase() === 'default.mp4') {
+      safeName = `video_${Date.now()}.mp4`;
+    }
+
+    let targetPath = path.join(resolvedDevicesPath, safeName);
+    while (fs.existsSync(targetPath) && path.resolve(targetPath) !== finalPath) {
+      const extName = path.extname(safeName);
+      const baseName = path.basename(safeName, extName);
+      safeName = `${baseName}_${crypto.randomBytes(3).toString('hex')}${extName}`;
+      targetPath = path.join(resolvedDevicesPath, safeName);
+    }
+
+    if (path.resolve(targetPath) !== finalPath) {
+      fs.renameSync(finalPath, targetPath);
+      finalPath = targetPath;
+    }
+
+    try {
+      fs.chmodSync(finalPath, 0o644);
+    } catch (chmodErr) {
+      logger.warn('[yt-dlp] Failed to set permissions on downloaded file', {
+        deviceId,
+        safeName,
+        filePath: finalPath,
+        error: chmodErr.message
+      });
+    }
+
+    const originalName = preferredOriginalName || path.basename(finalPath);
+
+    if (!fileNamesMap[deviceId]) fileNamesMap[deviceId] = {};
+    fileNamesMap[deviceId][safeName] = originalName;
+    saveFileNamesMap(fileNamesMap);
+
+    await processUploadedFilesAsync(
+      deviceId,
+      [{ filename: safeName, originalname: originalName, path: finalPath }],
+      resolvedDevicesPath,
+      fileNamesMap
+    );
+
+    updateDeviceFilesFromDB(deviceId, devices, fileNamesMap);
+    io.emit('devices/updated');
+
+    autoOptimizeVideoWrapper(deviceId, safeName).catch((err) => {
+      logger.warn('[yt-dlp] Auto optimization failed for downloaded file', {
+        deviceId,
+        safeName,
+        error: err.message
+      });
+    });
+
+    return {
+      safeName,
+      originalName,
+      filePath: finalPath
+    };
+  }
 
   // GET /api/devices/all/files - агрегированный список файлов по всем устройствам
   // Доступен только для авторизованных ролей (requireSpeaker: speaker/admin/hero_admin)
@@ -1287,6 +1496,271 @@ export function createFilesRouter(deps) {
     
     logger.info('[streams] Preview stream stop requested', { deviceId: id, safeName });
     res.json({ ok: true, stopped: true });
+  });
+
+  // POST /api/devices/:id/download-url - Загрузка видео по ссылке через локальный yt-dlp
+  router.post('/:id/download-url', requireAdmin, jsonParser, async (req, res) => {
+    const id = sanitizeDeviceId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Неверный ID устройства' });
+    if (!devices[id]) return res.status(404).json({ error: 'Устройство не найдено' });
+
+    const rawUrl = (req.body?.url || '').toString().trim();
+    if (!rawUrl) {
+      return res.status(400).json({ error: 'Требуется ссылка на видео' });
+    }
+
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(rawUrl);
+    } catch {
+      return res.status(400).json({ error: 'Неверный URL' });
+    }
+
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+      return res.status(400).json({ error: 'Поддерживаются только HTTP/HTTPS ссылки' });
+    }
+
+    const activeJob = Array.from(ytDlpJobs.values()).find((job) => {
+      return job.deviceId === id && ['queued', 'preparing', 'downloading', 'processing'].includes(job.status);
+    });
+
+    if (activeJob) {
+      return res.status(409).json({
+        error: 'Для этого устройства уже выполняется загрузка по ссылке',
+        jobId: activeJob.id,
+        status: activeJob.status
+      });
+    }
+
+    const job = createYtDlpJob({
+      deviceId: id,
+      url: parsedUrl.toString(),
+      username: req.user?.username
+    });
+
+    res.status(202).json({
+      ok: true,
+      jobId: job.id,
+      status: job.status
+    });
+
+    Promise.resolve().then(async () => {
+      let finalPathCandidate = null;
+      let titleCandidate = null;
+      let lastErrorLine = null;
+
+      try {
+        updateYtDlpJob(job.id, {
+          status: 'preparing',
+          progress: 0,
+          error: null
+        });
+
+        const binaryPath = await ensureLocalYtDlpBinary({ logger });
+        const devicesPath = getDevicesPath();
+
+        updateYtDlpJob(job.id, {
+          status: 'downloading',
+          progress: 0,
+          binaryPath
+        });
+
+        const args = [
+          '--no-playlist',
+          '--newline',
+          '--progress',
+          '--progress-delta', '1',
+          '--restrict-filenames',
+          '--merge-output-format', 'mp4',
+          '--print', `before_dl:${YTDLP_TITLE_MARKER}%(title)s`,
+          '--print', `after_move:${YTDLP_FINAL_PATH_MARKER}%(filepath)s`,
+          '--no-write-thumbnail',
+          '--no-write-info-json',
+          '-P', devicesPath,
+          '-o', '%(title).180B [%(id)s].%(ext)s',
+          parsedUrl.toString()
+        ];
+
+        const child = spawn(binaryPath, args, {
+          stdio: ['ignore', 'pipe', 'pipe']
+        });
+
+        updateYtDlpJob(job.id, { pid: child.pid || null });
+
+        const handleLine = (line) => {
+          const cleanLine = (line || '').trim();
+          if (!cleanLine) return;
+
+          const titleValue = extractMarkerValue(cleanLine, YTDLP_TITLE_MARKER);
+          if (titleValue) {
+            titleCandidate = titleValue;
+            updateYtDlpJob(job.id, { title: titleCandidate, lastLogLine: cleanLine });
+            return;
+          }
+
+          const pathCandidate = extractYtDlpPathCandidate(cleanLine);
+          if (pathCandidate) {
+            finalPathCandidate = pathCandidate;
+          }
+
+          const progress = parseYtDlpProgress(cleanLine);
+          if (progress) {
+            const current = ytDlpJobs.get(job.id);
+            updateYtDlpJob(job.id, {
+              progress: progress.percent !== null
+                ? Math.max(current?.progress || 0, progress.percent)
+                : current?.progress || 0,
+              speed: progress.speed || current?.speed || null,
+              eta: progress.eta || current?.eta || null,
+              lastLogLine: cleanLine
+            });
+          } else {
+            updateYtDlpJob(job.id, { lastLogLine: cleanLine });
+          }
+
+          if (cleanLine.includes('ERROR:')) {
+            lastErrorLine = cleanLine;
+          }
+        };
+
+        const bindStream = (stream) => {
+          let buffered = '';
+          stream.on('data', (chunk) => {
+            buffered += chunk.toString();
+            const lines = buffered.split(/\r?\n/);
+            buffered = lines.pop() || '';
+            lines.forEach(handleLine);
+          });
+          stream.on('end', () => {
+            if (buffered.trim()) {
+              handleLine(buffered);
+            }
+          });
+        };
+
+        bindStream(child.stdout);
+        bindStream(child.stderr);
+
+        await new Promise((resolve, reject) => {
+          child.once('error', reject);
+          child.once('close', (code) => {
+            if (code === 0) {
+              resolve();
+              return;
+            }
+            reject(new Error(lastErrorLine || `yt-dlp exited with code ${code}`));
+          });
+        });
+
+        updateYtDlpJob(job.id, {
+          status: 'processing',
+          progress: 100,
+          eta: null
+        });
+
+        const resolvedCandidate = finalPathCandidate
+          ? (path.isAbsolute(finalPathCandidate)
+            ? path.resolve(finalPathCandidate)
+            : path.resolve(path.join(devicesPath, finalPathCandidate)))
+          : null;
+
+        const preferredName = titleCandidate
+          ? `${titleCandidate}${resolvedCandidate ? path.extname(resolvedCandidate) : ''}`
+          : null;
+
+        const uploadedFile = await registerYtDlpDownloadedFile(id, resolvedCandidate, preferredName);
+
+        await auditLog({
+          userId: req.user?.userId || null,
+          action: AuditAction.FILE_UPLOAD,
+          resource: `device:${id}`,
+          details: {
+            deviceId: id,
+            filesCount: 1,
+            files: [uploadedFile.safeName],
+            uploadedBy: req.user?.username || 'anonymous',
+            source: 'yt-dlp',
+            url: parsedUrl.toString()
+          },
+          ipAddress: req.ip,
+          userAgent: req.get('user-agent'),
+          status: 'success'
+        });
+
+        updateYtDlpJob(job.id, {
+          status: 'completed',
+          progress: 100,
+          fileName: uploadedFile.safeName,
+          title: titleCandidate || uploadedFile.originalName,
+          error: null,
+          speed: null,
+          eta: null,
+          pid: null
+        });
+      } catch (error) {
+        logger.error('[yt-dlp] URL download failed', {
+          deviceId: id,
+          jobId: job.id,
+          url: parsedUrl?.toString?.() || rawUrl,
+          error: error.message,
+          stack: error.stack
+        });
+
+        updateYtDlpJob(job.id, {
+          status: 'failed',
+          error: error.message || 'Ошибка загрузки',
+          speed: null,
+          eta: null,
+          pid: null
+        });
+      } finally {
+        scheduleYtDlpJobCleanup(job.id);
+        pruneFinishedYtDlpJobs();
+      }
+    }).catch((err) => {
+      logger.error('[yt-dlp] Unexpected background handler error', {
+        deviceId: id,
+        jobId: job.id,
+        error: err.message,
+        stack: err.stack
+      });
+      updateYtDlpJob(job.id, {
+        status: 'failed',
+        error: err.message || 'Ошибка фоновой обработки'
+      });
+      scheduleYtDlpJobCleanup(job.id);
+    });
+  });
+
+  // GET /api/devices/:id/download-url/:jobId - Получить статус загрузки по ссылке
+  router.get('/:id/download-url/:jobId', requireAdmin, (req, res) => {
+    const id = sanitizeDeviceId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Неверный ID устройства' });
+
+    const jobId = (req.params.jobId || '').toString();
+    if (!jobId) return res.status(400).json({ error: 'Неверный jobId' });
+
+    const job = ytDlpJobs.get(jobId);
+    if (!job || job.deviceId !== id) {
+      return res.status(404).json({ error: 'Задача не найдена' });
+    }
+
+    res.json({
+      ok: true,
+      job: {
+        id: job.id,
+        deviceId: job.deviceId,
+        status: job.status,
+        progress: job.progress,
+        speed: job.speed,
+        eta: job.eta,
+        fileName: job.fileName,
+        title: job.title,
+        error: job.error,
+        createdAt: job.createdAt,
+        updatedAt: job.updatedAt
+      }
+    });
   });
 
   

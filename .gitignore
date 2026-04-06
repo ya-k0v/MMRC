@@ -65,6 +65,11 @@ public/content/*
 Thumbs.db
 .git-remotes-cheatsheet
 
+# Local downloader binaries
+bin/yt-dlp
+bin/yt-dlp.exe
+bin/yt-dlp.tmp-*
+
 # Archives / releases
 *.tar.gz
 *.zip

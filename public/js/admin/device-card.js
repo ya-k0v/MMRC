@@ -370,6 +370,14 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   uploadButtons.appendChild(folderInput);
   uploadButtons.appendChild(pickBtn);
   uploadButtons.appendChild(pickFolderBtn);
+
+  if (isAdmin) {
+    const ytDownloadBtn = document.createElement('button');
+    ytDownloadBtn.className = 'meta-lg ytDownloadBtn';
+    ytDownloadBtn.style.cssText = 'flex:1; min-width:90px;';
+    ytDownloadBtn.textContent = 'Ссылка';
+    uploadButtons.appendChild(ytDownloadBtn);
+  }
   
   if (isAdmin) {
     const addStreamBtn = document.createElement('button');
@@ -402,11 +410,32 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   const queue = document.createElement('ul');
   queue.className = 'queue';
   queue.style.cssText = 'display:none; margin-top:var(--space-sm); max-height:200px; overflow-y:auto; list-style:none; padding:0; margin-left:0;';
+
+  const ytDownloadStatus = document.createElement('div');
+  ytDownloadStatus.className = 'ytDownloadStatus';
+  ytDownloadStatus.style.cssText = 'display:none; margin-top:var(--space-sm); padding:var(--space-sm); border:1px solid var(--border-2); border-radius:var(--radius-sm); background:var(--panel-2);';
+
+  const ytDownloadStatusText = document.createElement('div');
+  ytDownloadStatusText.className = 'ytDownloadStatusText meta';
+  ytDownloadStatusText.style.cssText = 'margin-bottom:6px; word-break:break-word;';
+
+  const ytDownloadProgress = document.createElement('div');
+  ytDownloadProgress.className = 'ytDownloadProgress';
+  ytDownloadProgress.style.cssText = 'height:4px; border-radius:2px; background:var(--border-2); overflow:hidden;';
+
+  const ytDownloadProgressFill = document.createElement('div');
+  ytDownloadProgressFill.className = 'ytDownloadProgressFill';
+  ytDownloadProgressFill.style.cssText = 'height:100%; width:0%; background:linear-gradient(90deg, #4CAF50, #8BC34A); transition:width 0.3s ease;';
+
+  ytDownloadProgress.appendChild(ytDownloadProgressFill);
+  ytDownloadStatus.appendChild(ytDownloadStatusText);
+  ytDownloadStatus.appendChild(ytDownloadProgress);
   
   uploadBox.appendChild(uploadHeader);
   uploadBox.appendChild(uploadButtons);
   uploadBox.appendChild(dropZone);
   uploadBox.appendChild(queue);
+  uploadBox.appendChild(ytDownloadStatus);
   card.appendChild(uploadBox);
 
   // Обработчик ссылки на плеер в meta (копирование в буфер обмена)

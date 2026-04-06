@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "doctor:start": "node scripts/check-startup-compat.js"
+    "doctor:start": "node scripts/check-startup-compat.js",
+    "ytdlp:install": "bash ./scripts/install-yt-dlp-local.sh",
+    "ytdlp:version": "./bin/yt-dlp --version"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

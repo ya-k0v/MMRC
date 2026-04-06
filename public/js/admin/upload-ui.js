@@ -2,7 +2,6 @@
 import { setXhrAuth, adminFetch } from './auth.js';
 import { calculateFileMD5 } from './md5-helper.js';
 import { getFolderIcon, getWarningIcon, getSuccessIcon } from '../shared/svg-icons.js';
-import { escapeHtml } from '../shared/utils.js';
 
 export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, socket) {
   const dropZone = card.querySelector('.dropZone');
@@ -13,17 +12,118 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
   const clearBtn = card.querySelector('.clearBtn');
   const uploadBtn = card.querySelector('.uploadBtn');
   const queue = card.querySelector('.queue');
+  const ytDownloadBtn = card.querySelector('.ytDownloadBtn');
+  const ytDownloadStatus = card.querySelector('.ytDownloadStatus');
+  const ytDownloadStatusText = card.querySelector('.ytDownloadStatusText');
+  const ytDownloadProgressFill = card.querySelector('.ytDownloadProgressFill');
   if (!fileInput || !pickBtn || !clearBtn || !uploadBtn || !queue) return;
 
   let pending = [];
   let folderName = null; // Имя выбранной папки
   let isUploading = false; // Флаг активной загрузки (предотвращает обновление UI)
+  let ytDownloadJobId = null;
+  let ytDownloadPollTimer = null;
   const allowed = /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp|pdf|pptx|zip)$/i;
   const imageExtensions = /\.(png|jpg|jpeg|gif|webp)$/i;
   const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024; // 5GB
   
   // Экспортируем функцию для проверки состояния загрузки
   window.isUploadingFiles = () => isUploading;
+
+  function stopYtDownloadPolling() {
+    if (ytDownloadPollTimer) {
+      clearInterval(ytDownloadPollTimer);
+      ytDownloadPollTimer = null;
+    }
+  }
+
+  function updateYtDownloadStatus({ visible = false, text = '', progress = 0, state = 'downloading' } = {}) {
+    if (!ytDownloadStatus || !ytDownloadStatusText || !ytDownloadProgressFill) return;
+
+    ytDownloadStatus.style.display = visible ? 'block' : 'none';
+    ytDownloadStatusText.textContent = text;
+
+    const normalizedProgress = Math.max(0, Math.min(100, Math.round(progress)));
+    ytDownloadProgressFill.style.width = `${normalizedProgress}%`;
+
+    if (state === 'failed') {
+      ytDownloadProgressFill.style.background = 'linear-gradient(90deg, #ef5350, #e53935)';
+    } else if (state === 'completed') {
+      ytDownloadProgressFill.style.background = 'linear-gradient(90deg, #4CAF50, #8BC34A)';
+    } else {
+      ytDownloadProgressFill.style.background = 'linear-gradient(90deg, #42a5f5, #1e88e5)';
+    }
+  }
+
+  async function pollYtDownloadStatus() {
+    if (!ytDownloadJobId) return;
+
+    try {
+      const statusRes = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/download-url/${encodeURIComponent(ytDownloadJobId)}`);
+      const statusData = await statusRes.json();
+
+      if (!statusRes.ok || !statusData?.ok) {
+        throw new Error(statusData?.error || 'Не удалось получить статус загрузки');
+      }
+
+      const job = statusData.job || {};
+      const progress = typeof job.progress === 'number' ? job.progress : 0;
+
+      if (job.status === 'completed') {
+        updateYtDownloadStatus({
+          visible: true,
+          state: 'completed',
+          progress: 100,
+          text: `Загрузка завершена: ${job.fileName || job.title || 'файл готов'}`
+        });
+        ytDownloadJobId = null;
+        stopYtDownloadPolling();
+        if (ytDownloadBtn) ytDownloadBtn.disabled = false;
+        await renderFilesPane(deviceId);
+        socket.emit('devices/updated');
+        return;
+      }
+
+      if (job.status === 'failed') {
+        updateYtDownloadStatus({
+          visible: true,
+          state: 'failed',
+          progress,
+          text: `Ошибка загрузки: ${job.error || 'неизвестная ошибка'}`
+        });
+        ytDownloadJobId = null;
+        stopYtDownloadPolling();
+        if (ytDownloadBtn) ytDownloadBtn.disabled = false;
+        return;
+      }
+
+      const speedText = job.speed ? ` • ${job.speed}` : '';
+      const etaText = job.eta ? ` • ETA ${job.eta}` : '';
+      const statusLabel = {
+        queued: 'В очереди',
+        preparing: 'Подготовка',
+        downloading: 'Загрузка',
+        processing: 'Обработка'
+      }[job.status] || 'Загрузка';
+
+      updateYtDownloadStatus({
+        visible: true,
+        state: 'downloading',
+        progress,
+        text: `${statusLabel}: ${Math.round(progress)}%${speedText}${etaText}`
+      });
+    } catch (error) {
+      updateYtDownloadStatus({
+        visible: true,
+        state: 'failed',
+        progress: 0,
+        text: `Ошибка статуса: ${error.message}`
+      });
+      ytDownloadJobId = null;
+      stopYtDownloadPolling();
+      if (ytDownloadBtn) ytDownloadBtn.disabled = false;
+    }
+  }
 
   function renderQueue() {
     if (!pending.length) { 
@@ -294,6 +394,65 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
     }
     
     return files;
+  }
+
+  if (ytDownloadBtn) {
+    ytDownloadBtn.onclick = async () => {
+      if (ytDownloadJobId) {
+        alert('Для этого устройства уже идет загрузка по ссылке.');
+        return;
+      }
+
+      if (isUploading) {
+        alert('Дождитесь завершения текущей загрузки файлов.');
+        return;
+      }
+
+      const inputUrl = prompt('Вставьте ссылку на видео для загрузки через yt-dlp:');
+      const targetUrl = (inputUrl || '').trim();
+      if (!targetUrl) return;
+
+      ytDownloadBtn.disabled = true;
+      updateYtDownloadStatus({
+        visible: true,
+        state: 'downloading',
+        progress: 0,
+        text: 'Подготовка загрузки по ссылке...'
+      });
+
+      try {
+        const startRes = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/download-url`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: targetUrl })
+        });
+        const startData = await startRes.json();
+
+        if (!startRes.ok || !startData?.ok || !startData?.jobId) {
+          throw new Error(startData?.error || 'Не удалось запустить загрузку');
+        }
+
+        ytDownloadJobId = startData.jobId;
+        await pollYtDownloadStatus();
+
+        if (ytDownloadJobId) {
+          stopYtDownloadPolling();
+          ytDownloadPollTimer = setInterval(() => {
+            pollYtDownloadStatus();
+          }, 1200);
+        }
+      } catch (error) {
+        updateYtDownloadStatus({
+          visible: true,
+          state: 'failed',
+          progress: 0,
+          text: `Ошибка запуска: ${error.message}`
+        });
+        ytDownloadJobId = null;
+        stopYtDownloadPolling();
+        ytDownloadBtn.disabled = false;
+      }
+    };
   }
 
   uploadBtn.onclick = async () => {
