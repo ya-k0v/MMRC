@@ -1,28 +1,70 @@
 MMRC Personal Use License v1.0
 
+Лицензия MMRC для личного использования v1.0
+
 Copyright (c) 2026 ya-k0v
 
 1. Grant of License
+1. Предоставление лицензии
+
+EN:
 Permission is granted only to natural persons (individual users) to use, copy, and modify this software solely for personal, non-commercial purposes.
+RU:
+Разрешение предоставляется исключительно физическим лицам (индивидуальным пользователям) на использование, копирование и модификацию данного программного обеспечения исключительно в личных некоммерческих целях.
 
 2. Prohibited Use by Legal Entities
+2. Запрещённое использование юридическими лицами
+
+EN:
 Any use of this software by legal entities, individual entrepreneurs, governmental organizations, non-profit organizations, educational institutions, or any other organization is strictly prohibited without prior written permission from the copyright holder.
+RU:
+Любое использование данного программного обеспечения юридическими лицами, индивидуальными предпринимателями, государственными организациями, некоммерческими организациями, образовательными учреждениями или любыми другими организациями строго запрещено без предварительного письменного разрешения правообладателя.
 
 3. Commercial and Organizational Restrictions
+3. Коммерческие и организационные ограничения
+
+EN:
 Without prior written permission from the copyright holder, you may not:
-- use this software for commercial purposes;
-- provide this software as a service;
-- distribute, sublicense, sell, lease, or otherwise transfer this software to third parties;
-- use this software within organizational or corporate infrastructure.
+use this software for commercial purposes;
+provide this software as a service;
+distribute, sublicense, sell, lease, or otherwise transfer this software to third parties;
+use this software within organizational or corporate infrastructure.
+
+RU:
+Без предварительного письменного разрешения правообладателя запрещается:
+использовать данное программное обеспечение в коммерческих целях;
+предоставлять программное обеспечение как услугу;
+распространять, сублицензировать, продавать, сдавать в аренду или иным образом передавать программное обеспечение третьим лицам;
+использовать программное обеспечение в рамках организационной или корпоративной инфраструктуры.
 
 4. Written Permission Requirement
+4. Требование письменного разрешения
+
+EN:
 Any use outside the scope of Section 1 requires explicit prior written approval from the copyright holder.
+RU:
+Любое использование, выходящее за рамки Раздела 1, требует явного предварительного письменного согласия правообладателя.
 
 5. Disclaimer of Warranty
+5. Отказ от гарантий
+
+EN:
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+RU:
+ПРОГРАММНОЕ ОБЕСПЕЧЕНИЕ ПРЕДОСТАВЛЯЕТСЯ «КАК ЕСТЬ», БЕЗ КАКИХ-ЛИБО ГАРАНТИЙ, ЯВНЫХ ИЛИ ПОДРАЗУМЕВАЕМЫХ, ВКЛЮЧАЯ, НО НЕ ОГРАНИЧИВАЯСЬ ГАРАНТИЯМИ ТОВАРНОЙ ПРИГОДНОСТИ, СООТВЕТСТВИЯ КОНКРЕТНОЙ ЦЕЛИ И НЕНАРУШЕНИЯ ПРАВ.
 
 6. Limitation of Liability
+6. Ограничение ответственности
+
+EN:
 IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+RU:
+НИ ПРИ КАКИХ ОБСТОЯТЕЛЬСТВАХ ПРАВООБЛАДАТЕЛЬ НЕ НЕСЁТ ОТВЕТСТВЕННОСТИ ПО ЛЮБЫМ ИСКАМ, УЩЕРБУ ИЛИ ИНЫМ ОБЯЗАТЕЛЬСТВАМ, ВОЗНИКАЮЩИМ В РЕЗУЛЬТАТЕ ДОГОВОРА, ДЕЛИКТА ИЛИ ИНЫМ ОБРАЗОМ, СВЯЗАННЫМ С ПРОГРАММНЫМ ОБЕСПЕЧЕНИЕМ ИЛИ ЕГО ИСПОЛЬЗОВАНИЕМ.
 
 7. Termination
+7. Прекращение действия лицензии
+
+EN:
 Any violation of this license automatically terminates your rights under this license.
+RU:
+Любое нарушение условий данной лицензии автоматически прекращает ваши права, предоставленные этой лицензией.
