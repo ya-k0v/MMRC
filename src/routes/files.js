@@ -27,6 +27,8 @@ import { validateFilesAsync } from '../middleware/file-validation.js';
 import { getDatabase } from '../database/database.js';
 import { resolveContentType, STATIC_CONTENT_TYPES, VIDEO_EXTENSIONS } from '../config/file-types.js';
 import { ensureLocalYtDlpBinary } from '../utils/yt-dlp.js';
+import { needsFaststart } from '../video/mp4-faststart.js';
+import { needsOptimization } from '../video/optimizer.js';
 
 const STREAM_PROTOCOLS = new Set(['auto', 'hls', 'dash', 'mpegts']);
 const YTDLP_FINAL_PATH_MARKER = '__VC_FINAL_PATH__';
@@ -123,6 +125,77 @@ function parseYtDlpProgress(line = '') {
     speed: speedMatch ? speedMatch[1] : null,
     eta: etaMatch ? etaMatch[1] : null
   };
+}
+
+function parseFrameRate(raw = '') {
+  const value = String(raw || '').trim();
+  if (!value) return 0;
+  const [numRaw, denRaw] = value.split('/');
+  const num = Number(numRaw);
+  const den = Number(denRaw);
+  if (!Number.isFinite(num)) return 0;
+  if (!Number.isFinite(den) || den === 0) return num;
+  return num / den;
+}
+
+async function probeMediaInfo(filePath, timeoutMs = 30000) {
+  return await new Promise((resolve, reject) => {
+    const args = [
+      '-v', 'error',
+      '-show_entries', 'format=format_name',
+      '-show_entries', 'stream=codec_type,codec_name,pix_fmt,profile,level,r_frame_rate,width,height',
+      '-of', 'json',
+      filePath
+    ];
+
+    const ffprobe = spawn('ffprobe', args, {
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      ffprobe.kill('SIGKILL');
+      reject(new Error('ffprobe timeout'));
+    }, timeoutMs);
+
+    ffprobe.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    ffprobe.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    ffprobe.on('error', (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
+
+    ffprobe.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || `ffprobe exited with code ${code}`));
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(stdout || '{}');
+        resolve(parsed);
+      } catch (error) {
+        reject(new Error(`ffprobe JSON parse failed: ${error.message}`));
+      }
+    });
+  });
 }
 
 const router = express.Router();
@@ -706,12 +779,13 @@ export function createFilesRouter(deps) {
   const ytDlpJobs = new Map();
   const YTDLP_JOB_TTL_MS = 6 * 60 * 60 * 1000;
   const YTDLP_JOB_HISTORY_LIMIT = 100;
+  const YTDLP_ACTIVE_STATUSES = new Set(['queued', 'preparing', 'downloading', 'processing']);
 
   function pruneFinishedYtDlpJobs() {
     if (ytDlpJobs.size <= YTDLP_JOB_HISTORY_LIMIT) return;
 
     const finishedJobs = Array.from(ytDlpJobs.values())
-      .filter((job) => job.status === 'completed' || job.status === 'failed')
+      .filter((job) => job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled')
       .sort((a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime());
 
     while (ytDlpJobs.size > YTDLP_JOB_HISTORY_LIMIT && finishedJobs.length > 0) {
@@ -762,6 +836,7 @@ export function createFilesRouter(deps) {
       title: null,
       error: null,
       lastLogLine: null,
+      cancelRequested: false,
       startedBy: username || 'anonymous',
       createdAt: now,
       updatedAt: now
@@ -770,6 +845,232 @@ export function createFilesRouter(deps) {
     ytDlpJobs.set(id, job);
     pruneFinishedYtDlpJobs();
     return job;
+  }
+
+  function isYtDlpJobActive(job) {
+    return !!job && YTDLP_ACTIVE_STATUSES.has(job.status);
+  }
+
+  function cancelYtDlpJob(job, reason = 'Загрузка отменена пользователем') {
+    if (!isYtDlpJobActive(job)) return false;
+
+    const pid = Number(job.pid || 0);
+    updateYtDlpJob(job.id, {
+      status: 'cancelled',
+      error: reason,
+      speed: null,
+      eta: null,
+      pid: null,
+      cancelRequested: true
+    });
+
+    if (Number.isInteger(pid) && pid > 0) {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch (error) {
+        logger.warn('[yt-dlp] Failed to stop process on cancel', {
+          jobId: job.id,
+          pid,
+          error: error.message
+        });
+      }
+
+      const hardKillTimer = setTimeout(() => {
+        try {
+          process.kill(pid, 0);
+          process.kill(pid, 'SIGKILL');
+        } catch {
+          // Процесс уже завершен
+        }
+      }, 4000);
+
+      if (typeof hardKillTimer.unref === 'function') {
+        hardKillTimer.unref();
+      }
+    }
+
+    scheduleYtDlpJobCleanup(job.id);
+    pruneFinishedYtDlpJobs();
+    return true;
+  }
+
+  async function evaluateYtDlpVideoCompatibility(safeName, filePath) {
+    const reasons = new Set();
+    const ext = path.extname(safeName).toLowerCase();
+    const isMp4Like = ext === '.mp4' || ext === '.m4v';
+    const result = {
+      shouldOptimize: false,
+      reasons: [],
+      details: {
+        ext,
+        isMp4Like,
+        needsFaststart: null,
+        basicParams: null,
+        videoCodec: null,
+        audioCodec: null,
+        pixelFormat: null,
+        profile: null,
+        level: null,
+        fps: null,
+        formatName: null
+      }
+    };
+
+    if (!fs.existsSync(filePath)) {
+      reasons.add('missing_file');
+      result.reasons = Array.from(reasons);
+      result.shouldOptimize = true;
+      return result;
+    }
+
+    if (!isMp4Like) {
+      reasons.add(`container:${ext || 'unknown'}`);
+    }
+
+    if (isMp4Like) {
+      try {
+        const seekRisk = await needsFaststart(filePath);
+        result.details.needsFaststart = seekRisk;
+        if (seekRisk) {
+          reasons.add('seek_structure');
+        }
+      } catch (error) {
+        logger.warn('[yt-dlp] Failed to verify MP4 seekability', {
+          safeName,
+          filePath,
+          error: error.message
+        });
+        reasons.add('seek_check_failed');
+      }
+    }
+
+    try {
+      const params = await checkVideoParameters(filePath);
+      result.details.basicParams = params;
+      if (!params) {
+        reasons.add('video_params_unavailable');
+      } else if (needsOptimization(params)) {
+        reasons.add('optimizer_thresholds');
+      }
+    } catch (error) {
+      logger.warn('[yt-dlp] Failed to read basic video parameters', {
+        safeName,
+        filePath,
+        error: error.message
+      });
+      reasons.add('video_probe_failed');
+    }
+
+    try {
+      const probe = await probeMediaInfo(filePath);
+      const streams = Array.isArray(probe?.streams) ? probe.streams : [];
+      const videoStream = streams.find((stream) => stream?.codec_type === 'video') || null;
+      const audioStream = streams.find((stream) => stream?.codec_type === 'audio') || null;
+
+      const videoCodec = String(videoStream?.codec_name || '').toLowerCase();
+      const audioCodec = String(audioStream?.codec_name || '').toLowerCase();
+      const pixelFormat = String(videoStream?.pix_fmt || '').toLowerCase();
+      const profile = String(videoStream?.profile || '').trim();
+      const level = Number(videoStream?.level || 0);
+      const fps = parseFrameRate(videoStream?.r_frame_rate || '');
+      const formatName = String(probe?.format?.format_name || '').toLowerCase();
+
+      result.details.videoCodec = videoCodec || null;
+      result.details.audioCodec = audioCodec || null;
+      result.details.pixelFormat = pixelFormat || null;
+      result.details.profile = profile || null;
+      result.details.level = Number.isFinite(level) ? level : null;
+      result.details.fps = Number.isFinite(fps) ? Number(fps.toFixed(2)) : null;
+      result.details.formatName = formatName || null;
+
+      if (!videoStream) {
+        reasons.add('no_video_stream');
+      }
+
+      if (videoCodec && videoCodec !== 'h264') {
+        reasons.add(`video_codec:${videoCodec}`);
+      }
+
+      if (pixelFormat && pixelFormat !== 'yuv420p' && pixelFormat !== 'yuvj420p') {
+        reasons.add(`pix_fmt:${pixelFormat}`);
+      }
+
+      if (profile === 'High 10' || profile === 'High 4:2:2' || profile === 'High 4:4:4 Predictive') {
+        reasons.add(`profile:${profile}`);
+      }
+
+      if (Number.isFinite(level) && level > 42) {
+        reasons.add(`level:${level}`);
+      }
+
+      if (Number.isFinite(fps) && fps > 30.01) {
+        reasons.add(`fps:${fps.toFixed(2)}`);
+      }
+
+      if (audioCodec && audioCodec !== 'aac') {
+        reasons.add(`audio_codec:${audioCodec}`);
+      }
+
+      if (isMp4Like && formatName && !formatName.includes('mp4')) {
+        reasons.add(`format:${formatName}`);
+      }
+    } catch (error) {
+      logger.warn('[yt-dlp] Failed to read detailed media info', {
+        safeName,
+        filePath,
+        error: error.message
+      });
+      reasons.add('media_probe_failed');
+    }
+
+    result.reasons = Array.from(reasons);
+    result.shouldOptimize = result.reasons.length > 0;
+    return result;
+  }
+
+  function runSmartYtDlpOptimization(deviceId, safeName, filePath) {
+    Promise.resolve().then(async () => {
+      const ext = path.extname(safeName).toLowerCase();
+      if (!['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi', '.m4v'].includes(ext)) {
+        return;
+      }
+
+      const decision = await evaluateYtDlpVideoCompatibility(safeName, filePath);
+
+      if (!decision.shouldOptimize) {
+        logger.info('[yt-dlp] ✅ Full transcode skipped: file is already seekable and compatible', {
+          deviceId,
+          safeName,
+          filePath,
+          details: decision.details
+        });
+        return;
+      }
+
+      logger.info('[yt-dlp] ⚠️ Full optimization required after compatibility check', {
+        deviceId,
+        safeName,
+        reasons: decision.reasons,
+        details: decision.details
+      });
+
+      const optimizeResult = await autoOptimizeVideoWrapper(deviceId, safeName);
+      if (!optimizeResult?.success) {
+        logger.warn('[yt-dlp] Full optimization failed after compatibility check', {
+          deviceId,
+          safeName,
+          reasons: decision.reasons,
+          message: optimizeResult?.message || 'Unknown optimization error'
+        });
+      }
+    }).catch((error) => {
+      logger.warn('[yt-dlp] Smart optimization pipeline failed', {
+        deviceId,
+        safeName,
+        filePath,
+        error: error.message
+      });
+    });
   }
 
   async function registerYtDlpDownloadedFile(deviceId, downloadedPath, preferredOriginalName = null) {
@@ -839,13 +1140,12 @@ export function createFilesRouter(deps) {
     updateDeviceFilesFromDB(deviceId, devices, fileNamesMap);
     io.emit('devices/updated');
 
-    autoOptimizeVideoWrapper(deviceId, safeName).catch((err) => {
-      logger.warn('[yt-dlp] Auto optimization failed for downloaded file', {
-        deviceId,
-        safeName,
-        error: err.message
-      });
-    });
+    const currentMetadata = getFileMetadata(deviceId, safeName);
+    const optimizationPath = currentMetadata?.file_path && fs.existsSync(currentMetadata.file_path)
+      ? currentMetadata.file_path
+      : finalPath;
+
+    runSmartYtDlpOptimization(deviceId, safeName, optimizationPath);
 
     return {
       safeName,
@@ -1521,7 +1821,7 @@ export function createFilesRouter(deps) {
     }
 
     const activeJob = Array.from(ytDlpJobs.values()).find((job) => {
-      return job.deviceId === id && ['queued', 'preparing', 'downloading', 'processing'].includes(job.status);
+      return job.deviceId === id && isYtDlpJobActive(job);
     });
 
     if (activeJob) {
@@ -1591,6 +1891,11 @@ export function createFilesRouter(deps) {
           const cleanLine = (line || '').trim();
           if (!cleanLine) return;
 
+          const currentJob = ytDlpJobs.get(job.id);
+          if (!currentJob || currentJob.cancelRequested || currentJob.status === 'cancelled') {
+            return;
+          }
+
           const titleValue = extractMarkerValue(cleanLine, YTDLP_TITLE_MARKER);
           if (titleValue) {
             titleCandidate = titleValue;
@@ -1652,6 +1957,11 @@ export function createFilesRouter(deps) {
           });
         });
 
+        const afterDownloadJob = ytDlpJobs.get(job.id);
+        if (!afterDownloadJob || afterDownloadJob.cancelRequested || afterDownloadJob.status === 'cancelled') {
+          return;
+        }
+
         updateYtDlpJob(job.id, {
           status: 'processing',
           progress: 100,
@@ -1698,6 +2008,24 @@ export function createFilesRouter(deps) {
           pid: null
         });
       } catch (error) {
+        const cancelledJob = ytDlpJobs.get(job.id);
+        if (cancelledJob?.cancelRequested || cancelledJob?.status === 'cancelled') {
+          logger.info('[yt-dlp] URL download cancelled', {
+            deviceId: id,
+            jobId: job.id,
+            url: parsedUrl?.toString?.() || rawUrl
+          });
+
+          updateYtDlpJob(job.id, {
+            status: 'cancelled',
+            error: cancelledJob?.error || 'Загрузка отменена пользователем',
+            speed: null,
+            eta: null,
+            pid: null
+          });
+          return;
+        }
+
         logger.error('[yt-dlp] URL download failed', {
           deviceId: id,
           jobId: job.id,
@@ -1718,6 +2046,19 @@ export function createFilesRouter(deps) {
         pruneFinishedYtDlpJobs();
       }
     }).catch((err) => {
+      const cancelledJob = ytDlpJobs.get(job.id);
+      if (cancelledJob?.cancelRequested || cancelledJob?.status === 'cancelled') {
+        updateYtDlpJob(job.id, {
+          status: 'cancelled',
+          error: cancelledJob?.error || 'Загрузка отменена пользователем',
+          speed: null,
+          eta: null,
+          pid: null
+        });
+        scheduleYtDlpJobCleanup(job.id);
+        return;
+      }
+
       logger.error('[yt-dlp] Unexpected background handler error', {
         deviceId: id,
         jobId: job.id,
@@ -1729,6 +2070,47 @@ export function createFilesRouter(deps) {
         error: err.message || 'Ошибка фоновой обработки'
       });
       scheduleYtDlpJobCleanup(job.id);
+    });
+  });
+
+  // POST /api/devices/:id/download-url/cancel - Отменить задачи загрузки по ссылке
+  router.post('/:id/download-url/cancel', requireAdmin, jsonParser, (req, res) => {
+    const id = sanitizeDeviceId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Неверный ID устройства' });
+    if (!devices[id]) return res.status(404).json({ error: 'Устройство не найдено' });
+
+    const requestedJobId = (req.body?.jobId || '').toString().trim();
+    const reason = req.user?.username
+      ? `Загрузка отменена пользователем ${req.user.username}`
+      : 'Загрузка отменена пользователем';
+
+    let jobsToCancel = [];
+
+    if (requestedJobId) {
+      const singleJob = ytDlpJobs.get(requestedJobId);
+      if (!singleJob || singleJob.deviceId !== id) {
+        return res.status(404).json({ error: 'Задача не найдена' });
+      }
+      if (isYtDlpJobActive(singleJob)) {
+        jobsToCancel.push(singleJob);
+      }
+    } else {
+      jobsToCancel = Array.from(ytDlpJobs.values()).filter((job) => {
+        return job.deviceId === id && isYtDlpJobActive(job);
+      });
+    }
+
+    const cancelledIds = [];
+    jobsToCancel.forEach((job) => {
+      if (cancelYtDlpJob(job, reason)) {
+        cancelledIds.push(job.id);
+      }
+    });
+
+    res.json({
+      ok: true,
+      cancelled: cancelledIds.length,
+      jobIds: cancelledIds
     });
   });
 

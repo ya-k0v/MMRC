@@ -3,6 +3,223 @@ import { setXhrAuth, adminFetch } from './auth.js';
 import { calculateFileMD5 } from './md5-helper.js';
 import { getFolderIcon, getWarningIcon, getSuccessIcon } from '../shared/svg-icons.js';
 
+const YTDLP_ACTIVE_STATUSES = new Set(['queued', 'preparing', 'downloading', 'processing']);
+const ytDownloadRuntimeByDevice = new Map();
+const ytDownloadUiByDevice = new Map();
+
+function getYtRuntime(deviceId) {
+  if (!ytDownloadRuntimeByDevice.has(deviceId)) {
+    ytDownloadRuntimeByDevice.set(deviceId, {
+      deviceId,
+      jobId: null,
+      status: 'idle',
+      progress: 0,
+      speed: null,
+      eta: null,
+      fileName: null,
+      title: null,
+      error: null,
+      visible: false,
+      synced: false,
+      pollTimer: null,
+      updatedAt: Date.now()
+    });
+  }
+
+  return ytDownloadRuntimeByDevice.get(deviceId);
+}
+
+function notifyYtRuntimeChanged(deviceId) {
+  const render = ytDownloadUiByDevice.get(deviceId);
+  if (typeof render === 'function') {
+    render();
+  }
+}
+
+function setYtRuntime(deviceId, patch = {}) {
+  const runtime = getYtRuntime(deviceId);
+  const next = {
+    ...runtime,
+    ...patch,
+    updatedAt: Date.now()
+  };
+
+  ytDownloadRuntimeByDevice.set(deviceId, next);
+  notifyYtRuntimeChanged(deviceId);
+  return next;
+}
+
+function clearYtPollTimer(deviceId) {
+  const runtime = getYtRuntime(deviceId);
+  if (runtime.pollTimer) {
+    clearInterval(runtime.pollTimer);
+    runtime.pollTimer = null;
+    ytDownloadRuntimeByDevice.set(deviceId, runtime);
+  }
+}
+
+function normalizeYtProgress(progress = 0) {
+  return Math.max(0, Math.min(100, Math.round(Number(progress) || 0)));
+}
+
+function getYtStatusLabel(status) {
+  return {
+    queued: 'В очереди',
+    preparing: 'Подготовка',
+    downloading: 'Загрузка',
+    processing: 'Обработка',
+    completed: 'Готово',
+    failed: 'Ошибка',
+    cancelled: 'Отменено'
+  }[status] || 'Загрузка';
+}
+
+function buildYtStatusText(runtime) {
+  if (!runtime) return '';
+
+  const progress = normalizeYtProgress(runtime.progress);
+  const speedText = runtime.speed ? ` • ${runtime.speed}` : '';
+  const etaText = runtime.eta ? ` • ETA ${runtime.eta}` : '';
+
+  if (runtime.status === 'completed') {
+    return `Загрузка завершена: ${runtime.fileName || runtime.title || 'файл готов'}`;
+  }
+
+  if (runtime.status === 'failed') {
+    return `Ошибка загрузки: ${runtime.error || 'неизвестная ошибка'}`;
+  }
+
+  if (runtime.status === 'cancelled') {
+    return runtime.error || 'Загрузка отменена';
+  }
+
+  if (runtime.status === 'idle') {
+    return '';
+  }
+
+  return `${getYtStatusLabel(runtime.status)}: ${progress}%${speedText}${etaText}`;
+}
+
+function buildYtInlineText(runtime) {
+  if (!runtime) return '';
+
+  const progress = normalizeYtProgress(runtime.progress);
+  const speedText = runtime.speed ? ` • ${runtime.speed}` : '';
+  const etaText = runtime.eta ? ` • ETA ${runtime.eta}` : '';
+
+  if (YTDLP_ACTIVE_STATUSES.has(runtime.status)) {
+    return `${getYtStatusLabel(runtime.status)}: ${progress}%${speedText}${etaText}`;
+  }
+
+  if (runtime.status === 'completed') {
+    return 'Готово';
+  }
+
+  if (runtime.status === 'cancelled') {
+    return 'Отменено';
+  }
+
+  if (runtime.status === 'failed') {
+    return 'Ошибка';
+  }
+
+  return '';
+}
+
+function getYtVisualState(runtime) {
+  if (!runtime) return 'downloading';
+  if (runtime.status === 'completed') return 'completed';
+  if (runtime.status === 'failed' || runtime.status === 'cancelled') return 'failed';
+  return 'downloading';
+}
+
+async function pollYtDownloadStatusForDevice(deviceId) {
+  const runtime = getYtRuntime(deviceId);
+  if (!runtime.jobId) {
+    clearYtPollTimer(deviceId);
+    return;
+  }
+
+  try {
+    const statusRes = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/download-url/${encodeURIComponent(runtime.jobId)}`);
+    const statusData = await statusRes.json();
+
+    if (!statusRes.ok || !statusData?.ok) {
+      throw new Error(statusData?.error || 'Не удалось получить статус загрузки');
+    }
+
+    const job = statusData.job || {};
+    const patch = {
+      status: job.status || runtime.status,
+      progress: typeof job.progress === 'number' ? job.progress : runtime.progress,
+      speed: job.speed || null,
+      eta: job.eta || null,
+      fileName: job.fileName || runtime.fileName,
+      title: job.title || runtime.title,
+      error: job.error || null,
+      visible: true
+    };
+
+    if (job.status === 'completed') {
+      Object.assign(patch, {
+        progress: 100,
+        speed: null,
+        eta: null,
+        jobId: null,
+        error: null,
+        synced: false
+      });
+      clearYtPollTimer(deviceId);
+    }
+
+    if (job.status === 'failed' || job.status === 'cancelled') {
+      Object.assign(patch, {
+        speed: null,
+        eta: null,
+        jobId: null,
+        synced: false
+      });
+      clearYtPollTimer(deviceId);
+    }
+
+    setYtRuntime(deviceId, patch);
+  } catch (error) {
+    const current = getYtRuntime(deviceId);
+    if (current.status === 'cancelled') {
+      clearYtPollTimer(deviceId);
+      setYtRuntime(deviceId, { jobId: null, visible: true });
+      return;
+    }
+
+    clearYtPollTimer(deviceId);
+    setYtRuntime(deviceId, {
+      status: 'failed',
+      error: `Ошибка статуса: ${error.message}`,
+      speed: null,
+      eta: null,
+      jobId: null,
+      visible: true,
+      synced: false
+    });
+  }
+}
+
+function ensureYtDownloadPolling(deviceId) {
+  const runtime = getYtRuntime(deviceId);
+  if (!runtime.jobId || runtime.pollTimer) return;
+
+  runtime.pollTimer = setInterval(() => {
+    pollYtDownloadStatusForDevice(deviceId);
+  }, 1200);
+
+  ytDownloadRuntimeByDevice.set(deviceId, runtime);
+  pollYtDownloadStatusForDevice(deviceId);
+}
+
+function stopYtDownloadPolling(deviceId) {
+  clearYtPollTimer(deviceId);
+}
+
 export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, socket) {
   const dropZone = card.querySelector('.dropZone');
   const fileInput = card.querySelector('.fileInput');
@@ -16,13 +233,14 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
   const ytDownloadStatus = card.querySelector('.ytDownloadStatus');
   const ytDownloadStatusText = card.querySelector('.ytDownloadStatusText');
   const ytDownloadProgressFill = card.querySelector('.ytDownloadProgressFill');
+  const uploadStatusInline = card.querySelector('.uploadStatusInline');
   if (!fileInput || !pickBtn || !clearBtn || !uploadBtn || !queue) return;
 
   let pending = [];
   let folderName = null; // Имя выбранной папки
   let isUploading = false; // Флаг активной загрузки (предотвращает обновление UI)
-  let ytDownloadJobId = null;
-  let ytDownloadPollTimer = null;
+  let isClearingUploads = false;
+  const activeUploadRequests = new Set();
   const allowed = /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp|pdf|pptx|zip)$/i;
   const imageExtensions = /\.(png|jpg|jpeg|gif|webp)$/i;
   const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024; // 5GB
@@ -30,100 +248,89 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
   // Экспортируем функцию для проверки состояния загрузки
   window.isUploadingFiles = () => isUploading;
 
-  function stopYtDownloadPolling() {
-    if (ytDownloadPollTimer) {
-      clearInterval(ytDownloadPollTimer);
-      ytDownloadPollTimer = null;
-    }
+  function trackUploadRequest(xhr) {
+    activeUploadRequests.add(xhr);
+    xhr.addEventListener('loadend', () => {
+      activeUploadRequests.delete(xhr);
+    }, { once: true });
+    return xhr;
   }
 
-  function updateYtDownloadStatus({ visible = false, text = '', progress = 0, state = 'downloading' } = {}) {
-    if (!ytDownloadStatus || !ytDownloadStatusText || !ytDownloadProgressFill) return;
+  function updateYtDownloadStatusUI({ visible = false, text = '', progress = 0, state = 'downloading', inlineText = '' } = {}) {
+    if (ytDownloadStatus && ytDownloadStatusText && ytDownloadProgressFill) {
+      ytDownloadStatus.style.display = visible ? 'block' : 'none';
+      ytDownloadStatusText.textContent = text;
 
-    ytDownloadStatus.style.display = visible ? 'block' : 'none';
-    ytDownloadStatusText.textContent = text;
+      const normalizedProgress = normalizeYtProgress(progress);
+      ytDownloadProgressFill.style.width = `${normalizedProgress}%`;
 
-    const normalizedProgress = Math.max(0, Math.min(100, Math.round(progress)));
-    ytDownloadProgressFill.style.width = `${normalizedProgress}%`;
-
-    if (state === 'failed') {
-      ytDownloadProgressFill.style.background = 'linear-gradient(90deg, #ef5350, #e53935)';
-    } else if (state === 'completed') {
-      ytDownloadProgressFill.style.background = 'linear-gradient(90deg, #4CAF50, #8BC34A)';
-    } else {
-      ytDownloadProgressFill.style.background = 'linear-gradient(90deg, #42a5f5, #1e88e5)';
-    }
-  }
-
-  async function pollYtDownloadStatus() {
-    if (!ytDownloadJobId) return;
-
-    try {
-      const statusRes = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/download-url/${encodeURIComponent(ytDownloadJobId)}`);
-      const statusData = await statusRes.json();
-
-      if (!statusRes.ok || !statusData?.ok) {
-        throw new Error(statusData?.error || 'Не удалось получить статус загрузки');
+      if (state === 'failed') {
+        ytDownloadProgressFill.style.background = 'linear-gradient(90deg, #ef5350, #e53935)';
+      } else if (state === 'completed') {
+        ytDownloadProgressFill.style.background = 'linear-gradient(90deg, #4CAF50, #8BC34A)';
+      } else {
+        ytDownloadProgressFill.style.background = 'linear-gradient(90deg, #42a5f5, #1e88e5)';
       }
+    }
 
-      const job = statusData.job || {};
-      const progress = typeof job.progress === 'number' ? job.progress : 0;
+    if (uploadStatusInline) {
+      uploadStatusInline.style.display = inlineText ? 'inline' : 'none';
+      uploadStatusInline.textContent = inlineText;
+      if (state === 'failed') {
+        uploadStatusInline.style.color = '#e53935';
+      } else if (state === 'completed') {
+        uploadStatusInline.style.color = '#43a047';
+      } else {
+        uploadStatusInline.style.color = 'var(--text-dim)';
+      }
+    }
+  }
 
-      if (job.status === 'completed') {
-        updateYtDownloadStatus({
-          visible: true,
-          state: 'completed',
-          progress: 100,
-          text: `Загрузка завершена: ${job.fileName || job.title || 'файл готов'}`
-        });
-        ytDownloadJobId = null;
-        stopYtDownloadPolling();
-        if (ytDownloadBtn) ytDownloadBtn.disabled = false;
+  function syncYtDownloadUI() {
+    if (!document.body.contains(card)) {
+      if (ytDownloadUiByDevice.get(deviceId) === syncYtDownloadUI) {
+        ytDownloadUiByDevice.delete(deviceId);
+      }
+      return;
+    }
+
+    const runtime = getYtRuntime(deviceId);
+    const state = getYtVisualState(runtime);
+    const text = buildYtStatusText(runtime);
+    const inlineText = buildYtInlineText(runtime);
+
+    updateYtDownloadStatusUI({
+      visible: Boolean(text),
+      state,
+      progress: runtime.progress,
+      text,
+      inlineText
+    });
+
+    if (ytDownloadBtn) {
+      const hasActiveYtJob = Boolean(runtime.jobId && YTDLP_ACTIVE_STATUSES.has(runtime.status));
+      ytDownloadBtn.disabled = hasActiveYtJob || isUploading;
+    }
+
+    if (runtime.status === 'completed' && !runtime.synced) {
+      runtime.synced = true;
+      ytDownloadRuntimeByDevice.set(deviceId, runtime);
+
+      Promise.resolve().then(async () => {
         await renderFilesPane(deviceId);
         socket.emit('devices/updated');
-        return;
-      }
-
-      if (job.status === 'failed') {
-        updateYtDownloadStatus({
-          visible: true,
-          state: 'failed',
-          progress,
-          text: `Ошибка загрузки: ${job.error || 'неизвестная ошибка'}`
-        });
-        ytDownloadJobId = null;
-        stopYtDownloadPolling();
-        if (ytDownloadBtn) ytDownloadBtn.disabled = false;
-        return;
-      }
-
-      const speedText = job.speed ? ` • ${job.speed}` : '';
-      const etaText = job.eta ? ` • ETA ${job.eta}` : '';
-      const statusLabel = {
-        queued: 'В очереди',
-        preparing: 'Подготовка',
-        downloading: 'Загрузка',
-        processing: 'Обработка'
-      }[job.status] || 'Загрузка';
-
-      updateYtDownloadStatus({
-        visible: true,
-        state: 'downloading',
-        progress,
-        text: `${statusLabel}: ${Math.round(progress)}%${speedText}${etaText}`
+      }).catch((error) => {
+        console.error('[Upload] Ошибка обновления списка после yt-dlp:', error);
       });
-    } catch (error) {
-      updateYtDownloadStatus({
-        visible: true,
-        state: 'failed',
-        progress: 0,
-        text: `Ошибка статуса: ${error.message}`
-      });
-      ytDownloadJobId = null;
-      stopYtDownloadPolling();
-      if (ytDownloadBtn) ytDownloadBtn.disabled = false;
     }
   }
+
+  ytDownloadUiByDevice.set(deviceId, syncYtDownloadUI);
+  const runtime = getYtRuntime(deviceId);
+  if (runtime.jobId && YTDLP_ACTIVE_STATUSES.has(runtime.status)) {
+    ensureYtDownloadPolling(deviceId);
+  }
+  syncYtDownloadUI();
 
   function renderQueue() {
     if (!pending.length) { 
@@ -233,10 +440,76 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       folderInput.click();
     }
   };
-  clearBtn.onclick = () => { 
-    pending = []; 
+  clearBtn.onclick = async () => {
+    pending = [];
     folderName = null;
-    renderQueue(); 
+    renderQueue();
+
+    isClearingUploads = true;
+
+    if (activeUploadRequests.size > 0) {
+      for (const xhr of Array.from(activeUploadRequests)) {
+        try {
+          xhr.abort();
+        } catch (error) {
+          console.warn('[Upload] Не удалось прервать XMLHttpRequest:', error);
+        }
+      }
+      activeUploadRequests.clear();
+    }
+
+    if (isUploading) {
+      isUploading = false;
+      uploadBtn.disabled = false;
+      uploadBtn.textContent = 'Загрузить';
+    }
+
+    try {
+      const cancelRes = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/download-url/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ all: true })
+      });
+      const cancelData = await cancelRes.json();
+
+      if (!cancelRes.ok || !cancelData?.ok) {
+        throw new Error(cancelData?.error || 'Не удалось отменить задачи загрузки');
+      }
+
+      const runtime = getYtRuntime(deviceId);
+      if (cancelData.cancelled > 0 || (runtime.jobId && YTDLP_ACTIVE_STATUSES.has(runtime.status))) {
+        stopYtDownloadPolling(deviceId);
+        setYtRuntime(deviceId, {
+          jobId: null,
+          status: 'cancelled',
+          error: 'Загрузка отменена пользователем',
+          speed: null,
+          eta: null,
+          visible: true,
+          synced: false
+        });
+      } else {
+        stopYtDownloadPolling(deviceId);
+        setYtRuntime(deviceId, {
+          jobId: null,
+          status: 'idle',
+          progress: 0,
+          speed: null,
+          eta: null,
+          fileName: null,
+          title: null,
+          error: null,
+          visible: false,
+          synced: false
+        });
+      }
+    } catch (error) {
+      console.warn('[Upload] Не удалось отменить задачи загрузки:', error);
+      syncYtDownloadUI();
+    } finally {
+      isClearingUploads = false;
+      syncYtDownloadUI();
+    }
   };
   fileInput.onchange = e => { 
     folderName = null; // Сбрасываем режим папки
@@ -398,7 +671,8 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
 
   if (ytDownloadBtn) {
     ytDownloadBtn.onclick = async () => {
-      if (ytDownloadJobId) {
+      const runtime = getYtRuntime(deviceId);
+      if (runtime.jobId && YTDLP_ACTIVE_STATUSES.has(runtime.status)) {
         alert('Для этого устройства уже идет загрузка по ссылке.');
         return;
       }
@@ -412,12 +686,16 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       const targetUrl = (inputUrl || '').trim();
       if (!targetUrl) return;
 
-      ytDownloadBtn.disabled = true;
-      updateYtDownloadStatus({
-        visible: true,
-        state: 'downloading',
+      setYtRuntime(deviceId, {
+        status: 'preparing',
         progress: 0,
-        text: 'Подготовка загрузки по ссылке...'
+        speed: null,
+        eta: null,
+        fileName: null,
+        title: null,
+        error: null,
+        visible: true,
+        synced: false
       });
 
       try {
@@ -432,25 +710,28 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
           throw new Error(startData?.error || 'Не удалось запустить загрузку');
         }
 
-        ytDownloadJobId = startData.jobId;
-        await pollYtDownloadStatus();
-
-        if (ytDownloadJobId) {
-          stopYtDownloadPolling();
-          ytDownloadPollTimer = setInterval(() => {
-            pollYtDownloadStatus();
-          }, 1200);
-        }
-      } catch (error) {
-        updateYtDownloadStatus({
-          visible: true,
-          state: 'failed',
+        setYtRuntime(deviceId, {
+          jobId: startData.jobId,
+          status: startData.status || 'queued',
           progress: 0,
-          text: `Ошибка запуска: ${error.message}`
+          speed: null,
+          eta: null,
+          error: null,
+          visible: true,
+          synced: false
         });
-        ytDownloadJobId = null;
-        stopYtDownloadPolling();
-        ytDownloadBtn.disabled = false;
+        ensureYtDownloadPolling(deviceId);
+      } catch (error) {
+        setYtRuntime(deviceId, {
+          jobId: null,
+          status: 'failed',
+          progress: 0,
+          speed: null,
+          eta: null,
+          error: `Ошибка запуска: ${error.message}`,
+          visible: true,
+          synced: false
+        });
       }
     };
   }
@@ -534,6 +815,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       // STEP 2: Загружаем только уникальные файлы ПО ОЧЕРЕДИ (последовательно)
       if (filesToUpload.length > 0) {
         isUploading = true; // Устанавливаем флаг активной загрузки
+        syncYtDownloadUI();
         uploadBtn.textContent = `Загрузка (0/${filesToUpload.length})...`;
         
         let uploadedCount = 0;
@@ -560,7 +842,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
 
           const folderProgressEl = queue.querySelector(`#p_${deviceId}_folder`);
           await new Promise((resolve, reject) => {
-            const xhr = new XMLHttpRequest();
+            const xhr = trackUploadRequest(new XMLHttpRequest());
             xhr.open('POST', `/api/devices/${encodeURIComponent(deviceId)}/upload`);
             setXhrAuth(xhr);
             xhr.upload.onprogress = e => {
@@ -570,6 +852,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
             };
             xhr.onload = () => xhr.status<300 ? resolve() : reject(new Error(xhr.statusText || 'Ошибка загрузки'));
             xhr.onerror = () => reject(new Error('Ошибка сети'));
+            xhr.onabort = () => reject(new Error('Загрузка отменена пользователем'));
             xhr.send(form);
           });
           
@@ -588,7 +871,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
             form.append('files', file);
             
             await new Promise((resolve, reject) => {
-              const xhr = new XMLHttpRequest();
+              const xhr = trackUploadRequest(new XMLHttpRequest());
               xhr.open('POST', `/api/devices/${encodeURIComponent(deviceId)}/upload`);
               setXhrAuth(xhr);
               
@@ -615,6 +898,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
               };
               
               xhr.onerror = () => reject(new Error('Ошибка сети'));
+              xhr.onabort = () => reject(new Error('Загрузка отменена пользователем'));
               xhr.send(form);
             }).catch(err => {
               // Обрабатываем ошибку для текущего файла
@@ -643,6 +927,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       
       // Сбрасываем флаг загрузки ПЕРЕД обновлением UI
       isUploading = false;
+      syncYtDownloadUI();
       
       // После загрузки — обновить правую колонку файлов
       await renderFilesPane(deviceId);
@@ -657,11 +942,15 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       } else if (errorMessage === 'Upload failed' || errorMessage === 'Ошибка загрузки') {
         errorMessage = 'Ошибка загрузки';
       }
-      alert(`❌ Ошибка загрузки: ${errorMessage}`);
+
+      if (errorMessage !== 'Загрузка отменена пользователем' || !isClearingUploads) {
+        alert(`❌ Ошибка загрузки: ${errorMessage}`);
+      }
     } finally {
       isUploading = false; // Сбрасываем флаг в любом случае
       uploadBtn.disabled = false;
       uploadBtn.textContent = 'Загрузить';
+      syncYtDownloadUI();
     }
   };
 }

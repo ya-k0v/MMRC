@@ -311,11 +311,18 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   const uploadHeader = document.createElement('div');
   uploadHeader.className = 'header';
   uploadHeader.style.cssText = 'display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-sm);';
+
+  const uploadTitleWrap = document.createElement('div');
+  uploadTitleWrap.style.cssText = 'display:flex; align-items:center; gap:var(--space-sm); min-width:0;';
   
   const uploadTitle = document.createElement('div');
   uploadTitle.className = 'title';
   uploadTitle.style.cssText = 'margin:0; font-size:var(--font-size-base)';
   uploadTitle.textContent = 'Загрузка файлов';
+
+  const uploadStatusInline = document.createElement('span');
+  uploadStatusInline.className = 'uploadStatusInline meta';
+  uploadStatusInline.style.cssText = 'display:none; font-size:var(--font-size-xs); color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:min(52vw, 460px);';
   
   const queueToggleBtn = document.createElement('button');
   queueToggleBtn.className = 'meta-lg queueToggleBtn';
@@ -335,7 +342,9 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   queueToggleSvg.appendChild(queueTogglePolyline);
   queueToggleBtn.appendChild(queueToggleSvg);
   
-  uploadHeader.appendChild(uploadTitle);
+  uploadTitleWrap.appendChild(uploadTitle);
+  uploadTitleWrap.appendChild(uploadStatusInline);
+  uploadHeader.appendChild(uploadTitleWrap);
   uploadHeader.appendChild(queueToggleBtn);
   
   const uploadButtons = document.createElement('div');
