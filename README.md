@@ -106,7 +106,7 @@ node server.js
 
 ## 👤 Автор
 
-**ya-k0v** - [GitHub](https://github.com/ya-k0v/MMRC)
+**ya-k0v** - [GitHub](https://github.com/ya-k0v/)
 
 **Версия:** 3.1.1
 
