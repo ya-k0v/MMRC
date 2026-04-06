@@ -8,14 +8,26 @@ import http from 'http';
 import logger from '../utils/logger.js';
 import { getStreamsOutputDir } from '../config/settings-manager.js';
 import { 
+  notificationsManager,
   notifyDiskFull, 
   notifyStreamStartFailed,
   notifyStreamSourceUnavailable 
 } from '../utils/notifications.js';
+import { jobResourceManager } from '../utils/job-resource-manager.js';
 
 const execAsync = promisify(exec);
 
 const STREAM_KEY_SEPARATOR = '::';
+const STREAM_WORKER_ACTIVE_STATUSES = new Set(['starting', 'running', 'restarting']);
+
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const STREAM_RESOURCE_CPU_UNITS = Math.max(1, parsePositiveInt(process.env.STREAM_RESOURCE_CPU_UNITS, 1));
+const STREAM_RESOURCE_MEMORY_MB = Math.max(128, parsePositiveInt(process.env.STREAM_RESOURCE_MEMORY_MB, 384));
+const STREAM_RESOURCE_TIMEOUT_MS = Math.max(10000, parsePositiveInt(process.env.STREAM_RESOURCE_TIMEOUT_MS, 180000));
 
 // КРИТИЧНО: Максимальный размер stderr буфера для предотвращения утечек памяти
 const MAX_STDERR_BUFFER_SIZE = 10 * 1024; // 10KB
@@ -151,6 +163,8 @@ class StreamManager extends EventEmitter {
       ffmpegPath: this.options.ffmpegPath,
       idleTimeout: this.idleTimeout
     });
+
+    this._setupWorkerNotificationBridges();
     
     // Запускаем периодическую проверку неиспользуемых стримов
     this._startIdleCleanup();
@@ -164,6 +178,132 @@ class StreamManager extends EventEmitter {
     
     // Запускаем периодический health check для активных стримов
     this._startHealthCheck();
+  }
+
+  _streamWorkerStatusLabel(status) {
+    switch (status) {
+      case 'starting':
+        return 'Запуск';
+      case 'running':
+        return 'Работает';
+      case 'restarting':
+        return 'Перезапуск';
+      case 'failed':
+        return 'Ошибка';
+      case 'stopped':
+        return 'Остановлен';
+      default:
+        return 'Состояние';
+    }
+  }
+
+  _buildStreamWorkerActions(deviceId, safeName, status) {
+    if (!deviceId || !safeName || !STREAM_WORKER_ACTIVE_STATUSES.has(status)) {
+      return [];
+    }
+
+    return [{
+      id: 'cancel_worker',
+      label: 'Остановить воркер',
+      method: 'POST',
+      url: `/api/devices/${encodeURIComponent(deviceId)}/streams/${encodeURIComponent(safeName)}/cancel-worker`,
+      confirm: 'Остановить FFmpeg воркер для этого стрима?',
+      variant: 'danger'
+    }];
+  }
+
+  _publishStreamWorkerNotification({
+    deviceId,
+    safeName,
+    status = 'running',
+    severity = 'info',
+    message = '',
+    details = {}
+  } = {}) {
+    if (!safeName) return;
+
+    const normalizedStatus = String(status || 'running');
+
+    try {
+      notificationsManager.upsert({
+        key: `stream-worker:${safeName}`,
+        type: 'stream_worker',
+        severity,
+        title: `Stream worker • ${safeName}`,
+        message: message || this._streamWorkerStatusLabel(normalizedStatus),
+        source: 'stream-worker',
+        actions: this._buildStreamWorkerActions(deviceId, safeName, normalizedStatus),
+        details: {
+          deviceId: deviceId || null,
+          safeName,
+          status: normalizedStatus,
+          updatedAt: new Date().toISOString(),
+          ...details
+        }
+      });
+    } catch (err) {
+      logger.warn('[StreamManager] Failed to publish worker notification', {
+        deviceId,
+        safeName,
+        status: normalizedStatus,
+        error: err.message
+      });
+    }
+  }
+
+  _setupWorkerNotificationBridges() {
+    this.on('stream:running', ({ deviceId, safeName }) => {
+      this._publishStreamWorkerNotification({
+        deviceId,
+        safeName,
+        status: 'running',
+        severity: 'info',
+        message: 'FFmpeg воркер запущен'
+      });
+    });
+
+    this.on('stream:restarting', ({ deviceId, safeName, attempt }) => {
+      this._publishStreamWorkerNotification({
+        deviceId,
+        safeName,
+        status: 'restarting',
+        severity: 'warning',
+        message: `Перезапуск FFmpeg воркера (попытка ${attempt || 1})`,
+        details: {
+          attempt: Number(attempt) || 1
+        }
+      });
+    });
+
+    this.on('stream:restart:limit_reached', ({ deviceId, safeName, reason }) => {
+      this._publishStreamWorkerNotification({
+        deviceId,
+        safeName,
+        status: 'failed',
+        severity: 'critical',
+        message: 'Воркер остановлен: достигнут лимит перезапусков',
+        details: {
+          reason: reason || 'restart_limit'
+        }
+      });
+    });
+
+    this.on('stream:stopped', ({ deviceId, safeName, reason, code, signal }) => {
+      this._publishStreamWorkerNotification({
+        deviceId,
+        safeName,
+        status: 'stopped',
+        severity: 'info',
+        message: reason
+          ? `FFmpeg воркер остановлен (${reason})`
+          : 'FFmpeg воркер остановлен',
+        details: {
+          reason: reason || null,
+          code: code ?? null,
+          signal: signal ?? null
+        }
+      });
+    });
   }
   
   /**
@@ -877,6 +1017,30 @@ class StreamManager extends EventEmitter {
 
       const safeNameSanitized = sanitizePathFragment(safe_name);
       const paths = this._getPaths(safeNameSanitized);
+      const resourceRequestId = `stream-worker:${safeNameSanitized}`;
+      let resourceReservation = null;
+      let resourceReleased = false;
+
+      const releaseStreamResources = (reason = 'unknown') => {
+        if (resourceReleased) return;
+        resourceReleased = true;
+
+        if (resourceReservation?.release) {
+          try {
+            resourceReservation.release();
+          } catch (releaseErr) {
+            logger.warn('[StreamManager] Failed to release stream reservation', {
+              deviceId: device_id,
+              safeName: safe_name,
+              reservationId: resourceReservation.id,
+              reason,
+              error: releaseErr.message
+            });
+          }
+        } else {
+          jobResourceManager.release(resourceRequestId);
+        }
+      };
     
     logger.info('[StreamManager] Preparing stream folder', {
       deviceId: device_id,
@@ -1178,10 +1342,64 @@ class StreamManager extends EventEmitter {
       ffmpegPath: this.options.ffmpegPath,
       args: args.join(' ')
     });
-    
-    const child = spawn(this.options.ffmpegPath, args, {
-      stdio: ['ignore', 'ignore', 'pipe']
-    });
+
+    try {
+      resourceReservation = await jobResourceManager.acquire({
+        id: resourceRequestId,
+        jobType: 'stream-worker',
+        cpuUnits: STREAM_RESOURCE_CPU_UNITS,
+        memoryMb: STREAM_RESOURCE_MEMORY_MB,
+        priority: 3,
+        timeoutMs: STREAM_RESOURCE_TIMEOUT_MS,
+        meta: {
+          deviceId: device_id,
+          safeName: safeNameSanitized
+        }
+      });
+    } catch (resourceError) {
+      const message = resourceError.message === 'Resource acquisition timeout'
+        ? 'Нет свободных ресурсов для запуска stream worker'
+        : (resourceError.message || 'Не удалось зарезервировать ресурсы');
+
+      logger.warn('[StreamManager] Stream worker resource acquire failed', {
+        deviceId: device_id,
+        safeName: safe_name,
+        error: message
+      });
+
+      notifyStreamStartFailed(device_id, safe_name, {
+        reason: 'resource_limit',
+        error: message
+      });
+
+      this._publishStreamWorkerNotification({
+        deviceId: device_id,
+        safeName: safeNameSanitized,
+        status: 'failed',
+        severity: 'warning',
+        message,
+        details: {
+          reason: 'resource_limit'
+        }
+      });
+
+      return null;
+    }
+
+    let child;
+    try {
+      child = spawn(this.options.ffmpegPath, args, {
+        stdio: ['ignore', 'ignore', 'pipe']
+      });
+    } catch (spawnError) {
+      releaseStreamResources('spawn_throw');
+      logger.error('[StreamManager] FFmpeg spawn threw synchronously', {
+        deviceId: device_id,
+        safeName: safe_name,
+        error: spawnError.message
+      });
+      return null;
+    }
     
     // КРИТИЧНО: Собираем stderr для логирования ошибок FFmpeg
     let stderrBuffer = '';
@@ -1194,6 +1412,7 @@ class StreamManager extends EventEmitter {
       protocol: stream_protocol || 'auto',
       paths,
       status: 'starting',
+      stopReason: null,
       restarts: 0,
       stopping: false,
       lastError: null,
@@ -1204,8 +1423,19 @@ class StreamManager extends EventEmitter {
       circuitBreakerState: 'closed', // КРИТИЧНО: Состояние circuit breaker: 'closed' | 'open' | 'halfOpen'
       circuitBreakerOpenTime: null, // Время открытия circuit breaker
       consecutiveFailures: 0, // Количество последовательных неудач
-      emergencyCleanupTriggered: false // Флаг экстренной очистки при переполнении диска
+      emergencyCleanupTriggered: false, // Флаг экстренной очистки при переполнении диска
+      resourceRequestId,
+      resourceReservationId: resourceReservation?.id || null,
+      releaseResources: releaseStreamResources
     };
+
+    this._publishStreamWorkerNotification({
+      deviceId: device_id,
+      safeName: safeNameSanitized,
+      status: 'starting',
+      severity: 'info',
+      message: 'Запуск FFmpeg воркера'
+    });
 
       // КРИТИЧНО: Обрабатываем stderr для отслеживания статуса и сбора ошибок
       // Периодически очищаем буфер для предотвращения утечек памяти
@@ -1324,6 +1554,7 @@ class StreamManager extends EventEmitter {
 
     child.on('error', (err) => {
       job.lastError = err.message;
+      releaseStreamResources('child_error');
       
       // КРИТИЧНО: Обрабатываем ошибки переполнения диска
       if (err.code === 'ENOSPC' || err.message.includes('No space left on device')) {
@@ -1365,6 +1596,7 @@ class StreamManager extends EventEmitter {
 
     child.on('exit', (code, signal) => {
       const wasStopping = job.stopping;
+      releaseStreamResources('child_exit');
       
       // КРИТИЧНО: Очищаем обработчики событий процесса для предотвращения утечек памяти
       try {
@@ -1415,7 +1647,13 @@ class StreamManager extends EventEmitter {
         // КРИТИЧНО: Удаляем job и очищаем файлы при остановке
         this.jobs.delete(safeName);
         this._cleanupFolder(job.paths.folderPath);
-        this.emit('stream:stopped', { deviceId: job.deviceId, safeName: job.safeName, code, signal });
+        this.emit('stream:stopped', {
+          deviceId: job.deviceId,
+          safeName: job.safeName,
+          reason: job.stopReason || 'manual',
+          code,
+          signal
+        });
         logger.info('[StreamManager] FFmpeg process exited, files cleaned', { 
           deviceId: job.deviceId, 
           safeName: job.safeName, 
@@ -1648,6 +1886,10 @@ class StreamManager extends EventEmitter {
       
       // Очищаем файлы
       this._cleanupFolder(job.paths.folderPath);
+
+      if (typeof job.releaseResources === 'function') {
+        job.releaseResources('restart_hung_process');
+      }
       
       // Удаляем job из Maps
       this.jobs.delete(job.safeName);
@@ -2129,6 +2371,7 @@ class StreamManager extends EventEmitter {
     
     // КРИТИЧНО: Используем блокировку для предотвращения race conditions
     return this._withLock(safeNameSanitized, async () => {
+      let job = null;
       try {
         const nameEntry = this.nameToJobMap.get(safeNameSanitized);
         
@@ -2175,9 +2418,10 @@ class StreamManager extends EventEmitter {
       // Устройства могут остаться в списке даже после завершения просмотра
       // Проверяем также активных зрителей (HTTP-сессии)
       const hasActiveViewers = nameEntry.activeViewers && nameEntry.activeViewers.size > 0;
+      const forceStop = reason === 'admin_notification_cancel';
       
       // Если остались другие устройства ИЛИ есть активные запросы ИЛИ есть активные зрители - НЕ останавливаем стрим
-      if (remainingDevices > 0 || hasActiveRequests || hasActiveViewers) {
+      if (!forceStop && (remainingDevices > 0 || hasActiveRequests || hasActiveViewers)) {
         logger.info('[StreamManager] Stream still in use', {
           safeName: safeNameSanitized,
           remainingDevices,
@@ -2197,7 +2441,7 @@ class StreamManager extends EventEmitter {
         reason
       });
       
-      const job = nameEntry.job;
+      job = nameEntry.job;
       if (!job) {
         logger.warn('[StreamManager] No job found for stream', { safeName: safeNameSanitized });
         this.nameToJobMap.delete(safeNameSanitized);
@@ -2207,6 +2451,7 @@ class StreamManager extends EventEmitter {
         
       // Помечаем job как останавливаемый
       job.stopping = true;
+      job.stopReason = reason;
       const folderPathToClean = job.paths.folderPath;
       
       // КРИТИЧНО: Если процесс уже завершился, сразу очищаем джоб
@@ -2216,6 +2461,9 @@ class StreamManager extends EventEmitter {
           pid: job.process?.pid,
           reason
         });
+        if (typeof job.releaseResources === 'function') {
+          job.releaseResources('stop_dead_process');
+        }
         this.jobs.delete(safeNameSanitized);
         this.nameToJobMap.delete(safeNameSanitized);
         this._cleanupFolder(folderPathToClean);
@@ -2242,6 +2490,9 @@ class StreamManager extends EventEmitter {
             }
             
             // Удаляем все записи
+            if (typeof job.releaseResources === 'function') {
+              job.releaseResources('stop_cleanup_on_exit');
+            }
             this.jobs.delete(safeNameSanitized);
             this.nameToJobMap.delete(safeNameSanitized);
             
@@ -2354,6 +2605,9 @@ class StreamManager extends EventEmitter {
             }
             
             // Удаляем все записи
+            if (typeof job.releaseResources === 'function') {
+              job.releaseResources('stop_force_cleanup');
+            }
             this.jobs.delete(safeNameSanitized);
             this.nameToJobMap.delete(safeNameSanitized);
             
@@ -2430,6 +2684,9 @@ class StreamManager extends EventEmitter {
           
           this.jobs.delete(safeNameSanitized);
           this.nameToJobMap.delete(safeNameSanitized);
+          if (typeof job.releaseResources === 'function') {
+            job.releaseResources('stop_error_cleanup');
+          }
           this._cleanupFolder(folderPathToClean);
           this.emit('stream:stopped', { deviceId, safeName: safeNameSanitized, reason });
         }
@@ -2437,6 +2694,9 @@ class StreamManager extends EventEmitter {
         // Если процесса нет, сразу очищаем
         this.jobs.delete(safeNameSanitized);
         this.nameToJobMap.delete(safeNameSanitized);
+        if (typeof job.releaseResources === 'function') {
+          job.releaseResources('stop_without_process');
+        }
         this._cleanupFolder(folderPathToClean);
         this.emit('stream:stopped', { deviceId, safeName: safeNameSanitized, reason });
       }
@@ -2449,6 +2709,9 @@ class StreamManager extends EventEmitter {
           stack: err.stack
         });
         // Очищаем даже при ошибке
+        if (job && typeof job.releaseResources === 'function') {
+          job.releaseResources('stop_exception');
+        }
         this.jobs.delete(safeNameSanitized);
         this.nameToJobMap.delete(safeNameSanitized);
         if (job && job.paths) {

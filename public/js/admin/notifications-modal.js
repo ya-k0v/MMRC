@@ -3,11 +3,43 @@
  * @module admin/notifications-modal
  */
 
-import { showModal, closeModal } from './modal.js';
+import { showModal } from './modal.js';
 import { adminFetch } from './auth.js';
 
 let socket = null;
 let currentNotifications = [];
+
+function getActionButtonStyle(variant = 'secondary') {
+  if (variant === 'danger') {
+    return 'background:#b91c1c; border:1px solid #991b1b; color:#fff;';
+  }
+  if (variant === 'primary') {
+    return 'background:var(--accent, #2563eb); border:1px solid var(--accent, #2563eb); color:#fff;';
+  }
+  return 'background:var(--bg-secondary); border:1px solid var(--border); color:var(--text);';
+}
+
+async function reportModalError(title, error, details = {}) {
+  const message = error?.message || String(error || 'Неизвестная ошибка');
+  try {
+    await adminFetch('/api/notifications/report', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        type: 'admin_notifications_ui_error',
+        severity: 'warning',
+        title,
+        message,
+        source: 'admin-ui',
+        details
+      })
+    });
+  } catch (reportErr) {
+    console.error('[Notifications Modal] Failed to report UI error:', reportErr);
+  }
+}
 
 /**
  * Показывает модальное окно с уведомлениями
@@ -73,6 +105,7 @@ function renderNotification(notification) {
   const severityColor = getSeverityColor(notification.severity);
   const severityIcon = getSeverityIcon(notification.severity);
   const timeAgo = formatTimeAgo(new Date(notification.timestamp));
+  const actions = Array.isArray(notification.actions) ? notification.actions : [];
   
   const detailsHtml = notification.details && Object.keys(notification.details).length > 0
     ? `
@@ -84,6 +117,30 @@ function renderNotification(notification) {
           ${renderDetails(notification.details)}
         </div>
       </details>
+    `
+    : '';
+
+  const actionsHtml = actions.length > 0
+    ? `
+      <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;">
+        ${actions.map((action) => `
+          <button
+            class="notification-action-btn"
+            data-notification-id="${notification.id}"
+            data-action-id="${escapeHtml(action.id)}"
+            style="
+              min-width:auto;
+              padding:6px 10px;
+              font-size:0.75rem;
+              border-radius:6px;
+              ${getActionButtonStyle(action.variant)}
+            "
+            title="${escapeHtml(action.label)}"
+          >
+            ${escapeHtml(action.label)}
+          </button>
+        `).join('')}
+      </div>
     `
     : '';
   
@@ -105,6 +162,7 @@ function renderNotification(notification) {
             ${escapeHtml(notification.message)}
           </div>
           ${detailsHtml}
+          ${actionsHtml}
           <div style="font-size:0.75rem; color:var(--muted); margin-top:8px;">
             ${timeAgo}
           </div>
@@ -205,6 +263,16 @@ function setupNotificationHandlers() {
       await removeNotification(id);
     };
   });
+
+  // Кнопки действий (например, отмена задачи)
+  document.querySelectorAll('.notification-action-btn').forEach(btn => {
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      const notificationId = btn.getAttribute('data-notification-id');
+      const actionId = btn.getAttribute('data-action-id');
+      await executeNotificationAction(notificationId, actionId, btn);
+    };
+  });
   
   // Кнопка "Очистить все"
   const clearAllBtn = document.getElementById('notificationsClearAll');
@@ -252,7 +320,7 @@ async function acknowledgeNotification(id) {
     }
   } catch (error) {
     console.error('[Notifications Modal] Error acknowledging notification:', error);
-    alert('Не удалось отметить уведомление');
+    await reportModalError('Ошибка подтверждения уведомления', error, { notificationId: id });
   }
 }
 
@@ -290,7 +358,71 @@ async function removeNotification(id) {
     }
   } catch (error) {
     console.error('[Notifications Modal] Error removing notification:', error);
-    alert('Не удалось удалить уведомление');
+    await reportModalError('Ошибка удаления уведомления', error, { notificationId: id });
+  }
+}
+
+function getNotificationAction(notificationId, actionId) {
+  const notification = currentNotifications.find((item) => item.id === notificationId);
+  if (!notification || !Array.isArray(notification.actions)) {
+    return null;
+  }
+  return notification.actions.find((action) => action.id === actionId) || null;
+}
+
+async function executeNotificationAction(notificationId, actionId, buttonEl) {
+  const action = getNotificationAction(notificationId, actionId);
+  if (!action) {
+    await reportModalError('Действие уведомления не найдено', new Error('Notification action not found'), {
+      notificationId,
+      actionId
+    });
+    return;
+  }
+
+  const method = String(action.method || 'POST').toUpperCase();
+  const bodyAllowed = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
+
+  if (action.confirm && !window.confirm(action.confirm)) {
+    return;
+  }
+
+  const requestInit = {
+    method,
+    headers: {
+      'Content-Type': 'application/json'
+    }
+  };
+  if (bodyAllowed && action.body && typeof action.body === 'object') {
+    requestInit.body = JSON.stringify(action.body);
+  }
+
+  if (buttonEl) {
+    buttonEl.disabled = true;
+    buttonEl.style.opacity = '0.7';
+  }
+
+  try {
+    const response = await adminFetch(action.url, requestInit);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.ok === false || payload?.success === false) {
+      throw new Error(payload?.error || `HTTP ${response.status}`);
+    }
+
+    await showNotificationsModal(socket);
+  } catch (error) {
+    console.error('[Notifications Modal] Error executing notification action:', error);
+    await reportModalError('Ошибка выполнения действия уведомления', error, {
+      notificationId,
+      actionId,
+      method,
+      url: action.url
+    });
+  } finally {
+    if (buttonEl) {
+      buttonEl.disabled = false;
+      buttonEl.style.opacity = '1';
+    }
   }
 }
 
@@ -302,13 +434,18 @@ async function clearAllNotifications() {
     const ids = currentNotifications.map(n => n.id);
     
     // Отмечаем все параллельно
-    await Promise.all(
+    const responses = await Promise.all(
       ids.map(id => 
         adminFetch(`/api/notifications/${id}/acknowledge`, {
           method: 'POST'
         })
       )
     );
+
+    const failedResponse = responses.find((response) => !response.ok);
+    if (failedResponse) {
+      throw new Error(`HTTP ${failedResponse.status}`);
+    }
     
     // Отправляем через Socket.IO
     if (socket) {
@@ -321,7 +458,7 @@ async function clearAllNotifications() {
     showNotificationsModal();
   } catch (error) {
     console.error('[Notifications Modal] Error clearing all notifications:', error);
-    alert('Не удалось очистить все уведомления');
+    await reportModalError('Ошибка очистки уведомлений', error);
   }
 }
 

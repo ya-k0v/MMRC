@@ -274,6 +274,14 @@ export function getTrashIcon(size = 16, color = 'currentColor') {
 }
 
 /**
+ * Получить SVG иконку булавки (pin)
+ * @param {number} size - Размер иконки (по умолчанию 16)
+ * @param {string} color - Цвет (по умолчанию currentColor)
+ * @returns {string} SVG код
+ */
+ 
+
+/**
  * Получить SVG иконку успеха (галочка в круге)
  * @param {number} size - Размер иконки (по умолчанию 16)
  * @param {string} color - Цвет (по умолчанию currentColor)

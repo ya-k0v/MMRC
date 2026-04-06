@@ -19,6 +19,28 @@ import { escapeHtml } from '../shared/utils.js';
 
 const escapeJsStringForAttr = (value) => escapeHtml(JSON.stringify(value ?? ''));
 
+async function reportModalNotification(payload = {}) {
+  try {
+    if (typeof window.adminFetch !== 'function') return;
+
+    await window.adminFetch('/api/notifications/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: payload.type || 'admin_modal_event',
+        severity: payload.severity || 'warning',
+        title: payload.title || 'Ошибка в модальном окне',
+        message: payload.message || '',
+        details: payload.details || {},
+        key: payload.key || null,
+        source: 'admin-modal'
+      })
+    });
+  } catch (error) {
+    console.error('[Modal] Failed to report notification:', error);
+  }
+}
+
 export function showModal(title, content) {
   const overlay = document.getElementById('modalOverlay');
   const modalContent = document.getElementById('modalContent');
@@ -536,10 +558,20 @@ function filterAndRenderUsers(adminFetch) {
           await loadModalUsersList(window.adminFetch);
         } else {
           const error = await res.json().catch(() => ({ error: 'Ошибка' }));
-          alert(error.error || 'Ошибка при изменении статуса пользователя');
+          await reportModalNotification({
+            type: 'user_toggle_error',
+            title: 'Ошибка изменения статуса пользователя',
+            message: error.error || 'Ошибка при изменении статуса пользователя',
+            details: { userId, activate }
+          });
         }
       } catch (err) {
-        alert(`Ошибка: ${err.message}`);
+        await reportModalNotification({
+          type: 'user_toggle_error',
+          title: 'Ошибка изменения статуса пользователя',
+          message: err.message || 'Неизвестная ошибка',
+          details: { userId, activate }
+        });
       }
     };
   }
@@ -558,10 +590,20 @@ function filterAndRenderUsers(adminFetch) {
           await loadModalUsersList(window.adminFetch);
         } else {
           const error = await res.json().catch(() => ({ error: 'Ошибка' }));
-          alert(error.error || 'Ошибка при удалении пользователя');
+          await reportModalNotification({
+            type: 'user_delete_error',
+            title: 'Ошибка удаления пользователя',
+            message: error.error || 'Ошибка при удалении пользователя',
+            details: { userId, username }
+          });
         }
       } catch (err) {
-        alert(`Ошибка: ${err.message}`);
+        await reportModalNotification({
+          type: 'user_delete_error',
+          title: 'Ошибка удаления пользователя',
+          message: err.message || 'Неизвестная ошибка',
+          details: { userId, username }
+        });
       }
     };
   }
@@ -861,12 +903,22 @@ function setupUserDevicesModalHandlers(adminFetch, userId, username) {
         `);
       } else {
         const error = await res.json();
-        alert(error.error || 'Ошибка сохранения');
+        await reportModalNotification({
+          type: 'user_devices_save_error',
+          title: 'Ошибка сохранения устройств пользователя',
+          message: error.error || 'Ошибка сохранения',
+          details: { userId }
+        });
         saveBtn.disabled = false;
         saveBtn.textContent = 'Сохранить';
       }
     } catch (err) {
-      alert(`Ошибка: ${err.message}`);
+      await reportModalNotification({
+        type: 'user_devices_save_error',
+        title: 'Ошибка сохранения устройств пользователя',
+        message: err.message || 'Неизвестная ошибка',
+        details: { userId }
+      });
       saveBtn.disabled = false;
       saveBtn.textContent = 'Сохранить';
     }
@@ -1441,7 +1493,11 @@ async function loadSettingsContent(adminFetch) {
           exportBtn.innerHTML = `${getDownloadIcon(16)} Экспорт`;
         }, 2000);
       } catch (err) {
-        alert(`Ошибка экспорта: ${err.message}`);
+        await reportModalNotification({
+          type: 'database_export_error',
+          title: 'Ошибка экспорта базы данных',
+          message: err.message || 'Неизвестная ошибка'
+        });
         exportBtn.disabled = false;
         exportBtn.innerHTML = `${getDownloadIcon(16)} Экспорт`;
       }
@@ -1499,7 +1555,12 @@ async function loadSettingsContent(adminFetch) {
 
   cleanupFilesBtn.onclick = async () => {
     if (!lastCheckResult || lastCheckResult.missingOnDisk === 0) {
-      alert('Сначала выполните проверку файлов');
+      await reportModalNotification({
+        type: 'cleanup_prerequisite_missing',
+        severity: 'info',
+        title: 'Требуется предварительная проверка',
+        message: 'Сначала выполните проверку файлов'
+      });
       return;
     }
 
@@ -1610,7 +1671,12 @@ async function loadSettingsContent(adminFetch) {
 
   cleanupOrphanedBtn.onclick = async () => {
     if (!lastOrphanedResult || lastOrphanedResult.orphaned === 0) {
-      alert('Сначала выполните проверку осиротевших файлов');
+      await reportModalNotification({
+        type: 'orphan_cleanup_prerequisite_missing',
+        severity: 'info',
+        title: 'Требуется предварительная проверка',
+        message: 'Сначала выполните проверку осиротевших файлов'
+      });
       return;
     }
 

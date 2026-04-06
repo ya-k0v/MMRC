@@ -23,7 +23,7 @@
 #   sudo bash dev/scripts/install-server.sh
 #
 #   # Non-interactive
-#   AUTO_CONFIRM=1 sudo bash scripts/install-server.sh
+#   AUTO_CONFIRM=1 sudo bash dev/scripts/install-server.sh
 #
 # ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ:
 #   AUTO_CONFIRM=1  - Отключает все вопросы "y/n"
@@ -159,7 +159,63 @@ fi
 
 # Create default config files if not exist
 if [ ! -f config/video-optimization.json ]; then
-    echo '{"enabled": true, "targetResolution": "1080p"}' > config/video-optimization.json
+        cat > config/video-optimization.json << 'EOF'
+{
+    "enabled": true,
+    "autoOptimize": true,
+    "deleteOriginal": true,
+    "profiles": {
+        "720p": {
+            "width": 1280,
+            "height": 720,
+            "fps": 25,
+            "bitrate": "2000k",
+            "maxrate": "2500k",
+            "bufsize": "5000k",
+            "profile": "baseline",
+            "level": "3.1",
+            "audioBitrate": "128k"
+        },
+        "1080p": {
+            "width": 1920,
+            "height": 1080,
+            "fps": 30,
+            "bitrate": "4000k",
+            "maxrate": "5000k",
+            "bufsize": "8000k",
+            "profile": "main",
+            "level": "4.0",
+            "audioBitrate": "192k"
+        },
+        "2160p": {
+            "width": 3840,
+            "height": 2160,
+            "fps": 30,
+            "bitrate": "12000k",
+            "maxrate": "18000k",
+            "bufsize": "30000k",
+            "profile": "high",
+            "level": "5.1",
+            "audioBitrate": "192k"
+        }
+    },
+    "defaultProfile": "1080p",
+    "optimization": {
+        "maxConcurrent": 2,
+        "preset": "medium",
+        "pixelFormat": "yuv420p",
+        "audioCodec": "aac",
+        "audioSampleRate": "44100",
+        "audioChannels": 2
+    },
+    "thresholds": {
+        "maxWidth": 3840,
+        "maxHeight": 2160,
+        "maxFps": 60,
+        "maxBitrate": 25000000
+    }
+}
+EOF
     echo "Created config/video-optimization.json"
 fi
 
@@ -266,9 +322,8 @@ echo "  Journal: sudo journalctl -u videocontrol -f"
 echo ""
 echo "📖 Documentation:"
 echo "  📘 Overview:      README.md"
-echo "  🚀 Quick start:   QUICK-START.md"
+echo "  🛠️  Install:       dev/INSTALL.md"
 echo "  🧰 Operations:    dev/MANUAL.md"
-echo "  📱 Android:       clients/android-mediaplayer/README.md"
-echo "  🎧 MPV client:    clients/mpv/README.md"
+echo "  📱 Clients:       dev/CLIENTS.md"
 echo ""
 

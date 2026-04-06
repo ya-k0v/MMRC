@@ -4,7 +4,7 @@
 
 ![Version](https://img.shields.io/badge/version-3.1.1-blue)
 ![Node](https://img.shields.io/badge/node-20.x-green)
-![License](https://img.shields.io/badge/license-MIT-orange)
+![License](https://img.shields.io/badge/license-Personal_Use_Only-red)
 
 ---
 
@@ -86,7 +86,7 @@ videocontrol/
 ├── src/                   # Backend код
 ├── public/                # Frontend (HTML, JS, CSS)
 ├── config/                # Конфигурация (БД, настройки)
-├── scripts/               # Скрипты разработки (generate-favicons.js)
+├── scripts/               # Системные и сервисные скрипты
 ├── clients/               # Клиентские приложения
 │   ├── android-mediaplayer/
 │   └── mpv/
@@ -159,7 +159,10 @@ sudo systemctl start videocontrol
 
 ## 📄 Лицензия
 
-MIT License — свободное использование
+Используется кастомная лицензия: только личное (персональное) использование физическими лицами.
+
+- Использование юридическими лицами, ИП, госорганизациями и любыми организациями запрещено без письменного разрешения правообладателя.
+- Полный текст: [LICENSE](../LICENSE)
 
 ---
 

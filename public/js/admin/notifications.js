@@ -127,12 +127,14 @@ function subscribeToNotifications() {
   });
   
   // Новое уведомление
-  socket.on('notification', ({ notification, unreadCount: count }) => {
+  socket.on('notification', ({ notification, action, unreadCount: count }) => {
     unreadCount = count;
     updateBadge();
     
-    // Показываем всплывающее уведомление
-    showToastNotification(notification);
+    // Для обновлений (progress/status) не дублируем всплывающие тосты
+    if (!action || action === 'new') {
+      showToastNotification(notification);
+    }
   });
   
   // Уведомление прочитано

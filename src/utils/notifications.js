@@ -8,6 +8,7 @@ import logger from './logger.js';
 class NotificationsManager {
   constructor() {
     this.notifications = new Map(); // Map<id, notification>
+    this.notificationKeys = new Map(); // Map<key, id> для обновляемых уведомлений (job status)
     this.maxNotifications = 100;
     this.listeners = new Set();
   }
@@ -21,8 +22,35 @@ class NotificationsManager {
    * @param {Object} details - Дополнительные детали
    * @returns {string} ID уведомления
    */
-  add(type, severity, title, message, details = {}) {
+  add(type, severity, title, message, details = {}, options = {}) {
+    const nowIso = new Date().toISOString();
     const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const key = options.key ? String(options.key) : null;
+
+    const actions = Array.isArray(options.actions)
+      ? options.actions
+          .map((action) => {
+            if (!action || typeof action !== 'object') return null;
+            const actionId = String(action.id || '').trim();
+            const label = String(action.label || '').trim();
+            const method = String(action.method || 'POST').toUpperCase();
+            const url = String(action.url || '').trim();
+
+            if (!actionId || !label || !url) return null;
+
+            return {
+              id: actionId,
+              label,
+              method,
+              url,
+              body: action.body && typeof action.body === 'object' ? action.body : null,
+              confirm: action.confirm ? String(action.confirm) : null,
+              variant: String(action.variant || 'secondary')
+            };
+          })
+          .filter(Boolean)
+      : [];
+
     const notification = {
       id,
       type,           // 'disk_full', 'service_hanging', 'db_error', 'ffmpeg_error', etc.
@@ -30,18 +58,30 @@ class NotificationsManager {
       title,
       message,
       details,
-      timestamp: new Date().toISOString(),
+      actions,
+      key,
+      source: String(options.source || 'system'),
+      timestamp: nowIso,
+      updatedAt: nowIso,
       acknowledged: false
     };
 
     this.notifications.set(id, notification);
+    if (key) {
+      this.notificationKeys.set(key, id);
+    }
     
     // Ограничиваем количество уведомлений
     if (this.notifications.size > this.maxNotifications) {
       const sorted = Array.from(this.notifications.values())
         .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
       const oldest = sorted[0];
-      this.notifications.delete(oldest.id);
+      if (oldest) {
+        this.notifications.delete(oldest.id);
+        if (oldest.key) {
+          this.notificationKeys.delete(oldest.key);
+        }
+      }
     }
 
     logger.warn('[Notifications] New notification added', {
@@ -78,6 +118,103 @@ class NotificationsManager {
   }
 
   /**
+   * Получить уведомление по ID
+   * @param {string} id
+   * @returns {Object|null}
+   */
+  getById(id) {
+    return this.notifications.get(id) || null;
+  }
+
+  /**
+   * Обновить существующее уведомление
+   * @param {string} id
+   * @param {Object} patch
+   * @param {string} action
+   * @returns {Object|null}
+   */
+  update(id, patch = {}, action = 'updated') {
+    const current = this.notifications.get(id);
+    if (!current) return null;
+
+    const next = {
+      ...current,
+      ...patch,
+      details: patch.details !== undefined
+        ? patch.details
+        : current.details,
+      actions: Array.isArray(patch.actions)
+        ? patch.actions
+        : current.actions,
+      updatedAt: new Date().toISOString()
+    };
+
+    this.notifications.set(id, next);
+
+    if (current.key && current.key !== next.key) {
+      this.notificationKeys.delete(current.key);
+    }
+    if (next.key) {
+      this.notificationKeys.set(next.key, id);
+    }
+
+    this.notifyListeners(next, action);
+    return next;
+  }
+
+  /**
+   * Создать или обновить уведомление по ключу
+   * @param {Object} payload
+   * @returns {string} ID уведомления
+   */
+  upsert(payload = {}) {
+    const key = payload.key ? String(payload.key) : null;
+    if (!key) {
+      return this.add(
+        payload.type || 'info',
+        payload.severity || 'info',
+        payload.title || 'Уведомление',
+        payload.message || '',
+        payload.details || {},
+        {
+          actions: payload.actions || [],
+          source: payload.source || 'system'
+        }
+      );
+    }
+
+    const existingId = this.notificationKeys.get(key);
+    if (existingId && this.notifications.has(existingId)) {
+      const existing = this.notifications.get(existingId);
+      this.update(existingId, {
+        type: payload.type || existing.type,
+        severity: payload.severity || existing.severity,
+        title: payload.title || existing.title,
+        message: payload.message || existing.message,
+        details: payload.details !== undefined ? payload.details : existing.details,
+        actions: payload.actions !== undefined ? payload.actions : existing.actions,
+        source: payload.source || existing.source,
+        key,
+        acknowledged: false
+      }, 'updated');
+      return existingId;
+    }
+
+    return this.add(
+      payload.type || 'info',
+      payload.severity || 'info',
+      payload.title || 'Уведомление',
+      payload.message || '',
+      payload.details || {},
+      {
+        key,
+        actions: payload.actions || [],
+        source: payload.source || 'system'
+      }
+    );
+  }
+
+  /**
    * Отметить уведомление как прочитанное
    * @param {string} id - ID уведомления
    * @returns {boolean} Успешно ли обновлено
@@ -98,6 +235,10 @@ class NotificationsManager {
    * @returns {boolean} Успешно ли удалено
    */
   remove(id) {
+    const existing = this.notifications.get(id);
+    if (existing?.key) {
+      this.notificationKeys.delete(existing.key);
+    }
     return this.notifications.delete(id);
   }
 

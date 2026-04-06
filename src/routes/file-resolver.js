@@ -28,6 +28,7 @@ function normalizeFileNameParam(paramValue) {
 function sendFileWithRange(res, req, metadata, context = {}) {
   const options = {
     root: '/',  // Абсолютный путь
+    dotfiles: 'allow',
     headers: {
       'Content-Type': metadata.mime_type || 'application/octet-stream',
       'Accept-Ranges': 'bytes',
@@ -164,7 +165,11 @@ router.get('/trailer/:deviceId/*fileName', (req, res) => {
     return res.status(400).send('Invalid parameters');
   }
   
-  const metadata = getFileMetadata(deviceId, fileName);
+  let metadata = getFileMetadata(deviceId, fileName);
+  if (!metadata) {
+    logger.warn('[Resolver] Trailer fallback to resolve-all', { deviceId, fileName });
+    metadata = getAnyFileMetadataBySafeName(fileName);
+  }
   if (!metadata) {
     return res.status(404).send('Not found');
   }
@@ -206,7 +211,11 @@ router.get('/preview/:deviceId/*fileName', (req, res) => {
     return res.status(400).send('Invalid parameters');
   }
   
-  const metadata = getFileMetadata(deviceId, fileName);
+  let metadata = getFileMetadata(deviceId, fileName);
+  if (!metadata) {
+    logger.warn('[Resolver] Preview fallback to resolve-all', { deviceId, fileName });
+    metadata = getAnyFileMetadataBySafeName(fileName);
+  }
   if (!metadata) {
     return res.status(404).send('File not found');
   }
@@ -235,6 +244,7 @@ router.get('/preview/:deviceId/*fileName', (req, res) => {
     // Отдаем файл напрямую с поддержкой Range requests
     const options = {
       root: '/',  // Абсолютный путь
+      dotfiles: 'allow',
       headers: {
         'Content-Type': mime || 'video/mp4',
         'Accept-Ranges': 'bytes',

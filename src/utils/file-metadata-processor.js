@@ -32,8 +32,8 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
     }
     
     const stats = fs.statSync(filePath);
-    const fileSize = stats.size;
-    const fileMtime = stats.mtimeMs;
+    let fileSize = stats.size;
+    let fileMtime = stats.mtimeMs;
     const ext = path.extname(safeName).toLowerCase();
     
     logFile('debug', 'Processing file metadata', { deviceId, safeName, fileSize });
@@ -57,12 +57,11 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
       
       // Синхронно обрабатываем файл (ждем завершения)
       // Это важно, чтобы MD5 вычислялся для обработанного файла
-      // КРИТИЧНО: Всегда обрабатываем при загрузке (checkFirst: false)
-      // Потому что файлы с большим moov могут все равно не перематываться
-      // из-за fragmented структуры или неполных индексов
+      // КРИТИЧНО: Обрабатываем только когда реально требуется,
+      // чтобы не переписывать каждый MP4 без необходимости.
       try {
         const { applyFaststart } = await import('../video/mp4-faststart.js');
-        const processed = await applyFaststart(filePath, { checkFirst: false });
+        const processed = await applyFaststart(filePath, { checkFirst: true });
         
         if (processed) {
           logFile('info', '✅ MP4 файл обработан перед дедупликацией', {
@@ -72,6 +71,7 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
           // Обновляем размер файла после обработки
           const newStats = fs.statSync(filePath);
           fileSize = newStats.size;
+          fileMtime = newStats.mtimeMs;
         } else {
           logFile('warn', '⚠️ MP4 файл не был обработан (возможна ошибка)', {
             deviceId,

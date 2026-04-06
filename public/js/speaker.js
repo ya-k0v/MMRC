@@ -92,6 +92,26 @@ let fileListMode = 'device'; // device | all
 let currentFileSourceDevice = null;
 const ALL_FILES_LIMIT = 500;
 
+async function reportSpeakerNotification(payload = {}) {
+  try {
+    await speakerFetch('/api/notifications/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: payload.type || 'speaker_ui_event',
+        severity: payload.severity || 'warning',
+        title: payload.title || 'Событие speaker панели',
+        message: payload.message || '',
+        details: payload.details || {},
+        key: payload.key || null,
+        source: 'speaker-ui'
+      })
+    });
+  } catch (error) {
+    console.error('[Speaker] Failed to report notification:', error);
+  }
+}
+
 function getDeviceDisplayName(deviceId) {
   if (!deviceId) return '';
   const fromNodes = nodeNames?.[deviceId];
@@ -712,10 +732,24 @@ if (launchAndroidBtn) {
         launchAndroidBtn.style.display = 'none';
         return;
       } else {
-        alert('Ошибка запуска: ' + (result.error || 'Неизвестная ошибка'));
+        await reportSpeakerNotification({
+          type: 'speaker_launch_app_error',
+          title: 'Ошибка запуска Android-приложения',
+          message: result.error || 'Неизвестная ошибка',
+          details: {
+            deviceId: currentDevice
+          }
+        });
       }
     } catch (e) {
-      alert('Ошибка соединения: не удалось отправить команду на сервер');
+      await reportSpeakerNotification({
+        type: 'speaker_launch_app_network_error',
+        title: 'Ошибка соединения',
+        message: 'Не удалось отправить команду на сервер',
+        details: {
+          deviceId: currentDevice
+        }
+      });
     }
     launchAndroidBtn.disabled = false;
     updateLaunchAndroidBtn();
@@ -1377,12 +1411,32 @@ function renderThumbnailGrid(deviceId, safeName, contentType, imageUrls) {
           });
           if (!res.ok) {
             console.error('Не удалось подготовить файл на целевом устройстве:', res.status);
-            alert('Не удалось запустить файл на выбранном устройстве');
+            await reportSpeakerNotification({
+              type: 'speaker_play_target_error',
+              title: 'Не удалось запустить файл',
+              message: 'Не удалось запустить файл на выбранном устройстве',
+              details: {
+                sourceDeviceId,
+                targetDeviceId,
+                safeName,
+                status: res.status
+              }
+            });
             return;
           }
         } catch (err) {
           console.error('play-from-all error for thumbnails', err);
-          alert('Не удалось запустить файл на выбранном устройстве');
+          await reportSpeakerNotification({
+            type: 'speaker_play_target_error',
+            title: 'Не удалось запустить файл',
+            message: 'Не удалось запустить файл на выбранном устройстве',
+            details: {
+              sourceDeviceId,
+              targetDeviceId,
+              safeName,
+              error: err.message
+            }
+          });
           return;
         }
       }
@@ -2203,7 +2257,7 @@ async function loadFiles() {
   updatePlaybackInfoUI();
   
   try {
-    const res = await speakerFetch(`/api/devices/${encodeURIComponent(currentDevice)}/files-with-status`);
+    const res = await speakerFetch(`/api/devices/${encodeURIComponent(currentDevice)}/files-with-status?readyOnly=1`);
     if (!res.ok) {
       console.error('Не удалось загрузить файлы:', res.status);
       fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-xl)"><div class="meta">Ошибка загрузки файлов</div></li>';
@@ -2751,7 +2805,7 @@ async function loadAllFilesAggregated() {
   if (meta) meta.textContent = formatFilesMetaWithSelection('Загрузка...');
 
   try {
-    const res = await speakerFetch(`/api/devices/all/files?limit=${ALL_FILES_LIMIT}`);
+    const res = await speakerFetch(`/api/devices/all/files?limit=${ALL_FILES_LIMIT}&readyOnly=1`);
     if (!res.ok) {
       console.error('Не удалось загрузить все файлы:', res.status);
       fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-xl)"><div class="meta">Ошибка загрузки файлов</div></li>';
@@ -3049,7 +3103,15 @@ async function loadAllFilesAggregated() {
 
 async function handlePlayAggregated({ sourceDeviceId, safeName, contentType, streamProtocol, rowEl }) {
   if (!sourceDeviceId) {
-    alert('Не указан источник файла');
+    await reportSpeakerNotification({
+      type: 'speaker_play_missing_source',
+      severity: 'info',
+      title: 'Не указан источник файла',
+      message: 'Не удалось определить устройство-источник для запуска',
+      details: {
+        safeName
+      }
+    });
     return;
   }
 
@@ -3060,7 +3122,17 @@ async function handlePlayAggregated({ sourceDeviceId, safeName, contentType, str
   const readyTargetDeviceIds = targetDeviceIds.filter((deviceId) => isDeviceReady(deviceId));
 
   if (!readyTargetDeviceIds.length) {
-    alert('Нет онлайн-устройств для запуска');
+    await reportSpeakerNotification({
+      type: 'speaker_no_ready_devices',
+      severity: 'info',
+      title: 'Нет онлайн-устройств',
+      message: 'Нет онлайн-устройств для запуска выбранного файла',
+      details: {
+        sourceDeviceId,
+        safeName,
+        selectedTargets: targetDeviceIds
+      }
+    });
     return;
   }
 

@@ -7,7 +7,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 cd "$PROJECT_ROOT"
 
@@ -29,9 +29,9 @@ safe_delete() {
     if [ -f "$file" ]; then
         rm -f "$file"
         echo -e "${GREEN}✅ Удален:${NC} $file"
-        ((DELETED++))
+        ((DELETED+=1))
     else
-        ((SKIPPED++))
+        ((SKIPPED+=1))
     fi
 }
 
@@ -70,7 +70,7 @@ if [ "$1" == "--aggressive" ]; then
             if [ -n "$file" ]; then
                 rm -f "$file"
                 echo -e "${GREEN}✅ Удален:${NC} $file"
-                ((DELETED++))
+                ((DELETED+=1))
             fi
         done < <(find logs/ -name "*.log" -type f -mtime +30 2>/dev/null)
     fi
@@ -79,7 +79,7 @@ if [ "$1" == "--aggressive" ]; then
             if [ -n "$file" ]; then
                 rm -f "$file"
                 echo -e "${GREEN}✅ Удален:${NC} $file"
-                ((DELETED++))
+                ((DELETED+=1))
             fi
         done < <(find data/logs/ -name "*.log" -type f -mtime +30 2>/dev/null)
     fi
@@ -103,7 +103,7 @@ if [ -d "data/temp" ]; then
         if [ -n "$file" ]; then
             rm -f "$file"
             echo -e "${GREEN}✅ Удален:${NC} $file"
-            ((DELETED++))
+            ((DELETED+=1))
         fi
     done < <(find data/temp/ -type f -mtime +7 2>/dev/null)
 fi

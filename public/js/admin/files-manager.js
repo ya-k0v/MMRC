@@ -11,6 +11,26 @@ import {
   getContentTypeInfo
 } from '../shared/content-type-helper.js';
 
+async function reportFilesManagerNotification(payload = {}) {
+  try {
+    await adminFetch('/api/notifications/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: payload.type || 'files_manager_event',
+        severity: payload.severity || 'warning',
+        title: payload.title || 'Ошибка файлового менеджера',
+        message: payload.message || '',
+        details: payload.details || {},
+        key: payload.key || null,
+        source: 'admin-files-manager'
+      })
+    });
+  } catch (error) {
+    console.error('[FilesManager] Failed to report notification:', error);
+  }
+}
+
 /**
  * Универсальная функция для показа модального окна стрима (добавление/редактирование)
  * @param {Object} options
@@ -218,7 +238,9 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       contentType: item.contentType || null,
       streamUrl: item.streamUrl || null,
       streamProxyUrl: item.streamProxyUrl || null,
-      streamProtocol: item.streamProtocol || null
+      streamProtocol: item.streamProtocol || null,
+      hasTrailer: !!item.hasTrailer,
+      trailerUrl: item.trailerUrl || null
     };
   }).filter(f => f.safeName); // Фильтруем пустые имена
   
@@ -261,7 +283,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
   fileList.className = 'list';
   fileList.style.cssText = 'display:grid; gap:var(--space-sm)';
   
-  files.forEach(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, streamUrl, streamProtocol }) => {
+  files.forEach(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, streamUrl, streamProtocol, hasTrailer, trailerUrl }) => {
         // placeholders allowed only for image/video (no pdf/pptx/folders)
         const isStreaming = contentType === 'streaming';
         const isEligible = !isStreaming && /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp)$/i.test(safeName);
@@ -432,10 +454,10 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         headerRight.appendChild(metaDiv);
         header.appendChild(headerLeft);
         header.appendChild(headerRight);
-        
+
         const actions = document.createElement('div');
         actions.className = 'file-item-actions';
-        
+
         if (isStreaming) {
           const editBtn = document.createElement('button');
           editBtn.className = 'meta-lg editStreamBtn';
@@ -454,12 +476,14 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           previewBtn.setAttribute('data-original', encodeURIComponent(originalName));
           previewBtn.setAttribute('data-stream-protocol', streamProtocol || '');
           previewBtn.setAttribute('data-content-type', contentType || '');
+          previewBtn.setAttribute('data-has-trailer', hasTrailer ? '1' : '0');
+          previewBtn.setAttribute('data-trailer-url', trailerUrl || '');
           previewBtn.title = 'Предпросмотр';
           previewBtn.disabled = !canPlay;
           previewBtn.textContent = 'Превью';
           actions.appendChild(previewBtn);
         }
-        
+
         if (isEligible) {
           const makeDefaultBtn = document.createElement('button');
           makeDefaultBtn.className = 'meta-lg makeDefaultBtn';
@@ -470,7 +494,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           makeDefaultBtn.textContent = 'Заглушка';
           actions.appendChild(makeDefaultBtn);
         }
-        
+
         const delBtn = document.createElement('button');
         delBtn.className = 'danger meta-lg delFileBtn';
         delBtn.setAttribute('data-safe', encodeURIComponent(safeName));
@@ -479,6 +503,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         delBtn.textContent = 'Удалить';
         actions.appendChild(delBtn);
         
+        // place actions under the filename and align them to the right
         li.appendChild(header);
         li.appendChild(actions);
         fileList.appendChild(li);
@@ -566,6 +591,8 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
     btn.onclick = async () => {
       const safeName = decodeURIComponent(btn.getAttribute('data-safe'));
       const originalName = decodeURIComponent(btn.getAttribute('data-original') || safeName);
+      const hasTrailer = btn.getAttribute('data-has-trailer') === '1';
+      const trailerUrl = btn.getAttribute('data-trailer-url') || '';
       const previewContainer = document.querySelector('#detailPane .previewHolder');
       if (!previewContainer) return;
       const contentType = btn.closest('.file-item')?.getAttribute('data-content-type') || null;
@@ -698,6 +725,11 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
 
         if (normalizedType === 'image') {
           u += `&type=image&page=1`;
+        } else if (normalizedType === 'video' || VIDEO_EXTENSIONS.includes(getFileExtension(safeName))) {
+          u += '&type=video';
+          if (hasTrailer && trailerUrl) {
+            u += `&trailerUrl=${encodeURIComponent(trailerUrl)}`;
+          }
         }
 
         u += `&t=${Date.now()}`;
@@ -854,12 +886,22 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
           socket.emit('devices/updated');
         } else {
-          alert(`Ошибка переименования: ${data.error || 'Неизвестная ошибка'}`);
+          await reportFilesManagerNotification({
+            type: 'file_rename_error',
+            title: 'Ошибка переименования файла',
+            message: data.error || 'Неизвестная ошибка',
+            details: { deviceId, safeName, newDisplayName }
+          });
           cancelEdit();
         }
       } catch (err) {
         console.error('Failed to rename file:', err);
-        alert('Не удалось переименовать файл');
+        await reportFilesManagerNotification({
+          type: 'file_rename_error',
+          title: 'Ошибка переименования файла',
+          message: err.message || 'Не удалось переименовать файл',
+          details: { deviceId, safeName }
+        });
         cancelEdit();
       }
     };

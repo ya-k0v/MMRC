@@ -13,15 +13,15 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { applyFaststart, needsFaststart } from '../src/video/mp4-faststart.js';
-import { getDeviceFilesMetadata } from '../src/database/files-metadata.js';
-import { initDatabase, getDatabase } from '../src/database/database.js';
-import logger from '../src/utils/logger.js';
-import { ROOT } from '../src/config/constants.js';
+import { applyFaststart, needsFaststart } from '../../src/video/mp4-faststart.js';
+import { getDeviceFilesMetadata } from '../../src/database/files-metadata.js';
+import { initDatabase, getDatabase } from '../../src/database/database.js';
+import logger from '../../src/utils/logger.js';
+import { ROOT } from '../../src/config/constants.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const projectRoot = path.resolve(__dirname, '..');
+const projectRoot = path.resolve(__dirname, '../..');
 
 // Переходим в корень проекта
 process.chdir(projectRoot);
@@ -136,11 +136,11 @@ async function main() {
   if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
     console.log(`
 Использование:
-  node scripts/process-existing-mp4-faststart.js [deviceId] [--all]
+  node dev/scripts/process-existing-mp4-faststart.js [deviceId] [--all]
 
 Примеры:
-  node scripts/process-existing-mp4-faststart.js 001TV    # Обработать файлы устройства 001TV
-  node scripts/process-existing-mp4-faststart.js --all    # Обработать все файлы всех устройств
+  node dev/scripts/process-existing-mp4-faststart.js 001TV    # Обработать файлы устройства 001TV
+  node dev/scripts/process-existing-mp4-faststart.js --all    # Обработать все файлы всех устройств
     `);
     process.exit(0);
   }

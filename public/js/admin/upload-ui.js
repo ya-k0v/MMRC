@@ -1,11 +1,31 @@
 // upload-ui.js - ПОЛНЫЙ код setupUploadUI из admin.js
 import { setXhrAuth, adminFetch } from './auth.js';
 import { calculateFileMD5 } from './md5-helper.js';
-import { getFolderIcon, getWarningIcon, getSuccessIcon } from '../shared/svg-icons.js';
+import { getFolderIcon, getSuccessIcon } from '../shared/svg-icons.js';
 
-const YTDLP_ACTIVE_STATUSES = new Set(['queued', 'preparing', 'downloading', 'processing']);
+const YTDLP_ACTIVE_STATUSES = new Set(['queued', 'waiting_resources', 'preparing', 'downloading', 'processing']);
 const ytDownloadRuntimeByDevice = new Map();
 const ytDownloadUiByDevice = new Map();
+
+async function reportUploadNotification(payload = {}) {
+  try {
+    await adminFetch('/api/notifications/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: payload.type || 'upload_ui_event',
+        severity: payload.severity || 'info',
+        title: payload.title || 'Уведомление загрузки',
+        message: payload.message || '',
+        details: payload.details || {},
+        key: payload.key || null,
+        source: 'admin-upload-ui'
+      })
+    });
+  } catch (error) {
+    console.error('[Upload UI] Failed to report notification:', error);
+  }
+}
 
 function getYtRuntime(deviceId) {
   if (!ytDownloadRuntimeByDevice.has(deviceId)) {
@@ -65,6 +85,7 @@ function normalizeYtProgress(progress = 0) {
 function getYtStatusLabel(status) {
   return {
     queued: 'В очереди',
+    waiting_resources: 'Ожидание ресурсов',
     preparing: 'Подготовка',
     downloading: 'Загрузка',
     processing: 'Обработка',
@@ -428,7 +449,18 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
     // Показываем предупреждение о отклоненных файлах
     if (rejected.length > 0) {
       const messages = rejected.map(r => `• ${r.name}\n  ${r.reason}`).join('\n\n');
-      alert(`${getWarningIcon(18)} Следующие файлы не были добавлены:\n\n${messages}`);
+      reportUploadNotification({
+        type: 'upload_rejected_files',
+        severity: 'warning',
+        title: 'Часть файлов отклонена',
+        message: 'Некоторые файлы не были добавлены в очередь загрузки',
+        key: `upload-rejected:${deviceId}`,
+        details: {
+          deviceId,
+          rejectedCount: rejected.length,
+          rejected
+        }
+      });
     }
     
     renderQueue();
@@ -519,7 +551,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
   
   // Обработка выбора папки
   if (folderInput) {
-    folderInput.onchange = e => {
+    folderInput.onchange = async (e) => {
       const files = Array.from(e.target.files || []);
       if (files.length === 0) return;
       
@@ -527,7 +559,17 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       const imageFiles = files.filter(f => imageExtensions.test(f.name));
       
       if (imageFiles.length === 0) {
-        alert('В выбранной папке нет изображений! Поддерживаются форматы: PNG, JPG, JPEG, GIF, WEBP');
+        await reportUploadNotification({
+          type: 'folder_without_images',
+          severity: 'warning',
+          title: 'В папке нет изображений',
+          message: 'Поддерживаются форматы: PNG, JPG, JPEG, GIF, WEBP',
+          key: `folder-no-images:${deviceId}`,
+          details: {
+            deviceId,
+            selectedCount: files.length
+          }
+        });
         folderInput.value = '';
         return;
       }
@@ -557,12 +599,34 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       }
       
       if (rejected.length > 0) {
-        const messages = rejected.map(r => `• ${r.name}\n  ${r.reason}`).join('\n\n');
-        alert(`${getWarningIcon(18)} Следующие файлы из папки не будут загружены:\n\n${messages}`);
+        await reportUploadNotification({
+          type: 'folder_rejected_files',
+          severity: 'warning',
+          title: 'Часть файлов из папки отклонена',
+          message: 'Некоторые изображения превышают лимит 5 GB и не будут загружены',
+          key: `folder-rejected:${deviceId}`,
+          details: {
+            deviceId,
+            folderName,
+            rejectedCount: rejected.length,
+            rejected
+          }
+        });
       }
       
       if (validFiles.length === 0) {
-        alert('❌ Нет файлов для загрузки (все файлы превышают лимит 5 GB)');
+        await reportUploadNotification({
+          type: 'folder_no_valid_files',
+          severity: 'warning',
+          title: 'Нет файлов для загрузки',
+          message: 'Все файлы превышают лимит 5 GB',
+          key: `folder-no-valid:${deviceId}`,
+          details: {
+            deviceId,
+            folderName,
+            imageFiles: imageFiles.length
+          }
+        });
         folderInput.value = '';
         return;
       }
@@ -617,12 +681,34 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
                 }
                 
                 if (rejected.length > 0) {
-                  const messages = rejected.map(r => `• ${r.name}\n  ${r.reason}`).join('\n\n');
-                  alert(`${getWarningIcon(18)} Следующие файлы из папки не будут загружены:\n\n${messages}`);
+                  await reportUploadNotification({
+                    type: 'drop_folder_rejected_files',
+                    severity: 'warning',
+                    title: 'Часть файлов из папки отклонена',
+                    message: 'Некоторые изображения превышают лимит 5 GB и не будут загружены',
+                    key: `drop-folder-rejected:${deviceId}`,
+                    details: {
+                      deviceId,
+                      folderName,
+                      rejectedCount: rejected.length,
+                      rejected
+                    }
+                  });
                 }
                 
                 if (validFiles.length === 0) {
-                  alert('❌ Нет файлов для загрузки (все файлы превышают лимит 5 GB)');
+                  await reportUploadNotification({
+                    type: 'drop_folder_no_valid_files',
+                    severity: 'warning',
+                    title: 'Нет файлов для загрузки',
+                    message: 'Все файлы превышают лимит 5 GB',
+                    key: `drop-folder-no-valid:${deviceId}`,
+                    details: {
+                      deviceId,
+                      folderName,
+                      imageFiles: imageFiles.length
+                    }
+                  });
                   return;
                 }
                 
@@ -673,12 +759,32 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
     ytDownloadBtn.onclick = async () => {
       const runtime = getYtRuntime(deviceId);
       if (runtime.jobId && YTDLP_ACTIVE_STATUSES.has(runtime.status)) {
-        alert('Для этого устройства уже идет загрузка по ссылке.');
+        await reportUploadNotification({
+          type: 'yt_dlp_conflict',
+          severity: 'warning',
+          title: 'Загрузка по ссылке уже выполняется',
+          message: `Для устройства ${deviceId} уже идет загрузка по ссылке`,
+          key: `yt-dlp-conflict:${deviceId}`,
+          details: {
+            deviceId,
+            status: runtime.status,
+            jobId: runtime.jobId
+          }
+        });
         return;
       }
 
       if (isUploading) {
-        alert('Дождитесь завершения текущей загрузки файлов.');
+        await reportUploadNotification({
+          type: 'upload_busy',
+          severity: 'warning',
+          title: 'Идет загрузка файлов',
+          message: 'Дождитесь завершения текущей загрузки файлов перед запуском загрузки по ссылке',
+          key: `upload-busy:${deviceId}`,
+          details: {
+            deviceId
+          }
+        });
         return;
       }
 
@@ -944,7 +1050,17 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       }
 
       if (errorMessage !== 'Загрузка отменена пользователем' || !isClearingUploads) {
-        alert(`❌ Ошибка загрузки: ${errorMessage}`);
+        await reportUploadNotification({
+          type: 'file_upload_error',
+          severity: 'warning',
+          title: 'Ошибка загрузки файлов',
+          message: errorMessage,
+          details: {
+            deviceId,
+            pendingCount: pending.length,
+            folderName: folderName || null
+          }
+        });
       }
     } finally {
       isUploading = false; // Сбрасываем флаг в любом случае

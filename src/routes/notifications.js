@@ -11,6 +11,18 @@ import logger from '../utils/logger.js';
 export function createNotificationsRouter() {
   const router = express.Router();
 
+  function sanitizeSeverity(rawSeverity) {
+    const severity = String(rawSeverity || 'info').toLowerCase();
+    if (['critical', 'warning', 'info'].includes(severity)) {
+      return severity;
+    }
+    return 'info';
+  }
+
+  function sanitizeString(value, maxLen = 300) {
+    return String(value || '').trim().slice(0, maxLen);
+  }
+
   // Получить все активные уведомления
   router.get('/', requireAuth, (req, res) => {
     try {
@@ -72,6 +84,48 @@ export function createNotificationsRouter() {
       logger.error('[Notifications API] Error creating test notification:', {
         error: error.message,
         stack: error.stack
+      });
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Добавить или обновить уведомление из UI/джоб
+  router.post('/report', requireAuth, (req, res) => {
+    try {
+      const payload = req.body || {};
+      const notificationType = sanitizeString(payload.type || 'ui_event', 80) || 'ui_event';
+      const severity = sanitizeSeverity(payload.severity);
+      const title = sanitizeString(payload.title || 'Уведомление', 160) || 'Уведомление';
+      const message = sanitizeString(payload.message || '', 1000);
+      const key = sanitizeString(payload.key || '', 180) || null;
+      const source = sanitizeString(payload.source || 'admin-ui', 80) || 'admin-ui';
+      const details = payload.details && typeof payload.details === 'object' && !Array.isArray(payload.details)
+        ? payload.details
+        : {};
+      const actions = Array.isArray(payload.actions) ? payload.actions : [];
+
+      const id = notificationsManager.upsert({
+        type: notificationType,
+        severity,
+        title,
+        message,
+        key,
+        source,
+        details: {
+          ...details,
+          reportedBy: req.user?.username || 'unknown',
+          reportedAt: new Date().toISOString()
+        },
+        actions
+      });
+
+      const notification = notificationsManager.getById(id);
+      res.json({ ok: true, id, notification });
+    } catch (error) {
+      logger.error('[Notifications API] Error reporting notification:', {
+        error: error.message,
+        stack: error.stack,
+        user: req.user?.username
       });
       res.status(500).json({ error: error.message });
     }

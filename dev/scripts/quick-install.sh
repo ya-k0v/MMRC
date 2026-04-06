@@ -1,6 +1,6 @@
 #!/bin/bash
 # ========================================
-# VideoControl v3.0.0 - Quick Installation Script
+# VideoControl v3.1.1 - Quick Installation Script
 # ========================================
 # Полная установка системы на чистый Ubuntu/Debian сервер
 #
@@ -19,7 +19,7 @@
 #
 #   # Non-interactive (production)
 #   AUTO_CONFIRM=1 STORAGE_MODE=external DATA_ROOT=/mnt/videocontrol-data \
-#     sudo bash scripts/quick-install.sh /vid/videocontrol
+#     sudo bash dev/scripts/quick-install.sh /vid/videocontrol
 #
 # ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ:
 #   AUTO_CONFIRM=1          - Отключает все вопросы "y/n" (для автоматической установки)
@@ -59,7 +59,7 @@
 #   - Hero Panel: http://YOUR_SERVER_IP/hero/index.html
 #   - По умолчанию: admin / admin123 (ОБЯЗАТЕЛЬНО СМЕНИТЬ!)
 #
-# НОВОЕ В v3.0.0:
+# НОВОЕ В v3.1.1:
 #   - Динамические пути данных через config/app-settings.json
 #   - Автоматические миграции heroes.db
 #   - Дедупликация стримов (один FFmpeg на URL)
@@ -80,7 +80,7 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${BLUE}============================================${NC}"
-echo -e "${BLUE}  VideoControl v3.0.0 - Quick Install${NC}"
+echo -e "${BLUE}  VideoControl v3.1.1 - Quick Install${NC}"
 echo -e "${BLUE}============================================${NC}"
 echo ""
 
@@ -430,13 +430,61 @@ fi
 
 # Создаем конфигурацию видео-оптимизации если нет
 if [ ! -f config/video-optimization.json ]; then
-    cp config/video-optimization.json.example config/video-optimization.json 2>/dev/null || \
     cat > config/video-optimization.json << 'EOF'
 {
   "enabled": true,
   "autoOptimize": true,
   "deleteOriginal": true,
-  "defaultProfile": "1080p"
+    "profiles": {
+        "720p": {
+            "width": 1280,
+            "height": 720,
+            "fps": 25,
+            "bitrate": "2000k",
+            "maxrate": "2500k",
+            "bufsize": "5000k",
+            "profile": "baseline",
+            "level": "3.1",
+            "audioBitrate": "128k"
+        },
+        "1080p": {
+            "width": 1920,
+            "height": 1080,
+            "fps": 30,
+            "bitrate": "4000k",
+            "maxrate": "5000k",
+            "bufsize": "8000k",
+            "profile": "main",
+            "level": "4.0",
+            "audioBitrate": "192k"
+        },
+        "2160p": {
+            "width": 3840,
+            "height": 2160,
+            "fps": 30,
+            "bitrate": "12000k",
+            "maxrate": "18000k",
+            "bufsize": "30000k",
+            "profile": "high",
+            "level": "5.1",
+            "audioBitrate": "192k"
+        }
+    },
+    "defaultProfile": "1080p",
+    "optimization": {
+        "maxConcurrent": 2,
+        "preset": "medium",
+        "pixelFormat": "yuv420p",
+        "audioCodec": "aac",
+        "audioSampleRate": "44100",
+        "audioChannels": 2
+    },
+    "thresholds": {
+        "maxWidth": 3840,
+        "maxHeight": 2160,
+        "maxFps": 60,
+        "maxBitrate": 25000000
+    }
 }
 EOF
 fi
@@ -454,7 +502,7 @@ if [ ! -f config/app-settings.json ]; then
     cat > config/app-settings.json << EOF
 {
   "contentRoot": "$CONTENT_ROOT",
-  "version": "3.0.0"
+    "version": "3.1.1"
 }
 EOF
     # Права будут установлены на vcuser в PHASE 7
@@ -615,7 +663,7 @@ fi
 # Создаем systemd unit файл
 cat > /etc/systemd/system/videocontrol.service << EOF
 [Unit]
-Description=VideoControl Server v3.0.0
+Description=VideoControl Server v3.1.1
 After=network.target
 
 [Service]
@@ -675,7 +723,7 @@ echo -e "${GREEN}============================================${NC}"
 echo -e "${GREEN}  ✅ Installation Complete!${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo ""
-echo "🎉 VideoControl v3.0.0 successfully installed!"
+echo "🎉 VideoControl v3.1.1 successfully installed!"
 echo ""
 echo "📂 Installation directory: $INSTALL_DIR"
 echo "👤 Service user: $SERVICE_USER ($SERVICE_GROUP)"
@@ -740,9 +788,10 @@ echo "  Stop:    sudo systemctl stop videocontrol"
 echo ""
 echo "📚 Documentation:"
 echo "  Main:     $INSTALL_DIR/README.md"
-echo "  Install:  $INSTALL_DIR/INSTALL.md (new OS setup)"
-echo "  Quick:    $INSTALL_DIR/QUICK-START.md"
+echo "  Install:  $INSTALL_DIR/dev/INSTALL.md (new OS setup)"
+echo "  Quick:    $INSTALL_DIR/dev/README.md"
 echo "  Manual:   $INSTALL_DIR/dev/MANUAL.md"
+echo "  Clients:  $INSTALL_DIR/dev/CLIENTS.md"
 echo ""
 echo "🛠️  Utility scripts:"
 echo "  Check env:  bash $INSTALL_DIR/dev/scripts/check-environment.sh"

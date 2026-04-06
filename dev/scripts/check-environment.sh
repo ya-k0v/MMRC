@@ -7,7 +7,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 cd "$PROJECT_ROOT"
 
@@ -35,11 +35,11 @@ check_command() {
     else
         if [ "$required" = "true" ]; then
             echo -e "${RED}❌${NC} $name: не установлен (обязательно)"
-            ((ERRORS++))
+            ((ERRORS+=1))
             return 1
         else
             echo -e "${YELLOW}⚠️${NC}  $name: не установлен (опционально)"
-            ((WARNINGS++))
+            ((WARNINGS+=1))
             return 0
         fi
     fi
@@ -54,11 +54,11 @@ check_node_version() {
             echo -e "${GREEN}✅${NC} Node.js: v$version (требуется >= 20.x)"
         else
             echo -e "${RED}❌${NC} Node.js: v$version (требуется >= 20.x)"
-            ((ERRORS++))
+            ((ERRORS+=1))
         fi
     else
         echo -e "${RED}❌${NC} Node.js: не установлен"
-        ((ERRORS++))
+        ((ERRORS+=1))
     fi
 }
 
@@ -69,13 +69,13 @@ check_npm_packages() {
     
     if [ ! -f "package.json" ]; then
         echo -e "${RED}❌${NC} package.json не найден"
-        ((ERRORS++))
+        ((ERRORS+=1))
         return
     fi
     
     if [ ! -d "node_modules" ]; then
         echo -e "${YELLOW}⚠️${NC}  node_modules не найден, запустите: npm install"
-        ((WARNINGS++))
+        ((WARNINGS+=1))
         return
     fi
     
@@ -87,7 +87,7 @@ check_npm_packages() {
             echo -e "${GREEN}✅${NC} $dep: v$version"
         else
             echo -e "${RED}❌${NC} $dep: не установлен"
-            ((ERRORS++))
+            ((ERRORS+=1))
         fi
     done
 }
@@ -103,7 +103,7 @@ check_directories() {
             echo -e "${GREEN}✅${NC} $dir/"
         else
             echo -e "${RED}❌${NC} $dir/: не найдена"
-            ((ERRORS++))
+            ((ERRORS+=1))
         fi
     done
     
@@ -114,7 +114,7 @@ check_directories() {
             echo -e "${GREEN}✅${NC} $file"
         else
             echo -e "${RED}❌${NC} $file: не найден"
-            ((ERRORS++))
+            ((ERRORS+=1))
         fi
     done
 }
@@ -133,14 +133,14 @@ check_permissions() {
                 rmdir "$dir" 2>/dev/null || true
             else
                 echo -e "${RED}❌${NC} Нет прав на создание $dir/"
-                ((ERRORS++))
+                ((ERRORS+=1))
             fi
         else
             if [ -w "$dir" ]; then
                 echo -e "${GREEN}✅${NC} $dir/ доступен для записи"
             else
                 echo -e "${RED}❌${NC} $dir/ недоступен для записи"
-                ((ERRORS++))
+                ((ERRORS+=1))
             fi
         fi
     done
@@ -155,20 +155,20 @@ check_ports() {
     if command -v netstat > /dev/null 2>&1; then
         if netstat -tuln 2>/dev/null | grep -q ":$port "; then
             echo -e "${YELLOW}⚠️${NC}  Порт $port уже занят"
-            ((WARNINGS++))
+            ((WARNINGS+=1))
         else
             echo -e "${GREEN}✅${NC} Порт $port свободен"
         fi
     elif command -v ss > /dev/null 2>&1; then
         if ss -tuln 2>/dev/null | grep -q ":$port "; then
             echo -e "${YELLOW}⚠️${NC}  Порт $port уже занят"
-            ((WARNINGS++))
+            ((WARNINGS+=1))
         else
             echo -e "${GREEN}✅${NC} Порт $port свободен"
         fi
     else
         echo -e "${YELLOW}⚠️${NC}  Не удалось проверить порт (netstat/ss не установлены)"
-        ((WARNINGS++))
+        ((WARNINGS+=1))
     fi
 }
 
@@ -192,10 +192,10 @@ main() {
     elif command -v libreoffice > /dev/null 2>&1; then
         local version=$(libreoffice --version 2>&1 | head -1 || echo "unknown")
         echo -e "${YELLOW}⚠️${NC}  LibreOffice найден, но soffice недоступен. Создайте симлинк: ln -s $(which libreoffice) /usr/bin/soffice"
-        ((WARNINGS++))
+        ((WARNINGS+=1))
     else
         echo -e "${RED}❌${NC} LibreOffice (soffice): не установлен (обязателен для PPTX конвертации)"
-        ((ERRORS++))
+        ((ERRORS+=1))
     fi
     
     # GraphicsMagick или ImageMagick обязательны для PDF конвертации (pdf2pic)
@@ -207,7 +207,7 @@ main() {
         echo -e "${GREEN}✅${NC} ImageMagick: $version (будет использован для pdf2pic)"
     else
         echo -e "${RED}❌${NC} GraphicsMagick или ImageMagick: не установлены (обязательны для PDF конвертации)"
-        ((ERRORS++))
+        ((ERRORS+=1))
     fi
     
     check_command "sqlite3" "SQLite3 CLI" false

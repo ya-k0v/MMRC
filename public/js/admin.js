@@ -32,6 +32,26 @@ let user = null;
 const volumeStateByDevice = new Map();
 const VOLUME_STEP = 5;
 
+async function reportAdminUiNotification(payload = {}) {
+  try {
+    await adminFetch('/api/notifications/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: payload.type || 'admin_ui_event',
+        severity: payload.severity || 'info',
+        title: payload.title || 'Уведомление',
+        message: payload.message || '',
+        details: payload.details || {},
+        key: payload.key || null,
+        source: 'admin-main'
+      })
+    });
+  } catch (error) {
+    console.error('[Admin UI] Failed to report notification:', error);
+  }
+}
+
 // Настройка Socket.IO обработчиков
 setupSocketListeners(socket, {
   onDevicesUpdated: async () => {
@@ -380,7 +400,13 @@ function renderLayout() {
 
 async function promptAddStream() {
   if (!currentDeviceId) {
-    alert('Сначала выберите устройство');
+    await reportAdminUiNotification({
+      type: 'stream_add_no_device',
+      severity: 'info',
+      title: 'Сначала выберите устройство',
+      message: 'Для добавления стрима выберите устройство слева',
+      key: 'stream-add-no-device'
+    });
     return;
   }
   const { showStreamModal } = await import('./admin/files-manager.js');

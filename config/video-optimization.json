@@ -24,6 +24,17 @@
       "profile": "main",
       "level": "4.0",
       "audioBitrate": "192k"
+    },
+    "2160p": {
+      "width": 3840,
+      "height": 2160,
+      "fps": 30,
+      "bitrate": "12000k",
+      "maxrate": "18000k",
+      "bufsize": "30000k",
+      "profile": "high",
+      "level": "5.1",
+      "audioBitrate": "192k"
     }
   },
   "defaultProfile": "1080p",
@@ -36,10 +47,10 @@
     "audioChannels": 2
   },
   "thresholds": {
-    "maxWidth": 1920,
-    "maxHeight": 1080,
-    "maxFps": 30,
-    "maxBitrate": 6000000
+    "maxWidth": 3840,
+    "maxHeight": 2160,
+    "maxFps": 60,
+    "maxBitrate": 25000000
   }
 }
 

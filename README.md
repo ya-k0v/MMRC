@@ -4,7 +4,7 @@
 
 ![Version](https://img.shields.io/badge/version-3.1.1-blue)
 ![Node](https://img.shields.io/badge/node-20.x-green)
-![License](https://img.shields.io/badge/license-MIT-orange)
+![License](https://img.shields.io/badge/license-Personal_Use_Only-red)
 
 ---
 
@@ -97,7 +97,10 @@ node server.js
 
 ## 📄 Лицензия
 
-MIT License — свободное использование
+Используется кастомная лицензия: только личное (персональное) использование физическими лицами.
+
+- Использование юридическими лицами, ИП, госорганизациями и любыми организациями запрещено без письменного разрешения правообладателя.
+- Полный текст: [LICENSE](LICENSE)
 
 ---
 
