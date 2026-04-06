@@ -314,6 +314,7 @@ const devicesRouter = createDevicesRouter({
   fileNamesMap, 
   saveFileNamesMap: saveFileNamesToDB,
   requireAdmin,  // Передаем для защиты POST/DELETE
+  requireSpeaker,
   onDeviceCreated: (deviceId) => {
     const state = ensureVolumeState(deviceId);
     io.emit('devices/volume/state', {

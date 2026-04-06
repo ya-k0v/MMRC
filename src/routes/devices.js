@@ -15,7 +15,7 @@ import logger, { logDevice } from '../utils/logger.js';
 import { deleteDeviceFilesMetadata, getDeviceFilesMetadata } from '../database/files-metadata.js';
 import { removeStreamJob } from '../streams/stream-manager.js';
 import { requireAuth } from '../middleware/auth.js';
-import { getUserDevices } from '../middleware/device-access.js';
+import { getUserDevices, hasDeviceAccess } from '../middleware/device-access.js';
 import { launchAndroidApp } from '../utils/adb-launcher.js';
 
 const router = express.Router();
@@ -33,6 +33,7 @@ export function createDevicesRouter(deps) {
     fileNamesMap, 
     saveFileNamesMap, 
     requireAdmin,
+    requireSpeaker,
     onDeviceCreated,
     onDeviceDeleted
   } = deps;
@@ -267,11 +268,17 @@ export function createDevicesRouter(deps) {
   });
   
   // POST /api/devices/:id/launch-app - Запустить Android-приложение на устройстве
-  router.post('/:id/launch-app', requireAdmin, async (req, res) => {
+  router.post('/:id/launch-app', requireSpeaker, async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
     if (!id || !devices[id]) {
       return res.status(404).json({ ok: false, error: 'Устройство не найдено' });
     }
+
+    // Speaker может запускать только на назначенных ему устройствах.
+    if (!hasDeviceAccess(req.user.userId, id, req.user.role)) {
+      return res.status(403).json({ ok: false, error: 'Доступ к устройству запрещен' });
+    }
+
     const device = devices[id];
     if (!device.ipAddress) {
       return res.status(400).json({ ok: false, error: 'IP адрес устройства не задан' });
