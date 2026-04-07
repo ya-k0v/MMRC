@@ -103,6 +103,10 @@ try {
         ...settings,
         ...parsed
       };
+      // Environment override: if CONTENT_ROOT is provided via env, prefer it
+      if (process.env.CONTENT_ROOT && typeof process.env.CONTENT_ROOT === 'string' && process.env.CONTENT_ROOT.trim()) {
+        settings.contentRoot = process.env.CONTENT_ROOT.trim();
+      }
     }
   } else {
     // Создаем файл с настройками по умолчанию
