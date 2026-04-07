@@ -127,6 +127,7 @@ const logger = winston.createLogger({
   silent: isLogSilent,
   format: logFormat,
   defaultMeta: { service: 'mmrc' },
+  exitOnError: false,
   transports: [
     ...(errorFileTransport ? [errorFileTransport] : []),
     ...(combinedFileTransport ? [combinedFileTransport] : []),
