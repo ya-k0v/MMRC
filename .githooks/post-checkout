@@ -1,0 +1,17 @@
+#!/bin/bash
+# post-checkout hook: sync after branch switches (only for branch checkout)
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$REPO_ROOT" || exit 0
+
+# git post-checkout args: <old-ref> <new-ref> <is-branch-checkout>
+IS_BRANCH_CHECKOUT="${3:-0}"
+if [[ "$IS_BRANCH_CHECKOUT" != "1" ]]; then
+  exit 0
+fi
+
+echo "[git-hook] post-checkout: branch checkout detected, running post-pull sync"
+
+if [[ -x "scripts/post-pull-sync.sh" ]]; then
+  bash scripts/post-pull-sync.sh || echo "[git-hook] post-pull sync failed"
+fi

@@ -21,7 +21,7 @@ if ! command -v git >/dev/null 2>&1; then
   exit 0
 fi
 
-chmod +x .githooks/* 2>/dev/null || true
+find .githooks -type f -exec chmod +x {} + 2>/dev/null || true
 git config core.hooksPath .githooks
 
 echo "[hooks] core.hooksPath configured to .githooks"

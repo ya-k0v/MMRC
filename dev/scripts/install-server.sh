@@ -100,7 +100,11 @@ fi
 # Install npm packages
 echo ""
 echo "Installing npm packages..."
-npm install
+if [ -f package-lock.json ]; then
+    npm ci --omit=dev || npm install
+else
+    npm install
+fi
 npm run setup-hooks --silent || true
 
 # Create .env file with JWT secret
@@ -140,7 +144,7 @@ mkdir -p config/hero
 # Initialize or migrate database
 echo ""
 echo "Initializing/migrating database..."
-npm run migrate-db --silent
+SKIP_NPM_INSTALL=1 SKIP_SERVICE_RESTART=1 bash ./scripts/post-pull-sync.sh
 echo "✅ Database schema is up to date"
 echo "   Default admin user: admin / admin123 (if first install)"
 

@@ -9,6 +9,7 @@
     "test:ci": "bash ./scripts/ci-test.sh",
     "doctor:start": "node scripts/check-startup-compat.js",
     "migrate-db": "node src/database/migrate.js",
+    "post-pull:sync": "bash ./scripts/post-pull-sync.sh",
     "setup-hooks": "bash ./scripts/setup-git-hooks.sh",
     "install-git-hooks": "npm run setup-hooks --silent",
     "postinstall": "npm run setup-hooks --silent || true",
