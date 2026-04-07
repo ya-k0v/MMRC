@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      CONTENT_ROOT: ${{ runner.temp }}/videocontrol-data
+      CONTENT_ROOT: ${{ github.workspace }}/.tmp/videocontrol-data
 
     steps:
       - name: Checkout
