@@ -43,6 +43,66 @@ function getUserByUsername(db, username) {
   };
 }
 
+function normalizeGroupToken(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function extractCnFromDn(dnValue) {
+  const match = String(dnValue || '').match(/(?:^|,)\s*cn=([^,]+)/i);
+  return match ? String(match[1]).trim() : '';
+}
+
+function collectLdapGroupTokens(groups = []) {
+  const values = Array.isArray(groups) ? groups : [];
+  const tokens = new Set();
+
+  for (const group of values) {
+    const normalizedGroup = normalizeGroupToken(group);
+    if (!normalizedGroup) {
+      continue;
+    }
+
+    tokens.add(normalizedGroup);
+
+    const cn = extractCnFromDn(group);
+    if (cn) {
+      tokens.add(normalizeGroupToken(cn));
+    }
+  }
+
+  return tokens;
+}
+
+function resolveRoleFromLdapGroups(groups = [], ldapSettings = {}) {
+  const roleMap = ldapSettings?.groupRoleMap && typeof ldapSettings.groupRoleMap === 'object'
+    ? ldapSettings.groupRoleMap
+    : {};
+  const priority = Array.isArray(ldapSettings?.rolePriority) && ldapSettings.rolePriority.length
+    ? ldapSettings.rolePriority
+    : ['admin', 'hero_admin', 'speaker'];
+  const groupTokens = collectLdapGroupTokens(groups);
+
+  if (!groupTokens.size) {
+    return null;
+  }
+
+  for (const role of priority) {
+    if (!['admin', 'speaker', 'hero_admin'].includes(role)) {
+      continue;
+    }
+
+    const mappedGroups = Array.isArray(roleMap[role]) ? roleMap[role] : [];
+    for (const mappedGroup of mappedGroups) {
+      const mappedToken = normalizeGroupToken(mappedGroup);
+      if (mappedToken && groupTokens.has(mappedToken)) {
+        return role;
+      }
+    }
+  }
+
+  return null;
+}
+
 async function logLoginFailure(req, username, reason, userId = null) {
   await auditLog({
     userId,
@@ -185,6 +245,7 @@ router.post('/login',
         const ldapUsername = String(ldapResult.user?.username || username).trim();
         const ldapFullName = String(ldapResult.user?.fullName || ldapUsername).trim() || ldapUsername;
         const ldapDn = String(ldapResult.user?.dn || '').trim() || null;
+        const mappedRoleFromGroups = resolveRoleFromLdapGroups(ldapResult.user?.groups || [], ldapSettings);
 
         let ldapUser = getUserByUsername(db, ldapUsername);
 
@@ -211,11 +272,12 @@ router.post('/login',
           const defaultRole = ['admin', 'speaker', 'hero_admin'].includes(ldapSettings.defaultRole)
             ? ldapSettings.defaultRole
             : 'speaker';
+          const effectiveRole = mappedRoleFromGroups || defaultRole;
 
           const insertResult = db.prepare(`
             INSERT INTO users (username, full_name, password_hash, auth_source, ldap_dn, role, is_active)
             VALUES (?, ?, ?, 'ldap', ?, ?, 1)
-          `).run(ldapUsername, ldapFullName, passwordHash, ldapDn, defaultRole);
+          `).run(ldapUsername, ldapFullName, passwordHash, ldapDn, effectiveRole);
 
           ldapUser = db.prepare(`
             SELECT id, username, full_name, password_hash, role, is_active, auth_source, ldap_dn
@@ -239,6 +301,11 @@ router.post('/login',
           if (ldapDn !== ldapUser.ldap_dn) {
             updates.push('ldap_dn = ?');
             params.push(ldapDn);
+          }
+
+          if (mappedRoleFromGroups && mappedRoleFromGroups !== ldapUser.role) {
+            updates.push('role = ?');
+            params.push(mappedRoleFromGroups);
           }
 
           if (updates.length > 0) {

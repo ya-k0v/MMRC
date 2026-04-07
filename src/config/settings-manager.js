@@ -24,7 +24,13 @@ const LDAP_DEFAULTS = {
   defaultRole: 'speaker',
   connectTimeoutMs: 5000,
   operationTimeoutMs: 5000,
-  tlsRejectUnauthorized: true
+  tlsRejectUnauthorized: true,
+  groupRoleMap: {
+    admin: [],
+    speaker: [],
+    hero_admin: []
+  },
+  rolePriority: ['admin', 'hero_admin', 'speaker']
 };
 
 const ALLOWED_SEARCH_SCOPES = new Set(['base', 'one', 'sub']);
@@ -60,9 +66,105 @@ function normalizeRole(role) {
   return ALLOWED_USER_ROLES.has(normalized) ? normalized : LDAP_DEFAULTS.defaultRole;
 }
 
+function splitList(value) {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => splitList(item));
+  }
+
+  if (typeof value !== 'string') {
+    return [];
+  }
+
+  const text = value.trim();
+  if (!text) {
+    return [];
+  }
+
+  // Для LDAP DN запятые являются частью значения, поэтому
+  // разделяем только по ';' или новой строке.
+  if (!/[;\n]/.test(text)) {
+    return [text];
+  }
+
+  return text
+    .split(/[;\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function splitRoleList(value) {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => splitRoleList(item));
+  }
+
+  if (typeof value !== 'string') {
+    return [];
+  }
+
+  return value
+    .split(/[\n,;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeUniqueCaseInsensitive(values = []) {
+  const seen = new Set();
+  const result = [];
+
+  for (const value of values) {
+    const key = String(value).trim().toLowerCase();
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(String(value).trim());
+  }
+
+  return result;
+}
+
+function normalizeGroupRoleMap(sourceMap = {}, baseMap = LDAP_DEFAULTS.groupRoleMap) {
+  const source = sourceMap && typeof sourceMap === 'object' ? sourceMap : {};
+  const base = baseMap && typeof baseMap === 'object' ? baseMap : LDAP_DEFAULTS.groupRoleMap;
+
+  return {
+    admin: normalizeUniqueCaseInsensitive(splitList(source.admin ?? base.admin ?? [])),
+    speaker: normalizeUniqueCaseInsensitive(splitList(source.speaker ?? base.speaker ?? [])),
+    hero_admin: normalizeUniqueCaseInsensitive(splitList(source.hero_admin ?? base.hero_admin ?? []))
+  };
+}
+
+function normalizeRolePriority(value, fallback = LDAP_DEFAULTS.rolePriority) {
+  const source = normalizeUniqueCaseInsensitive(splitRoleList(value));
+  const base = Array.isArray(fallback) && fallback.length
+    ? fallback
+    : LDAP_DEFAULTS.rolePriority;
+
+  const normalized = source
+    .map((role) => String(role || '').trim().toLowerCase())
+    .filter((role) => ALLOWED_USER_ROLES.has(role));
+
+  if (!normalized.length) {
+    return [...base];
+  }
+
+  return normalized;
+}
+
 function normalizeLdapAuthSettings(raw = {}, current = LDAP_DEFAULTS) {
   const source = raw && typeof raw === 'object' ? raw : {};
   const base = current && typeof current === 'object' ? current : LDAP_DEFAULTS;
+
+  const sourceMap = source.groupRoleMap && typeof source.groupRoleMap === 'object'
+    ? source.groupRoleMap
+    : {
+        admin: source.groupsAdmin ?? source.groupAdmin,
+        speaker: source.groupsSpeaker ?? source.groupSpeaker,
+        hero_admin: source.groupsHeroAdmin ?? source.groupHeroAdmin
+      };
+  const baseMap = base.groupRoleMap && typeof base.groupRoleMap === 'object'
+    ? base.groupRoleMap
+    : LDAP_DEFAULTS.groupRoleMap;
 
   return {
     enabled: normalizeBoolean(source.enabled, normalizeBoolean(base.enabled, LDAP_DEFAULTS.enabled)),
@@ -80,7 +182,9 @@ function normalizeLdapAuthSettings(raw = {}, current = LDAP_DEFAULTS) {
     tlsRejectUnauthorized: normalizeBoolean(
       source.tlsRejectUnauthorized,
       normalizeBoolean(base.tlsRejectUnauthorized, LDAP_DEFAULTS.tlsRejectUnauthorized)
-    )
+    ),
+    groupRoleMap: normalizeGroupRoleMap(sourceMap, baseMap),
+    rolePriority: normalizeRolePriority(source.rolePriority ?? base.rolePriority ?? LDAP_DEFAULTS.rolePriority)
   };
 }
 
@@ -199,7 +303,13 @@ function readLdapAuthSettingsFromEnv() {
     defaultRole: process.env.LDAP_DEFAULT_ROLE || LDAP_DEFAULTS.defaultRole,
     connectTimeoutMs: process.env.LDAP_CONNECT_TIMEOUT_MS,
     operationTimeoutMs: process.env.LDAP_OPERATION_TIMEOUT_MS,
-    tlsRejectUnauthorized: process.env.LDAP_TLS_REJECT_UNAUTHORIZED
+    tlsRejectUnauthorized: process.env.LDAP_TLS_REJECT_UNAUTHORIZED,
+    groupRoleMap: {
+      admin: process.env.LDAP_GROUPS_ADMIN || process.env.LDAP_GROUP_ADMIN || '',
+      speaker: process.env.LDAP_GROUPS_SPEAKER || process.env.LDAP_GROUP_SPEAKER || '',
+      hero_admin: process.env.LDAP_GROUPS_HERO_ADMIN || process.env.LDAP_GROUP_HERO_ADMIN || ''
+    },
+    rolePriority: process.env.LDAP_ROLE_PRIORITY || LDAP_DEFAULTS.rolePriority.join(',')
   };
 
   return normalizeLdapAuthSettings(raw, LDAP_DEFAULTS);

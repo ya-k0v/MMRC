@@ -65,6 +65,30 @@ function resolveFullName(entry, fallback) {
   return String(fullName || fallback || '').trim();
 }
 
+function resolveGroups(entry) {
+  const rawGroups = entry?.memberOf ?? entry?.memberof ?? entry?.groups ?? [];
+  const values = Array.isArray(rawGroups) ? rawGroups : [rawGroups];
+  const seen = new Set();
+  const groups = [];
+
+  for (const value of values) {
+    const group = toSafeString(value).trim();
+    if (!group) {
+      continue;
+    }
+
+    const key = group.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    groups.push(group);
+  }
+
+  return groups;
+}
+
 export async function authenticateAgainstLdap(username, password, ldapConfig = {}) {
   if (!username || !password) {
     return { ok: false, reason: 'invalid_input' };
@@ -117,7 +141,8 @@ export async function authenticateAgainstLdap(username, password, ldapConfig = {
         'cn',
         'displayName',
         'userPrincipalName',
-        'mail'
+        'mail',
+        'memberOf'
       ],
       sizeLimit: 2
     });
@@ -144,7 +169,8 @@ export async function authenticateAgainstLdap(username, password, ldapConfig = {
       user: {
         username: resolveUsername(entry, usernameAttribute, username),
         fullName: resolveFullName(entry, username),
-        dn: userDn
+        dn: userDn,
+        groups: resolveGroups(entry)
       }
     };
   } catch (error) {
