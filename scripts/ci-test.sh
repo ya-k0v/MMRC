@@ -11,6 +11,12 @@ HEALTH_JSON="$TMP_DIR/ci-health.json"
 mkdir -p "$TMP_DIR"
 rm -f "$SERVER_LOG" "$HEALTH_JSON"
 
+# Ensure CONTENT_ROOT is writable for CI/local runs. Prefer explicit env, else use repo .tmp/data
+if [[ -z "${CONTENT_ROOT:-}" ]]; then
+  export CONTENT_ROOT="$TMP_DIR/data"
+  mkdir -p "$CONTENT_ROOT"
+fi
+
 echo "[ci] Syntax check (server scripts)"
 find server.js src scripts dev/scripts -type f -name '*.js' -print0 | xargs -0 -n1 node --check
 
