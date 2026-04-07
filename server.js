@@ -59,8 +59,7 @@ import { initSystemMonitor, stopSystemMonitor } from './src/utils/system-monitor
 import logger, { httpLoggerMiddleware } from './src/utils/logger.js';
 import { cleanupResolutionCache, getResolutionCacheSize } from './src/video/resolution-cache.js';
 import { circuitBreakers } from './src/utils/circuit-breaker.js';
-import { getSettings, updateContentRootPath, updateLdapAuthSettings, getDataRoot, getDevicesPath, getStreamsOutputDir, getConvertedCache, getLogsDir, getTempDir } from './src/config/settings-manager.js';
-import { testLdapConnection } from './src/auth/ldap-auth.js';
+import { getSettings, updateContentRootPath, getDataRoot, getDevicesPath, getStreamsOutputDir, getConvertedCache, getLogsDir, getTempDir } from './src/config/settings-manager.js';
 import { getMetrics } from './src/utils/metrics.js';
 import { timerRegistry } from './src/utils/timer-registry.js';
 import adminRouter from './src/routes/admin.js';
@@ -493,34 +492,6 @@ app.post('/api/admin/settings/content-root', requireAuth, requireAdmin, async (r
   } catch (error) {
     logger.error('[Admin] Failed to update content root:', error);
     res.status(400).json({ error: error.message || 'Не удалось обновить путь' });
-  }
-});
-
-app.post('/api/admin/settings/ldap', requireAuth, requireAdmin, (req, res) => {
-  try {
-    const ldapAuth = updateLdapAuthSettings(req.body || {});
-    res.json({ ok: true, ldapAuth });
-  } catch (error) {
-    logger.error('[Admin] Failed to update LDAP settings:', error);
-    res.status(400).json({ error: error.message || 'Не удалось обновить LDAP настройки' });
-  }
-});
-
-app.post('/api/admin/settings/ldap/test', requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const payload = req.body || {};
-    // Если админ передал временные настройки, используем их, иначе используем сохранённые
-    const ldapConfig = Object.keys(payload).length ? payload : (getSettings().ldapAuth || {});
-
-    const result = await testLdapConnection(ldapConfig);
-    if (result && result.ok) {
-      return res.json({ ok: true, message: 'Connection OK', details: result });
-    }
-
-    return res.status(400).json({ ok: false, error: result });
-  } catch (error) {
-    logger.error('[Admin] LDAP test failed:', error);
-    res.status(500).json({ ok: false, error: error.message || 'LDAP test error' });
   }
 });
 

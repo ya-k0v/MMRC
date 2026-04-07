@@ -163,21 +163,20 @@ router.post('/login',
         if (!ldapEnabled) {
           const reason = user ? 'ldap_disabled' : 'user_not_found';
           await logLoginFailure(req, username, reason, user?.id || null);
-
-          if (user && user.auth_source === 'ldap') {
-            return res.status(401).json({ error: 'LDAP авторизация отключена' });
-          }
-
           return res.status(401).json({ error: 'Неверный логин или пароль' });
         }
 
         const ldapResult = await authenticateAgainstLdap(username, password, ldapSettings);
 
         if (!ldapResult.ok) {
-          await logLoginFailure(req, username, ldapResult.reason || 'ldap_error', user?.id || null);
+          const ldapFailureReason = ldapResult.reason || 'ldap_error';
+          await logLoginFailure(req, username, ldapFailureReason, user?.id || null);
 
-          if (ldapResult.reason === 'misconfigured') {
-            return res.status(500).json({ error: 'LDAP не настроен' });
+          if (ldapFailureReason === 'misconfigured' || ldapFailureReason === 'ldap_error' || ldapFailureReason === 'disabled') {
+            logger.warn('[Auth] LDAP unavailable, fallback to local auth only', {
+              username,
+              reason: ldapFailureReason
+            });
           }
 
           return res.status(401).json({ error: 'Неверный логин или пароль' });

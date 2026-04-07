@@ -87,8 +87,7 @@ function normalizeLdapAuthSettings(raw = {}, current = LDAP_DEFAULTS) {
 // КРИТИЧНО: Инициализируем settings сразу, чтобы избежать ошибки "Cannot access 'settings' before initialization"
 // Это важно, так как logger.js может использовать getLogsDir() до полной инициализации модуля
 let settings = {
-  contentRoot: process.env.CONTENT_ROOT || DEFAULT_DATA_ROOT,
-  ldapAuth: { ...LDAP_DEFAULTS }
+  contentRoot: process.env.CONTENT_ROOT || DEFAULT_DATA_ROOT
 };
 
 // КРИТИЧНО: Загружаем настройки из файла синхронно при загрузке модуля
@@ -103,6 +102,7 @@ try {
         ...settings,
         ...parsed
       };
+      delete settings.ldapAuth;
       // Environment override: if CONTENT_ROOT is provided via env, prefer it
       if (process.env.CONTENT_ROOT && typeof process.env.CONTENT_ROOT === 'string' && process.env.CONTENT_ROOT.trim()) {
         settings.contentRoot = process.env.CONTENT_ROOT.trim();
@@ -184,12 +184,32 @@ function applyContentRootPolicy() {
 }
 
 applyContentRootPolicy();
-settings.ldapAuth = normalizeLdapAuthSettings(settings.ldapAuth, LDAP_DEFAULTS);
+
+function readLdapAuthSettingsFromEnv() {
+  const raw = {
+    enabled: process.env.LDAP_ENABLED,
+    url: process.env.LDAP_URL || process.env.LDAP_URI || '',
+    bindDN: process.env.LDAP_BIND_DN || '',
+    bindPassword: process.env.LDAP_BIND_PASSWORD || '',
+    baseDN: process.env.LDAP_BASE_DN || '',
+    userFilter: process.env.LDAP_USER_FILTER || LDAP_DEFAULTS.userFilter,
+    usernameAttribute: process.env.LDAP_USERNAME_ATTRIBUTE || LDAP_DEFAULTS.usernameAttribute,
+    searchScope: process.env.LDAP_SEARCH_SCOPE || LDAP_DEFAULTS.searchScope,
+    autoCreateUsers: process.env.LDAP_AUTO_CREATE_USERS,
+    defaultRole: process.env.LDAP_DEFAULT_ROLE || LDAP_DEFAULTS.defaultRole,
+    connectTimeoutMs: process.env.LDAP_CONNECT_TIMEOUT_MS,
+    operationTimeoutMs: process.env.LDAP_OPERATION_TIMEOUT_MS,
+    tlsRejectUnauthorized: process.env.LDAP_TLS_REJECT_UNAUTHORIZED
+  };
+
+  return normalizeLdapAuthSettings(raw, LDAP_DEFAULTS);
+}
 
 function safeWriteSettings() {
   try {
     fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf-8');
+    const { ldapAuth, ...persistableSettings } = settings;
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(persistableSettings, null, 2), 'utf-8');
   } catch (error) {
     // КРИТИЧНО: Используем lazy import logger, чтобы избежать циклической зависимости
     import('../utils/logger.js').then(({ default: logger }) => {
@@ -230,8 +250,8 @@ function loadSettingsFromFile() {
         ...settings,
         ...parsed
       };
+      delete settings.ldapAuth;
       applyContentRootPolicy();
-      settings.ldapAuth = normalizeLdapAuthSettings(settings.ldapAuth, LDAP_DEFAULTS);
     }
   } catch (error) {
     // КРИТИЧНО: Не используем logger здесь из-за циклической зависимости
@@ -380,7 +400,7 @@ export function getSettings() {
 
 export function getLdapAuthSettings(options = {}) {
   const includeSecrets = options?.includeSecrets === true;
-  const normalized = normalizeLdapAuthSettings(settings.ldapAuth, LDAP_DEFAULTS);
+  const normalized = readLdapAuthSettingsFromEnv();
 
   if (includeSecrets) {
     return { ...normalized };
@@ -393,31 +413,8 @@ export function getLdapAuthSettings(options = {}) {
   };
 }
 
-export function updateLdapAuthSettings(partial = {}) {
-  if (!partial || typeof partial !== 'object') {
-    throw new Error('Некорректные LDAP настройки');
-  }
-
-  const current = normalizeLdapAuthSettings(settings.ldapAuth, LDAP_DEFAULTS);
-  const merged = {
-    ...current,
-    ...partial
-  };
-
-  const next = normalizeLdapAuthSettings(merged, current);
-
-  if (Object.prototype.hasOwnProperty.call(partial, 'bindPassword')) {
-    const password = String(partial.bindPassword || '');
-    next.bindPassword = password;
-  } else if (partial.clearBindPassword === true) {
-    next.bindPassword = '';
-  } else {
-    next.bindPassword = current.bindPassword;
-  }
-
-  settings.ldapAuth = next;
-  safeWriteSettings();
-  return getLdapAuthSettings();
+export function updateLdapAuthSettings() {
+  throw new Error('LDAP настраивается через .env и перезапуск сервиса');
 }
 
 export async function updateContentRootPath(newPath) {

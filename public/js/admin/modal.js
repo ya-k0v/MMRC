@@ -1168,185 +1168,24 @@ async function loadSettingsContent(adminFetch) {
   storageSection.appendChild(storageTitle);
   storageSection.appendChild(storageContent);
 
-  // LDAP / AD авторизация
-  let ldapAuthSettings = settingsData?.ldapAuth || {};
+  // LDAP / AD теперь настраивается только через .env
+  const authConfigSection = document.createElement('div');
+  authConfigSection.style.cssText = 'padding:var(--space-md) 0; display:flex; flex-direction:column; gap:var(--space-sm);';
 
-  const createLdapField = (labelText, inputElement) => {
-    const field = document.createElement('div');
-    field.style.cssText = 'display:flex; flex-direction:column; gap:4px;';
+  const authConfigTitle = document.createElement('div');
+  authConfigTitle.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary);';
+  authConfigTitle.textContent = 'Авторизация';
 
-    const label = document.createElement('label');
-    label.className = 'meta';
-    label.style.cssText = 'font-size:0.85rem; color:var(--text-secondary);';
-    label.textContent = labelText;
+  const authConfigDescription = document.createElement('div');
+  authConfigDescription.className = 'meta';
+  authConfigDescription.style.cssText = 'color:var(--text-secondary); line-height:1.5;';
+  authConfigDescription.textContent = 'LDAP/AD настраивается через файл .env на сервере. При отсутствии или ошибке LDAP вход продолжает работать для локальных учетных записей.';
 
-    field.appendChild(label);
-    field.appendChild(inputElement);
-    return field;
-  };
+  authConfigSection.appendChild(authConfigTitle);
+  authConfigSection.appendChild(authConfigDescription);
 
-  const ldapSection = document.createElement('div');
-  ldapSection.style.cssText = 'padding:var(--space-md) 0; display:flex; flex-direction:column; gap:var(--space-sm);';
-
-  const ldapTitle = document.createElement('div');
-  ldapTitle.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary);';
-  ldapTitle.textContent = 'AD / LDAP авторизация';
-
-  const ldapDescription = document.createElement('div');
-  ldapDescription.className = 'meta';
-  ldapDescription.style.cssText = 'color:var(--text-secondary); line-height:1.4;';
-  ldapDescription.textContent = 'Локальные учетные записи продолжают работать всегда. LDAP добавляет вход через Active Directory.';
-
-  const ldapToggleRow = document.createElement('label');
-  ldapToggleRow.style.cssText = 'display:flex; align-items:center; gap:8px; margin-top:4px;';
-
-  const ldapEnabledInput = document.createElement('input');
-  ldapEnabledInput.type = 'checkbox';
-  ldapEnabledInput.checked = Boolean(ldapAuthSettings.enabled);
-
-  const ldapEnabledLabel = document.createElement('span');
-  ldapEnabledLabel.style.cssText = 'font-weight:500; color:var(--text-primary);';
-  ldapEnabledLabel.textContent = 'Включить LDAP вход';
-
-  ldapToggleRow.appendChild(ldapEnabledInput);
-  ldapToggleRow.appendChild(ldapEnabledLabel);
-
-  const ldapGrid = document.createElement('div');
-  ldapGrid.style.cssText = 'display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:var(--space-sm);';
-
-  const ldapUrlInput = document.createElement('input');
-  ldapUrlInput.className = 'input';
-  ldapUrlInput.placeholder = 'ldap://dc.company.local:389';
-  ldapUrlInput.value = ldapAuthSettings.url || '';
-
-  const ldapBaseDnInput = document.createElement('input');
-  ldapBaseDnInput.className = 'input';
-  ldapBaseDnInput.placeholder = 'DC=company,DC=local';
-  ldapBaseDnInput.value = ldapAuthSettings.baseDN || '';
-
-  const ldapBindDnInput = document.createElement('input');
-  ldapBindDnInput.className = 'input';
-  ldapBindDnInput.placeholder = 'CN=svc_ldap,OU=Service,DC=company,DC=local';
-  ldapBindDnInput.value = ldapAuthSettings.bindDN || '';
-
-  const ldapBindPasswordInput = document.createElement('input');
-  ldapBindPasswordInput.className = 'input';
-  ldapBindPasswordInput.type = 'password';
-  ldapBindPasswordInput.placeholder = ldapAuthSettings.bindPasswordSet ? 'Сохранено. Введите новое чтобы заменить' : 'Пароль bind пользователя';
-
-  const ldapUserFilterInput = document.createElement('input');
-  ldapUserFilterInput.className = 'input';
-  ldapUserFilterInput.placeholder = '(sAMAccountName={username})';
-  ldapUserFilterInput.value = ldapAuthSettings.userFilter || '(sAMAccountName={username})';
-
-  const ldapUsernameAttrInput = document.createElement('input');
-  ldapUsernameAttrInput.className = 'input';
-  ldapUsernameAttrInput.placeholder = 'sAMAccountName';
-  ldapUsernameAttrInput.value = ldapAuthSettings.usernameAttribute || 'sAMAccountName';
-
-  const ldapSearchScopeSelect = document.createElement('select');
-  ldapSearchScopeSelect.className = 'input';
-  ['sub', 'one', 'base'].forEach((scope) => {
-    const option = document.createElement('option');
-    option.value = scope;
-    option.textContent = scope;
-    if ((ldapAuthSettings.searchScope || 'sub') === scope) {
-      option.selected = true;
-    }
-    ldapSearchScopeSelect.appendChild(option);
-  });
-
-  const ldapDefaultRoleSelect = document.createElement('select');
-  ldapDefaultRoleSelect.className = 'input';
-  [
-    { value: 'speaker', text: 'speaker' },
-    { value: 'hero_admin', text: 'hero_admin' },
-    { value: 'admin', text: 'admin' }
-  ].forEach((role) => {
-    const option = document.createElement('option');
-    option.value = role.value;
-    option.textContent = role.text;
-    if ((ldapAuthSettings.defaultRole || 'speaker') === role.value) {
-      option.selected = true;
-    }
-    ldapDefaultRoleSelect.appendChild(option);
-  });
-
-  const ldapAutoCreateRow = document.createElement('label');
-  ldapAutoCreateRow.style.cssText = 'display:flex; align-items:center; gap:8px;';
-
-  const ldapAutoCreateInput = document.createElement('input');
-  ldapAutoCreateInput.type = 'checkbox';
-  ldapAutoCreateInput.checked = ldapAuthSettings.autoCreateUsers !== false;
-
-  const ldapAutoCreateLabel = document.createElement('span');
-  ldapAutoCreateLabel.className = 'meta';
-  ldapAutoCreateLabel.style.cssText = 'color:var(--text-secondary);';
-  ldapAutoCreateLabel.textContent = 'Автоматически создавать LDAP пользователей';
-
-  ldapAutoCreateRow.appendChild(ldapAutoCreateInput);
-  ldapAutoCreateRow.appendChild(ldapAutoCreateLabel);
-
-  const ldapClearPasswordRow = document.createElement('label');
-  ldapClearPasswordRow.style.cssText = 'display:flex; align-items:center; gap:8px;';
-
-  const ldapClearPasswordInput = document.createElement('input');
-  ldapClearPasswordInput.type = 'checkbox';
-
-  const ldapClearPasswordLabel = document.createElement('span');
-  ldapClearPasswordLabel.className = 'meta';
-  ldapClearPasswordLabel.style.cssText = 'color:var(--text-secondary);';
-  ldapClearPasswordLabel.textContent = 'Очистить сохраненный bind пароль';
-
-  ldapClearPasswordRow.appendChild(ldapClearPasswordInput);
-  ldapClearPasswordRow.appendChild(ldapClearPasswordLabel);
-
-  const ldapPasswordHint = document.createElement('div');
-  ldapPasswordHint.className = 'meta';
-  ldapPasswordHint.style.cssText = 'font-size:0.8rem; color:var(--text-secondary);';
-  ldapPasswordHint.textContent = ldapAuthSettings.bindPasswordSet
-    ? 'Bind пароль сохранен на сервере.'
-    : 'Bind пароль не задан.';
-
-  ldapGrid.appendChild(createLdapField('LDAP URL', ldapUrlInput));
-  ldapGrid.appendChild(createLdapField('Base DN', ldapBaseDnInput));
-  ldapGrid.appendChild(createLdapField('Bind DN (опционально)', ldapBindDnInput));
-  ldapGrid.appendChild(createLdapField('Bind пароль', ldapBindPasswordInput));
-  ldapGrid.appendChild(createLdapField('Фильтр пользователя', ldapUserFilterInput));
-  ldapGrid.appendChild(createLdapField('Атрибут логина', ldapUsernameAttrInput));
-  ldapGrid.appendChild(createLdapField('Search scope', ldapSearchScopeSelect));
-  ldapGrid.appendChild(createLdapField('Роль нового LDAP пользователя', ldapDefaultRoleSelect));
-
-  const ldapControls = document.createElement('div');
-  ldapControls.style.cssText = 'display:flex; flex-direction:column; gap:6px;';
-  ldapControls.appendChild(ldapAutoCreateRow);
-  ldapControls.appendChild(ldapClearPasswordRow);
-  ldapControls.appendChild(ldapPasswordHint);
-
-  const ldapSaveRow = document.createElement('div');
-  ldapSaveRow.style.cssText = 'display:flex; align-items:center; gap:var(--space-sm);';
-
-  const ldapSaveBtn = document.createElement('button');
-  ldapSaveBtn.className = 'primary';
-  ldapSaveBtn.textContent = 'Сохранить LDAP';
-
-  const ldapStatus = document.createElement('div');
-  ldapStatus.className = 'meta';
-  ldapStatus.style.cssText = 'min-height:1.2em; font-size:0.85rem;';
-
-  ldapSaveRow.appendChild(ldapSaveBtn);
-  ldapSaveRow.appendChild(ldapStatus);
-
-  ldapSection.appendChild(ldapTitle);
-  ldapSection.appendChild(ldapDescription);
-  ldapSection.appendChild(ldapToggleRow);
-  ldapSection.appendChild(ldapGrid);
-  ldapSection.appendChild(ldapControls);
-  ldapSection.appendChild(ldapSaveRow);
-
-  // Разделитель между storage и LDAP
-  const dividerStorageLdap = document.createElement('div');
-  dividerStorageLdap.style.cssText = 'border-top:1px solid var(--border-color, rgba(255,255,255,0.1)); margin:0;';
+  const dividerStorageAuth = document.createElement('div');
+  dividerStorageAuth.style.cssText = 'border-top:1px solid var(--border-color, rgba(255,255,255,0.1)); margin:0;';
   
   // Разделитель
   const divider1 = document.createElement('div');
@@ -1576,8 +1415,8 @@ async function loadSettingsContent(adminFetch) {
 
   mainDiv.appendChild(apkSection);
   mainDiv.appendChild(storageSection);
-  mainDiv.appendChild(dividerStorageLdap);
-  mainDiv.appendChild(ldapSection);
+  mainDiv.appendChild(dividerStorageAuth);
+  mainDiv.appendChild(authConfigSection);
   mainDiv.appendChild(divider1);
   mainDiv.appendChild(dbSection);
   mainDiv.appendChild(divider2);
@@ -1648,93 +1487,6 @@ async function loadSettingsContent(adminFetch) {
     }
   };
 
-  const setLdapFieldsState = () => {
-    const disabled = !ldapEnabledInput.checked;
-    ldapUrlInput.disabled = disabled;
-    ldapBaseDnInput.disabled = disabled;
-    ldapBindDnInput.disabled = disabled;
-    ldapBindPasswordInput.disabled = disabled;
-    ldapUserFilterInput.disabled = disabled;
-    ldapUsernameAttrInput.disabled = disabled;
-    ldapSearchScopeSelect.disabled = disabled;
-    ldapAutoCreateInput.disabled = disabled;
-    ldapDefaultRoleSelect.disabled = disabled;
-    ldapClearPasswordInput.disabled = disabled || !Boolean(ldapAuthSettings.bindPasswordSet);
-  };
-
-  setLdapFieldsState();
-  ldapEnabledInput.addEventListener('change', () => {
-    setLdapFieldsState();
-    ldapStatus.textContent = '';
-  });
-
-  ldapSaveBtn.onclick = async () => {
-    const payload = {
-      enabled: ldapEnabledInput.checked,
-      url: ldapUrlInput.value.trim(),
-      baseDN: ldapBaseDnInput.value.trim(),
-      bindDN: ldapBindDnInput.value.trim(),
-      userFilter: ldapUserFilterInput.value.trim() || '(sAMAccountName={username})',
-      usernameAttribute: ldapUsernameAttrInput.value.trim() || 'sAMAccountName',
-      searchScope: ldapSearchScopeSelect.value,
-      autoCreateUsers: ldapAutoCreateInput.checked,
-      defaultRole: ldapDefaultRoleSelect.value
-    };
-
-    if (payload.enabled && (!payload.url || !payload.baseDN)) {
-      ldapStatus.textContent = 'Для включенного LDAP заполните URL и Base DN';
-      ldapStatus.style.color = 'var(--danger)';
-      return;
-    }
-
-    const nextPassword = ldapBindPasswordInput.value;
-    if (nextPassword) {
-      payload.bindPassword = nextPassword;
-    }
-    if (ldapClearPasswordInput.checked) {
-      payload.clearBindPassword = true;
-    }
-
-    ldapSaveBtn.disabled = true;
-    ldapSaveBtn.textContent = 'Сохранение...';
-    ldapStatus.textContent = 'Сохраняем LDAP настройки...';
-    ldapStatus.style.color = 'var(--text-secondary)';
-
-    try {
-      const response = await adminFetch('/api/admin/settings/ldap', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'Ошибка сохранения LDAP настроек' }));
-        throw new Error(error.error || 'Ошибка сохранения LDAP настроек');
-      }
-
-      const data = await response.json();
-      ldapAuthSettings = data?.ldapAuth || ldapAuthSettings;
-
-      ldapBindPasswordInput.value = '';
-      ldapClearPasswordInput.checked = false;
-      ldapPasswordHint.textContent = ldapAuthSettings.bindPasswordSet
-        ? 'Bind пароль сохранен на сервере.'
-        : 'Bind пароль не задан.';
-
-      ldapStatus.textContent = ldapAuthSettings.enabled
-        ? 'LDAP включен и настройки сохранены.'
-        : 'LDAP отключен. Локальные учетные записи продолжают работать.';
-      ldapStatus.style.color = 'var(--success)';
-      setLdapFieldsState();
-    } catch (err) {
-      ldapStatus.textContent = err.message || 'Ошибка сохранения LDAP настроек';
-      ldapStatus.style.color = 'var(--danger)';
-    } finally {
-      ldapSaveBtn.disabled = false;
-      ldapSaveBtn.textContent = 'Сохранить LDAP';
-    }
-  };
-  
   exportBtn.onclick = async () => {
       exportBtn.disabled = true;
       exportBtn.textContent = 'Экспорт...';
