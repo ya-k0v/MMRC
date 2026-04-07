@@ -30,10 +30,14 @@ fi
 
 # 5. Установка npm-зависимостей
 npm install
+npm run setup-hooks --silent || true
 
 # 6. Создание директорий
 mkdir -p config config/hero data/content data/streams data/converted data/logs data/temp
 chown -R vcuser:vcgroup data config
+
+# 6.1 Инициализация/миграция БД
+npm run migrate-db --silent
 
 # 7. Копирование systemd unit
 cp videocontrol.service /etc/systemd/system/videocontrol.service

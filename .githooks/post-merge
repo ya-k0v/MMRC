@@ -1,0 +1,19 @@
+#!/bin/bash
+# post-merge hook: run DB migrations after pull/merge
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$REPO_ROOT" || exit 0
+
+echo "[git-hook] post-merge: running npm run migrate-db"
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "[git-hook] npm not found, skipping migrate-db"
+  exit 0
+fi
+
+if [[ ! -f package.json ]]; then
+  echo "[git-hook] package.json not found, skipping migrate-db"
+  exit 0
+fi
+
+npm run migrate-db --silent || echo "[git-hook] migrate-db failed"

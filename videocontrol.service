@@ -12,6 +12,7 @@ User=vcuser
 Group=vcgroup
 WorkingDirectory=/vid/videocontrol
 ExecStartPre=/usr/bin/node /vid/videocontrol/scripts/check-startup-compat.js
+ExecStartPre=/usr/bin/node /vid/videocontrol/src/database/migrate.js
 ExecStart=/usr/bin/node /vid/videocontrol/server.js
 Restart=on-failure
 RestartSec=3

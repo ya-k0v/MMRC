@@ -101,6 +101,7 @@ fi
 echo ""
 echo "Installing npm packages..."
 npm install
+npm run setup-hooks --silent || true
 
 # Create .env file with JWT secret
 echo ""
@@ -136,17 +137,12 @@ mkdir -p data/temp
 mkdir -p config
 mkdir -p config/hero
 
-# Initialize database
+# Initialize or migrate database
 echo ""
-echo "Initializing database..."
-if [ ! -f config/main.db ]; then
-    sqlite3 config/main.db < src/database/init.sql
-    echo "✅ Database initialized with default schema"
-    echo "   Default admin user: admin / admin123"
-    echo "   ⚠️  CHANGE PASSWORD AFTER FIRST LOGIN!"
-else
-    echo "ℹ️  Database already exists, skipping initialization"
-fi
+echo "Initializing/migrating database..."
+npm run migrate-db --silent
+echo "✅ Database schema is up to date"
+echo "   Default admin user: admin / admin123 (if first install)"
 
 # Initialize hero module database
 echo ""
@@ -241,6 +237,7 @@ Type=simple
 User=$CURRENT_USER
 WorkingDirectory=$CURRENT_DIR
 ExecStart=/usr/bin/node $CURRENT_DIR/server.js
+ExecStartPre=/usr/bin/node $CURRENT_DIR/src/database/migrate.js
 Restart=always
 RestartSec=10
 Environment=NODE_ENV=production

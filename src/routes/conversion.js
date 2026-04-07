@@ -9,6 +9,7 @@ import path from 'path';
 import mime from 'mime';
 import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
+import { hasDeviceAccess } from '../middleware/device-access.js';
 import logger from '../utils/logger.js';
 import { getFolderImagesCount } from '../converters/folder-converter.js';
 
@@ -28,6 +29,10 @@ export function createConversionRouter(deps) {
     
     if (!id) {
       return res.status(400).json({ error: 'Неверный ID устройства' });
+    }
+
+    if (!hasDeviceAccess(req.user.userId, id, req.user.role)) {
+      return res.status(403).json({ error: 'Доступ к устройству запрещен' });
     }
     
     const fileName = req.query.file;

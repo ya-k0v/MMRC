@@ -139,6 +139,8 @@ cd /vid/videocontrol
 sudo systemctl stop videocontrol
 git pull origin main
 npm install
+npm run setup-hooks --silent || true
+npm run migrate-db --silent
 
 # Проверяем, что .env файл существует и содержит все необходимые переменные
 if [ ! -f .env ]; then

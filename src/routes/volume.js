@@ -1,5 +1,6 @@
 import express from 'express';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
+import { hasDeviceAccess } from '../middleware/device-access.js';
 
 /**
  * Роутер для управления громкостью устройств
@@ -25,6 +26,11 @@ export function createVolumeRouter(deps) {
     if (!deviceId) {
       return res.status(400).json({ error: 'Неверный ID устройства' });
     }
+
+    if (!hasDeviceAccess(req.user.userId, deviceId, req.user.role)) {
+      return res.status(403).json({ error: 'Доступ к устройству запрещен' });
+    }
+
     if (!devices[deviceId]) {
       return res.status(404).json({ error: 'Устройство не найдено' });
     }
@@ -43,6 +49,11 @@ export function createVolumeRouter(deps) {
     if (!deviceId) {
       return res.status(400).json({ error: 'Неверный ID устройства' });
     }
+
+    if (!hasDeviceAccess(req.user.userId, deviceId, req.user.role)) {
+      return res.status(403).json({ error: 'Доступ к устройству запрещен' });
+    }
+
     if (!devices[deviceId]) {
       return res.status(404).json({ error: 'Устройство не найдено' });
     }

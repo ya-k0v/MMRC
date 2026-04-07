@@ -11,10 +11,84 @@ let currentContentRoot = DEFAULT_DATA_ROOT;
 
 const SETTINGS_FILE = path.join(ROOT, 'config', 'app-settings.json');
 
+const LDAP_DEFAULTS = {
+  enabled: false,
+  url: '',
+  bindDN: '',
+  bindPassword: '',
+  baseDN: '',
+  userFilter: '(sAMAccountName={username})',
+  usernameAttribute: 'sAMAccountName',
+  searchScope: 'sub',
+  autoCreateUsers: true,
+  defaultRole: 'speaker',
+  connectTimeoutMs: 5000,
+  operationTimeoutMs: 5000,
+  tlsRejectUnauthorized: true
+};
+
+const ALLOWED_SEARCH_SCOPES = new Set(['base', 'one', 'sub']);
+const ALLOWED_USER_ROLES = new Set(['admin', 'speaker', 'hero_admin']);
+
+function normalizeBoolean(value, fallback = false) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1') return true;
+    if (normalized === 'false' || normalized === '0') return false;
+  }
+  return fallback;
+}
+
+function normalizeNumber(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.round(parsed);
+}
+
+function normalizeSearchScope(scope) {
+  const normalized = String(scope || '').trim().toLowerCase();
+  return ALLOWED_SEARCH_SCOPES.has(normalized) ? normalized : LDAP_DEFAULTS.searchScope;
+}
+
+function normalizeRole(role) {
+  const normalized = String(role || '').trim().toLowerCase();
+  return ALLOWED_USER_ROLES.has(normalized) ? normalized : LDAP_DEFAULTS.defaultRole;
+}
+
+function normalizeLdapAuthSettings(raw = {}, current = LDAP_DEFAULTS) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const base = current && typeof current === 'object' ? current : LDAP_DEFAULTS;
+
+  return {
+    enabled: normalizeBoolean(source.enabled, normalizeBoolean(base.enabled, LDAP_DEFAULTS.enabled)),
+    url: String(source.url ?? base.url ?? LDAP_DEFAULTS.url).trim(),
+    bindDN: String(source.bindDN ?? base.bindDN ?? LDAP_DEFAULTS.bindDN).trim(),
+    bindPassword: String(source.bindPassword ?? base.bindPassword ?? LDAP_DEFAULTS.bindPassword),
+    baseDN: String(source.baseDN ?? base.baseDN ?? LDAP_DEFAULTS.baseDN).trim(),
+    userFilter: String(source.userFilter ?? base.userFilter ?? LDAP_DEFAULTS.userFilter).trim() || LDAP_DEFAULTS.userFilter,
+    usernameAttribute: String(source.usernameAttribute ?? base.usernameAttribute ?? LDAP_DEFAULTS.usernameAttribute).trim() || LDAP_DEFAULTS.usernameAttribute,
+    searchScope: normalizeSearchScope(source.searchScope ?? base.searchScope ?? LDAP_DEFAULTS.searchScope),
+    autoCreateUsers: normalizeBoolean(source.autoCreateUsers, normalizeBoolean(base.autoCreateUsers, LDAP_DEFAULTS.autoCreateUsers)),
+    defaultRole: normalizeRole(source.defaultRole ?? base.defaultRole ?? LDAP_DEFAULTS.defaultRole),
+    connectTimeoutMs: normalizeNumber(source.connectTimeoutMs ?? base.connectTimeoutMs, LDAP_DEFAULTS.connectTimeoutMs),
+    operationTimeoutMs: normalizeNumber(source.operationTimeoutMs ?? base.operationTimeoutMs, LDAP_DEFAULTS.operationTimeoutMs),
+    tlsRejectUnauthorized: normalizeBoolean(
+      source.tlsRejectUnauthorized,
+      normalizeBoolean(base.tlsRejectUnauthorized, LDAP_DEFAULTS.tlsRejectUnauthorized)
+    )
+  };
+}
+
 // КРИТИЧНО: Инициализируем settings сразу, чтобы избежать ошибки "Cannot access 'settings' before initialization"
 // Это важно, так как logger.js может использовать getLogsDir() до полной инициализации модуля
 let settings = {
-  contentRoot: process.env.CONTENT_ROOT || DEFAULT_DATA_ROOT
+  contentRoot: process.env.CONTENT_ROOT || DEFAULT_DATA_ROOT,
+  ldapAuth: { ...LDAP_DEFAULTS }
 };
 
 // КРИТИЧНО: Загружаем настройки из файла синхронно при загрузке модуля
@@ -39,6 +113,8 @@ try {
   // Игнорируем ошибки при загрузке настроек при инициализации модуля
   // logger еще может быть не инициализирован
 }
+
+settings.ldapAuth = normalizeLdapAuthSettings(settings.ldapAuth, LDAP_DEFAULTS);
 
 function safeWriteSettings() {
   try {
@@ -77,6 +153,7 @@ function loadSettingsFromFile() {
         ...settings,
         ...parsed
       };
+      settings.ldapAuth = normalizeLdapAuthSettings(settings.ldapAuth, LDAP_DEFAULTS);
     }
   } catch (error) {
     // КРИТИЧНО: Не используем logger здесь из-за циклической зависимости
@@ -203,8 +280,11 @@ export function getDevicesPath() {
 }
 
 export function getSettings() {
+  const { ldapAuth, ...restSettings } = settings;
+
   return {
-    ...settings,
+    ...restSettings,
+    ldapAuth: getLdapAuthSettings(),
     defaults: {
       contentRoot: DEFAULT_DATA_ROOT
     },
@@ -218,6 +298,48 @@ export function getSettings() {
       tempDir: getTempDir()
     }
   };
+}
+
+export function getLdapAuthSettings(options = {}) {
+  const includeSecrets = options?.includeSecrets === true;
+  const normalized = normalizeLdapAuthSettings(settings.ldapAuth, LDAP_DEFAULTS);
+
+  if (includeSecrets) {
+    return { ...normalized };
+  }
+
+  const { bindPassword, ...safeSettings } = normalized;
+  return {
+    ...safeSettings,
+    bindPasswordSet: Boolean(bindPassword)
+  };
+}
+
+export function updateLdapAuthSettings(partial = {}) {
+  if (!partial || typeof partial !== 'object') {
+    throw new Error('Некорректные LDAP настройки');
+  }
+
+  const current = normalizeLdapAuthSettings(settings.ldapAuth, LDAP_DEFAULTS);
+  const merged = {
+    ...current,
+    ...partial
+  };
+
+  const next = normalizeLdapAuthSettings(merged, current);
+
+  if (Object.prototype.hasOwnProperty.call(partial, 'bindPassword')) {
+    const password = String(partial.bindPassword || '');
+    next.bindPassword = password;
+  } else if (partial.clearBindPassword === true) {
+    next.bindPassword = '';
+  } else {
+    next.bindPassword = current.bindPassword;
+  }
+
+  settings.ldapAuth = next;
+  safeWriteSettings();
+  return getLdapAuthSettings();
 }
 
 export async function updateContentRootPath(newPath) {

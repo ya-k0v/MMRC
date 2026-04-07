@@ -22,6 +22,7 @@ import { setFileStatus as setGlobalFileStatus } from '../video/file-status.js';
 import { getStreamPlaybackUrl, getStreamRestreamStatus, upsertStreamJob, removeStreamJob } from '../streams/stream-manager.js';
 import { getTrailerPath } from '../video/trailer-generator.js';
 import { requireSpeaker } from '../middleware/auth.js';
+import { getUserDevices, hasDeviceAccess } from '../middleware/device-access.js';
 import { validateUploadSize } from '../middleware/multer-config.js';
 import { validateFilesAsync } from '../middleware/file-validation.js';
 import { getDatabase } from '../database/database.js';
@@ -1362,11 +1363,38 @@ export function createFilesRouter(deps) {
     const excludeDevice = sanitizeDeviceId(req.query.excludeDevice); // Исключить файлы выбранного устройства
     const limit = Math.min(Math.max(parseInt(req.query.limit || '200', 10) || 200, 1), 500);
     const offset = Math.max(parseInt(req.query.offset || '0', 10) || 0, 0);
+    const isSpeaker = req.user?.role === 'speaker';
+    const allowedDevices = isSpeaker ? getUserDevices(req.user.userId) : [];
+    const allowedDevicesSet = new Set(allowedDevices);
+
+    if (isSpeaker && allowedDevices.length === 0) {
+      return res.json({
+        items: [],
+        total: 0,
+        limit,
+        offset,
+        count: 0,
+        hasMore: false
+      });
+    }
+
+    if (isSpeaker && deviceFilter && !allowedDevicesSet.has(deviceFilter)) {
+      return res.status(403).json({ error: 'Доступ к устройству запрещен', deviceId: deviceFilter });
+    }
+
+    if (isSpeaker && excludeDevice && !allowedDevicesSet.has(excludeDevice)) {
+      return res.status(403).json({ error: 'Доступ к устройству запрещен', deviceId: excludeDevice });
+    }
 
     try {
       const db = getDatabase();
       const params = [];
       const where = [];
+
+      if (isSpeaker) {
+        where.push(`device_id IN (${allowedDevices.map(() => '?').join(',')})`);
+        params.push(...allowedDevices);
+      }
 
       if (deviceFilter) {
         where.push('device_id = ?');
@@ -1450,6 +1478,7 @@ export function createFilesRouter(deps) {
 
       // Добавляем псевдо-записи для папок/презентаций, которых нет в БД
       for (const [deviceId, device] of Object.entries(devices)) {
+        if (isSpeaker && !allowedDevicesSet.has(deviceId)) continue;
         // Исключаем файлы выбранного устройства
         if (excludeDevice && deviceId === excludeDevice) continue;
         
@@ -1511,6 +1540,15 @@ export function createFilesRouter(deps) {
 
     if (!sourceDeviceId || !targetDeviceId || !safeName) {
       return res.status(400).json({ error: 'sourceDeviceId, targetDeviceId и safeName обязательны' });
+    }
+
+    if (req.user?.role === 'speaker') {
+      const hasSourceAccess = hasDeviceAccess(req.user.userId, sourceDeviceId, req.user.role);
+      const hasTargetAccess = hasDeviceAccess(req.user.userId, targetDeviceId, req.user.role);
+
+      if (!hasSourceAccess || !hasTargetAccess) {
+        return res.status(403).json({ error: 'Доступ к одному из устройств запрещен' });
+      }
     }
 
     let sourceMeta = getFileMetadata(sourceDeviceId, safeName);
@@ -1967,6 +2005,11 @@ export function createFilesRouter(deps) {
   router.post('/:id/streams/:safeName/stop-preview', requireSpeaker[0], requireSpeaker[1], jsonParser, async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
     if (!id) return res.status(400).json({ error: 'Неверный ID устройства' });
+
+    if (!hasDeviceAccess(req.user.userId, id, req.user.role)) {
+      return res.status(403).json({ error: 'Доступ к устройству запрещен' });
+    }
+
     const safeName = req.params.safeName;
     if (!safeName) return res.status(400).json({ error: 'Неверное название стрима' });
 
@@ -4234,12 +4277,16 @@ export function createFilesRouter(deps) {
   });
   
   // GET /api/devices/:id/files-with-status - Получить список файлов со статусами
-  router.get('/:id/files-with-status', async (req, res) => {
+  router.get('/:id/files-with-status', requireSpeaker[0], requireSpeaker[1], async (req, res) => {
     const readyOnly = req.query.readyOnly === '1' || req.query.readyOnly === 'true';
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
       return res.status(400).json({ error: 'Неверный ID устройства' });
+    }
+
+    if (!hasDeviceAccess(req.user.userId, id, req.user.role)) {
+      return res.status(403).json({ error: 'Доступ к устройству запрещен' });
     }
     
     const d = devices[id];
