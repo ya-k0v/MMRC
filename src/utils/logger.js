@@ -6,6 +6,7 @@
 import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
+import fs from 'fs';
 import { getLogsDir } from '../config/settings-manager.js';
 
 // Директория для логов (вычисляется динамически из настроек БД)
@@ -24,6 +25,7 @@ try {
     try {
       fs.mkdirSync(fallback, { recursive: true });
       LOG_DIR = fallback;
+      FILE_LOGGING_ENABLED = true;
     } catch (e) {
       // Последняя инстанция: оставляем LOG_DIR null and disable file logging
       LOG_DIR = null;
@@ -41,6 +43,7 @@ try {
   try {
     fs.mkdirSync(fallback, { recursive: true });
     LOG_DIR = fallback;
+    FILE_LOGGING_ENABLED = true;
   } catch (e) {
     LOG_DIR = null;
   }

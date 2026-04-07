@@ -118,6 +118,72 @@ try {
   // logger еще может быть не инициализирован
 }
 
+function isWritableDirectory(dirPath) {
+  try {
+    fs.mkdirSync(dirPath, { recursive: true });
+    fs.accessSync(dirPath, fs.constants.W_OK);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function uniqueResolvedPaths(paths = []) {
+  const seen = new Set();
+  return paths.filter((candidate) => {
+    if (!candidate || typeof candidate !== 'string') {
+      return false;
+    }
+    const normalized = path.resolve(candidate);
+    if (seen.has(normalized)) {
+      return false;
+    }
+    seen.add(normalized);
+    return true;
+  });
+}
+
+function resolveWritableContentRoot(preferredPath) {
+  const preferred = path.resolve(preferredPath || DEFAULT_DATA_ROOT);
+  const fallbackDefault = path.resolve(DEFAULT_DATA_ROOT);
+  const fallbackTmp = path.resolve(path.join(ROOT, '.tmp', 'data'));
+
+  const candidates = uniqueResolvedPaths([preferred, fallbackDefault, fallbackTmp]);
+  for (const candidate of candidates) {
+    if (isWritableDirectory(candidate)) {
+      if (candidate !== preferred) {
+        try {
+          process.stderr.write(`[Settings] Content root fallback: ${preferred} -> ${candidate}\n`);
+        } catch (e) {
+          // ignore
+        }
+      }
+      return candidate;
+    }
+  }
+
+  try {
+    process.stderr.write(`[Settings] Unable to find writable content root, keeping: ${preferred}\n`);
+  } catch (e) {
+    // ignore
+  }
+  return preferred;
+}
+
+function applyContentRootPolicy() {
+  const envContentRoot =
+    typeof process.env.CONTENT_ROOT === 'string' ? process.env.CONTENT_ROOT.trim() : '';
+  if (envContentRoot) {
+    settings.contentRoot = envContentRoot;
+  }
+
+  const resolvedRoot = resolveWritableContentRoot(settings.contentRoot || DEFAULT_DATA_ROOT);
+  settings.contentRoot = resolvedRoot;
+  currentContentRoot = resolvedRoot;
+  setDevicesPath(path.join(resolvedRoot, 'content'));
+}
+
+applyContentRootPolicy();
 settings.ldapAuth = normalizeLdapAuthSettings(settings.ldapAuth, LDAP_DEFAULTS);
 
 function safeWriteSettings() {
@@ -164,6 +230,7 @@ function loadSettingsFromFile() {
         ...settings,
         ...parsed
       };
+      applyContentRootPolicy();
       settings.ldapAuth = normalizeLdapAuthSettings(settings.ldapAuth, LDAP_DEFAULTS);
     }
   } catch (error) {

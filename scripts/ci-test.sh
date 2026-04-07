@@ -17,6 +17,9 @@ if [[ -z "${CONTENT_ROOT:-}" ]]; then
   mkdir -p "$CONTENT_ROOT"
 fi
 
+# Keep CI behavior deterministic (avoid production-only exits in middleware)
+export NODE_ENV="${NODE_ENV:-test}"
+
 echo "[ci] Syntax check (server scripts)"
 find server.js src scripts dev/scripts -type f -name '*.js' -print0 | xargs -0 -n1 node --check
 
