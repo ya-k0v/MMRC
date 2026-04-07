@@ -6,6 +6,7 @@ on:
       - main
       - master
       - develop
+      - 'v*'
   pull_request:
   workflow_dispatch:
 
