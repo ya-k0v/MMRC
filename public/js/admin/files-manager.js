@@ -263,27 +263,251 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
     const filesPane = document.getElementById('filesPane');
     const pager = filesPane ? filesPane.querySelector('#filePagerAdmin') : null;
     if (pager) pager.innerHTML = '';
+    // Убираем запас снизу у панели файлов
+    try { panelEl.style.paddingBottom = ''; } catch (e) {}
     return;
   }
+
+  // Сбрасываем возможный ранее установленный отступ, чтобы расчеты были стабильными
+  try { panelEl.style.paddingBottom = '0px'; } catch (e) {}
   
-  // Пагинация файлов
-  const pageSize = getPageSize();
-  const totalPages = Math.max(1, Math.ceil(allFiles.length / pageSize));
+  // Пагинация файлов (используем специальный режим расчёта для файлов)
+  // Поддерживаем выбор пользователя: auto (сколько влезет) или фиксированные 10/25/50
+  let savedPerPage = 'auto';
+  try { savedPerPage = localStorage.getItem('admin_files_per_page') || 'auto'; } catch (e) { savedPerPage = 'auto'; }
+  let pageSize = Math.max(1, Math.min(200, parseInt(savedPerPage === 'auto' ? '0' : savedPerPage, 10) || getPageSize('file')));
+  // Если выбран auto - рассчитываем количество элементов так, чтобы список внутри `panelEl` помещался без скролла
+  if (savedPerPage === 'auto') {
+    try {
+      const availableHeight = panelEl.clientHeight || 0;
+      // Решение: создаём оффскрин контейнер с тем же размером панели и добавляем пробные элементы,
+      // проверяя, появляется ли внутренний скролл. Подгоняем pageSize, чтобы не было скролла.
+      try {
+        const panelWidth = panelEl.clientWidth || panelEl.offsetWidth || 600;
+        const probeDiv = document.createElement('div');
+        probeDiv.style.cssText = `position:absolute; left:-9999px; top:0; width:${panelWidth}px; height:${availableHeight}px; overflow:auto;`;
+
+        const probeList = document.createElement('ul');
+        probeList.className = 'list';
+        probeList.style.cssText = 'display:grid; gap:var(--space-sm); margin:0; padding:0; list-style:none;';
+
+        // Создаём один эталонный элемент
+        const makeProbeLi = () => {
+          const li = document.createElement('li');
+          li.className = 'file-item';
+          li.style.boxSizing = 'border-box';
+
+          const header = document.createElement('div'); header.className = 'file-item-header';
+          const headerLeft = document.createElement('div'); headerLeft.style.cssText = 'flex:1; display:flex; gap:6px; min-width:0;';
+          const nameSpan = document.createElement('span'); nameSpan.className = 'file-item-name'; nameSpan.textContent = 'Sample very long file name to force wrapping and larger height if needed';
+          nameSpan.style.cssText = 'white-space:normal; overflow:hidden; text-overflow:ellipsis;';
+          headerLeft.appendChild(nameSpan);
+          const headerRight = document.createElement('div'); headerRight.style.cssText = 'display:flex; gap:4px;';
+          header.appendChild(headerLeft);
+          header.appendChild(headerRight);
+
+          const actions = document.createElement('div'); actions.className = 'file-item-actions'; actions.style.cssText = 'display:flex; gap:6px; flex-wrap:wrap;';
+          const btnPreview = document.createElement('button'); btnPreview.className = 'meta-lg previewFileBtn'; btnPreview.textContent = 'Превью'; actions.appendChild(btnPreview);
+          const btnDefault = document.createElement('button'); btnDefault.className = 'meta-lg makeDefaultBtn'; btnDefault.textContent = 'Заглушка'; actions.appendChild(btnDefault);
+          const btnDel = document.createElement('button'); btnDel.className = 'danger meta-lg delFileBtn'; btnDel.textContent = 'Удалить'; actions.appendChild(btnDel);
+
+          li.appendChild(header);
+          li.appendChild(actions);
+          return li;
+        };
+
+        // Добавляем один элемент для измерения
+        const firstLi = makeProbeLi();
+        probeList.appendChild(firstLi);
+        probeDiv.appendChild(probeList);
+        document.body.appendChild(probeDiv);
+
+        const itemHeight = firstLi.offsetHeight || 68;
+
+        // Начальная оценка
+        let estimate = itemHeight > 0 && availableHeight > 0 ? Math.floor(availableHeight / itemHeight) : getPageSize('file');
+        estimate = Math.max(1, Math.min(200, estimate));
+
+        const fits = (n) => {
+          // Очистим список и вставим n элементов
+          probeList.innerHTML = '';
+          for (let i = 0; i < n; i++) {
+            probeList.appendChild(makeProbeLi());
+          }
+          // small throttle of layout read
+          const needsScroll = probeDiv.scrollHeight > probeDiv.clientHeight;
+          return !needsScroll;
+        };
+
+        // Найдём максимальное n, при котором не появляется скролл — используем бинарный поиск
+        let low = 1;
+        let high = Math.min(200, Math.max(1, estimate + 5));
+        let best = 1;
+        while (low <= high) {
+          const mid = Math.floor((low + high) / 2);
+          if (fits(mid)) {
+            best = mid;
+            low = mid + 1;
+          } else {
+            high = mid - 1;
+          }
+        }
+        // Попробуем добавить ещё один элемент, если он помещается
+        if (best < 200 && fits(best + 1)) {
+          best = best + 1;
+        }
+
+        pageSize = Math.max(1, Math.min(200, best));
+
+        // Удаляем probe
+        document.body.removeChild(probeDiv);
+      } catch (e) {
+        pageSize = getPageSize('file');
+      }
+      // Ограничения
+      pageSize = Math.max(1, Math.min(200, pageSize));
+    } catch (e) {
+      pageSize = getPageSize('file');
+    }
+  }
+  let totalPages = Math.max(1, Math.ceil(allFiles.length / pageSize));
   // ИСПРАВЛЕНО: Корректируем страницу если она выходит за пределы
   let currentPage = filePage;
-  if (currentPage >= totalPages) currentPage = Math.max(0, totalPages - 1);
   if (currentPage < 0) currentPage = 0;
-  const start = currentPage * pageSize;
-  const end = Math.min(start + pageSize, allFiles.length);
-  const files = allFiles.slice(start, end);
-  
-  // Используем DOM методы вместо innerHTML для безопасности
-  panelEl.innerHTML = '';
-  const fileList = document.createElement('ul');
-  fileList.className = 'list';
-  fileList.style.cssText = 'display:grid; gap:var(--space-sm)';
-  
-  files.forEach(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, streamUrl, streamProtocol, hasTrailer, trailerUrl }) => {
+
+  // Функция собирает DOM-список по данным файлов (чтобы можно было перерендеривать)
+  const buildFileList = (files) => {
+    const fileList = document.createElement('ul');
+    fileList.className = 'list';
+    fileList.style.cssText = 'display:grid; gap:var(--space-sm)';
+
+    files.forEach(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, streamUrl, streamProtocol, hasTrailer, trailerUrl }) => {
+      const safeExt = getFileExtension(safeName);
+      const displayName = originalName.replace(/\.[^.]+$/, '');
+      let typeLabel = 'VID';
+      const normalizedType = resolveContentType({ contentType, fileName: safeName, originalName, fallbackToFolder: true });
+      if (normalizedType === 'streaming') {
+        typeLabel = 'STREAM';
+      } else if (normalizedType && normalizedType !== 'unknown') {
+        typeLabel = getContentTypeInfo(normalizedType, streamProtocol).shortLabel;
+      }
+
+      const isStreaming = contentType === 'streaming';
+      const isEligible = !isStreaming && /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp)$/i.test(safeName);
+      const isVideo = !isStreaming && (normalizedType === 'video' || VIDEO_EXTENSIONS.includes(safeExt));
+      const fileStatus = status || 'ready';
+      const isProcessing = fileStatus === 'processing' || fileStatus === 'checking';
+      const hasError = fileStatus === 'error';
+      const fileProgress = progress || 100;
+
+      let resolutionLabel = '';
+      if (isVideo && resolution) {
+        const width = resolution.width || 0;
+        const height = resolution.height || 0;
+        if (width >= 3840 || height >= 2160) resolutionLabel = '4K';
+        else if (width >= 1920 || height >= 1080) resolutionLabel = 'FHD';
+        else if (width >= 1280 || height >= 720) resolutionLabel = 'HD';
+        else if (width > 0) resolutionLabel = 'SD';
+      }
+
+      let statusIcon = '';
+      let statusText = '';
+      let statusColor = '';
+      const isStaticDoc = STATIC_CONTENT_TYPES.has(normalizedType);
+      if (isVideo || isStaticDoc) {
+        if (isProcessing) {
+          statusColor = 'var(--warning)';
+          statusIcon = getClockIcon(14, statusColor);
+          statusText = `Обработка... ${fileProgress}%`;
+        } else if (hasError) {
+          statusColor = 'var(--danger)';
+          statusIcon = getCrossIcon(14, statusColor);
+          statusText = 'Ошибка обработки';
+        } else if (fileStatus === 'ready') {
+          statusColor = 'var(--success)';
+          statusIcon = getCheckIcon(14, statusColor);
+          statusText = 'Готов';
+        }
+      }
+
+      const metaBadges = [];
+      if (typeLabel === 'FOLDER' && folderImageCount !== null) metaBadges.push(`${folderImageCount} фото`);
+      if (isVideo && durationSeconds && typeof durationSeconds === 'number' && durationSeconds > 0) metaBadges.push(formatTime(durationSeconds));
+      if (isStreaming && streamProtocol) metaBadges.unshift(streamProtocol.toUpperCase());
+      const typeBadge = `${typeLabel}${metaBadges.length ? ` · ${metaBadges.join(' · ')}` : ''}`;
+
+      const li = document.createElement('li');
+      li.className = 'file-item';
+      li.draggable = canPlay;
+      li.setAttribute('data-device-id', deviceId || '');
+      li.setAttribute('data-file-name', encodeURIComponent(safeName));
+      li.setAttribute('data-content-type', contentType || '');
+      li.setAttribute('data-stream-protocol', streamProtocol || '');
+      let bgColor = isPlaceholder ? 'rgba(59, 130, 246, 0.1)' : 'var(--panel-2)';
+      let borderLeft = isPlaceholder ? 'border-left: 3px solid rgba(59, 130, 246, 0.6);' : '';
+      let opacity = isProcessing ? 'opacity:0.7;' : '';
+      let cursor = canPlay ? 'cursor:move;' : '';
+      li.style.cssText = `border:var(--border); background:${bgColor}; ${borderLeft} ${opacity} ${cursor}`;
+
+      const header = document.createElement('div'); header.className = 'file-item-header';
+      const headerLeft = document.createElement('div'); headerLeft.style.cssText = 'flex:1; display:flex; align-items:stretch; gap:var(--space-xs); min-width:0;';
+      if (isPlaceholder) {
+        const placeholderSpan = document.createElement('span');
+        placeholderSpan.style.cssText = 'background:rgba(59, 130, 246, 0.8); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:600; align-self:center; flex-shrink:0;';
+        placeholderSpan.textContent = '📌 ЗАГЛУШКА';
+        headerLeft.appendChild(placeholderSpan);
+      }
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'file-item-name fileName-editable';
+      nameSpan.setAttribute('data-safe', encodeURIComponent(safeName));
+      nameSpan.setAttribute('data-original-full', encodeURIComponent(originalName));
+      nameSpan.style.cssText = 'cursor:pointer; padding:var(--space-xs) var(--space-sm); border-radius:var(--radius-sm); transition:all 0.2s; flex:1; min-width:0;';
+      nameSpan.contentEditable = 'false';
+      nameSpan.textContent = displayName;
+      const saveBtn = document.createElement('button'); saveBtn.className = 'primary fileRenameSaveBtn'; saveBtn.style.cssText = 'display:none; min-width:28px; width:28px; height:28px; padding:0; border-radius:var(--radius-sm); flex-shrink:0'; saveBtn.title = 'Сохранить';
+      const saveSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); saveSvg.setAttribute('width', '14'); saveSvg.setAttribute('height', '14'); saveSvg.setAttribute('viewBox', '0 0 24 24'); saveSvg.setAttribute('fill', 'none'); saveSvg.setAttribute('stroke', 'currentColor'); saveSvg.setAttribute('stroke-width', '2.5'); saveSvg.setAttribute('stroke-linecap', 'round'); saveSvg.setAttribute('stroke-linejoin', 'round'); saveSvg.style.display = 'block';
+      const savePolyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline'); savePolyline.setAttribute('points', '20 6 9 17 4 12'); saveSvg.appendChild(savePolyline); saveBtn.appendChild(saveSvg);
+      headerLeft.appendChild(nameSpan); headerLeft.appendChild(saveBtn);
+      const headerRight = document.createElement('div'); headerRight.style.cssText = 'display:flex; align-items:center; gap:var(--space-sm);';
+      if (statusText) { const statusSpan = document.createElement('span'); statusSpan.style.cssText = `font-size:var(--font-size-sm); color:${statusColor}; white-space:nowrap; display:flex; align-items:center; gap:var(--space-xs);`; statusSpan.innerHTML = `${statusIcon} ${escapeHtml(statusText)}`; headerRight.appendChild(statusSpan); }
+      const metaDiv = document.createElement('div'); metaDiv.style.cssText = 'display:flex; align-items:center; gap:4px; flex-wrap:wrap;';
+      if (resolutionLabel) { const resSpan = document.createElement('span'); resSpan.style.cssText = 'font-size:10px; opacity:0.7;'; resSpan.textContent = resolutionLabel; metaDiv.appendChild(resSpan); }
+      const typeSpan = document.createElement('span'); typeSpan.className = 'file-item-type'; typeSpan.textContent = typeBadge; metaDiv.appendChild(typeSpan);
+      headerRight.appendChild(metaDiv);
+      header.appendChild(headerLeft); header.appendChild(headerRight);
+
+      const actions = document.createElement('div'); actions.className = 'file-item-actions';
+      if (isStreaming) {
+        const editBtn = document.createElement('button'); editBtn.className = 'meta-lg editStreamBtn'; editBtn.setAttribute('data-safe', encodeURIComponent(safeName)); editBtn.setAttribute('data-original', encodeURIComponent(originalName)); editBtn.setAttribute('data-stream-url', encodeURIComponent(streamUrl || '')); editBtn.setAttribute('data-stream-protocol', encodeURIComponent(streamProtocol || '')); editBtn.setAttribute('data-content-type', contentType || ''); editBtn.title = 'Изменить стрим'; editBtn.textContent = 'Изменить'; actions.appendChild(editBtn);
+      } else {
+        const previewBtn = document.createElement('button'); previewBtn.className = 'meta-lg previewFileBtn'; previewBtn.setAttribute('data-safe', encodeURIComponent(safeName)); previewBtn.setAttribute('data-original', encodeURIComponent(originalName)); previewBtn.setAttribute('data-stream-protocol', streamProtocol || ''); previewBtn.setAttribute('data-content-type', contentType || ''); previewBtn.setAttribute('data-has-trailer', hasTrailer ? '1' : '0'); previewBtn.setAttribute('data-trailer-url', trailerUrl || ''); previewBtn.title = 'Предпросмотр'; previewBtn.disabled = !canPlay; previewBtn.textContent = 'Превью'; actions.appendChild(previewBtn);
+      }
+      if (isEligible) { const makeDefaultBtn = document.createElement('button'); makeDefaultBtn.className = 'meta-lg makeDefaultBtn'; makeDefaultBtn.setAttribute('data-safe', encodeURIComponent(safeName)); makeDefaultBtn.setAttribute('data-original', encodeURIComponent(originalName)); makeDefaultBtn.title = 'Сделать заглушкой'; makeDefaultBtn.disabled = !canPlay; makeDefaultBtn.textContent = 'Заглушка'; actions.appendChild(makeDefaultBtn); }
+      const delBtn = document.createElement('button'); delBtn.className = 'danger meta-lg delFileBtn'; delBtn.setAttribute('data-safe', encodeURIComponent(safeName)); delBtn.setAttribute('data-original', encodeURIComponent(originalName)); delBtn.title = 'Удалить'; delBtn.textContent = 'Удалить'; actions.appendChild(delBtn);
+
+      li.appendChild(header); li.appendChild(actions); fileList.appendChild(li);
+    });
+
+    return fileList;
+  };
+
+  let finalPageSize = pageSize;
+  let renderedPage = 0;
+  while (true) {
+    totalPages = Math.max(1, Math.ceil(allFiles.length / finalPageSize));
+    if (currentPage >= totalPages) currentPage = Math.max(0, totalPages - 1);
+
+    const start = currentPage * finalPageSize;
+    const end = Math.min(start + finalPageSize, allFiles.length);
+    const files = allFiles.slice(start, end);
+
+    // Рендерим список
+    panelEl.innerHTML = '';
+    const fileList = document.createElement('ul');
+    fileList.className = 'list';
+    fileList.style.cssText = 'display:grid; gap:var(--space-sm)';
+
+    files.forEach(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, streamUrl, streamProtocol, hasTrailer, trailerUrl }) => {
         // placeholders allowed only for image/video (no pdf/pptx/folders)
         const isStreaming = contentType === 'streaming';
         const isEligible = !isStreaming && /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp)$/i.test(safeName);
@@ -507,61 +731,151 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         li.appendChild(header);
         li.appendChild(actions);
         fileList.appendChild(li);
-  });
-  
-  panelEl.appendChild(fileList);
+    });
+
+    panelEl.appendChild(fileList);
+
+    // Если в режиме авто — попробуем добавить ещё один элемент, если помещается без скролла
+    if (savedPerPage === 'auto' && end < allFiles.length && finalPageSize < 200) {
+      // если места хватает для дополнительного элемента — увеличим finalPageSize и перерендерим
+      // но убедимся, что последний элемент полностью виден (не по scrollHeight только)
+      const last = panelEl.querySelector('.list .file-item:last-child');
+      if (last) {
+        const panelRect = panelEl.getBoundingClientRect();
+        const lastRect = last.getBoundingClientRect();
+        if (lastRect.bottom <= panelRect.bottom - 1) {
+          finalPageSize = finalPageSize + 1;
+          if (finalPageSize > 200) break;
+          renderedPage++;
+          if (renderedPage > 20) break; // safety bail
+          continue;
+        }
+      } else {
+        // fallback to scrollHeight check
+        if (panelEl.scrollHeight <= panelEl.clientHeight) {
+          finalPageSize = finalPageSize + 1;
+          if (finalPageSize > 200) break;
+          renderedPage++;
+          if (renderedPage > 20) break;
+          continue;
+        }
+      }
+    }
+
+    break;
+  }
+
+  // Финальная коррекция для AUTO: если последний элемент обрезан, уменьшаем pageSize до полного влезания
+  if (savedPerPage === 'auto') {
+    const hasOverflow = () => {
+      const last = panelEl.querySelector('.list .file-item:last-child');
+      const scrollOverflow = panelEl.scrollHeight > (panelEl.clientHeight + 1);
+      if (!last) return scrollOverflow;
+      const panelRect = panelEl.getBoundingClientRect();
+      const lastRect = last.getBoundingClientRect();
+      return scrollOverflow || (lastRect.bottom > panelRect.bottom - 1);
+    };
+
+    let guard = 0;
+    while (finalPageSize > 1 && hasOverflow() && guard < 20) {
+      finalPageSize -= 1;
+      totalPages = Math.max(1, Math.ceil(allFiles.length / finalPageSize));
+      if (currentPage >= totalPages) currentPage = Math.max(0, totalPages - 1);
+      const start = currentPage * finalPageSize;
+      const end = Math.min(start + finalPageSize, allFiles.length);
+      panelEl.innerHTML = '';
+      panelEl.appendChild(buildFileList(allFiles.slice(start, end)));
+      guard += 1;
+    }
+  }
   
   // Рендер пейджера файлов (теперь находится вне panelEl, в filesPane)
   const filesPane = document.getElementById('filesPane');
   let filePagerAdmin = filesPane ? filesPane.querySelector('#filePagerAdmin') : null;
   
-  if (totalPages > 1) {
-    if (!filePagerAdmin && filesPane) {
-      // Если не найден, значит он уже в HTML (создан в renderLayout)
-      filePagerAdmin = filesPane.querySelector('#filePagerAdmin');
-    }
-    
-    if (filePagerAdmin) {
-      filePagerAdmin.innerHTML = '';
-      const prevBtn = document.createElement('button');
-      prevBtn.className = 'secondary';
-      prevBtn.id = 'filePrevAdmin';
-      prevBtn.disabled = currentPage <= 0;
-      prevBtn.style.cssText = 'min-width:80px';
-      prevBtn.textContent = 'Назад';
-      filePagerAdmin.appendChild(prevBtn);
-      const pageSpan = document.createElement('span');
-      pageSpan.style.cssText = 'white-space:nowrap';
-      pageSpan.textContent = `Стр. ${currentPage+1} из ${totalPages}`;
-      filePagerAdmin.appendChild(pageSpan);
-      const nextBtn = document.createElement('button');
-      nextBtn.className = 'secondary';
-      nextBtn.id = 'fileNextAdmin';
-      nextBtn.disabled = currentPage >= totalPages - 1;
-      nextBtn.style.cssText = 'min-width:80px';
-      nextBtn.textContent = 'Вперед';
-      filePagerAdmin.appendChild(nextBtn);
-      const prev = filePagerAdmin.querySelector('#filePrevAdmin');
-      const next = filePagerAdmin.querySelector('#fileNextAdmin');
-      if (prev) prev.onclick = async () => { 
-        if (currentPage > 0) { 
-          const updatedPage = await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage - 1, socket, onPageUpdate);
-          if (updatedPage !== undefined && onPageUpdate) {
-            onPageUpdate(updatedPage);
-          }
-        }
-      };
-      if (next) next.onclick = async () => { 
-        if (currentPage < totalPages - 1) { 
-          const updatedPage = await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage + 1, socket, onPageUpdate);
-          if (updatedPage !== undefined && onPageUpdate) {
-            onPageUpdate(updatedPage);
-          }
-        }
-      };
-    }
-  } else if (filePagerAdmin) {
+  // Всегда рендерим панель управления пагинацией/количеством на странице
+  if (!filePagerAdmin && filesPane) {
+    // Если не найден, значит он уже в HTML (создан в renderLayout)
+    filePagerAdmin = filesPane.querySelector('#filePagerAdmin');
+  }
+
+  if (filePagerAdmin) {
     filePagerAdmin.innerHTML = '';
+
+    // Переключатель отображения по
+    const perPageWrap = document.createElement('div');
+    perPageWrap.style.cssText = 'display:flex; align-items:center; gap:8px;';
+    const perPageLabel = document.createElement('div');
+    perPageLabel.className = 'meta';
+    perPageLabel.style.cssText = 'margin:0;';
+    perPageLabel.textContent = 'Отображать по:';
+    const perPageSelect = document.createElement('select');
+    perPageSelect.id = 'filePerPageAdmin';
+    perPageSelect.className = 'input';
+    perPageSelect.style.cssText = 'width:auto; min-width:72px; padding:4px;';
+    const optAuto = document.createElement('option'); optAuto.value = 'auto'; optAuto.text = 'авто';
+    const opt10 = document.createElement('option'); opt10.value = '10'; opt10.text = '10';
+    const opt25 = document.createElement('option'); opt25.value = '25'; opt25.text = '25';
+    const opt50 = document.createElement('option'); opt50.value = '50'; opt50.text = '50';
+    perPageSelect.appendChild(optAuto);
+    perPageSelect.appendChild(opt10);
+    perPageSelect.appendChild(opt25);
+    perPageSelect.appendChild(opt50);
+    try { perPageSelect.value = savedPerPage; } catch(e) { perPageSelect.value = 'auto'; }
+    perPageWrap.appendChild(perPageLabel);
+    perPageWrap.appendChild(perPageSelect);
+    filePagerAdmin.appendChild(perPageWrap);
+
+    const spacer = document.createElement('div'); spacer.style.cssText = 'flex:1;';
+    filePagerAdmin.appendChild(spacer);
+
+    const prevBtn = document.createElement('button');
+    prevBtn.className = 'secondary';
+    prevBtn.id = 'filePrevAdmin';
+    prevBtn.disabled = currentPage <= 0;
+    prevBtn.style.cssText = 'min-width:80px';
+    prevBtn.textContent = 'Назад';
+    filePagerAdmin.appendChild(prevBtn);
+
+    const pageSpan = document.createElement('span');
+    pageSpan.style.cssText = 'white-space:nowrap';
+    pageSpan.textContent = `Стр. ${currentPage+1} из ${totalPages}`;
+    filePagerAdmin.appendChild(pageSpan);
+
+    const nextBtn = document.createElement('button');
+    nextBtn.className = 'secondary';
+    nextBtn.id = 'fileNextAdmin';
+    nextBtn.disabled = currentPage >= totalPages - 1;
+    nextBtn.style.cssText = 'min-width:80px';
+    nextBtn.textContent = 'Вперед';
+    filePagerAdmin.appendChild(nextBtn);
+
+    const prev = filePagerAdmin.querySelector('#filePrevAdmin');
+    const next = filePagerAdmin.querySelector('#fileNextAdmin');
+    if (prev) prev.onclick = async () => { 
+      if (currentPage > 0) { 
+        const updatedPage = await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage - 1, socket, onPageUpdate);
+        if (updatedPage !== undefined && onPageUpdate) {
+          onPageUpdate(updatedPage);
+        }
+      }
+    };
+    if (next) next.onclick = async () => { 
+      if (currentPage < totalPages - 1) { 
+        const updatedPage = await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage + 1, socket, onPageUpdate);
+        if (updatedPage !== undefined && onPageUpdate) {
+          onPageUpdate(updatedPage);
+        }
+      }
+    };
+
+    // Обработчик смены количества на странице
+    perPageSelect.onchange = async () => {
+      const v = perPageSelect.value || 'auto';
+      try { localStorage.setItem('admin_files_per_page', v); } catch (e) {}
+      // При смене размера страницы переходим на 1-ю страницу
+      await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, 0, socket, onPageUpdate);
+    };
   }
 
   // Обработчик кнопки "Изменить" для стримов

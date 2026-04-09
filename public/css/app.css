@@ -1708,7 +1708,7 @@ body.maintenance-ui.light button.secondary {
 body.maintenance-ui button.danger {
   background: rgba(239, 68, 68, 0.22);
   border-color: rgba(248, 113, 113, 0.7);
-  color: #fecaca;
+  color: #ff0000;
 }
 
 body.maintenance-ui button.danger:hover:not(:disabled) {
@@ -1826,9 +1826,102 @@ body.admin-page #filesPanel {
   overflow-x: hidden;
 }
 
+body.admin-page #filesPane .file-item-actions {
+  justify-content: flex-end;
+  width: 100%;
+  gap: 6px;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+body.admin-page #filesPane .file-item-actions button {
+  flex: 0 0 auto;
+  width: 92px;
+  min-width: 84px;
+  max-width: 96px;
+  min-height: 32px;
+  height: 32px;
+  padding: 4px 8px;
+  font-size: 0.82rem;
+  justify-content: center;
+}
+
+body.admin-page #filesPane #filePagerAdmin button {
+  width: 96px;
+  min-width: 96px;
+  max-width: 96px;
+  min-height: 32px;
+  height: 32px;
+  padding: 4px 10px;
+  font-size: 0.82rem;
+  justify-content: center;
+}
+
+/* Compact pager & selector for admin files pane */
+body.admin-page #filesPane #filePagerAdmin {
+  gap: 8px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+body.admin-page #filesPane #filePagerAdmin .meta {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+body.admin-page #filesPane #filePagerAdmin .input {
+  height: 28px;
+  min-height: 28px;
+  padding: 4px 6px;
+  font-size: 0.82rem;
+  width: auto;
+  min-width: 64px;
+}
+
+body.admin-page #filesPane #filePagerAdmin button {
+  width: 84px;
+  min-width: 72px;
+  max-width: 96px;
+  height: 30px;
+  padding: 4px 8px;
+  font-size: 0.8rem;
+}
+
+body.admin-page #filesPane #filePagerAdmin span {
+  font-size: 0.82rem;
+}
+
+body.admin-page #filesPane #filesPanel .list {
+  gap: 6px !important;
+}
+
+body.admin-page #filesPane .file-item {
+  height: auto;
+  min-height: 74px;
+  padding: 6px 8px;
+  gap: 6px;
+  display: grid;
+  grid-template-rows: auto auto;
+  align-content: start;
+  overflow: hidden;
+}
+
+body.admin-page #filesPane .file-item-name {
+  font-size: 0.92rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body.admin-page #filesPane .file-item-type {
+  font-size: 0.78rem;
+}
+
 body.admin-page #detailPane > .card {
+  width: 100%;
   height: 100%;
   min-height: 0;
+  min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -1836,7 +1929,7 @@ body.admin-page #detailPane > .card {
 /* Убираем пустые поля по бокам на широких экранах */
 @media (min-width: 1024px) {
   body.admin-page #grid {
-    grid-template-columns: minmax(240px, 300px) minmax(360px, 0.95fr) minmax(460px, 1.05fr);
+    grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) 450px;
     grid-template-rows: minmax(0, 1fr);
     max-width: none;
     margin: 0;
@@ -1857,6 +1950,10 @@ body.admin-page #detailPane > .card {
   body.admin-page #detailPane {
     grid-column: 3;
     grid-row: 1;
+    width: 450px;
+    min-width: 450px;
+    max-width: 450px;
+    justify-self: end;
   }
 }
 
@@ -1919,12 +2016,13 @@ body.admin-page #detailPane > .card {
   body.admin-page #devicesPane,
   body.admin-page #detailPane,
   body.admin-page #filesPane {
-    height: auto;
+    height: 100%;
     min-height: auto;
   }
 
   body.admin-page #detailPane > .card {
     height: auto;
+    min-width: 0;
     overflow: visible;
   }
 
@@ -1935,7 +2033,7 @@ body.admin-page #detailPane > .card {
 
   body.admin-page .file-item {
     height: auto;
-    min-height: var(--item-min-height);
+    min-height: 68px;
   }
 }
 
