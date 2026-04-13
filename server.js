@@ -48,7 +48,8 @@ import { createHeroRouter } from './src/hero/index.js';
 import { createVolumeRouter } from './src/routes/volume.js';
 import fileResolverRouter from './src/routes/file-resolver.js';
 import { createNotificationsRouter } from './src/routes/notifications.js';
-import { createUploadMiddleware } from './src/middleware/multer-config.js';
+import multer from 'multer';
+import { createUploadMiddleware, validateUploadSize } from './src/middleware/multer-config.js';
 import { requireAuth, requireAdmin, requireHeroAdmin, requireSpeaker } from './src/middleware/auth.js';
 import { globalLimiter, apiSpeedLimiter } from './src/middleware/rate-limit.js';
 import { setupExpressMiddleware, setupStaticFiles } from './src/middleware/express-config.js';
@@ -448,6 +449,156 @@ app.get('/api/admin/export-database', requireAuth, requireAdmin, (req, res) => {
   } catch (error) {
     logger.error('[Admin] Error exporting database:', error);
     res.status(500).json({ error: 'Failed to export database' });
+  }
+});
+
+// Импорт базы данных (замена текущей БД). Принимает FormData с полем `file` (.db).
+app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUploadSize, (req, res) => {
+  try {
+    const tempUploadDir = getTempDir();
+    if (!fs.existsSync(tempUploadDir)) fs.mkdirSync(tempUploadDir, { recursive: true });
+
+    const storage = multer.diskStorage({
+      destination: (r, f, cb) => cb(null, tempUploadDir),
+      filename: (r, f, cb) => cb(null, `import_${Date.now()}${path.extname(f.originalname)}`)
+    });
+
+    const uploadSingle = multer({ storage, limits: { fileSize: MAX_FILE_SIZE } }).single('file');
+
+    uploadSingle(req, res, async (err) => {
+      if (err) {
+        logger.warn('[Admin] Import DB upload failed', { error: err.message });
+        return res.status(400).json({ error: err.message || 'Upload failed' });
+      }
+
+      const file = req.file;
+      if (!file) return res.status(400).json({ error: 'No file uploaded' });
+
+      const ext = path.extname(file.originalname || '').toLowerCase();
+      if (ext !== '.db') {
+        try { fs.unlinkSync(file.path); } catch (_) {}
+        return res.status(400).json({ error: 'Unsupported file type. Expected .db' });
+      }
+
+      // Быстрая проверка сигнатуры SQLite файла
+      try {
+        const fd = fs.openSync(file.path, 'r');
+        const headerBuffer = Buffer.alloc(16);
+        try {
+          fs.readSync(fd, headerBuffer, 0, 16, 0);
+        } finally {
+          fs.closeSync(fd);
+        }
+
+        const signature = headerBuffer.toString('utf8');
+        if (signature !== 'SQLite format 3\u0000') {
+          try { fs.unlinkSync(file.path); } catch (_) {}
+          return res.status(400).json({ error: 'Invalid SQLite database file' });
+        }
+      } catch (signatureError) {
+        try { fs.unlinkSync(file.path); } catch (_) {}
+        return res.status(400).json({ error: signatureError.message || 'Failed to validate file' });
+      }
+
+      const uploadedPath = file.path;
+      const backupPath = `${DB_PATH}.bak.${Date.now()}`;
+      const walPath = `${DB_PATH}-wal`;
+      const shmPath = `${DB_PATH}-shm`;
+      let checkpointStopped = false;
+      let backupCreated = false;
+
+      const removeWalShmFiles = () => {
+        [walPath, shmPath].forEach((p) => {
+          try {
+            if (fs.existsSync(p)) fs.unlinkSync(p);
+          } catch (cleanupError) {
+            logger.warn('[Admin] Failed to remove SQLite sidecar file', {
+              file: p,
+              error: cleanupError.message
+            });
+          }
+        });
+      };
+
+      try {
+        // Создаём резервную копию текущей БД если она существует
+        if (fs.existsSync(DB_PATH)) {
+          fs.copyFileSync(DB_PATH, backupPath);
+          backupCreated = true;
+          logger.info('[Admin] Database backup created', { backupPath });
+        }
+
+        // Остановим периодический checkpoint и попробуем корректно завершить БД
+        try {
+          stopWalCheckpointInterval();
+          checkpointStopped = true;
+        } catch (e) {
+          logger.warn('[Admin] Failed to stop WAL checkpoint interval', { error: e.message });
+        }
+
+        try {
+          performWalCheckpoint(true);
+        } catch (e) {
+          logger.warn('[Admin] WAL checkpoint warning', { error: e.message });
+        }
+
+        try {
+          closeDatabase();
+        } catch (e) {
+          logger.warn('[Admin] closeDatabase warning', { error: e.message });
+        }
+
+        // Важно: удаляем -wal/-shm перед подменой файла базы
+        removeWalShmFiles();
+
+        // Копируем загруженный файл на место основной БД
+        fs.copyFileSync(uploadedPath, DB_PATH);
+        logger.info('[Admin] Database file replaced', { dbPath: DB_PATH });
+
+        // Применяем миграции на новой базе
+        runMigrations(DB_PATH);
+
+        // Перезагрузим in-memory данные (devices, fileNamesMap)
+        devices = loadDevicesFromDB();
+        fileNamesMap = loadFileNamesFromDB();
+        io.emit('devices/updated');
+
+        res.json({ ok: true });
+        logger.info('[Admin] Database import completed', { user: req.user?.username || 'unknown' });
+      } catch (error) {
+        logger.error('[Admin] Database import failed', { error: error?.message || String(error) });
+        // Попытка восстановления из бэкапа
+        try {
+          if (backupCreated && fs.existsSync(backupPath)) {
+            removeWalShmFiles();
+            fs.copyFileSync(backupPath, DB_PATH);
+            runMigrations(DB_PATH);
+            devices = loadDevicesFromDB();
+            fileNamesMap = loadFileNamesFromDB();
+            io.emit('devices/updated');
+            logger.info('[Admin] Database restored from backup after import error and state reloaded', { backupPath });
+          }
+        } catch (restoreErr) {
+          logger.error('[Admin] Failed to restore database from backup', { error: restoreErr.message });
+        }
+
+        return res.status(500).json({ error: error.message || 'Import failed' });
+      } finally {
+        if (checkpointStopped) {
+          try {
+            startWalCheckpointInterval(WAL_CHECKPOINT_INTERVAL_MS);
+          } catch (restartErr) {
+            logger.warn('[Admin] Failed to restart WAL checkpoint interval', { error: restartErr.message });
+          }
+        }
+
+        // Удалим временный файл
+        try { if (fs.existsSync(uploadedPath)) fs.unlinkSync(uploadedPath); } catch (_) {}
+      }
+    });
+  } catch (outerErr) {
+    logger.error('[Admin] Unexpected error in import-database route', { error: outerErr.message });
+    return res.status(500).json({ error: outerErr.message || 'Unexpected error' });
   }
 });
 

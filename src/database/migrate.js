@@ -36,6 +36,17 @@ const MIGRATIONS = [
       db.exec("UPDATE users SET auth_source = 'local' WHERE auth_source IS NULL OR auth_source = ''");
       db.exec('CREATE INDEX IF NOT EXISTS idx_users_auth_source ON users(auth_source)');
     }
+  },
+  {
+    id: '2026-04-13-refresh-tokens-last-used',
+    description: 'Ensure refresh_tokens.last_used column and index',
+    up(db) {
+      if (!hasColumn(db, 'refresh_tokens', 'last_used')) {
+        db.exec('ALTER TABLE refresh_tokens ADD COLUMN last_used DATETIME');
+      }
+
+      db.exec('CREATE INDEX IF NOT EXISTS idx_refresh_tokens_last_used ON refresh_tokens(last_used)');
+    }
   }
 ];
 

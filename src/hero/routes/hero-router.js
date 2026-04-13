@@ -1,10 +1,16 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { heroQueries } from '../database/queries.js';
 import { HERO_DB_PATH, LEGACY_HERO_DB_PATH } from '../database/hero-db.js';
 import path from 'path';
 import fs from 'fs';
 import logger from '../../utils/logger.js';
 import { createLimiter, deleteLimiter } from '../../middleware/rate-limit.js';
+
+const heroDbImportUpload = multer({
+  dest: '/tmp',
+  limits: { fileSize: 200 * 1024 * 1024 }
+});
 
 function validateMediaSize(base64String, limitBytes = 10 * 1024 * 1024) {
   if (!base64String || typeof base64String !== 'string') return;
@@ -217,6 +223,83 @@ export function createHeroRouter({ requireHeroAdmin }) {
         stack: error.stack
       });
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Импорт базы героев: файл подменяется атомарно, применение после перезапуска сервиса.
+  router.post('/import-database', requireHeroAdmin, heroDbImportUpload.single('file'), (req, res) => {
+    const uploadedPath = req.file?.path;
+
+    try {
+      if (!uploadedPath) {
+        return res.status(400).json({ error: 'Файл не загружен' });
+      }
+
+      const ext = path.extname(req.file.originalname || '').toLowerCase();
+      if (ext !== '.db') {
+        return res.status(400).json({ error: 'Поддерживаются только файлы .db' });
+      }
+
+      const fd = fs.openSync(uploadedPath, 'r');
+      const headerBuffer = Buffer.alloc(16);
+      try {
+        fs.readSync(fd, headerBuffer, 0, 16, 0);
+      } finally {
+        fs.closeSync(fd);
+      }
+
+      if (headerBuffer.toString('utf8') !== 'SQLite format 3\u0000') {
+        return res.status(400).json({ error: 'Некорректный файл SQLite' });
+      }
+
+      const targetPath = HERO_DB_PATH;
+      const targetDir = path.dirname(targetPath);
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
+
+      if (fs.existsSync(targetPath)) {
+        const backupPath = `${targetPath}.bak.${Date.now()}`;
+        fs.copyFileSync(targetPath, backupPath);
+        logger.info('[Hero Router] Hero DB backup created before import', { backupPath });
+      }
+
+      const stagedPath = path.join(targetDir, `heroes_import_${Date.now()}.db`);
+      fs.copyFileSync(uploadedPath, stagedPath);
+      fs.renameSync(stagedPath, targetPath);
+
+      [`${targetPath}-wal`, `${targetPath}-shm`].forEach((extraPath) => {
+        try {
+          if (fs.existsSync(extraPath)) fs.unlinkSync(extraPath);
+        } catch (cleanupErr) {
+          logger.warn('[Hero Router] Failed to remove sidecar file after import', {
+            file: extraPath,
+            error: cleanupErr.message
+          });
+        }
+      });
+
+      return res.json({
+        ok: true,
+        message: 'База героев импортирована. Перезапустите сервис для применения изменений.'
+      });
+    } catch (error) {
+      logger.error('[Hero Router] Error in POST /import-database', {
+        error: error.message,
+        stack: error.stack
+      });
+      return res.status(500).json({ error: error.message || 'Ошибка импорта базы героев' });
+    } finally {
+      if (uploadedPath && fs.existsSync(uploadedPath)) {
+        try {
+          fs.unlinkSync(uploadedPath);
+        } catch (cleanupErr) {
+          logger.warn('[Hero Router] Failed to remove uploaded temp file', {
+            file: uploadedPath,
+            error: cleanupErr.message
+          });
+        }
+      }
     }
   });
 

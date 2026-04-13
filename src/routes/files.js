@@ -7,6 +7,7 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import os from 'os';
 import { spawn } from 'child_process';
 import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
@@ -200,6 +201,62 @@ async function probeMediaInfo(filePath, timeoutMs = 30000) {
       }
     });
   });
+}
+
+function runCommandWithStderr(command, args = [], options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      ...options,
+      stdio: ['ignore', 'ignore', 'pipe']
+    });
+
+    let stderr = '';
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('error', (error) => {
+      reject(error);
+    });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+
+      reject(new Error(stderr.trim() || `${command} exited with code ${code}`));
+    });
+  });
+}
+
+async function createZipArchiveFromFolder(sourceFolderPath, outputZipPath) {
+  const folderPath = path.resolve(sourceFolderPath);
+  const parentDir = path.dirname(folderPath);
+  const folderName = path.basename(folderPath);
+
+  try {
+    await runCommandWithStderr('zip', ['-r', '-q', outputZipPath, folderName], { cwd: parentDir });
+    return;
+  } catch (zipError) {
+    logger.warn('[download] zip command failed, trying 7z fallback', {
+      folderPath,
+      outputZipPath,
+      error: zipError.message
+    });
+  }
+
+  await runCommandWithStderr('7z', ['a', '-tzip', '-y', outputZipPath, folderName], { cwd: parentDir });
+}
+
+function safeDownloadFileName(fileName = '', fallback = 'download') {
+  const normalized = String(fileName || '')
+    .replace(/[\r\n]/g, '')
+    .trim();
+
+  const baseName = path.basename(normalized || fallback);
+  return baseName || fallback;
 }
 
 const router = express.Router();
@@ -3905,6 +3962,148 @@ export function createFilesRouter(deps) {
       logger.error('[rename] Ошибка', { error: e.message, stack: e.stack, deviceId: id, oldName, newName, oldPath, newPath });
       res.status(500).json({ error: 'Ошибка переименования', details: e.message });
     }
+  });
+
+  // GET /api/devices/:id/files/:name/download - Скачать файл или папку
+  // Папки скачиваются как ZIP архив
+  router.get('/:id/files/:name/download', requireSpeaker[0], requireSpeaker[1], async (req, res) => {
+    const id = sanitizeDeviceId(req.params.id);
+
+    if (!id) {
+      return res.status(400).json({ error: 'Неверный ID устройства' });
+    }
+
+    if (!hasDeviceAccess(req.user.userId, id, req.user.role)) {
+      return res.status(403).json({ error: 'Доступ к устройству запрещен' });
+    }
+
+    const name = String(req.params.name || '');
+    if (!name || name.includes('..') || name.startsWith('/') || name.startsWith('\\')) {
+      return res.status(400).json({ error: 'Неверное имя файла' });
+    }
+
+    const d = devices[id];
+    if (!d) {
+      return res.status(404).json({ error: 'Устройство не найдено' });
+    }
+
+    const devicesPath = getDevicesPath();
+    const deviceFolder = path.join(devicesPath, d.folder || id);
+    const metadata = getFileMetadata(id, name);
+
+    if (metadata?.content_type === 'streaming') {
+      return res.status(400).json({ error: 'Стримы нельзя скачать как файл' });
+    }
+
+    let targetPath = metadata?.file_path && fs.existsSync(metadata.file_path)
+      ? path.resolve(metadata.file_path)
+      : null;
+
+    if (!targetPath) {
+      const filePath = path.join(deviceFolder, name);
+      const folderPath = path.join(deviceFolder, name.replace(/\.(pdf|pptx|zip)$/i, ''));
+
+      if (fs.existsSync(filePath)) {
+        targetPath = filePath;
+      } else if (fs.existsSync(folderPath)) {
+        targetPath = folderPath;
+      }
+    }
+
+    if (!targetPath || !fs.existsSync(targetPath)) {
+      return res.status(404).json({ error: 'Файл или папка не найдены' });
+    }
+
+    let stat;
+    try {
+      stat = fs.statSync(targetPath);
+    } catch (error) {
+      logger.error('[download] Failed to stat target', {
+        deviceId: id,
+        name,
+        targetPath,
+        error: error.message
+      });
+      return res.status(500).json({ error: 'Не удалось получить информацию о файле' });
+    }
+
+    if (stat.isDirectory()) {
+      const originalName = metadata?.original_name || name.replace(/\.(zip|pdf|pptx)$/i, '') || path.basename(targetPath);
+      const zipName = safeDownloadFileName(
+        /\.zip$/i.test(originalName) ? originalName : `${originalName}.zip`,
+        `${path.basename(targetPath)}.zip`
+      );
+
+      let tempDirPath = null;
+
+      const cleanupTemp = () => {
+        if (!tempDirPath) return;
+        fs.rm(tempDirPath, { recursive: true, force: true }, () => {});
+        tempDirPath = null;
+      };
+
+      try {
+        tempDirPath = fs.mkdtempSync(path.join(os.tmpdir(), 'videocontrol-download-'));
+        const zipPath = path.join(tempDirPath, `${Date.now()}-${crypto.randomBytes(4).toString('hex')}.zip`);
+
+        await createZipArchiveFromFolder(targetPath, zipPath);
+
+        res.setHeader('X-Download-Filename', zipName);
+        return res.download(zipPath, zipName, (error) => {
+          cleanupTemp();
+          if (!error) return;
+
+          logger.error('[download] Failed to send ZIP archive', {
+            deviceId: id,
+            name,
+            targetPath,
+            zipName,
+            error: error.message
+          });
+
+          if (!res.headersSent) {
+            res.status(500).json({ error: 'Ошибка передачи ZIP архива' });
+          }
+        });
+      } catch (error) {
+        cleanupTemp();
+        logger.error('[download] Failed to create ZIP archive', {
+          deviceId: id,
+          name,
+          targetPath,
+          error: error.message
+        });
+        return res.status(500).json({ error: 'Не удалось создать ZIP архив' });
+      }
+    }
+
+    if (!stat.isFile()) {
+      return res.status(400).json({ error: 'Поддерживается скачивание только файлов и папок' });
+    }
+
+    const metadataOriginalName = metadata?.original_name || fileNamesMap[id]?.[name] || path.basename(targetPath);
+    const ext = path.extname(name);
+    const fileNameForDownload = safeDownloadFileName(
+      path.extname(metadataOriginalName) ? metadataOriginalName : `${metadataOriginalName}${ext}`,
+      path.basename(targetPath)
+    );
+
+    res.setHeader('X-Download-Filename', fileNameForDownload);
+    return res.download(targetPath, fileNameForDownload, (error) => {
+      if (!error) return;
+
+      logger.error('[download] Failed to send file', {
+        deviceId: id,
+        name,
+        targetPath,
+        fileNameForDownload,
+        error: error.message
+      });
+
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Ошибка передачи файла' });
+      }
+    });
   });
   
   // DELETE /api/devices/:id/files/:name - Удаление файла или папки

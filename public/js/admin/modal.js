@@ -13,11 +13,77 @@ import {
   getSuccessIcon, 
   getSettingsIcon, 
   getDownloadIcon, 
+  getUpDownloadIcon,
   getCloseIcon 
 } from '../shared/svg-icons.js';
 import { escapeHtml } from '../shared/utils.js';
 
 const escapeJsStringForAttr = (value) => escapeHtml(JSON.stringify(value ?? ''));
+const modalHistoryStack = [];
+let activeModalEscHandler = null;
+
+function bindModalOverlayHandlers(overlay) {
+  if (!overlay) return;
+
+  // Закрываем только при "точном" клике по фону:
+  // pointerdown и pointerup должны произойти на overlay.
+  let pointerDownOnOverlay = false;
+  overlay.onclick = null;
+  overlay.onpointerdown = (e) => {
+    pointerDownOnOverlay = e.target === overlay;
+  };
+  overlay.onpointerup = (e) => {
+    const shouldClose = pointerDownOnOverlay && e.target === overlay;
+    pointerDownOnOverlay = false;
+    if (shouldClose) {
+      closeModal();
+    }
+  };
+  overlay.onpointercancel = () => {
+    pointerDownOnOverlay = false;
+  };
+}
+
+function bindModalEscHandler() {
+  if (activeModalEscHandler) {
+    document.removeEventListener('keydown', activeModalEscHandler);
+  }
+
+  activeModalEscHandler = (e) => {
+    if (e.key !== 'Escape') return;
+
+    if (modalHistoryStack.length > 0) {
+      goBackModal();
+      return;
+    }
+
+    closeModal();
+  };
+
+  document.addEventListener('keydown', activeModalEscHandler);
+}
+
+export function goBackModal() {
+  const overlay = document.getElementById('modalOverlay');
+  const modalContent = document.getElementById('modalContent');
+  if (!overlay || !modalContent) return;
+
+  const previousState = modalHistoryStack.pop();
+  if (!previousState) return;
+
+  while (modalContent.firstChild) {
+    modalContent.removeChild(modalContent.firstChild);
+  }
+
+  modalContent.style.maxWidth = previousState.maxWidth || '600px';
+  previousState.nodes.forEach((node) => {
+    modalContent.appendChild(node);
+  });
+
+  overlay.style.display = 'flex';
+  bindModalOverlayHandlers(overlay);
+  bindModalEscHandler();
+}
 
 async function reportModalNotification(payload = {}) {
   try {
@@ -41,18 +107,47 @@ async function reportModalNotification(payload = {}) {
   }
 }
 
-export function showModal(title, content) {
+export function showModal(title, content, options = {}) {
   const overlay = document.getElementById('modalOverlay');
   const modalContent = document.getElementById('modalContent');
   
   if (!overlay || !modalContent) return;
+
+  const isNestedModal = overlay.style.display === 'flex' && modalContent.childNodes.length > 0;
+  if (!isNestedModal) {
+    modalHistoryStack.length = 0;
+  } else if (options.pushHistory !== false) {
+    modalHistoryStack.push({
+      nodes: Array.from(modalContent.childNodes),
+      maxWidth: modalContent.style.maxWidth || '600px'
+    });
+  }
+
+  const requestedMaxWidth = typeof options.maxWidth === 'string' && options.maxWidth.trim()
+    ? options.maxWidth.trim()
+    : '600px';
+  modalContent.style.maxWidth = requestedMaxWidth;
   
   // Очищаем содержимое модального окна безопасным способом
-  modalContent.innerHTML = '';
+  while (modalContent.firstChild) {
+    modalContent.removeChild(modalContent.firstChild);
+  }
   
   const header = document.createElement('div');
   header.className = 'header';
   header.style.cssText = 'display:flex; justify-content:space-between; align-items:center;';
+
+  const headerLeft = document.createElement('div');
+  headerLeft.style.cssText = 'display:flex; align-items:center; gap:8px; min-width:0; flex:1;';
+
+  if (modalHistoryStack.length > 0 && options.showBack !== false) {
+    const backBtn = document.createElement('button');
+    backBtn.className = 'secondary';
+    backBtn.onclick = goBackModal;
+    backBtn.style.cssText = 'min-width:auto; padding:8px 10px; display:flex; align-items:center; justify-content:center;';
+    backBtn.textContent = '← Назад';
+    headerLeft.appendChild(backBtn);
+  }
   
   const titleEl = document.createElement('div');
   titleEl.className = 'title';
@@ -80,7 +175,8 @@ export function showModal(title, content) {
     titleEl.appendChild(titleText);
   }
   
-  header.appendChild(titleEl);
+  headerLeft.appendChild(titleEl);
+  header.appendChild(headerLeft);
   
   const closeBtn = document.createElement('button');
   closeBtn.className = 'secondary';
@@ -115,22 +211,9 @@ export function showModal(title, content) {
   modalContent.appendChild(contentDiv);
   
   overlay.style.display = 'flex';
-  
-  // Закрытие по клику на overlay
-  overlay.onclick = (e) => {
-    if (e.target === overlay) {
-      closeModal();
-    }
-  };
-  
-  // Закрытие по ESC
-  const escHandler = (e) => {
-    if (e.key === 'Escape') {
-      closeModal();
-      document.removeEventListener('keydown', escHandler);
-    }
-  };
-  document.addEventListener('keydown', escHandler);
+
+  bindModalOverlayHandlers(overlay);
+  bindModalEscHandler();
 }
 
 export function closeModal() {
@@ -138,10 +221,17 @@ export function closeModal() {
   if (overlay) {
     overlay.style.display = 'none';
   }
+
+  modalHistoryStack.length = 0;
+  if (activeModalEscHandler) {
+    document.removeEventListener('keydown', activeModalEscHandler);
+    activeModalEscHandler = null;
+  }
 }
 
 // Глобальные функции для onclick
 window.closeModal = closeModal;
+window.goBackModal = goBackModal;
 window.showUsersModal = showUsersModal;
 
 export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevice, renderFilesPane) {
@@ -149,12 +239,12 @@ export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevi
     <div style="display:flex; flex-direction:column; gap:var(--space-md);">
       <div>
         <label style="display:block; margin-bottom:4px; font-weight:500;">ID устройства</label>
-        <input id="modalDeviceId" class="input" placeholder="tv-001" required />
+        <input id="modalDeviceId" class="input" placeholder="TV001" required />
       </div>
       
       <div>
         <label style="display:block; margin-bottom:4px; font-weight:500;">Имя устройства</label>
-        <input id="modalDeviceName" class="input" placeholder="Living Room TV" />
+        <input id="modalDeviceName" class="input" placeholder="001 Комната на первом этаже" />
       </div>
       
       <div id="modalError" style="color:var(--danger); font-size:0.875rem; display:none;"></div>
@@ -233,33 +323,92 @@ export async function showUsersModal(adminFetch) {
     filteredUsers: [],
     currentPage: 1,
     itemsPerPage: 5,
-    searchQuery: ''
+    searchQuery: '',
+    authTab: 'local',
+    selectedUserId: null,
+    allDevicesById: {}
   };
   
   const content = `
-    <div style="display:flex; flex-direction:column; gap:var(--space-lg);">
-      <!-- Форма создания пользователя -->
-      <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm);">
-        <div style="margin-bottom:var(--space-md); font-weight:600;">Создать пользователя</div>
-        <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
-          <input id="modalUsername" class="input" placeholder="Логин" />
-          <input id="modalFullName" class="input" placeholder="ФИО" />
-          <input id="modalPassword" class="input" type="password" placeholder="Пароль (мин. 8 символов)" />
-          <select id="modalRole" class="input">
-            <option value="speaker">Speaker (управление контентом)</option>
-            <option value="admin">Admin (полный доступ)</option>
-            <option value="hero_admin">Hero Admin (управление карточками героев)</option>
-          </select>
-          <div id="modalUserError" style="color:var(--danger); font-size:0.875rem; display:none;"></div>
-          <button id="modalCreateUser" class="primary">Создать пользователя</button>
+    <style>
+      #usersModalLayout {
+        display: grid;
+        grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+        gap: var(--space-md);
+      }
+
+      #usersModalLayout .users-modal-panel {
+        padding: var(--space-md);
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+      }
+
+      #usersModalLayout .modal-user-row {
+        cursor: pointer;
+        border: 1px solid transparent;
+        transition: background-color 0.15s ease, border-color 0.15s ease;
+      }
+
+      #usersModalLayout .modal-user-row:hover {
+        background: var(--panel-2);
+      }
+
+      #usersModalLayout .modal-user-row.selected {
+        border-color: var(--brand);
+        background: var(--panel-2);
+      }
+
+      #usersModalLayout .users-tab-btn.active {
+        background: var(--brand);
+        border-color: var(--brand);
+        color: var(--panel);
+      }
+
+      @media (max-width: 960px) {
+        #usersModalLayout {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+
+    <div id="usersModalLayout">
+      <div style="display:flex; flex-direction:column; gap:var(--space-md);">
+        <div class="users-modal-panel">
+          <div style="margin-bottom:var(--space-md); font-weight:600;">Создать пользователя</div>
+          <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
+            <input id="modalUsername" class="input" placeholder="Логин" />
+            <input id="modalFullName" class="input" placeholder="ФИО" />
+            <input id="modalPassword" class="input" type="password" placeholder="Пароль (мин. 8 символов)" />
+            <select id="modalRole" class="input">
+              <option value="speaker">Speaker (управление контентом)</option>
+              <option value="admin">Admin (полный доступ)</option>
+              <option value="hero_admin">Hero Admin (управление карточками героев)</option>
+            </select>
+            <div id="modalUserError" style="color:var(--danger); font-size:0.875rem; display:none;"></div>
+            <button id="modalCreateUser" class="primary">Создать пользователя</button>
+          </div>
+        </div>
+
+        <div class="users-modal-panel">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:var(--space-sm); margin-bottom:var(--space-sm);">
+            <div style="font-weight:600;">Устройства пользователя</div>
+            <div class="meta" id="modalSelectedUserDevicesCount" style="color:var(--text-secondary);"></div>
+          </div>
+          <div id="modalSelectedUserDevicesPanel" style="display:flex; flex-direction:column; gap:var(--space-xs); min-height:140px; max-height:280px; overflow-y:auto;">
+            <div class="meta" style="color:var(--text-secondary);">Выберите пользователя в списке справа, чтобы увидеть доступные ему устройства.</div>
+          </div>
         </div>
       </div>
-      
-      <!-- Список пользователей -->
-      <div>
+
+      <div class="users-modal-panel" style="display:flex; flex-direction:column; min-height:520px;">
         <div style="margin-bottom:var(--space-md); font-weight:600;">Список пользователей</div>
-        
-        <!-- Поле поиска -->
+
+        <div style="display:flex; gap:var(--space-xs); margin-bottom:var(--space-sm);">
+          <button id="modalUsersTabLocal" class="secondary users-tab-btn active" data-users-auth-tab="local" style="flex:1;">LOCAL</button>
+          <button id="modalUsersTabLdap" class="secondary users-tab-btn" data-users-auth-tab="ldap" style="flex:1;">LDAP</button>
+        </div>
+
         <div style="margin-bottom:var(--space-sm);">
           <input 
             id="modalUsersSearch" 
@@ -269,14 +418,12 @@ export async function showUsersModal(adminFetch) {
             style="width:100%;"
           />
         </div>
-        
-        <!-- Список пользователей -->
-        <div id="modalUsersList" style="display:flex; flex-direction:column; gap:var(--space-sm); min-height:200px;">
+
+        <div id="modalUsersList" style="display:flex; flex-direction:column; gap:var(--space-sm); min-height:280px;">
           <div class="meta" style="text-align:center; padding:var(--space-lg);">Загрузка...</div>
         </div>
-        
-        <!-- Пагинация -->
-        <div id="modalUsersPagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:var(--space-md); padding-top:var(--space-md); border-top:1px solid var(--border);">
+
+        <div id="modalUsersPagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:auto; padding-top:var(--space-md); border-top:1px solid var(--border);">
           <div class="meta" id="modalUsersPaginationInfo" style="color:var(--text-secondary);"></div>
           <div style="display:flex; gap:var(--space-xs); align-items:center;">
             <button 
@@ -302,7 +449,7 @@ export async function showUsersModal(adminFetch) {
     </div>
   `;
   
-  showModal(`${getUsersIcon(18)} Управление пользователями`, content);
+  showModal(`${getUsersIcon(18)} Управление пользователями`, content, { maxWidth: '1200px' });
   
   // Загружаем список пользователей
   setTimeout(() => {
@@ -332,7 +479,7 @@ export async function showUsersModal(adminFetch) {
         errorEl.style.display = 'block';
         return;
       }
-      
+
       if (password.length < 8) {
         errorEl.textContent = 'Пароль минимум 8 символов';
         errorEl.style.display = 'block';
@@ -389,27 +536,55 @@ async function loadModalUsersList(adminFetch) {
       filteredUsers: [],
       currentPage: 1,
       itemsPerPage: 5,
-      searchQuery: ''
+      searchQuery: '',
+      authTab: 'local',
+      selectedUserId: null,
+      allDevicesById: {}
     };
   }
   
   try {
-    const res = await adminFetch('/api/auth/users');
-    const users = await res.json();
+    const [usersRes, devicesRes] = await Promise.all([
+      adminFetch('/api/auth/users'),
+      adminFetch('/api/devices')
+    ]);
+    const users = await usersRes.json();
+    const devices = await devicesRes.json();
+
+    window.usersModalState.allDevicesById = Array.isArray(devices)
+      ? devices.reduce((acc, d) => {
+        if (d && d.device_id) {
+          acc[d.device_id] = d;
+        }
+        return acc;
+      }, {})
+      : {};
     
     // Загружаем количество устройств для каждого пользователя
     const usersWithDeviceCount = await Promise.all(users.map(async (u) => {
       try {
         const devicesRes = await adminFetch(`/api/auth/users/${u.id}/devices`);
         const deviceIds = await devicesRes.json();
-        return { ...u, deviceCount: Array.isArray(deviceIds) ? deviceIds.length : 0 };
+        const normalizedDeviceIds = Array.isArray(deviceIds) ? deviceIds : [];
+        return {
+          ...u,
+          deviceIds: normalizedDeviceIds,
+          deviceCount: normalizedDeviceIds.length
+        };
       } catch (err) {
-        return { ...u, deviceCount: 0 };
+        return { ...u, deviceIds: [], deviceCount: 0 };
       }
     }));
     
     // Сохраняем всех пользователей в состояние
     window.usersModalState.allUsers = usersWithDeviceCount;
+
+    if (window.usersModalState.selectedUserId !== null) {
+      const stillExists = usersWithDeviceCount.some((u) => Number(u.id) === Number(window.usersModalState.selectedUserId));
+      if (!stillExists) {
+        window.usersModalState.selectedUserId = null;
+      }
+    }
     
     // Применяем фильтрацию и пагинацию
     filterAndRenderUsers(adminFetch);
@@ -423,8 +598,19 @@ function setupUsersModalHandlers(adminFetch) {
   const searchInput = document.getElementById('modalUsersSearch');
   const prevBtn = document.getElementById('modalUsersPrevPage');
   const nextBtn = document.getElementById('modalUsersNextPage');
+  const tabButtons = Array.from(document.querySelectorAll('[data-users-auth-tab]'));
   
   if (!searchInput || !prevBtn || !nextBtn) return;
+
+  tabButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const nextTab = btn.getAttribute('data-users-auth-tab') === 'ldap' ? 'ldap' : 'local';
+      if (window.usersModalState.authTab === nextTab) return;
+      window.usersModalState.authTab = nextTab;
+      window.usersModalState.currentPage = 1;
+      filterAndRenderUsers(adminFetch);
+    });
+  });
   
   // Обработчик поиска с debounce
   let searchTimeout;
@@ -461,21 +647,48 @@ function filterAndRenderUsers(adminFetch) {
   const pageInfo = document.getElementById('modalUsersPageInfo');
   const prevBtn = document.getElementById('modalUsersPrevPage');
   const nextBtn = document.getElementById('modalUsersNextPage');
+  const localTabBtn = document.getElementById('modalUsersTabLocal');
+  const ldapTabBtn = document.getElementById('modalUsersTabLdap');
   
   if (!container) return;
+
+  const localCount = state.allUsers.filter((u) => String(u.auth_source || 'local').toLowerCase() !== 'ldap').length;
+  const ldapCount = state.allUsers.filter((u) => String(u.auth_source || 'local').toLowerCase() === 'ldap').length;
+
+  if (localTabBtn) {
+    localTabBtn.textContent = `LOCAL (${localCount})`;
+    localTabBtn.classList.toggle('active', state.authTab !== 'ldap');
+  }
+  if (ldapTabBtn) {
+    ldapTabBtn.textContent = `LDAP (${ldapCount})`;
+    ldapTabBtn.classList.toggle('active', state.authTab === 'ldap');
+  }
   
   // Фильтрация пользователей
-  if (state.searchQuery) {
-    state.filteredUsers = state.allUsers.filter(u => 
+  state.filteredUsers = state.allUsers.filter((u) => {
+    const authSource = String(u.auth_source || 'local').toLowerCase();
+    const matchesTab = state.authTab === 'ldap' ? authSource === 'ldap' : authSource !== 'ldap';
+    if (!matchesTab) return false;
+
+    if (!state.searchQuery) return true;
+    return (
       u.username.toLowerCase().includes(state.searchQuery) ||
       (u.full_name && u.full_name.toLowerCase().includes(state.searchQuery))
     );
-  } else {
-    state.filteredUsers = [...state.allUsers];
+  });
+
+  const hasSelectedInCurrentFilter = state.filteredUsers.some((u) => Number(u.id) === Number(state.selectedUserId));
+  if (!hasSelectedInCurrentFilter) {
+    state.selectedUserId = null;
   }
   
   // Вычисляем пагинацию
   const totalPages = Math.ceil(state.filteredUsers.length / state.itemsPerPage);
+  if (totalPages === 0) {
+    state.currentPage = 1;
+  } else if (state.currentPage > totalPages) {
+    state.currentPage = totalPages;
+  }
   const startIndex = (state.currentPage - 1) * state.itemsPerPage;
   const endIndex = startIndex + state.itemsPerPage;
   const pageUsers = state.filteredUsers.slice(startIndex, endIndex);
@@ -506,6 +719,7 @@ function filterAndRenderUsers(adminFetch) {
     container.innerHTML = state.searchQuery 
       ? '<div class="meta" style="text-align:center; padding:var(--space-lg);">Ничего не найдено</div>'
       : '<div class="meta" style="text-align:center; padding:var(--space-lg);">Нет пользователей</div>';
+    renderSelectedUserDevicesPanel();
     return;
   }
   
@@ -518,8 +732,9 @@ function filterAndRenderUsers(adminFetch) {
     const usernameArg = escapeJsStringForAttr(u.username || '');
     const roleArg = escapeJsStringForAttr(u.role || '');
     const isLdapUser = authSource === 'ldap';
+    const isSelected = Number(state.selectedUserId) === safeUserId;
     return `
-      <div class="item" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm);">
+      <div class="item modal-user-row ${isSelected ? 'selected' : ''}" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm);" onclick="selectUserInUsersModal(${safeUserId})">
         <div style="flex:1; min-width:0;">
           <div style="display:flex; align-items:center; gap:var(--space-xs); flex-wrap:wrap;">
             <strong>${safeUsername}</strong>
@@ -533,20 +748,30 @@ function filterAndRenderUsers(adminFetch) {
           ${u.role === 'speaker' ? `<div class="meta" style="font-size:0.75rem; color:var(--text-secondary);">Устройств: ${deviceCountLabel}</div>` : ''}
         </div>
         <div style="display:flex; gap:4px; flex-shrink:0;">
-          ${u.role === 'speaker' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})" title="Управление устройствами">${getSettingsIcon(16)}</button>` : ''}
-          ${u.role === 'admin' || u.role === 'hero_admin' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})" title="Информация об устройствах">${getSettingsIcon(16)}</button>` : ''}
+          ${u.role === 'speaker' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})" title="Управление устройствами">${getSettingsIcon(16)}</button>` : ''}
+          ${u.role === 'admin' || u.role === 'hero_admin' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})" title="Информация об устройствах">${getSettingsIcon(16)}</button>` : ''}
           ${isLdapUser
             ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center; opacity:0.6;" disabled title="Пароль LDAP меняется в AD">${getKeyIcon(16)}</button>`
-            : `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="resetUserPasswordInModal(${safeUserId}, ${usernameArg})" title="Сбросить пароль">${getKeyIcon(16)}</button>`}
+            : `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); resetUserPasswordInModal(${safeUserId}, ${usernameArg})" title="Сбросить пароль">${getKeyIcon(16)}</button>`}
           ${u.is_active 
-            ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="toggleUserInModal(${safeUserId}, false)" title="Отключить">${getLockIcon(16)}</button>`
-            : `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="toggleUserInModal(${safeUserId}, true)" title="Включить">${getUnlockIcon(16)}</button>`
+            ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); toggleUserInModal(${safeUserId}, false)" title="Отключить">${getLockIcon(16)}</button>`
+            : `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); toggleUserInModal(${safeUserId}, true)" title="Включить">${getUnlockIcon(16)}</button>`
           }
-          ${u.id !== 1 ? `<button class="danger meta-lg" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="deleteUserInModal(${safeUserId}, ${usernameArg})" title="Удалить">${getTrashIcon(16)}</button>` : ''}
+          ${u.id !== 1 ? `<button class="danger meta-lg" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); deleteUserInModal(${safeUserId}, ${usernameArg})" title="Удалить">${getTrashIcon(16)}</button>` : ''}
         </div>
       </div>
     `;
   }).join('');
+
+  renderSelectedUserDevicesPanel();
+
+  if (!window.selectUserInUsersModal) {
+    window.selectUserInUsersModal = (userId) => {
+      if (!window.usersModalState) return;
+      window.usersModalState.selectedUserId = Number(userId);
+      filterAndRenderUsers(window.adminFetch);
+    };
+  }
     
   // Регистрируем глобальные функции для onclick (если еще не зарегистрированы)
   if (!window.toggleUserInModal) {
@@ -697,6 +922,79 @@ function filterAndRenderUsers(adminFetch) {
       }, 100);
     };
   }
+}
+
+function renderSelectedUserDevicesPanel() {
+  const panel = document.getElementById('modalSelectedUserDevicesPanel');
+  const countEl = document.getElementById('modalSelectedUserDevicesCount');
+  const state = window.usersModalState;
+  if (!panel || !state) return;
+
+  const selectedUser = state.allUsers.find((u) => Number(u.id) === Number(state.selectedUserId));
+
+  if (!selectedUser) {
+    if (countEl) countEl.textContent = '';
+    panel.innerHTML = '<div class="meta" style="color:var(--text-secondary);">Выберите пользователя в списке справа, чтобы увидеть доступные ему устройства.</div>';
+    return;
+  }
+
+  const safeUsername = escapeHtml(selectedUser.username || '');
+  const safeRole = escapeHtml(selectedUser.role || '');
+  const usernameArg = escapeJsStringForAttr(selectedUser.username || '');
+  const roleArg = escapeJsStringForAttr(selectedUser.role || '');
+  const safeUserId = Number.isFinite(Number(selectedUser.id)) ? Number(selectedUser.id) : 0;
+
+  if (selectedUser.role === 'admin') {
+    if (countEl) countEl.textContent = 'Все устройства';
+    panel.innerHTML = `
+      <div style="font-weight:600; margin-bottom:4px;">${safeUsername}</div>
+      <div class="meta" style="color:var(--text-secondary);">Роль <strong>ADMIN</strong> имеет доступ ко всем устройствам автоматически.</div>
+    `;
+    return;
+  }
+
+  if (selectedUser.role === 'hero_admin') {
+    if (countEl) countEl.textContent = 'Без устройств';
+    panel.innerHTML = `
+      <div style="font-weight:600; margin-bottom:4px;">${safeUsername}</div>
+      <div class="meta" style="color:var(--text-secondary);">Роль <strong>HERO ADMIN</strong> работает в своей панели и не использует назначения устройств.</div>
+    `;
+    return;
+  }
+
+  const deviceIds = Array.isArray(selectedUser.deviceIds) ? selectedUser.deviceIds : [];
+  if (countEl) countEl.textContent = `${deviceIds.length} шт.`;
+
+  if (deviceIds.length === 0) {
+    panel.innerHTML = `
+      <div style="font-weight:600; margin-bottom:4px;">${safeUsername}</div>
+      <div class="meta" style="color:var(--text-secondary); margin-bottom:var(--space-sm);">Роль: ${safeRole}</div>
+      <div class="meta" style="color:var(--text-secondary);">Назначенных устройств нет.</div>
+      <button class="secondary" style="margin-top:var(--space-sm);" onclick="showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})">Назначить устройства</button>
+    `;
+    return;
+  }
+
+  const devicesHtml = deviceIds.map((deviceId) => {
+    const item = state.allDevicesById?.[deviceId];
+    const safeDeviceName = escapeHtml(item?.device_name || deviceId || 'Без названия');
+    const safeDeviceId = escapeHtml(deviceId || '');
+    return `
+      <div style="padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--panel);">
+        <div style="font-weight:600; font-size:0.9rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${safeDeviceName}</div>
+        <div class="meta" style="font-size:0.75rem; color:var(--text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${safeDeviceId}</div>
+      </div>
+    `;
+  }).join('');
+
+  panel.innerHTML = `
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:var(--space-sm); margin-bottom:var(--space-xs);">
+      <div style="font-weight:600; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${safeUsername}</div>
+      <button class="secondary meta" style="min-width:auto; padding:6px 10px;" onclick="showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})">Изменить</button>
+    </div>
+    <div class="meta" style="color:var(--text-secondary); margin-bottom:var(--space-xs);">Роль: ${safeRole}</div>
+    <div style="display:grid; gap:var(--space-xs);">${devicesHtml}</div>
+  `;
 }
 
 // Глобальная функция для открытия модального окна назначения устройств
@@ -1168,24 +1466,7 @@ async function loadSettingsContent(adminFetch) {
   storageSection.appendChild(storageTitle);
   storageSection.appendChild(storageContent);
 
-  // LDAP / AD теперь настраивается только через .env
-  const authConfigSection = document.createElement('div');
-  authConfigSection.style.cssText = 'padding:var(--space-md) 0; display:flex; flex-direction:column; gap:var(--space-sm);';
-
-  const authConfigTitle = document.createElement('div');
-  authConfigTitle.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary);';
-  authConfigTitle.textContent = 'Авторизация';
-
-  const authConfigDescription = document.createElement('div');
-  authConfigDescription.className = 'meta';
-  authConfigDescription.style.cssText = 'color:var(--text-secondary); line-height:1.5;';
-  authConfigDescription.textContent = 'LDAP/AD настраивается через файл .env на сервере. При отсутствии или ошибке LDAP вход продолжает работать для локальных учетных записей.';
-
-  authConfigSection.appendChild(authConfigTitle);
-  authConfigSection.appendChild(authConfigDescription);
-
-  const dividerStorageAuth = document.createElement('div');
-  dividerStorageAuth.style.cssText = 'border-top:1px solid var(--border-color, rgba(255,255,255,0.1)); margin:0;';
+  // (LDAP/AD UI removed — configuration moved to server .env)
   
   // Разделитель
   const divider1 = document.createElement('div');
@@ -1212,9 +1493,23 @@ async function loadSettingsContent(adminFetch) {
   exportDatabaseBtn.className = 'primary';
   exportDatabaseBtn.style.cssText = 'flex-shrink:0;';
   exportDatabaseBtn.innerHTML = `${getDownloadIcon(16)} Экспорт`;
+
+  // Кнопка импорта базы данных (скрытый input + кнопка)
+  const importDatabaseBtn = document.createElement('button');
+  importDatabaseBtn.id = 'importDatabaseBtn';
+  importDatabaseBtn.className = 'secondary';
+  importDatabaseBtn.style.cssText = 'flex-shrink:0; margin-left:8px;';
+  importDatabaseBtn.innerHTML = `${getUpDownloadIcon(16)} Импорт`;
+
+  const importFileInput = document.createElement('input');
+  importFileInput.type = 'file';
+  importFileInput.accept = '.db';
+  importFileInput.style.display = 'none';
   
   dbContent.appendChild(dbDescription);
   dbContent.appendChild(exportDatabaseBtn);
+  dbContent.appendChild(importDatabaseBtn);
+  dbSection.appendChild(importFileInput);
   dbSection.appendChild(dbTitle);
   dbSection.appendChild(dbContent);
   
@@ -1415,8 +1710,6 @@ async function loadSettingsContent(adminFetch) {
 
   mainDiv.appendChild(apkSection);
   mainDiv.appendChild(storageSection);
-  mainDiv.appendChild(dividerStorageAuth);
-  mainDiv.appendChild(authConfigSection);
   mainDiv.appendChild(divider1);
   mainDiv.appendChild(dbSection);
   mainDiv.appendChild(divider2);
@@ -1428,10 +1721,12 @@ async function loadSettingsContent(adminFetch) {
   const saveBtn = contentRootSaveBtn;
   const statusEl = contentRootStatus;
   const exportBtn = exportDatabaseBtn;
+  const importBtn = importDatabaseBtn;
+  const importFileEl = importFileInput;
   const cleanupStatusEl = cleanupStatus;
   const orphanedStatusEl = orphanedStatus;
   
-  if (!inputEl || !saveBtn || !statusEl || !exportBtn || !checkFilesBtn || !cleanupFilesBtn || !cleanupStatusEl || !checkOrphanedBtn || !cleanupOrphanedBtn || !orphanedStatusEl) return;
+  if (!inputEl || !saveBtn || !statusEl || !exportBtn || !importBtn || !importFileEl || !checkFilesBtn || !cleanupFilesBtn || !cleanupStatusEl || !checkOrphanedBtn || !cleanupOrphanedBtn || !orphanedStatusEl) return;
   
   let lastSavedValue = currentContentRoot;
   inputEl.value = currentContentRoot;
@@ -1526,6 +1821,64 @@ async function loadSettingsContent(adminFetch) {
         });
         exportBtn.disabled = false;
         exportBtn.innerHTML = `${getDownloadIcon(16)} Экспорт`;
+      }
+    };
+
+    // Импорт базы данных
+    importBtn.onclick = async () => {
+      if (!confirm('Импорт базы данных перезапишет текущую базу. Продолжить?')) return;
+      // Открываем диалог выбора файла
+      importFileEl.value = null;
+      importFileEl.click();
+    };
+
+    importFileEl.onchange = async () => {
+      const file = importFileEl.files && importFileEl.files[0];
+      if (!file) return;
+
+      importBtn.disabled = true;
+      importBtn.textContent = 'Импорт...';
+
+      try {
+        const form = new FormData();
+        form.append('file', file);
+
+        // Используем adminFetch — он может добавлять CSRF/авторизацию
+        const resp = await adminFetch('/api/admin/import-database', {
+          method: 'POST',
+          body: form
+        });
+
+        if (!resp.ok) {
+          const error = await resp.json().catch(() => ({ error: 'Ошибка импорта' }));
+          throw new Error(error.error || 'Ошибка импорта');
+        }
+
+        const result = await resp.json().catch(() => ({ ok: true }));
+
+        if (result.ok || resp.ok) {
+          showModal(`${getSuccessIcon(18)} Успешно`, `
+            <div style="text-align:center; padding:var(--space-lg);">
+              Импорт базы данных завершён успешно.
+            </div>
+            <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-md);">OK</button>
+          `);
+        } else {
+          await reportModalNotification({
+            type: 'database_import_error',
+            title: 'Ошибка импорта базы данных',
+            message: result.error || 'Ошибка импорта'
+          });
+        }
+      } catch (err) {
+        await reportModalNotification({
+          type: 'database_import_error',
+          title: 'Ошибка импорта базы данных',
+          message: err.message || 'Неизвестная ошибка'
+        });
+      } finally {
+        importBtn.disabled = false;
+        importBtn.innerHTML = `${getUpDownloadIcon(16)} Импорт`;
       }
     };
 

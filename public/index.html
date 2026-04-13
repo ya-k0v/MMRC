@@ -56,6 +56,11 @@
     const form = document.getElementById('loginForm');
     const errorEl = document.getElementById('error');
     const loginBtn = document.getElementById('loginBtn');
+
+    function setLoginButtonLoading(isLoading) {
+      loginBtn.disabled = isLoading;
+      loginBtn.textContent = isLoading ? 'Вход...' : 'Войти';
+    }
     
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -69,9 +74,9 @@
       }
       
       // Блокируем кнопку
-      loginBtn.disabled = true;
-      loginBtn.textContent = 'Вход...';
+      setLoginButtonLoading(true);
       errorEl.style.display = 'none';
+      let redirected = false;
       
       try {
         const response = await fetch('/api/auth/login', {
@@ -81,8 +86,13 @@
           },
           body: JSON.stringify({ username, password })
         });
-        
-        const data = await response.json();
+
+        let data = {};
+        try {
+          data = await response.json();
+        } catch (_) {
+          data = {};
+        }
         
         if (response.ok) {
           // Сохраняем токены
@@ -92,24 +102,35 @@
           
           // Редирект в зависимости от роли
           if (data.user.role === 'hero_admin') {
+            redirected = true;
             window.location.href = '/hero/admin.html';
           } else if (data.user.role === 'admin') {
+            redirected = true;
             window.location.href = '/admin.html';
           } else if (data.user.role === 'speaker') {
+            redirected = true;
             window.location.href = '/speaker.html';
           } else {
+            redirected = true;
             window.location.href = '/admin.html'; // Fallback
           }
         } else {
-          showError(data.error || 'Неверный логин или пароль');
-          loginBtn.disabled = false;
-          loginBtn.textContent = 'Войти';
+          const blockedByCode = data.code === 'ACCOUNT_DISABLED';
+          const blockedByStatus = response.status === 403 && /отключ|заблок|disabled|blocked/i.test(String(data.error || ''));
+
+          if (blockedByCode || blockedByStatus) {
+            showError('Пользователь заблокирован. Обратитесь к администратору.');
+          } else {
+            showError(data.error || 'Неверный логин или пароль');
+          }
         }
       } catch (err) {
         console.error('Login error:', err);
         showError('Ошибка подключения к серверу');
-        loginBtn.disabled = false;
-        loginBtn.textContent = 'Войти';
+      } finally {
+        if (!redirected) {
+          setLoginButtonLoading(false);
+        }
       }
     });
     

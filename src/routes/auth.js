@@ -203,7 +203,10 @@ router.post('/login',
 
       if (user && !user.is_active) {
         await logLoginFailure(req, username, 'account_disabled', user.id);
-        return res.status(403).json({ error: 'Аккаунт отключен' });
+        return res.status(403).json({
+          error: 'Пользователь заблокирован. Обратитесь к администратору.',
+          code: 'ACCOUNT_DISABLED'
+        });
       }
 
       // Для локальных учеток проверяем только локальный пароль, чтобы LDAP не ломал обратную совместимость.
@@ -287,7 +290,10 @@ router.post('/login',
         } else {
           if (!ldapUser.is_active) {
             await logLoginFailure(req, username, 'account_disabled', ldapUser.id);
-            return res.status(403).json({ error: 'Аккаунт отключен' });
+            return res.status(403).json({
+              error: 'Пользователь заблокирован. Обратитесь к администратору.',
+              code: 'ACCOUNT_DISABLED'
+            });
           }
 
           const updates = [];

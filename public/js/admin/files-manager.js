@@ -1,6 +1,14 @@
 // files-manager.js - ПОЛНЫЙ код управления файлами из admin.js
 import { adminFetch } from './auth.js';
-import { getCheckIcon, getCrossIcon, getClockIcon } from '../shared/svg-icons.js';
+import {
+  getCheckIcon,
+  getCrossIcon,
+  getClockIcon,
+  getDownloadIcon,
+  getFilmIcon,
+  getTrashIcon,
+  getSettingsIcon
+} from '../shared/svg-icons.js';
 import { formatTime } from '../shared/formatters.js';
 import { escapeHtml } from '../shared/utils.js';
 import {
@@ -29,6 +37,15 @@ async function reportFilesManagerNotification(payload = {}) {
   } catch (error) {
     console.error('[FilesManager] Failed to report notification:', error);
   }
+}
+
+function toIconOnlySvg(svg = '') {
+  return String(svg).replace(/margin-right:\s*\d+px;?/g, '');
+}
+
+function applySquareActionButtonStyle(button) {
+  if (!button) return;
+  button.style.cssText = 'min-width:30px; width:30px; height:30px; padding:0; display:flex; align-items:center; justify-content:center; line-height:1; border-radius:var(--radius-sm);';
 }
 
 /**
@@ -478,12 +495,22 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
 
       const actions = document.createElement('div'); actions.className = 'file-item-actions';
       if (isStreaming) {
-        const editBtn = document.createElement('button'); editBtn.className = 'meta-lg editStreamBtn'; editBtn.setAttribute('data-safe', encodeURIComponent(safeName)); editBtn.setAttribute('data-original', encodeURIComponent(originalName)); editBtn.setAttribute('data-stream-url', encodeURIComponent(streamUrl || '')); editBtn.setAttribute('data-stream-protocol', encodeURIComponent(streamProtocol || '')); editBtn.setAttribute('data-content-type', contentType || ''); editBtn.title = 'Изменить стрим'; editBtn.textContent = 'Изменить'; actions.appendChild(editBtn);
+        const editBtn = document.createElement('button'); editBtn.className = 'meta-lg editStreamBtn'; editBtn.setAttribute('data-safe', encodeURIComponent(safeName)); editBtn.setAttribute('data-original', encodeURIComponent(originalName)); editBtn.setAttribute('data-stream-url', encodeURIComponent(streamUrl || '')); editBtn.setAttribute('data-stream-protocol', encodeURIComponent(streamProtocol || '')); editBtn.setAttribute('data-content-type', contentType || ''); editBtn.title = 'Изменить стрим'; editBtn.innerHTML = toIconOnlySvg(getSettingsIcon(14)); applySquareActionButtonStyle(editBtn); actions.appendChild(editBtn);
       } else {
-        const previewBtn = document.createElement('button'); previewBtn.className = 'meta-lg previewFileBtn'; previewBtn.setAttribute('data-safe', encodeURIComponent(safeName)); previewBtn.setAttribute('data-original', encodeURIComponent(originalName)); previewBtn.setAttribute('data-stream-protocol', streamProtocol || ''); previewBtn.setAttribute('data-content-type', contentType || ''); previewBtn.setAttribute('data-has-trailer', hasTrailer ? '1' : '0'); previewBtn.setAttribute('data-trailer-url', trailerUrl || ''); previewBtn.title = 'Предпросмотр'; previewBtn.disabled = !canPlay; previewBtn.textContent = 'Превью'; actions.appendChild(previewBtn);
+        const previewBtn = document.createElement('button'); previewBtn.className = 'meta-lg previewFileBtn'; previewBtn.setAttribute('data-safe', encodeURIComponent(safeName)); previewBtn.setAttribute('data-original', encodeURIComponent(originalName)); previewBtn.setAttribute('data-stream-protocol', streamProtocol || ''); previewBtn.setAttribute('data-content-type', contentType || ''); previewBtn.setAttribute('data-has-trailer', hasTrailer ? '1' : '0'); previewBtn.setAttribute('data-trailer-url', trailerUrl || ''); previewBtn.title = 'Предпросмотр'; previewBtn.disabled = !canPlay; previewBtn.innerHTML = toIconOnlySvg(getFilmIcon(14)); applySquareActionButtonStyle(previewBtn); actions.appendChild(previewBtn);
+
+        const downloadBtn = document.createElement('button');
+        downloadBtn.className = 'secondary meta-lg downloadFileBtn';
+        downloadBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+        downloadBtn.setAttribute('data-original', encodeURIComponent(originalName));
+        downloadBtn.setAttribute('data-content-type', normalizedType || contentType || '');
+        downloadBtn.title = normalizedType === 'folder' ? 'Скачать папку ZIP' : 'Скачать файл';
+        downloadBtn.innerHTML = toIconOnlySvg(getDownloadIcon(14));
+        applySquareActionButtonStyle(downloadBtn);
+        actions.appendChild(downloadBtn);
       }
-      if (isEligible) { const makeDefaultBtn = document.createElement('button'); makeDefaultBtn.className = 'meta-lg makeDefaultBtn'; makeDefaultBtn.setAttribute('data-safe', encodeURIComponent(safeName)); makeDefaultBtn.setAttribute('data-original', encodeURIComponent(originalName)); makeDefaultBtn.title = 'Сделать заглушкой'; makeDefaultBtn.disabled = !canPlay; makeDefaultBtn.textContent = 'Заглушка'; actions.appendChild(makeDefaultBtn); }
-      const delBtn = document.createElement('button'); delBtn.className = 'danger meta-lg delFileBtn'; delBtn.setAttribute('data-safe', encodeURIComponent(safeName)); delBtn.setAttribute('data-original', encodeURIComponent(originalName)); delBtn.title = 'Удалить'; delBtn.textContent = 'Удалить'; actions.appendChild(delBtn);
+      if (isEligible) { const makeDefaultBtn = document.createElement('button'); makeDefaultBtn.className = 'meta-lg makeDefaultBtn'; makeDefaultBtn.setAttribute('data-safe', encodeURIComponent(safeName)); makeDefaultBtn.setAttribute('data-original', encodeURIComponent(originalName)); makeDefaultBtn.title = 'Сделать заглушкой'; makeDefaultBtn.disabled = !canPlay; makeDefaultBtn.textContent = '📌'; applySquareActionButtonStyle(makeDefaultBtn); actions.appendChild(makeDefaultBtn); }
+      const delBtn = document.createElement('button'); delBtn.className = 'danger meta-lg delFileBtn'; delBtn.setAttribute('data-safe', encodeURIComponent(safeName)); delBtn.setAttribute('data-original', encodeURIComponent(originalName)); delBtn.title = 'Удалить'; delBtn.innerHTML = toIconOnlySvg(getTrashIcon(14)); applySquareActionButtonStyle(delBtn); actions.appendChild(delBtn);
 
       li.appendChild(header); li.appendChild(actions); fileList.appendChild(li);
     });
@@ -691,7 +718,8 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           editBtn.setAttribute('data-stream-protocol', encodeURIComponent(streamProtocol || ''));
           editBtn.setAttribute('data-content-type', contentType || '');
           editBtn.title = 'Изменить стрим';
-          editBtn.textContent = 'Изменить';
+          editBtn.innerHTML = toIconOnlySvg(getSettingsIcon(14));
+          applySquareActionButtonStyle(editBtn);
           actions.appendChild(editBtn);
         } else {
           const previewBtn = document.createElement('button');
@@ -704,8 +732,19 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           previewBtn.setAttribute('data-trailer-url', trailerUrl || '');
           previewBtn.title = 'Предпросмотр';
           previewBtn.disabled = !canPlay;
-          previewBtn.textContent = 'Превью';
+          previewBtn.innerHTML = toIconOnlySvg(getFilmIcon(14));
+          applySquareActionButtonStyle(previewBtn);
           actions.appendChild(previewBtn);
+
+          const downloadBtn = document.createElement('button');
+          downloadBtn.className = 'secondary meta-lg downloadFileBtn';
+          downloadBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+          downloadBtn.setAttribute('data-original', encodeURIComponent(originalName));
+          downloadBtn.setAttribute('data-content-type', normalizedType || contentType || '');
+          downloadBtn.title = normalizedType === 'folder' ? 'Скачать папку ZIP' : 'Скачать файл';
+          downloadBtn.innerHTML = toIconOnlySvg(getDownloadIcon(14));
+          applySquareActionButtonStyle(downloadBtn);
+          actions.appendChild(downloadBtn);
         }
 
         if (isEligible) {
@@ -715,7 +754,8 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           makeDefaultBtn.setAttribute('data-original', encodeURIComponent(originalName));
           makeDefaultBtn.title = 'Сделать заглушкой';
           makeDefaultBtn.disabled = !canPlay;
-          makeDefaultBtn.textContent = 'Заглушка';
+          makeDefaultBtn.textContent = '📌';
+          applySquareActionButtonStyle(makeDefaultBtn);
           actions.appendChild(makeDefaultBtn);
         }
 
@@ -724,7 +764,8 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         delBtn.setAttribute('data-safe', encodeURIComponent(safeName));
         delBtn.setAttribute('data-original', encodeURIComponent(originalName));
         delBtn.title = 'Удалить';
-        delBtn.textContent = 'Удалить';
+        delBtn.innerHTML = toIconOnlySvg(getTrashIcon(14));
+        applySquareActionButtonStyle(delBtn);
         actions.appendChild(delBtn);
         
         // place actions under the filename and align them to the right
@@ -1055,6 +1096,80 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         }
 
         frame.src = u;
+      }
+    };
+  });
+
+  const resolveDownloadFileName = (response, fallbackName) => {
+    const explicitName = response.headers.get('x-download-filename');
+    if (explicitName) {
+      return explicitName;
+    }
+
+    const contentDisposition = response.headers.get('content-disposition') || '';
+    const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+    if (utf8Match && utf8Match[1]) {
+      try {
+        return decodeURIComponent(utf8Match[1]);
+      } catch (_err) {
+        // fallback на обычный filename
+      }
+    }
+
+    const plainMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+    if (plainMatch && plainMatch[1]) {
+      return plainMatch[1];
+    }
+
+    return fallbackName;
+  };
+
+  panelEl.querySelectorAll('.downloadFileBtn').forEach(btn => {
+    btn.onclick = async () => {
+      const safeName = decodeURIComponent(btn.getAttribute('data-safe') || '');
+      const originalName = decodeURIComponent(btn.getAttribute('data-original') || safeName);
+      const contentTypeAttr = String(btn.getAttribute('data-content-type') || '').toLowerCase();
+      const fallbackName = contentTypeAttr === 'folder' && !/\.zip$/i.test(originalName)
+        ? `${originalName}.zip`
+        : (originalName || safeName);
+
+      const originalButtonHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = toIconOnlySvg(getDownloadIcon(14));
+
+      try {
+        const response = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(safeName)}/download`);
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          throw new Error(error.error || `HTTP ${response.status}`);
+        }
+
+        const blob = await response.blob();
+        const fileName = resolveDownloadFileName(response, fallbackName);
+        const blobUrl = URL.createObjectURL(blob);
+
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+
+        setTimeout(() => {
+          URL.revokeObjectURL(blobUrl);
+        }, 1000);
+      } catch (err) {
+        console.error('[FilesManager] Failed to download content:', err);
+        await reportFilesManagerNotification({
+          type: 'file_download_error',
+          title: 'Ошибка скачивания контента',
+          message: err.message || 'Не удалось скачать файл',
+          details: { deviceId, safeName }
+        });
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalButtonHtml;
       }
     };
   });
