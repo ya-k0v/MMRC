@@ -426,6 +426,260 @@ app.get('/favicon.ico', (req, res) => {
 // ========================================
 // ADMIN ENDPOINTS
 // ========================================
+const AUTO_RESTART_AFTER_DB_IMPORT = process.env.AUTO_RESTART_AFTER_DB_IMPORT !== '0';
+const DB_IMPORT_RESTART_DELAY_MS = Math.max(300, Number(process.env.DB_IMPORT_RESTART_DELAY_MS || 800));
+const MANUAL_RESTART_DELAY_MS = Math.max(500, Number(process.env.MANUAL_RESTART_DELAY_MS || 1200));
+const SERVICE_LOGS_MAX_LINES = Math.max(50, Number(process.env.SERVICE_LOGS_MAX_LINES || 2000));
+const SERVICE_LOGS_DEFAULT_LINES = Math.max(20, Number(process.env.SERVICE_LOGS_DEFAULT_LINES || 200));
+const SERVICE_LOGS_MAX_CHUNK_BYTES = Math.max(64 * 1024, Number(process.env.SERVICE_LOGS_MAX_CHUNK_BYTES || 512 * 1024));
+let isServiceRestartScheduled = false;
+
+function scheduleServiceRestart(reason = 'admin_restart', delayMs = DB_IMPORT_RESTART_DELAY_MS) {
+  if (isServiceRestartScheduled) {
+    return true;
+  }
+
+  isServiceRestartScheduled = true;
+  logger.warn('[Admin] Service restart scheduled', { reason, delayMs });
+
+  setTimeout(() => {
+    gracefulShutdown(reason, 1).catch((err) => {
+      logger.error('[Admin] Graceful service restart failed', { reason, error: err?.message || String(err) });
+      process.exit(1);
+    });
+  }, delayMs);
+
+  return true;
+}
+
+function scheduleRestartAfterDbImport() {
+  if (!AUTO_RESTART_AFTER_DB_IMPORT) {
+    logger.info('[Admin] Auto restart after DB import is disabled');
+    return false;
+  }
+
+  return scheduleServiceRestart('db_import_restart', DB_IMPORT_RESTART_DELAY_MS);
+}
+
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return parsed;
+}
+
+function clampInt(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function resolveLatestServiceLogFilePath() {
+  const candidateDirs = [];
+
+  try {
+    const configuredLogsDir = getLogsDir();
+    if (configuredLogsDir) candidateDirs.push(configuredLogsDir);
+  } catch (_) {
+    // ignore and fallback below
+  }
+
+  candidateDirs.push(path.join(process.cwd(), '.tmp', 'logs'));
+
+  const seenDirs = new Set();
+  for (const dirPath of candidateDirs) {
+    if (!dirPath || seenDirs.has(dirPath)) continue;
+    seenDirs.add(dirPath);
+
+    try {
+      if (!fs.existsSync(dirPath)) continue;
+      const files = fs.readdirSync(dirPath)
+        .filter((name) => /^combined-\d{4}-\d{2}-\d{2}\.log$/.test(name))
+        .sort();
+
+      if (!files.length) continue;
+      return path.join(dirPath, files[files.length - 1]);
+    } catch (error) {
+      logger.warn('[Admin] Failed to inspect logs directory', {
+        dirPath,
+        error: error?.message || String(error)
+      });
+    }
+  }
+
+  return null;
+}
+
+function readLastLinesFromFile(filePath, lineLimit) {
+  const safeLimit = clampInt(parsePositiveInt(lineLimit, SERVICE_LOGS_DEFAULT_LINES), 1, SERVICE_LOGS_MAX_LINES);
+  const fd = fs.openSync(filePath, 'r');
+
+  try {
+    const stats = fs.fstatSync(fd);
+    if (!stats.size) {
+      return { lines: [], size: 0, truncated: false };
+    }
+
+    const chunkSize = 64 * 1024;
+    let position = stats.size;
+    let content = '';
+    let linesFound = 0;
+
+    while (position > 0 && linesFound <= safeLimit) {
+      const bytesToRead = Math.min(chunkSize, position);
+      position -= bytesToRead;
+      const buffer = Buffer.alloc(bytesToRead);
+      fs.readSync(fd, buffer, 0, bytesToRead, position);
+      content = buffer.toString('utf8') + content;
+      linesFound = content.split(/\r?\n/).length - 1;
+    }
+
+    const lines = content
+      .split(/\r?\n/)
+      .map((line) => line.trimEnd())
+      .filter((line) => line.length > 0)
+      .slice(-safeLimit);
+
+    return {
+      lines,
+      size: stats.size,
+      truncated: false
+    };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function readLinesFromOffset(filePath, offset) {
+  const safeOffset = Math.max(0, parsePositiveInt(offset, 0));
+  const fd = fs.openSync(filePath, 'r');
+
+  try {
+    const stats = fs.fstatSync(fd);
+    if (safeOffset >= stats.size) {
+      return { lines: [], size: stats.size, truncated: false, reset: false };
+    }
+
+    let startOffset = safeOffset;
+    let truncated = false;
+    const unreadBytes = stats.size - startOffset;
+
+    if (unreadBytes > SERVICE_LOGS_MAX_CHUNK_BYTES) {
+      startOffset = stats.size - SERVICE_LOGS_MAX_CHUNK_BYTES;
+      truncated = true;
+    }
+
+    const bytesToRead = stats.size - startOffset;
+    if (bytesToRead <= 0) {
+      return { lines: [], size: stats.size, truncated, reset: false };
+    }
+
+    const buffer = Buffer.alloc(bytesToRead);
+    fs.readSync(fd, buffer, 0, bytesToRead, startOffset);
+
+    const lines = buffer
+      .toString('utf8')
+      .split(/\r?\n/)
+      .map((line) => line.trimEnd())
+      .filter((line) => line.length > 0);
+
+    return {
+      lines,
+      size: stats.size,
+      truncated,
+      reset: false
+    };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+app.post('/api/admin/restart-service', requireAuth, requireAdmin, (req, res) => {
+  const restartScheduled = scheduleServiceRestart('admin_manual_restart', MANUAL_RESTART_DELAY_MS);
+  logger.warn('[Admin] Manual service restart requested', {
+    user: req.user?.username || 'unknown',
+    restartScheduled
+  });
+
+  return res.json({
+    ok: true,
+    restartScheduled,
+    message: 'Перезапуск сервиса запущен. Подождите 3-10 секунд и обновите страницу.'
+  });
+});
+
+app.get('/api/admin/service-logs', requireAuth, requireAdmin, (req, res) => {
+  try {
+    const requestedLines = clampInt(
+      parsePositiveInt(req.query.lines, SERVICE_LOGS_DEFAULT_LINES),
+      1,
+      SERVICE_LOGS_MAX_LINES
+    );
+    const requestedOffset = parsePositiveInt(req.query.offset, -1);
+    const requestedFileName = typeof req.query.fileName === 'string' ? req.query.fileName : '';
+
+    const logFilePath = resolveLatestServiceLogFilePath();
+    if (!logFilePath) {
+      return res.json({
+        ok: true,
+        lines: [],
+        nextOffset: 0,
+        fileName: null,
+        reset: true,
+        truncated: false,
+        source: 'combined'
+      });
+    }
+
+    const fileName = path.basename(logFilePath);
+
+    // Первый запрос (без offset) - отдаем хвост последних N строк
+    if (requestedOffset < 0) {
+      const snapshot = readLastLinesFromFile(logFilePath, requestedLines);
+      return res.json({
+        ok: true,
+        lines: snapshot.lines,
+        nextOffset: snapshot.size,
+        fileName,
+        reset: true,
+        truncated: snapshot.truncated,
+        source: 'combined'
+      });
+    }
+
+    const fileStats = fs.statSync(logFilePath);
+    const fileChanged = Boolean(requestedFileName) && requestedFileName !== fileName;
+    const offsetOutOfRange = requestedOffset > fileStats.size;
+
+    if (fileChanged || offsetOutOfRange) {
+      const snapshot = readLastLinesFromFile(logFilePath, requestedLines);
+      return res.json({
+        ok: true,
+        lines: snapshot.lines,
+        nextOffset: snapshot.size,
+        fileName,
+        reset: true,
+        truncated: snapshot.truncated,
+        source: 'combined'
+      });
+    }
+
+    const chunk = readLinesFromOffset(logFilePath, requestedOffset);
+    return res.json({
+      ok: true,
+      lines: chunk.lines,
+      nextOffset: chunk.size,
+      fileName,
+      reset: chunk.reset,
+      truncated: chunk.truncated,
+      source: 'combined'
+    });
+  } catch (error) {
+    logger.error('[Admin] Failed to read service logs', { error: error?.message || String(error) });
+    return res.status(500).json({
+      ok: false,
+      error: 'Не удалось получить логи сервиса'
+    });
+  }
+});
+
 // Экспорт базы данных (только для админов)
 app.get('/api/admin/export-database', requireAuth, requireAdmin, (req, res) => {
   try {
@@ -563,8 +817,19 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
         fileNamesMap = loadFileNamesFromDB();
         io.emit('devices/updated');
 
-        res.json({ ok: true });
-        logger.info('[Admin] Database import completed', { user: req.user?.username || 'unknown' });
+        const restartScheduled = scheduleRestartAfterDbImport();
+
+        res.json({
+          ok: true,
+          restartScheduled,
+          message: restartScheduled
+            ? 'Импорт завершён. Сервис будет автоматически перезапущен.'
+            : 'Импорт завершён.'
+        });
+        logger.info('[Admin] Database import completed', {
+          user: req.user?.username || 'unknown',
+          restartScheduled
+        });
       } catch (error) {
         logger.error('[Admin] Database import failed', { error: error?.message || String(error) });
         // Попытка восстановления из бэкапа
@@ -1019,7 +1284,7 @@ const cleanupInterval = timerRegistry.setInterval(() => {
 
 let isShuttingDown = false;
 
-async function gracefulShutdown(signal) {
+async function gracefulShutdown(signal, exitCode = 0) {
   if (isShuttingDown) return;
   isShuttingDown = true;
   
@@ -1063,10 +1328,10 @@ async function gracefulShutdown(signal) {
     await new Promise(resolve => setTimeout(resolve, 2000));
     
     logger.info('✅ Graceful shutdown completed');
-    process.exit(0);
+    process.exit(exitCode);
   } catch (e) {
     logger.error('❌ Error during shutdown:', e);
-    process.exit(1);
+    process.exit(exitCode === 0 ? 1 : exitCode);
   }
 }
 

@@ -21,6 +21,11 @@ import { escapeHtml } from '../shared/utils.js';
 const escapeJsStringForAttr = (value) => escapeHtml(JSON.stringify(value ?? ''));
 const modalHistoryStack = [];
 let activeModalEscHandler = null;
+const SERVICE_LOGS_POLL_INTERVAL_MS = 1200;
+const SERVICE_LOGS_TYPING_CHUNK = 36;
+const SERVICE_LOGS_TYPING_DELAY_MS = 14;
+const SERVICE_LOGS_MAX_CHARS = 350000;
+let serviceLogsViewerState = null;
 
 function bindModalOverlayHandlers(overlay) {
   if (!overlay) return;
@@ -64,6 +69,8 @@ function bindModalEscHandler() {
 }
 
 export function goBackModal() {
+  stopServiceLogsViewer();
+
   const overlay = document.getElementById('modalOverlay');
   const modalContent = document.getElementById('modalContent');
   if (!overlay || !modalContent) return;
@@ -105,6 +112,270 @@ async function reportModalNotification(payload = {}) {
   } catch (error) {
     console.error('[Modal] Failed to report notification:', error);
   }
+}
+
+function stopServiceLogsViewer() {
+  const state = serviceLogsViewerState;
+  if (!state) return;
+
+  if (state.pollTimer) {
+    clearInterval(state.pollTimer);
+  }
+
+  if (state.typeTimer) {
+    clearTimeout(state.typeTimer);
+  }
+
+  serviceLogsViewerState = null;
+}
+
+function getServiceLogsElements() {
+  return {
+    outputEl: document.getElementById('serviceLogsOutput'),
+    statusEl: document.getElementById('serviceLogsStatus'),
+    linesSelectEl: document.getElementById('serviceLogsLinesSelect'),
+    autoscrollEl: document.getElementById('serviceLogsAutoscroll')
+  };
+}
+
+function clampServiceLogsLines(value) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed)) return 200;
+  return Math.max(20, Math.min(2000, parsed));
+}
+
+function setServiceLogsStatus(text, color = 'var(--text-secondary)') {
+  const { statusEl } = getServiceLogsElements();
+  if (!statusEl) return;
+  statusEl.textContent = text || '';
+  statusEl.style.color = color;
+}
+
+function trimServiceLogsOutput(outputEl) {
+  if (!outputEl || outputEl.textContent.length <= SERVICE_LOGS_MAX_CHARS) return;
+
+  const tailText = outputEl.textContent.slice(-(SERVICE_LOGS_MAX_CHARS + 4096));
+  const firstLineBreak = tailText.indexOf('\n');
+  outputEl.textContent = firstLineBreak >= 0 ? tailText.slice(firstLineBreak + 1) : tailText;
+}
+
+function runServiceLogsTypewriter() {
+  const state = serviceLogsViewerState;
+  if (!state || state.isTyping) return;
+
+  const { outputEl } = getServiceLogsElements();
+  if (!outputEl) {
+    stopServiceLogsViewer();
+    return;
+  }
+
+  state.isTyping = true;
+
+  const step = () => {
+    const activeState = serviceLogsViewerState;
+    if (!activeState || activeState !== state) return;
+
+    const { outputEl: liveOutput } = getServiceLogsElements();
+    if (!liveOutput) {
+      stopServiceLogsViewer();
+      return;
+    }
+
+    if (!activeState.textQueue.length) {
+      activeState.isTyping = false;
+      activeState.typeTimer = null;
+      return;
+    }
+
+    const chunk = activeState.textQueue.slice(0, SERVICE_LOGS_TYPING_CHUNK);
+    activeState.textQueue = activeState.textQueue.slice(chunk.length);
+    liveOutput.textContent += chunk;
+    trimServiceLogsOutput(liveOutput);
+
+    if (activeState.autoScroll) {
+      liveOutput.scrollTop = liveOutput.scrollHeight;
+    }
+
+    activeState.typeTimer = window.setTimeout(step, SERVICE_LOGS_TYPING_DELAY_MS);
+  };
+
+  step();
+}
+
+function enqueueServiceLogsText(text) {
+  if (!text || !serviceLogsViewerState) return;
+  serviceLogsViewerState.textQueue += text;
+  runServiceLogsTypewriter();
+}
+
+async function fetchServiceLogsChunk(adminFetch, { reset = false } = {}) {
+  const state = serviceLogsViewerState;
+  if (!state || state.isFetching) return;
+
+  const { outputEl, linesSelectEl } = getServiceLogsElements();
+  if (!outputEl) {
+    stopServiceLogsViewer();
+    return;
+  }
+
+  const linesLimit = clampServiceLogsLines(linesSelectEl?.value || state.linesLimit || 200);
+  state.linesLimit = linesLimit;
+  state.isFetching = true;
+
+  try {
+    const params = new URLSearchParams();
+    params.set('lines', String(linesLimit));
+
+    if (!reset && Number.isFinite(state.offset) && state.offset >= 0) {
+      params.set('offset', String(state.offset));
+    }
+
+    if (!reset && state.fileName) {
+      params.set('fileName', state.fileName);
+    }
+
+    const response = await adminFetch(`/api/admin/service-logs?${params.toString()}`);
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Ошибка загрузки логов' }));
+      throw new Error(error.error || 'Ошибка загрузки логов');
+    }
+
+    const result = await response.json().catch(() => ({ ok: true, lines: [], nextOffset: 0 }));
+    if (!serviceLogsViewerState || serviceLogsViewerState !== state) return;
+
+    if (result.reset || reset) {
+      outputEl.textContent = '';
+      state.textQueue = '';
+    }
+
+    const nextOffset = Number.parseInt(String(result.nextOffset ?? ''), 10);
+    if (Number.isFinite(nextOffset) && nextOffset >= 0) {
+      state.offset = nextOffset;
+    }
+
+    state.fileName = typeof result.fileName === 'string' ? result.fileName : '';
+
+    const lines = Array.isArray(result.lines) ? result.lines : [];
+    if (lines.length) {
+      enqueueServiceLogsText(`${lines.join('\n')}\n`);
+    } else if ((result.reset || reset) && !outputEl.textContent.trim()) {
+      outputEl.textContent = 'Логи пока пусты.\n';
+    }
+
+    if (result.truncated) {
+      setServiceLogsStatus('Показана только последняя часть логов (ограничение объема).', 'var(--warning)');
+    } else {
+      const sourceText = state.fileName ? `Файл: ${state.fileName}` : 'Логи сервиса';
+      setServiceLogsStatus(`${sourceText} • строк: ${linesLimit}`, 'var(--text-secondary)');
+    }
+  } catch (error) {
+    if (serviceLogsViewerState === state) {
+      setServiceLogsStatus(`Ошибка: ${error.message || 'не удалось загрузить логи'}`, 'var(--danger)');
+    }
+  } finally {
+    if (serviceLogsViewerState === state) {
+      state.isFetching = false;
+    }
+  }
+}
+
+function openServiceLogsModal(adminFetch) {
+  stopServiceLogsViewer();
+
+  const content = `
+    <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
+      <div style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap;">
+        <label class="meta" for="serviceLogsLinesSelect" style="display:flex; align-items:center; gap:6px;">
+          Строк:
+          <select id="serviceLogsLinesSelect" class="input" style="min-width:92px; padding:6px 8px;">
+            <option value="100" selected>100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+            <option value="1000">1000</option>
+            <option value="2000">2000</option>
+          </select>
+        </label>
+
+        <label class="meta" style="display:flex; align-items:center; gap:6px;">
+          <input id="serviceLogsAutoscroll" type="checkbox" checked />
+          Автопрокрутка
+        </label>
+
+        <button id="serviceLogsRefreshBtn" class="secondary" type="button" style="min-width:auto;">Обновить</button>
+        <button id="serviceLogsClearBtn" class="secondary" type="button" style="min-width:auto;">Очистить</button>
+      </div>
+
+      <div id="serviceLogsStatus" class="meta" style="min-height:1.2em; color:var(--text-secondary);"></div>
+
+      <pre id="serviceLogsOutput" style="margin:0; padding:12px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--panel); color:var(--text-primary); font-family:'Fira Code', Consolas, 'Courier New', monospace; font-size:0.84rem; line-height:1.35; white-space:pre-wrap; word-break:break-word; height:min(72vh, 760px); overflow:auto;"></pre>
+    </div>
+  `;
+
+  showModal(`${getSettingsIcon(18)} Логи сервиса`, content, { maxWidth: 'min(96vw, 1400px)' });
+
+  setTimeout(() => {
+    const linesSelectEl = document.getElementById('serviceLogsLinesSelect');
+    const autoscrollEl = document.getElementById('serviceLogsAutoscroll');
+    const refreshBtn = document.getElementById('serviceLogsRefreshBtn');
+    const clearBtn = document.getElementById('serviceLogsClearBtn');
+    const outputEl = document.getElementById('serviceLogsOutput');
+
+    if (!outputEl || !linesSelectEl || !autoscrollEl || !refreshBtn || !clearBtn) return;
+
+    serviceLogsViewerState = {
+      pollTimer: null,
+      typeTimer: null,
+      isTyping: false,
+      isFetching: false,
+      textQueue: '',
+      autoScroll: true,
+      linesLimit: clampServiceLogsLines(linesSelectEl.value),
+      offset: -1,
+      fileName: ''
+    };
+
+    autoscrollEl.onchange = () => {
+      if (!serviceLogsViewerState) return;
+      serviceLogsViewerState.autoScroll = autoscrollEl.checked;
+      if (serviceLogsViewerState.autoScroll) {
+        outputEl.scrollTop = outputEl.scrollHeight;
+      }
+    };
+
+    linesSelectEl.onchange = async () => {
+      if (!serviceLogsViewerState) return;
+      serviceLogsViewerState.linesLimit = clampServiceLogsLines(linesSelectEl.value);
+      serviceLogsViewerState.offset = -1;
+      await fetchServiceLogsChunk(adminFetch, { reset: true });
+    };
+
+    refreshBtn.onclick = async () => {
+      if (!serviceLogsViewerState) return;
+      serviceLogsViewerState.offset = -1;
+      await fetchServiceLogsChunk(adminFetch, { reset: true });
+    };
+
+    clearBtn.onclick = () => {
+      outputEl.textContent = '';
+      if (serviceLogsViewerState) {
+        serviceLogsViewerState.textQueue = '';
+      }
+      setServiceLogsStatus('Окно логов очищено.', 'var(--text-secondary)');
+    };
+
+    fetchServiceLogsChunk(adminFetch, { reset: true });
+
+    serviceLogsViewerState.pollTimer = window.setInterval(() => {
+      const overlay = document.getElementById('modalOverlay');
+      const outputStillVisible = document.getElementById('serviceLogsOutput');
+      if (!overlay || overlay.style.display !== 'flex' || !outputStillVisible) {
+        stopServiceLogsViewer();
+        return;
+      }
+
+      fetchServiceLogsChunk(adminFetch);
+    }, SERVICE_LOGS_POLL_INTERVAL_MS);
+  }, 0);
 }
 
 export function showModal(title, content, options = {}) {
@@ -177,6 +448,45 @@ export function showModal(title, content, options = {}) {
   
   headerLeft.appendChild(titleEl);
   header.appendChild(headerLeft);
+
+  const headerRight = document.createElement('div');
+  headerRight.style.cssText = 'display:flex; align-items:center; gap:8px; flex-shrink:0;';
+
+  if (typeof options.onViewServiceLogs === 'function') {
+    const logsBtn = document.createElement('button');
+    logsBtn.className = 'secondary';
+    logsBtn.type = 'button';
+    logsBtn.title = 'Просмотр логов сервиса';
+    logsBtn.style.cssText = 'min-width:auto; padding:8px 10px; display:flex; align-items:center; justify-content:center;';
+    logsBtn.textContent = 'Логи';
+    logsBtn.onclick = async () => {
+      if (logsBtn.disabled) return;
+      try {
+        await options.onViewServiceLogs(logsBtn);
+      } catch (error) {
+        console.error('[Modal] View service logs action failed:', error);
+      }
+    };
+    headerRight.appendChild(logsBtn);
+  }
+
+  if (typeof options.onRestartService === 'function') {
+    const restartBtn = document.createElement('button');
+    restartBtn.className = 'secondary';
+    restartBtn.type = 'button';
+    restartBtn.title = 'Перезапустить сервис';
+    restartBtn.style.cssText = 'min-width:auto; padding:8px 10px; display:flex; align-items:center; justify-content:center; font-weight:700;';
+    restartBtn.textContent = '↻';
+    restartBtn.onclick = async () => {
+      if (restartBtn.disabled) return;
+      try {
+        await options.onRestartService(restartBtn);
+      } catch (error) {
+        console.error('[Modal] Restart service action failed:', error);
+      }
+    };
+    headerRight.appendChild(restartBtn);
+  }
   
   const closeBtn = document.createElement('button');
   closeBtn.className = 'secondary';
@@ -184,8 +494,9 @@ export function showModal(title, content, options = {}) {
   closeBtn.style.cssText = 'min-width:auto; padding:8px; display:flex; align-items:center; justify-content:center;';
   // getCloseIcon возвращает безопасную SVG иконку из константы
   closeBtn.insertAdjacentHTML('beforeend', getCloseIcon(18));
-  
-  header.appendChild(closeBtn);
+
+  headerRight.appendChild(closeBtn);
+  header.appendChild(headerRight);
   modalContent.appendChild(header);
   
   const contentDiv = document.createElement('div');
@@ -217,6 +528,8 @@ export function showModal(title, content, options = {}) {
 }
 
 export function closeModal() {
+  stopServiceLogsViewer();
+
   const overlay = document.getElementById('modalOverlay');
   if (overlay) {
     overlay.style.display = 'none';
@@ -1348,6 +1661,44 @@ export function showSettingsModal() {
     import('./system-monitor.js'),
     import('./auth.js')
   ]).then(([{ getSystemMonitorHTML, initSystemMonitor }, { adminFetch }]) => {
+    const restartServiceFromSettings = async (buttonEl) => {
+      if (!confirm('Перезапустить сервис сейчас?')) return;
+
+      const initialText = buttonEl.textContent;
+      buttonEl.disabled = true;
+      buttonEl.textContent = '...';
+
+      try {
+        const response = await adminFetch('/api/admin/restart-service', {
+          method: 'POST'
+        });
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ error: 'Ошибка перезапуска сервиса' }));
+          throw new Error(error.error || 'Ошибка перезапуска сервиса');
+        }
+
+        const result = await response.json().catch(() => ({ ok: true }));
+        const message = result.message || 'Перезапуск сервиса запущен. Подождите несколько секунд.';
+
+        showModal(`${getSuccessIcon(18)} Перезапуск`, `
+          <div style="text-align:center; padding:var(--space-lg);">
+            ${escapeHtml(message)}
+          </div>
+          <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-md);">OK</button>
+        `);
+      } catch (err) {
+        await reportModalNotification({
+          type: 'service_restart_error',
+          title: 'Ошибка перезапуска сервиса',
+          message: err.message || 'Неизвестная ошибка'
+        });
+      } finally {
+        buttonEl.disabled = false;
+        buttonEl.textContent = initialText;
+      }
+    };
+
     const content = `
       <div id="settingsModalSystemMonitor" style="margin-bottom:var(--space-md);">
         ${getSystemMonitorHTML()}
@@ -1357,7 +1708,10 @@ export function showSettingsModal() {
       </div>
     `;
     
-    showModal(`${getSettingsIcon(18)} Настройки`, content);
+    showModal(`${getSettingsIcon(18)} Настройки`, content, {
+      onRestartService: restartServiceFromSettings,
+      onViewServiceLogs: () => openServiceLogsModal(adminFetch)
+    });
     
     // Инициализируем системный монитор в модальном окне после того как DOM обновлен
     setTimeout(() => {
@@ -1372,12 +1726,53 @@ export function showSettingsModal() {
   }).catch(() => {
     // Fallback если импорт не удался
     import('./auth.js').then(({ adminFetch }) => {
+      const restartServiceFromSettings = async (buttonEl) => {
+        if (!confirm('Перезапустить сервис сейчас?')) return;
+
+        const initialText = buttonEl.textContent;
+        buttonEl.disabled = true;
+        buttonEl.textContent = '...';
+
+        try {
+          const response = await adminFetch('/api/admin/restart-service', {
+            method: 'POST'
+          });
+
+          if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Ошибка перезапуска сервиса' }));
+            throw new Error(error.error || 'Ошибка перезапуска сервиса');
+          }
+
+          const result = await response.json().catch(() => ({ ok: true }));
+          const message = result.message || 'Перезапуск сервиса запущен. Подождите несколько секунд.';
+
+          showModal(`${getSuccessIcon(18)} Перезапуск`, `
+            <div style="text-align:center; padding:var(--space-lg);">
+              ${escapeHtml(message)}
+            </div>
+            <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-md);">OK</button>
+          `);
+        } catch (err) {
+          await reportModalNotification({
+            type: 'service_restart_error',
+            title: 'Ошибка перезапуска сервиса',
+            message: err.message || 'Неизвестная ошибка'
+          });
+        } finally {
+          buttonEl.disabled = false;
+          buttonEl.textContent = initialText;
+        }
+      };
+
       const content = `
         <div id="settingsModalContainer" style="display:flex; flex-direction:column; gap:var(--space-lg);">
           <div class="meta" style="text-align:center;">Загрузка настроек...</div>
         </div>
       `;
-      showModal(`${getSettingsIcon(18)} Настройки`, content);
+      showModal(`${getSettingsIcon(18)} Настройки`, content, {
+        onRestartService: restartServiceFromSettings,
+        onViewServiceLogs: () => openServiceLogsModal(adminFetch)
+      });
       loadSettingsContent(adminFetch);
     });
   });
@@ -1857,9 +2252,14 @@ async function loadSettingsContent(adminFetch) {
         const result = await resp.json().catch(() => ({ ok: true }));
 
         if (result.ok || resp.ok) {
+          const restartScheduled = !!result.restartScheduled;
+          const statusText = restartScheduled
+            ? 'Импорт базы данных завершён успешно. Сервис перезапускается, подождите 3-10 секунд.'
+            : 'Импорт базы данных завершён успешно.';
+
           showModal(`${getSuccessIcon(18)} Успешно`, `
             <div style="text-align:center; padding:var(--space-lg);">
-              Импорт базы данных завершён успешно.
+              ${statusText}
             </div>
             <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-md);">OK</button>
           `);

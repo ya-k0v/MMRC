@@ -370,11 +370,12 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
  */
 export async function processUploadedFilesAsync(deviceId, files, devicesPath, fileNamesMap) {
   
-  logger.error('[FileMetadata] 📦 Starting batch metadata processing', {
+  logger.info('[FileMetadata] 📦 Starting batch metadata processing', {
     deviceId,
     filesCount: files.length,
     devicesPath,
-    files: files.map(f => ({ filename: f.filename, path: f.path }))
+    filesSample: files.slice(0, 5).map(f => ({ filename: f.filename, path: f.path })),
+    filesOmitted: Math.max(0, files.length - 5)
   });
   
   const promises = files.map(file => {
@@ -468,8 +469,7 @@ export async function processUploadedFilesAsync(deviceId, files, devicesPath, fi
     }
   }
   
-  // КРИТИЧНО: Логируем результат на уровне warn для видимости в production
-  logger.warn('[FileMetadata] ✅ Batch file metadata processing completed', { 
+  logger.info('[FileMetadata] ✅ Batch file metadata processing completed', { 
     deviceId, 
     filesCount: files.length,
     deduplicatedCount,
@@ -488,7 +488,7 @@ export async function processUploadedFilesAsync(deviceId, files, devicesPath, fi
   });
   
   if (deduplicatedCount > 0) {
-    logger.warn(`[FileMetadata] 🎯 Deduplication saved ${deduplicatedCount} file upload(s)`, {
+    logger.info(`[FileMetadata] 🎯 Deduplication saved ${deduplicatedCount} file upload(s)`, {
       deviceId,
       deduplicatedCount,
       totalFiles: files.length

@@ -63,7 +63,7 @@ const logLevelMap = {
   off: 'off',
   debug: 'debug',
   info: 'info',
-  warning: 'error',
+  warning: 'warn',
   warn: 'warn',
   error: 'error'
 };
@@ -204,7 +204,25 @@ export const httpLoggerMiddleware = (req, res, next) => {
       logData.role = req.user.role;
     }
 
-    const level = res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info';
+    const rawUrl = req.originalUrl || req.url || '';
+    const urlPath = rawUrl.split('?')[0];
+    const isAdminApi = urlPath.startsWith('/api/admin/');
+    const isAdminWrite = isAdminApi && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
+    const isServiceLogsPoll = urlPath === '/api/admin/service-logs';
+
+    let level = 'info';
+    if (res.statusCode >= 500) {
+      level = 'error';
+    } else if (res.statusCode >= 400) {
+      level = 'warn';
+    } else if (isServiceLogsPoll) {
+      // Polling-эндпоинт viewer'а не должен засорять логи.
+      level = 'debug';
+    } else if (isAdminWrite) {
+      // Админские изменяющие операции оставляем заметными.
+      level = 'warn';
+    }
+
     logAPI(level, `${req.method} ${req.originalUrl || req.url}`, logData);
 
     // Записываем метрики (асинхронно, не блокируем ответ)
