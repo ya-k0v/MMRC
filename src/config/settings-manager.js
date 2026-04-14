@@ -554,62 +554,60 @@ export async function updateContentRootPath(newPath) {
   }
 
   const normalized = path.resolve(trimmed);
+
+  let rootStat;
   let canonicalRoot;
-  const realRoot = fs.realpathSync(normalizedRoot);
-  const normalizedNewRoot = fs.realpathSync(normalized);
-  if (normalizedNewRoot !== realRoot && !normalizedNewRoot.startsWith(realRoot + path.sep)) {
   try {
     rootStat = fs.statSync(normalized);
+    if (!rootStat.isDirectory()) {
+      throw new Error('Укажите путь к существующей директории');
+    }
     canonicalRoot = fs.realpathSync(normalized);
   } catch (error) {
     throw new Error('Указанный путь не существует или недоступен');
   }
 
-  if (!rootStat.isDirectory()) {
-    throw new Error('Укажите путь к существующей директории');
-  }
-
-  const normalizedRoot = path.resolve(ROOT);
-  if (canonicalRoot !== normalizedRoot && !canonicalRoot.startsWith(normalizedRoot + path.sep)) {
+  const appRoot = path.resolve(ROOT);
+  if (canonicalRoot !== appRoot && !canonicalRoot.startsWith(appRoot + path.sep)) {
     throw new Error('Путь должен находиться внутри разрешенной директории приложения');
   }
-  
+
   // КРИТИЧНО: Сохраняем старый путь для миграции
   const oldRoot = currentContentRoot || DEFAULT_DATA_ROOT;
   const normalizedOldRoot = oldRoot.replace(/\/+$/, '');
-  const normalizedNewRoot = normalized.replace(/\/+$/, '');
+  const normalizedNewRoot = canonicalRoot.replace(/\/+$/, '');
 
   // Обновляем настройки
-  settings.contentRoot = normalized;
+  settings.contentRoot = canonicalRoot;
   safeWriteSettings();
   setDevicesPath(getDevicesPath()); // contentRoot/content
-  
+
   // КРИТИЧНО: Создаем все необходимые поддиректории
-  ensureDirectory(normalized); // dataRoot (contentRoot из настроек)
+  ensureDirectory(canonicalRoot); // dataRoot (contentRoot из настроек)
   ensureDirectory(getDevicesPath()); // dataRoot/content (DEVICES)
   ensureDirectory(getStreamsOutputDir()); // dataRoot/streams
   ensureDirectory(getConvertedCache()); // dataRoot/converted
   ensureDirectory(getLogsDir()); // dataRoot/logs
   ensureDirectory(getTempDir()); // dataRoot/temp
-  
+
   // КРИТИЧНО: Используем lazy import logger, чтобы избежать циклической зависимости
   const { default: logger } = await import('../utils/logger.js');
-  
-  logger.info(`[Settings] 📁 Created all data directories:`, {
-    dataRoot: normalized,
+
+  logger.info('[Settings] 📁 Created all data directories', {
+    dataRoot: canonicalRoot,
     devices: getDevicesPath(),
     streams: getStreamsOutputDir(),
     converted: getConvertedCache(),
     logs: getLogsDir(),
     temp: getTempDir()
   });
-  
+
   // КРИТИЧНО: Мигрируем пути в базе данных если путь изменился
   if (normalizedOldRoot !== normalizedNewRoot) {
     try {
       const { migrateFilePaths } = await import('../database/files-metadata.js');
       const updated = migrateFilePaths(normalizedOldRoot, normalizedNewRoot);
-      
+
       if (updated > 0) {
         logger.info(`[Settings] ✅ Migrated ${updated} file paths in database`, {
           oldRoot: normalizedOldRoot,
@@ -617,36 +615,34 @@ export async function updateContentRootPath(newPath) {
           updated
         });
       } else {
-        logger.info(`[Settings] 🔄 Content root updated (no paths to migrate)`, {
+        logger.info('[Settings] 🔄 Content root updated (no paths to migrate)', {
           oldRoot: normalizedOldRoot,
           newRoot: normalizedNewRoot
         });
       }
     } catch (error) {
       logger.error('[Settings] Failed to migrate file paths', {
-        stack: error.stack,
+        stack: error?.stack,
         oldRoot: normalizedOldRoot,
-        dataRoot: normalizedNewRoot,
+        dataRoot: normalizedNewRoot
       });
       // НЕ прерываем выполнение - путь всё равно обновлен в настройках
     }
   } else {
-    logger.info(`[Settings] 🔄 Content root updated (same path, no migration needed)`, {
+    logger.info('[Settings] 🔄 Content root updated (same path, no migration needed)', {
       path: normalizedNewRoot
     });
   }
 
   currentContentRoot = normalizedNewRoot;
-  return normalizedNewRoot;
-  
-  logger.info(`[Settings] 📁 Updated paths:`, {
+  logger.info('[Settings] 📁 Updated paths', {
     dataRoot: canonicalRoot,
     streams: getStreamsOutputDir(),
     converted: getConvertedCache(),
     logs: getLogsDir(),
     temp: getTempDir()
   });
-  
+
   return canonicalRoot;
 }
 
@@ -669,5 +665,4 @@ try {
 setDevicesPath(path.join(normalizedInitialPath, 'content'));
 currentContentRoot = normalizedInitialPath;
 
-// Асинхронная миграция будет вызвана после инициализации БД
-
+// Асинхронная миграция будет вызвана после инициализации БД  
