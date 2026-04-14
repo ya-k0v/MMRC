@@ -104,6 +104,8 @@ export function initDatabase(initialDbPath) {
                 username TEXT UNIQUE NOT NULL,
                 full_name TEXT NOT NULL,
                 password_hash TEXT NOT NULL,
+                auth_source TEXT NOT NULL DEFAULT 'local' CHECK(auth_source IN ('local', 'ldap')),
+                ldap_dn TEXT,
                 role TEXT DEFAULT 'speaker' CHECK(role IN ('admin', 'speaker', 'hero_admin')),
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -116,8 +118,8 @@ export function initDatabase(initialDbPath) {
             // Копируем данные из старой таблицы
             if (usersData.length > 0) {
               const insertStmt = db.prepare(`
-                INSERT INTO users (id, username, full_name, password_hash, role, created_at, updated_at, last_login, is_active)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO users (id, username, full_name, password_hash, auth_source, ldap_dn, role, created_at, updated_at, last_login, is_active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               `);
               
               const insertMany = db.transaction((users) => {
@@ -127,6 +129,8 @@ export function initDatabase(initialDbPath) {
                     user.username,
                     user.full_name,
                     user.password_hash,
+                    user.auth_source || 'local',
+                    user.ldap_dn || null,
                     user.role,
                     user.created_at,
                     user.updated_at,
@@ -144,6 +148,7 @@ export function initDatabase(initialDbPath) {
             db.exec('CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)');
             db.exec('CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)');
             db.exec('CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active)');
+            db.exec('CREATE INDEX IF NOT EXISTS idx_users_auth_source ON users(auth_source)');
             logger.info('[DB] Restored indexes');
             
             // Исправляем foreign key в связанных таблицах (они могут ссылаться на users_old)
@@ -324,6 +329,8 @@ export function initDatabase(initialDbPath) {
         logger.error('[DB] Failed to create user_devices table:', userDevicesErr);
         logger.warn('[DB] Continuing without user_devices table - device access control may not work');
       }
+
+      ensureUsersAuthColumns();
     } catch (migrationErr) {
       logger.error('[DB] Migration failed:', migrationErr);
       // Не прерываем инициализацию, но логируем ошибку
@@ -335,6 +342,39 @@ export function initDatabase(initialDbPath) {
   } catch (e) {
     logger.error('[DB] Failed to initialize database:', e);
     throw e;
+  }
+}
+
+function ensureUsersAuthColumns() {
+  try {
+    const usersTableExists = db.prepare(`
+      SELECT name FROM sqlite_master
+      WHERE type='table' AND name='users'
+    `).get();
+
+    if (!usersTableExists) {
+      return;
+    }
+
+    const columns = db.prepare('PRAGMA table_info(users)').all();
+    const names = new Set(columns.map((col) => col.name));
+
+    if (!names.has('auth_source')) {
+      db.exec(`ALTER TABLE users ADD COLUMN auth_source TEXT NOT NULL DEFAULT 'local'`);
+      logger.info('[DB] Added auth_source column to users');
+    }
+
+    if (!names.has('ldap_dn')) {
+      db.exec('ALTER TABLE users ADD COLUMN ldap_dn TEXT');
+      logger.info('[DB] Added ldap_dn column to users');
+    }
+
+    db.exec('UPDATE users SET auth_source = \'local\' WHERE auth_source IS NULL OR auth_source = \'\'');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_users_auth_source ON users(auth_source)');
+  } catch (err) {
+    logger.warn('[DB] Failed to ensure users auth columns (non-critical)', {
+      error: err.message
+    });
   }
 }
 

@@ -29,11 +29,19 @@ if [ ! -f .env ]; then
 fi
 
 # 5. Установка npm-зависимостей
-npm install
+if [[ -f package-lock.json ]]; then
+  npm ci --omit=dev || npm install
+else
+  npm install
+fi
+npm run setup-hooks --silent || true
 
 # 6. Создание директорий
 mkdir -p config config/hero data/content data/streams data/converted data/logs data/temp
 chown -R vcuser:vcgroup data config
+
+# 6.1 Инициализация/миграция БД
+SKIP_NPM_INSTALL=1 SKIP_SERVICE_RESTART=1 bash ./scripts/post-pull-sync.sh
 
 # 7. Копирование systemd unit
 cp videocontrol.service /etc/systemd/system/videocontrol.service

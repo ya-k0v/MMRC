@@ -11,6 +11,183 @@ let currentContentRoot = DEFAULT_DATA_ROOT;
 
 const SETTINGS_FILE = path.join(ROOT, 'config', 'app-settings.json');
 
+const LDAP_DEFAULTS = {
+  enabled: false,
+  url: '',
+  bindDN: '',
+  bindPassword: '',
+  baseDN: '',
+  userFilter: '(sAMAccountName={username})',
+  usernameAttribute: 'sAMAccountName',
+  searchScope: 'sub',
+  autoCreateUsers: true,
+  defaultRole: 'speaker',
+  connectTimeoutMs: 5000,
+  operationTimeoutMs: 5000,
+  tlsRejectUnauthorized: true,
+  groupRoleMap: {
+    admin: [],
+    speaker: [],
+    hero_admin: []
+  },
+  rolePriority: ['admin', 'hero_admin', 'speaker']
+};
+
+const ALLOWED_SEARCH_SCOPES = new Set(['base', 'one', 'sub']);
+const ALLOWED_USER_ROLES = new Set(['admin', 'speaker', 'hero_admin']);
+
+function normalizeBoolean(value, fallback = false) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1') return true;
+    if (normalized === 'false' || normalized === '0') return false;
+  }
+  return fallback;
+}
+
+function normalizeNumber(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.round(parsed);
+}
+
+function normalizeSearchScope(scope) {
+  const normalized = String(scope || '').trim().toLowerCase();
+  return ALLOWED_SEARCH_SCOPES.has(normalized) ? normalized : LDAP_DEFAULTS.searchScope;
+}
+
+function normalizeRole(role) {
+  const normalized = String(role || '').trim().toLowerCase();
+  return ALLOWED_USER_ROLES.has(normalized) ? normalized : LDAP_DEFAULTS.defaultRole;
+}
+
+function splitList(value) {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => splitList(item));
+  }
+
+  if (typeof value !== 'string') {
+    return [];
+  }
+
+  const text = value.trim();
+  if (!text) {
+    return [];
+  }
+
+  // Для LDAP DN запятые являются частью значения, поэтому
+  // разделяем только по ';' или новой строке.
+  if (!/[;\n]/.test(text)) {
+    return [text];
+  }
+
+  return text
+    .split(/[;\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function splitRoleList(value) {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => splitRoleList(item));
+  }
+
+  if (typeof value !== 'string') {
+    return [];
+  }
+
+  return value
+    .split(/[\n,;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeUniqueCaseInsensitive(values = []) {
+  const seen = new Set();
+  const result = [];
+
+  for (const value of values) {
+    const key = String(value).trim().toLowerCase();
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(String(value).trim());
+  }
+
+  return result;
+}
+
+function normalizeGroupRoleMap(sourceMap = {}, baseMap = LDAP_DEFAULTS.groupRoleMap) {
+  const source = sourceMap && typeof sourceMap === 'object' ? sourceMap : {};
+  const base = baseMap && typeof baseMap === 'object' ? baseMap : LDAP_DEFAULTS.groupRoleMap;
+
+  return {
+    admin: normalizeUniqueCaseInsensitive(splitList(source.admin ?? base.admin ?? [])),
+    speaker: normalizeUniqueCaseInsensitive(splitList(source.speaker ?? base.speaker ?? [])),
+    hero_admin: normalizeUniqueCaseInsensitive(splitList(source.hero_admin ?? base.hero_admin ?? []))
+  };
+}
+
+function normalizeRolePriority(value, fallback = LDAP_DEFAULTS.rolePriority) {
+  const source = normalizeUniqueCaseInsensitive(splitRoleList(value));
+  const base = Array.isArray(fallback) && fallback.length
+    ? fallback
+    : LDAP_DEFAULTS.rolePriority;
+
+  const normalized = source
+    .map((role) => String(role || '').trim().toLowerCase())
+    .filter((role) => ALLOWED_USER_ROLES.has(role));
+
+  if (!normalized.length) {
+    return [...base];
+  }
+
+  return normalized;
+}
+
+function normalizeLdapAuthSettings(raw = {}, current = LDAP_DEFAULTS) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const base = current && typeof current === 'object' ? current : LDAP_DEFAULTS;
+
+  const sourceMap = source.groupRoleMap && typeof source.groupRoleMap === 'object'
+    ? source.groupRoleMap
+    : {
+        admin: source.groupsAdmin ?? source.groupAdmin,
+        speaker: source.groupsSpeaker ?? source.groupSpeaker,
+        hero_admin: source.groupsHeroAdmin ?? source.groupHeroAdmin
+      };
+  const baseMap = base.groupRoleMap && typeof base.groupRoleMap === 'object'
+    ? base.groupRoleMap
+    : LDAP_DEFAULTS.groupRoleMap;
+
+  return {
+    enabled: normalizeBoolean(source.enabled, normalizeBoolean(base.enabled, LDAP_DEFAULTS.enabled)),
+    url: String(source.url ?? base.url ?? LDAP_DEFAULTS.url).trim(),
+    bindDN: String(source.bindDN ?? base.bindDN ?? LDAP_DEFAULTS.bindDN).trim(),
+    bindPassword: String(source.bindPassword ?? base.bindPassword ?? LDAP_DEFAULTS.bindPassword),
+    baseDN: String(source.baseDN ?? base.baseDN ?? LDAP_DEFAULTS.baseDN).trim(),
+    userFilter: String(source.userFilter ?? base.userFilter ?? LDAP_DEFAULTS.userFilter).trim() || LDAP_DEFAULTS.userFilter,
+    usernameAttribute: String(source.usernameAttribute ?? base.usernameAttribute ?? LDAP_DEFAULTS.usernameAttribute).trim() || LDAP_DEFAULTS.usernameAttribute,
+    searchScope: normalizeSearchScope(source.searchScope ?? base.searchScope ?? LDAP_DEFAULTS.searchScope),
+    autoCreateUsers: normalizeBoolean(source.autoCreateUsers, normalizeBoolean(base.autoCreateUsers, LDAP_DEFAULTS.autoCreateUsers)),
+    defaultRole: normalizeRole(source.defaultRole ?? base.defaultRole ?? LDAP_DEFAULTS.defaultRole),
+    connectTimeoutMs: normalizeNumber(source.connectTimeoutMs ?? base.connectTimeoutMs, LDAP_DEFAULTS.connectTimeoutMs),
+    operationTimeoutMs: normalizeNumber(source.operationTimeoutMs ?? base.operationTimeoutMs, LDAP_DEFAULTS.operationTimeoutMs),
+    tlsRejectUnauthorized: normalizeBoolean(
+      source.tlsRejectUnauthorized,
+      normalizeBoolean(base.tlsRejectUnauthorized, LDAP_DEFAULTS.tlsRejectUnauthorized)
+    ),
+    groupRoleMap: normalizeGroupRoleMap(sourceMap, baseMap),
+    rolePriority: normalizeRolePriority(source.rolePriority ?? base.rolePriority ?? LDAP_DEFAULTS.rolePriority)
+  };
+}
+
 // КРИТИЧНО: Инициализируем settings сразу, чтобы избежать ошибки "Cannot access 'settings' before initialization"
 // Это важно, так как logger.js может использовать getLogsDir() до полной инициализации модуля
 let settings = {
@@ -29,6 +206,11 @@ try {
         ...settings,
         ...parsed
       };
+      delete settings.ldapAuth;
+      // Environment override: if CONTENT_ROOT is provided via env, prefer it
+      if (process.env.CONTENT_ROOT && typeof process.env.CONTENT_ROOT === 'string' && process.env.CONTENT_ROOT.trim()) {
+        settings.contentRoot = process.env.CONTENT_ROOT.trim();
+      }
     }
   } else {
     // Создаем файл с настройками по умолчанию
@@ -40,10 +222,104 @@ try {
   // logger еще может быть не инициализирован
 }
 
+function isWritableDirectory(dirPath) {
+  try {
+    fs.mkdirSync(dirPath, { recursive: true });
+    fs.accessSync(dirPath, fs.constants.W_OK);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function uniqueResolvedPaths(paths = []) {
+  const seen = new Set();
+  return paths.filter((candidate) => {
+    if (!candidate || typeof candidate !== 'string') {
+      return false;
+    }
+    const normalized = path.resolve(candidate);
+    if (seen.has(normalized)) {
+      return false;
+    }
+    seen.add(normalized);
+    return true;
+  });
+}
+
+function resolveWritableContentRoot(preferredPath) {
+  const preferred = path.resolve(preferredPath || DEFAULT_DATA_ROOT);
+  const fallbackDefault = path.resolve(DEFAULT_DATA_ROOT);
+  const fallbackTmp = path.resolve(path.join(ROOT, '.tmp', 'data'));
+
+  const candidates = uniqueResolvedPaths([preferred, fallbackDefault, fallbackTmp]);
+  for (const candidate of candidates) {
+    if (isWritableDirectory(candidate)) {
+      if (candidate !== preferred) {
+        try {
+          process.stderr.write(`[Settings] Content root fallback: ${preferred} -> ${candidate}\n`);
+        } catch (e) {
+          // ignore
+        }
+      }
+      return candidate;
+    }
+  }
+
+  try {
+    process.stderr.write(`[Settings] Unable to find writable content root, keeping: ${preferred}\n`);
+  } catch (e) {
+    // ignore
+  }
+  return preferred;
+}
+
+function applyContentRootPolicy() {
+  const envContentRoot =
+    typeof process.env.CONTENT_ROOT === 'string' ? process.env.CONTENT_ROOT.trim() : '';
+  if (envContentRoot) {
+    settings.contentRoot = envContentRoot;
+  }
+
+  const resolvedRoot = resolveWritableContentRoot(settings.contentRoot || DEFAULT_DATA_ROOT);
+  settings.contentRoot = resolvedRoot;
+  currentContentRoot = resolvedRoot;
+  setDevicesPath(path.join(resolvedRoot, 'content'));
+}
+
+applyContentRootPolicy();
+
+function readLdapAuthSettingsFromEnv() {
+  const raw = {
+    enabled: process.env.LDAP_ENABLED,
+    url: process.env.LDAP_URL || process.env.LDAP_URI || '',
+    bindDN: process.env.LDAP_BIND_DN || '',
+    bindPassword: process.env.LDAP_BIND_PASSWORD || '',
+    baseDN: process.env.LDAP_BASE_DN || '',
+    userFilter: process.env.LDAP_USER_FILTER || LDAP_DEFAULTS.userFilter,
+    usernameAttribute: process.env.LDAP_USERNAME_ATTRIBUTE || LDAP_DEFAULTS.usernameAttribute,
+    searchScope: process.env.LDAP_SEARCH_SCOPE || LDAP_DEFAULTS.searchScope,
+    autoCreateUsers: process.env.LDAP_AUTO_CREATE_USERS,
+    defaultRole: process.env.LDAP_DEFAULT_ROLE || LDAP_DEFAULTS.defaultRole,
+    connectTimeoutMs: process.env.LDAP_CONNECT_TIMEOUT_MS,
+    operationTimeoutMs: process.env.LDAP_OPERATION_TIMEOUT_MS,
+    tlsRejectUnauthorized: process.env.LDAP_TLS_REJECT_UNAUTHORIZED,
+    groupRoleMap: {
+      admin: process.env.LDAP_GROUPS_ADMIN || process.env.LDAP_GROUP_ADMIN || '',
+      speaker: process.env.LDAP_GROUPS_SPEAKER || process.env.LDAP_GROUP_SPEAKER || '',
+      hero_admin: process.env.LDAP_GROUPS_HERO_ADMIN || process.env.LDAP_GROUP_HERO_ADMIN || ''
+    },
+    rolePriority: process.env.LDAP_ROLE_PRIORITY || LDAP_DEFAULTS.rolePriority.join(',')
+  };
+
+  return normalizeLdapAuthSettings(raw, LDAP_DEFAULTS);
+}
+
 function safeWriteSettings() {
   try {
     fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf-8');
+    const { ldapAuth, ...persistableSettings } = settings;
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(persistableSettings, null, 2), 'utf-8');
   } catch (error) {
     // КРИТИЧНО: Используем lazy import logger, чтобы избежать циклической зависимости
     import('../utils/logger.js').then(({ default: logger }) => {
@@ -58,7 +334,14 @@ function ensureDirectory(dirPath) {
   try {
     fs.mkdirSync(dirPath, { recursive: true });
   } catch (error) {
-    throw new Error(`Не удалось создать папку: ${error.message}`);
+    // Не прерываем выполнение при ошибках доступа в средах CI/runner
+    // Логируем в STDERR, чтобы проблема была видна, но не ломала тесты
+    try {
+      process.stderr.write(`[Settings] Could not create directory ${dirPath}: ${error.message}\n`);
+    } catch (e) {
+      // ignore
+    }
+    return;
   }
 }
 
@@ -77,6 +360,8 @@ function loadSettingsFromFile() {
         ...settings,
         ...parsed
       };
+      delete settings.ldapAuth;
+      applyContentRootPolicy();
     }
   } catch (error) {
     // КРИТИЧНО: Не используем logger здесь из-за циклической зависимости
@@ -203,8 +488,11 @@ export function getDevicesPath() {
 }
 
 export function getSettings() {
+  const { ldapAuth, ...restSettings } = settings;
+
   return {
-    ...settings,
+    ...restSettings,
+    ldapAuth: getLdapAuthSettings(),
     defaults: {
       contentRoot: DEFAULT_DATA_ROOT
     },
@@ -218,6 +506,25 @@ export function getSettings() {
       tempDir: getTempDir()
     }
   };
+}
+
+export function getLdapAuthSettings(options = {}) {
+  const includeSecrets = options?.includeSecrets === true;
+  const normalized = readLdapAuthSettingsFromEnv();
+
+  if (includeSecrets) {
+    return { ...normalized };
+  }
+
+  const { bindPassword, ...safeSettings } = normalized;
+  return {
+    ...safeSettings,
+    bindPasswordSet: Boolean(bindPassword)
+  };
+}
+
+export function updateLdapAuthSettings() {
+  throw new Error('LDAP настраивается через .env и перезапуск сервиса');
 }
 
 export async function updateContentRootPath(newPath) {

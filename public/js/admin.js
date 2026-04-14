@@ -737,9 +737,6 @@ function updateVolumePanel(deviceId = currentDeviceId) {
       iconColor = isMuted ? 'var(--danger)' : 'var(--success)';
       iconHtml = isMuted ? getVolumeMutedIcon(20, iconColor) : getVolumeOnIcon(20, iconColor);
       actionLabel = isMuted ? 'Включить звук' : 'Заглушить звук';
-      if (isOffline) {
-        actionLabel += ' · применится при подключении';
-      }
     }
     
     if (iconEl) {
@@ -765,9 +762,6 @@ function updateVolumePanel(deviceId = currentDeviceId) {
   if (valueEl) valueEl.textContent = `${level}%`;
   if (statusEl) {
     let statusText = state.muted ? 'Звук выключен' : 'Звук включен';
-    if (isOffline) {
-      statusText += ' · применится при подключении';
-    }
     statusEl.textContent = statusText;
   }
 }

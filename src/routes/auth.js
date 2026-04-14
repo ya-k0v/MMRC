@@ -5,8 +5,11 @@
 
 import express from 'express';
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 import { body, validationResult } from 'express-validator';
 import { getDatabase } from '../database/database.js';
+import { getLdapAuthSettings } from '../config/settings-manager.js';
+import { authenticateAgainstLdap } from '../auth/ldap-auth.js';
 import { 
   generateAccessToken, 
   generateRefreshToken, 
@@ -18,6 +21,160 @@ import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import logger, { logAuth, logSecurity } from '../utils/logger.js';
 
 const router = express.Router();
+
+function normalizeAuthSource(authSource) {
+  return authSource === 'ldap' ? 'ldap' : 'local';
+}
+
+function getUserByUsername(db, username) {
+  const row = db.prepare(`
+    SELECT id, username, full_name, password_hash, role, is_active, auth_source, ldap_dn
+    FROM users
+    WHERE username = ?
+  `).get(username);
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    ...row,
+    auth_source: normalizeAuthSource(row.auth_source)
+  };
+}
+
+function normalizeGroupToken(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function extractCnFromDn(dnValue) {
+  const match = String(dnValue || '').match(/(?:^|,)\s*cn=([^,]+)/i);
+  return match ? String(match[1]).trim() : '';
+}
+
+function collectLdapGroupTokens(groups = []) {
+  const values = Array.isArray(groups) ? groups : [];
+  const tokens = new Set();
+
+  for (const group of values) {
+    const normalizedGroup = normalizeGroupToken(group);
+    if (!normalizedGroup) {
+      continue;
+    }
+
+    tokens.add(normalizedGroup);
+
+    const cn = extractCnFromDn(group);
+    if (cn) {
+      tokens.add(normalizeGroupToken(cn));
+    }
+  }
+
+  return tokens;
+}
+
+function resolveRoleFromLdapGroups(groups = [], ldapSettings = {}) {
+  const roleMap = ldapSettings?.groupRoleMap && typeof ldapSettings.groupRoleMap === 'object'
+    ? ldapSettings.groupRoleMap
+    : {};
+  const priority = Array.isArray(ldapSettings?.rolePriority) && ldapSettings.rolePriority.length
+    ? ldapSettings.rolePriority
+    : ['admin', 'hero_admin', 'speaker'];
+  const groupTokens = collectLdapGroupTokens(groups);
+
+  if (!groupTokens.size) {
+    return null;
+  }
+
+  for (const role of priority) {
+    if (!['admin', 'speaker', 'hero_admin'].includes(role)) {
+      continue;
+    }
+
+    const mappedGroups = Array.isArray(roleMap[role]) ? roleMap[role] : [];
+    for (const mappedGroup of mappedGroups) {
+      const mappedToken = normalizeGroupToken(mappedGroup);
+      if (mappedToken && groupTokens.has(mappedToken)) {
+        return role;
+      }
+    }
+  }
+
+  return null;
+}
+
+async function logLoginFailure(req, username, reason, userId = null) {
+  await auditLog({
+    userId,
+    action: AuditAction.LOGIN_FAILED,
+    resource: username,
+    details: { reason },
+    ipAddress: req.ip,
+    userAgent: req.get('user-agent'),
+    status: 'failure'
+  });
+
+  logSecurity('warn', 'Failed login attempt', {
+    username,
+    userId,
+    reason,
+    ip: req.ip
+  });
+}
+
+async function createSessionAndRespond(req, res, db, user, authSource = 'local') {
+  const accessToken = generateAccessToken(user.id, user.username, user.role);
+  const refreshToken = generateRefreshToken(user.id);
+
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + 7);
+
+  db.prepare(`
+    INSERT INTO refresh_tokens (user_id, token, expires_at, ip_address, user_agent)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    user.id,
+    refreshToken,
+    expiresAt.toISOString(),
+    req.ip,
+    req.get('user-agent')
+  );
+
+  db.prepare('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
+
+  await auditLog({
+    userId: user.id,
+    action: AuditAction.LOGIN,
+    resource: user.username,
+    details: {
+      role: user.role,
+      authSource
+    },
+    ipAddress: req.ip,
+    userAgent: req.get('user-agent'),
+    status: 'success'
+  });
+
+  logAuth('info', 'User logged in successfully', {
+    username: user.username,
+    userId: user.id,
+    role: user.role,
+    authSource,
+    ip: req.ip
+  });
+
+  res.json({
+    accessToken,
+    refreshToken,
+    user: {
+      id: user.id,
+      username: user.username,
+      full_name: user.full_name,
+      role: user.role,
+      auth_source: normalizeAuthSource(user.auth_source)
+    }
+  });
+}
 
 /**
  * POST /api/auth/login
@@ -33,109 +190,151 @@ router.post('/login',
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { username, password } = req.body;
+    const username = String(req.body.username || '').trim();
+    const password = String(req.body.password || '');
     const db = getDatabase();
 
     try {
-      // Находим пользователя
-      const user = db.prepare(`
-        SELECT id, username, full_name, password_hash, role, is_active 
-        FROM users 
-        WHERE username = ?
-      `).get(username);
+      let user = getUserByUsername(db, username);
+      const ldapSettings = getLdapAuthSettings({ includeSecrets: true });
+      const ldapEnabled = Boolean(ldapSettings.enabled);
+      let authenticatedUser = null;
+      let authSource = 'local';
 
-      if (!user) {
-        // Логируем неудачную попытку логина
-        await auditLog({
-          userId: null,
-          action: AuditAction.LOGIN_FAILED,
-          resource: username,
-          details: { reason: 'user_not_found' },
-          ipAddress: req.ip,
-          userAgent: req.get('user-agent'),
-          status: 'failure'
+      if (user && !user.is_active) {
+        await logLoginFailure(req, username, 'account_disabled', user.id);
+        return res.status(403).json({
+          error: 'Пользователь заблокирован. Обратитесь к администратору.',
+          code: 'ACCOUNT_DISABLED'
         });
-        logSecurity('warn', 'Failed login attempt: user not found', { username, ip: req.ip });
-        return res.status(401).json({ error: 'Неверный логин или пароль' });
       }
 
-      if (!user.is_active) {
-        // Логируем попытку входа в отключенный аккаунт
-        await auditLog({
-          userId: user.id,
-          action: AuditAction.LOGIN_FAILED,
-          resource: username,
-          details: { reason: 'account_disabled' },
-          ipAddress: req.ip,
-          userAgent: req.get('user-agent'),
-          status: 'failure'
-        });
-        logSecurity('warn', 'Failed login attempt: account disabled', { username, userId: user.id, ip: req.ip });
-        return res.status(403).json({ error: 'Аккаунт отключен' });
-      }
+      // Для локальных учеток проверяем только локальный пароль, чтобы LDAP не ломал обратную совместимость.
+      if (user && user.auth_source === 'local') {
+        const passwordMatch = await bcrypt.compare(password, user.password_hash);
 
-      // Проверяем пароль
-      const passwordMatch = await bcrypt.compare(password, user.password_hash);
-      
-      if (!passwordMatch) {
-        // Логируем неудачную попытку с неверным паролем
-        await auditLog({
-          userId: user.id,
-          action: AuditAction.LOGIN_FAILED,
-          resource: username,
-          details: { reason: 'invalid_password' },
-          ipAddress: req.ip,
-          userAgent: req.get('user-agent'),
-          status: 'failure'
-        });
-        logSecurity('warn', 'Failed login attempt: invalid password', { username, userId: user.id, ip: req.ip });
-        return res.status(401).json({ error: 'Неверный логин или пароль' });
-      }
-
-      // Генерируем токены
-      const accessToken = generateAccessToken(user.id, user.username, user.role);
-      const refreshToken = generateRefreshToken(user.id);
-
-      // Сохраняем refresh token в БД
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + 7); // 7 дней
-
-      db.prepare(`
-        INSERT INTO refresh_tokens (user_id, token, expires_at, ip_address, user_agent)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(
-        user.id,
-        refreshToken,
-        expiresAt.toISOString(),
-        req.ip,
-        req.get('user-agent')
-      );
-
-      // Обновляем last_login
-      db.prepare('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
-
-      // Логируем успешный вход
-      await auditLog({
-        userId: user.id,
-        action: AuditAction.LOGIN,
-        resource: username,
-        details: { role: user.role },
-        ipAddress: req.ip,
-        userAgent: req.get('user-agent'),
-        status: 'success'
-      });
-      logAuth('info', 'User logged in successfully', { username, userId: user.id, role: user.role, ip: req.ip });
-
-      res.json({
-        accessToken,
-        refreshToken,
-        user: {
-          id: user.id,
-          username: user.username,
-          full_name: user.full_name,
-          role: user.role
+        if (!passwordMatch) {
+          await logLoginFailure(req, username, 'invalid_password', user.id);
+          return res.status(401).json({ error: 'Неверный логин или пароль' });
         }
-      });
+
+        authenticatedUser = user;
+        authSource = 'local';
+      }
+
+      if (!authenticatedUser) {
+        if (!ldapEnabled) {
+          const reason = user ? 'ldap_disabled' : 'user_not_found';
+          await logLoginFailure(req, username, reason, user?.id || null);
+          return res.status(401).json({ error: 'Неверный логин или пароль' });
+        }
+
+        const ldapResult = await authenticateAgainstLdap(username, password, ldapSettings);
+
+        if (!ldapResult.ok) {
+          const ldapFailureReason = ldapResult.reason || 'ldap_error';
+          await logLoginFailure(req, username, ldapFailureReason, user?.id || null);
+
+          if (ldapFailureReason === 'misconfigured' || ldapFailureReason === 'ldap_error' || ldapFailureReason === 'disabled') {
+            logger.warn('[Auth] LDAP unavailable, fallback to local auth only', {
+              username,
+              reason: ldapFailureReason
+            });
+          }
+
+          return res.status(401).json({ error: 'Неверный логин или пароль' });
+        }
+
+        const ldapUsername = String(ldapResult.user?.username || username).trim();
+        const ldapFullName = String(ldapResult.user?.fullName || ldapUsername).trim() || ldapUsername;
+        const ldapDn = String(ldapResult.user?.dn || '').trim() || null;
+        const mappedRoleFromGroups = resolveRoleFromLdapGroups(ldapResult.user?.groups || [], ldapSettings);
+
+        let ldapUser = getUserByUsername(db, ldapUsername);
+
+        if (!ldapUser && ldapUsername !== username) {
+          const aliasUser = getUserByUsername(db, username);
+          if (aliasUser && aliasUser.auth_source === 'ldap') {
+            ldapUser = aliasUser;
+          }
+        }
+
+        if (ldapUser && ldapUser.auth_source === 'local') {
+          await logLoginFailure(req, username, 'local_user_conflict', ldapUser.id);
+          return res.status(403).json({ error: 'Для этого пользователя разрешен только локальный вход' });
+        }
+
+        if (!ldapUser) {
+          if (!ldapSettings.autoCreateUsers) {
+            await logLoginFailure(req, username, 'ldap_user_not_registered');
+            return res.status(403).json({ error: 'Пользователь LDAP не зарегистрирован в системе' });
+          }
+
+          const generatedPassword = crypto.randomBytes(32).toString('hex');
+          const passwordHash = await bcrypt.hash(generatedPassword, 10);
+          const defaultRole = ['admin', 'speaker', 'hero_admin'].includes(ldapSettings.defaultRole)
+            ? ldapSettings.defaultRole
+            : 'speaker';
+          const effectiveRole = mappedRoleFromGroups || defaultRole;
+
+          const insertResult = db.prepare(`
+            INSERT INTO users (username, full_name, password_hash, auth_source, ldap_dn, role, is_active)
+            VALUES (?, ?, ?, 'ldap', ?, ?, 1)
+          `).run(ldapUsername, ldapFullName, passwordHash, ldapDn, effectiveRole);
+
+          ldapUser = db.prepare(`
+            SELECT id, username, full_name, password_hash, role, is_active, auth_source, ldap_dn
+            FROM users
+            WHERE id = ?
+          `).get(insertResult.lastInsertRowid);
+        } else {
+          if (!ldapUser.is_active) {
+            await logLoginFailure(req, username, 'account_disabled', ldapUser.id);
+            return res.status(403).json({
+              error: 'Пользователь заблокирован. Обратитесь к администратору.',
+              code: 'ACCOUNT_DISABLED'
+            });
+          }
+
+          const updates = [];
+          const params = [];
+
+          if (ldapFullName && ldapFullName !== ldapUser.full_name) {
+            updates.push('full_name = ?');
+            params.push(ldapFullName);
+          }
+
+          if (ldapDn !== ldapUser.ldap_dn) {
+            updates.push('ldap_dn = ?');
+            params.push(ldapDn);
+          }
+
+          if (mappedRoleFromGroups && mappedRoleFromGroups !== ldapUser.role) {
+            updates.push('role = ?');
+            params.push(mappedRoleFromGroups);
+          }
+
+          if (updates.length > 0) {
+            db.prepare(`
+              UPDATE users
+              SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP
+              WHERE id = ?
+            `).run(...params, ldapUser.id);
+          }
+
+          ldapUser = getUserByUsername(db, ldapUser.username);
+        }
+
+        authenticatedUser = ldapUser;
+        authSource = 'ldap';
+      }
+
+      if (!authenticatedUser) {
+        await logLoginFailure(req, username, 'authentication_failed');
+        return res.status(401).json({ error: 'Неверный логин или пароль' });
+      }
+
+      return createSessionAndRespond(req, res, db, authenticatedUser, authSource);
     } catch (err) {
       logger.error('Login error', { error: err.message, stack: err.stack, username });
       res.status(500).json({ error: 'Внутренняя ошибка сервера' });
@@ -249,7 +448,7 @@ router.get('/me', requireAuth, async (req, res) => {
 
   try {
     const user = db.prepare(`
-      SELECT id, username, full_name, role, created_at, last_login
+      SELECT id, username, full_name, role, auth_source, created_at, last_login
       FROM users
       WHERE id = ?
     `).get(req.user.userId);
@@ -301,8 +500,8 @@ router.post('/register',
 
       // Создаем пользователя
       const result = db.prepare(`
-        INSERT INTO users (username, full_name, password_hash, role)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO users (username, full_name, password_hash, auth_source, role)
+        VALUES (?, ?, ?, 'local', ?)
       `).run(username, full_name, passwordHash, role);
 
       const newUserId = result.lastInsertRowid;
@@ -346,7 +545,7 @@ router.get('/users', requireAuth, requireAdmin, async (req, res) => {
 
   try {
     const users = db.prepare(`
-      SELECT id, username, full_name, role, is_active, created_at, last_login
+      SELECT id, username, full_name, role, auth_source, is_active, created_at, last_login
       FROM users
       ORDER BY created_at DESC
     `).all();
@@ -479,10 +678,14 @@ router.post('/users/:id/reset-password',
 
     try {
       // Получаем информацию о пользователе
-      const userToUpdate = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(userId);
+      const userToUpdate = db.prepare('SELECT id, username, role, auth_source FROM users WHERE id = ?').get(userId);
       
       if (!userToUpdate) {
         return res.status(404).json({ error: 'Пользователь не найден' });
+      }
+
+      if (normalizeAuthSource(userToUpdate.auth_source) === 'ldap') {
+        return res.status(400).json({ error: 'Пароль LDAP пользователя изменяется в Active Directory' });
       }
 
       // Хешируем новый пароль

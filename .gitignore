@@ -16,6 +16,7 @@ config/main.db-wal
 config/main.db-shm
 config/main.db.backup
 config/main.db.backup.*
+config/*.db.bak.*
 config/json-backup-*/
 config/heroes.db
 config/heroes.db-wal

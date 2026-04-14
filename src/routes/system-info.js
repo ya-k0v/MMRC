@@ -7,11 +7,11 @@ import os from 'os';
 import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import logger from '../utils/logger.js';
 import { getSettings } from '../config/settings-manager.js';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export function createSystemInfoRouter() {
   const router = express.Router();
@@ -120,8 +120,12 @@ async function getDiskInfo() {
       }
       
       // Получаем информацию о диске для этого пути
-      const { stdout } = await execAsync(`df -k "${contentPath}" | tail -n +2`);
-      const line = stdout.trim();
+        const { stdout } = await execFileAsync('df', ['-k', contentPath]);
+        const line = stdout
+          .split(/\r?\n/)
+          .slice(1)
+          .map((item) => item.trim())
+          .find((item) => item.length > 0) || '';
       
       if (!line) {
         throw new Error('Не удалось получить информацию о диске');
@@ -168,7 +172,14 @@ async function getDiskInfo() {
       }
       
       // Получаем информацию о логическом диске
-      const { stdout } = await execAsync(`wmic logicaldisk where "caption='${driveLetter}'" get size,freespace,caption /format:value`);
+        const { stdout } = await execFileAsync('wmic', [
+          'logicaldisk',
+          'where',
+          `caption='${driveLetter}'`,
+          'get',
+          'size,freespace,caption',
+          '/format:value'
+        ]);
       const lines = stdout.trim().split('\n').filter(line => line.trim());
       
       let total = 0;

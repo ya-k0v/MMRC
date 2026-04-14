@@ -1595,41 +1595,53 @@ function showConfirmModal(message, title = 'Подтверждение') {
     
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
-    
-    // Обработчики
-    const handleCancel = () => {
-      document.body.removeChild(overlay);
-      resolve(false);
-    };
-    
-    const handleConfirm = () => {
-      document.body.removeChild(overlay);
-      resolve(true);
-    };
+
+    let isClosed = false;
     
     const handleEscape = (e) => {
       if (e.key === 'Escape') {
         handleCancel();
       }
     };
+
+    const cleanup = () => {
+      if (isClosed) return false;
+      isClosed = true;
+      document.removeEventListener('keydown', handleEscape);
+      if (overlay.parentNode) {
+        overlay.parentNode.removeChild(overlay);
+      }
+      return true;
+    };
+
+    // Обработчики
+    const handleCancel = () => {
+      if (!cleanup()) return;
+      resolve(false);
+    };
+
+    const handleConfirm = () => {
+      if (!cleanup()) return;
+      resolve(true);
+    };
     
     modal.querySelector('#modal-cancel').addEventListener('click', handleCancel);
     modal.querySelector('#modal-confirm').addEventListener('click', handleConfirm);
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) {
+    let pointerDownOnOverlay = false;
+    overlay.addEventListener('pointerdown', (e) => {
+      pointerDownOnOverlay = e.target === overlay;
+    });
+    overlay.addEventListener('pointerup', (e) => {
+      const shouldCancel = pointerDownOnOverlay && e.target === overlay;
+      pointerDownOnOverlay = false;
+      if (shouldCancel) {
         handleCancel();
       }
     });
+    overlay.addEventListener('pointercancel', () => {
+      pointerDownOnOverlay = false;
+    });
     document.addEventListener('keydown', handleEscape);
-    
-    // Удаляем обработчик Escape после закрытия
-    const originalHandleEscape = handleEscape;
-    const cleanup = () => {
-      document.removeEventListener('keydown', originalHandleEscape);
-    };
-    
-    modal.querySelector('#modal-cancel').addEventListener('click', cleanup, { once: true });
-    modal.querySelector('#modal-confirm').addEventListener('click', cleanup, { once: true });
   });
 }
 

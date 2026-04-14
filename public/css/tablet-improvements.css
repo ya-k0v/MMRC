@@ -10,13 +10,20 @@ body:has(#filePreview) .file-item,
 .speaker-layout .file-item {
   display: grid !important;
   grid-template-columns: 3fr 1fr !important; /* 75% информация + 25% кнопка Play */
+  gap: 0 !important;
   padding: 0 !important;
   border-radius: var(--radius-md) !important;
   overflow: hidden !important;
   background: transparent !important;
-  min-height: 60px !important;
-  max-height: 60px !important;
+  height: auto !important;
+  min-height: var(--speaker-file-item-min-height, 52px) !important;
+  max-height: none !important;
   border: var(--border) !important;
+}
+
+body:has(#filePreview) .file-item .file-info,
+.speaker-layout .file-item .file-info {
+  justify-content: space-between !important;
 }
 
 body:has(#filePreview) .file-item.active,
@@ -39,7 +46,7 @@ body:has(#filePreview) .file-item-actions,
 /* Уменьшаем gap между файлами в панели спикера */
 body:has(#filePreview) #fileList,
 .speaker-layout #fileList {
-  gap: 6px !important; /* Было 8px, уменьшили на 2px */
+  gap: 4px !important;
 }
 
 /* ===== tvTile на панели спикера: такие же отступы как на админ панели ===== */
@@ -58,7 +65,7 @@ body:has(#filePreview) #fileList,
 /* ===== 1. Touch targets: 40px → 48px (только для планшетов с touch) ===== */
 @media (pointer: coarse) and (min-width: 768px) and (max-width: 1366px) {
   button {
-    min-height: 48px;
+    min-height: var(--speaker-control-height, 48px);
   }
 }
 
@@ -67,10 +74,10 @@ body:has(#filePreview) #fileList,
   #tvList {
     gap: 12px;
   }
-  /* Для файлов уменьшаем gap на 2px */
+  /* Для файлов делаем более плотный список */
   body:has(#filePreview) #fileList,
   .speaker-layout #fileList {
-    gap: 10px !important; /* Было 12px, уменьшили на 2px */
+    gap: 6px !important;
   }
 }
 
@@ -84,31 +91,31 @@ body:has(#filePreview) #fileList,
 /* ===== 4. Шрифты: 16px → 17px (для планшетов) ===== */
 @media (min-width: 768px) and (max-width: 1366px) {
   body {
-    font-size: 17px;
+    font-size: var(--speaker-base-font-size, 17px);
   }
 }
 
 /* ===== 5. Высота элементов списка: оптимизировано для горизонтального layout ===== */
 /* Для спикера - компактные карточки (горизонтальный layout) */
 body:has(#filePreview) #fileList li {
-  min-height: 64px; /* Компактно для горизонтального layout */
-  max-height: 72px;
+  min-height: var(--speaker-file-item-min-height, 52px);
+  max-height: none;
 }
 
 /* Устройства можно оставить повыше */
 #tvList li {
-  min-height: 80px;
+  min-height: var(--speaker-tile-min-height, 80px);
 }
 
 /* На планшетах чуть больше для удобства */
 @media (min-width: 768px) and (max-width: 1366px) {
   body:has(#filePreview) #fileList li {
-    min-height: 72px;
-    max-height: 80px;
+    min-height: var(--speaker-file-item-min-height, 56px);
+    max-height: none;
   }
   
   #tvList li {
-    min-height: 90px;
+    min-height: var(--speaker-tile-min-height, 90px);
   }
 }
 

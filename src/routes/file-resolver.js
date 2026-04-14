@@ -20,6 +20,26 @@ function normalizeFileNameParam(paramValue) {
   return typeof paramValue === 'string' ? paramValue : '';
 }
 
+function isExpectedClientDisconnectError(err) {
+  if (!err) return false;
+
+  const message = String(err.message || '').toLowerCase();
+  const code = String(err.code || '').toUpperCase();
+  const statusCode = Number(err.statusCode || err.status || 0);
+
+  return (
+    code === 'ECONNABORTED' ||
+    code === 'ECONNRESET' ||
+    code === 'EPIPE' ||
+    statusCode === 499 ||
+    message.includes('request aborted') ||
+    message.includes('aborted') ||
+    message.includes('write epipe') ||
+    message.includes('socket hang up') ||
+    message.includes('premature close')
+  );
+}
+
 /**
  * GET /api/files/resolve/:deviceId/:fileName
  * Резолвит виртуальный путь в физический и отдает файл
@@ -78,6 +98,13 @@ function sendFileWithRange(res, req, metadata, context = {}) {
         if (!res.headersSent) {
           res.status(416).set('Content-Range', `bytes */${metadata.file_size || 0}`).send('Range Not Satisfiable');
         }
+      } else if (isExpectedClientDisconnectError(err)) {
+        logger.debug('[Resolver] Client disconnected during file send', {
+          ...context,
+          error: err.message,
+          code: err.code,
+          statusCode: err.statusCode || err.status
+        });
       } else {
         logger.error('[Resolver] Error sending file', { error: err.message, ...context, statusCode: err.statusCode || err.status });
         if (!res.headersSent) {
@@ -283,6 +310,14 @@ router.get('/preview/:deviceId/*fileName', (req, res) => {
           if (!res.headersSent) {
             res.status(416).set('Content-Range', `bytes */${metadata.file_size}`).send('Range Not Satisfiable');
           }
+        } else if (isExpectedClientDisconnectError(err)) {
+          logger.debug('[Preview] Client disconnected during preview send', {
+            deviceId,
+            fileName,
+            error: err.message,
+            code: err.code,
+            statusCode: err.statusCode || err.status
+          });
         } else {
           logger.error('[Preview] Error sending file', { 
             error: err.message, 

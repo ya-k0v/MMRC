@@ -3,11 +3,11 @@
  * @module video/ffmpeg-wrapper
  */
 
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import util from 'util';
 import logger from '../utils/logger.js';
 
-const execAsync = util.promisify(exec);
+const execFileAsync = util.promisify(execFile);
 
 /**
  * Проверка параметров видео через ffprobe
@@ -17,10 +17,16 @@ const execAsync = util.promisify(exec);
 export async function checkVideoParameters(filePath) {
   try {
     // ИСПРАВЛЕНО: Добавлен timeout 30 секунд для предотвращения зависания
-    const { stdout } = await execAsync(
-      `ffprobe -v error -show_entries stream=codec_type,codec_name,width,height,r_frame_rate,bit_rate,profile,level,pix_fmt,channels,sample_rate -show_entries format=duration,bit_rate -of json "${filePath}"`,
-      { timeout: 30000, maxBuffer: 2 * 1024 * 1024 } // 30s timeout, 2MB buffer
-    );
+    const { stdout } = await execFileAsync('ffprobe', [
+      '-v', 'error',
+      '-show_entries', 'stream=codec_type,codec_name,width,height,r_frame_rate,bit_rate,profile,level,pix_fmt,channels,sample_rate',
+      '-show_entries', 'format=duration,bit_rate',
+      '-of', 'json',
+      filePath
+    ], {
+      timeout: 30000,
+      maxBuffer: 2 * 1024 * 1024
+    }); // 30s timeout, 2MB buffer
     
     const data = JSON.parse(stdout);
     const streams = Array.isArray(data.streams) ? data.streams : [];

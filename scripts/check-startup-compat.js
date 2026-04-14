@@ -43,6 +43,34 @@ function ensureWritableDirectory(dirPath, issues) {
   }
 }
 
+function resolveWritableContentRoot(preferredPath) {
+  const candidates = [
+    preferredPath,
+    path.join(ROOT, 'data'),
+    path.join(ROOT, '.tmp', 'data')
+  ]
+    .filter(Boolean)
+    .map((candidate) => path.resolve(candidate));
+
+  const seen = new Set();
+  for (const candidate of candidates) {
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+
+    try {
+      if (!fs.existsSync(candidate)) {
+        fs.mkdirSync(candidate, { recursive: true });
+      }
+      fs.accessSync(candidate, fs.constants.R_OK | fs.constants.W_OK);
+      return candidate;
+    } catch {
+      // try next candidate
+    }
+  }
+
+  return path.resolve(preferredPath);
+}
+
 function validateRoutePatterns(expressMajor, issues) {
   if (expressMajor < 5) {
     return;
@@ -89,7 +117,13 @@ function main() {
   validateRoutePatterns(expressMajor, issues);
 
   const settings = readJson(path.join(ROOT, 'config', 'app-settings.json'), {});
-  const contentRoot = settings.contentRoot || path.join(ROOT, 'data');
+  const envContentRoot = (process.env.CONTENT_ROOT || '').trim();
+  const requestedContentRoot = envContentRoot || settings.contentRoot || path.join(ROOT, 'data');
+  const contentRoot = resolveWritableContentRoot(requestedContentRoot);
+
+  if (path.resolve(requestedContentRoot) !== contentRoot) {
+    console.warn(`[StartupDoctor] content root fallback: ${requestedContentRoot} -> ${contentRoot}`);
+  }
 
   const requiredDirs = [
     path.join(ROOT, 'config'),

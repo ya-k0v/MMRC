@@ -129,3 +129,17 @@ export const createLimiter = rateLimit({
   }
 });
 
+/**
+ * Limiter для интенсивных read-операций (скачивание/детальные списки)
+ * Применяется только к внешним IP
+ */
+export const readLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 120,
+  message: { error: 'Too many read operations, please try again later' },
+  skip: isLocalIP,
+  validate: {
+    trustProxy: false
+  }
+});
+

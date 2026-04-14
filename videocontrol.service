@@ -4,7 +4,6 @@ After=network-online.target local-fs.target
 Wants=network-online.target
 StartLimitIntervalSec=60
 StartLimitBurst=5
-RequiresMountsFor=/mnt/videocontrol-data
 
 [Service]
 Type=simple
@@ -12,6 +11,7 @@ User=vcuser
 Group=vcgroup
 WorkingDirectory=/vid/videocontrol
 ExecStartPre=/usr/bin/node /vid/videocontrol/scripts/check-startup-compat.js
+ExecStartPre=/usr/bin/node /vid/videocontrol/src/database/migrate.js
 ExecStart=/usr/bin/node /vid/videocontrol/server.js
 Restart=on-failure
 RestartSec=3
@@ -27,8 +27,8 @@ PrivateTmp=true
 ProtectSystem=strict
 # ReadWritePaths настраиваются динамически в зависимости от contentRoot из настроек
 # По умолчанию: /vid/videocontrol/data и /vid/videocontrol/config
-# Если используется внешний диск, добавьте его путь сюда
-ReadWritePaths=/vid/videocontrol/data /vid/videocontrol/config /mnt/videocontrol-data
+# Если используется внешний диск, добавьте его путь в drop-in конфиг systemd
+ReadWritePaths=/vid/videocontrol/data /vid/videocontrol/config /vid/videocontrol/.tmp
 
 # Resource limits
 LimitNOFILE=65535
