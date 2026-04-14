@@ -1,8 +1,8 @@
-# 📺 MMRC 3.1.1
+# 📺 MMRC 3.2.0
 
 **Система управления медиаконтентом для цифровых дисплеев**
 
-![Version](https://img.shields.io/badge/version-3.1.1-blue)
+![Version](https://img.shields.io/badge/version-3.2.0-blue)
 ![Node](https://img.shields.io/badge/node-20.x-green)
 ![License](https://img.shields.io/badge/license-Personal_Use_Only-red)
 
@@ -115,5 +115,5 @@ node server.js
 
 **ya-k0v** - [GitHub](https://github.com/ya-k0v/)
 
-**Версия:** 3.1.1
+**Версия:** 3.2.0
 

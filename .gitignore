@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+dev/
 
 # Logs & runtime artifacts
 data/
@@ -75,7 +76,7 @@ bin/yt-dlp.tmp-*
 *.tar.gz
 *.zip
 *.apk
-!MMRCPlayer-v3.1.1.apk
+!MMRCPlayer-v3.2.0.apk
 *.ap_
 *.aab
 

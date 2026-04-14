@@ -31,7 +31,7 @@ const previewStreamProtocol = url.searchParams.get('protocol');
 const previewStreamUrl = url.searchParams.get('stream_url'); // Прямой URL стрима для превью
 const previewTrailerUrl = url.searchParams.get('trailerUrl');
 
-const APP_VERSION = '3.1.1';
+const APP_VERSION = '3.2.0';
 const badgeDeviceId = device_id || (preview ? 'preview' : 'unknown');
 const playerBadge = document.getElementById('playerBadge');
 if (playerBadge) {

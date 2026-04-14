@@ -32,7 +32,7 @@
 **Автоматическая установка и настройка одной командой:**
 
 ```bash
-cd /vid/videocontrol
+cd /var/lib/mmrc
 ./dev/scripts/quick-setup-android.sh <device_ip:port> <server_url> <device_id>
 
 # Пример:
@@ -81,7 +81,7 @@ cd /vid/videocontrol
 
 2. **Откройте проект:**
    - Запустите Android Studio
-   - File → Open → выберите `/vid/videocontrol/clients/android-mediaplayer`
+   - File → Open → выберите `/var/lib/mmrc/clients/android-mediaplayer`
    - Дождитесь синхронизации Gradle
 
 3. **Настройте:**
@@ -117,7 +117,7 @@ cd clients/android-mediaplayer
 adb connect <device_ip>:5555
 
 # Установка
-adb install -r MMRCplayer-v3.1.1.apk
+adb install -r MMRCplayer-v3.2.0.apk
 ```
 
 ### 2. Настройка устройства для 24/7
@@ -185,7 +185,7 @@ adb logcat -d | grep -E "BootReceiver|MMRCPlayer"
 
 ```bash
 # Установка/обновление
-adb -s SERIAL install -r MMRCplayer-v3.1.1.apk
+adb -s SERIAL install -r MMRCplayer-v3.2.0.apk
 
 # Остановка приложения
 adb -s SERIAL shell am force-stop com.videocontrol.mediaplayer
@@ -440,5 +440,5 @@ sudo apt install vdpauinfo libvdpau-va-gl1            # NVIDIA
 
 ---
 
-**Версия:** 3.1.1
+**Версия:** 3.2.0
 

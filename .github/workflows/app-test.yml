@@ -57,6 +57,9 @@ jobs:
     needs: quality_gate
     if: github.event_name != 'workflow_call'
     timeout-minutes: 15
+    env:
+      CONTENT_ROOT: ${{ github.workspace }}/.tmp/videocontrol-data
+      NODE_ENV: test
 
     steps:
       - name: Checkout

@@ -1,6 +1,6 @@
 #!/bin/bash
 # ========================================
-# VideoControl v3.1.1 - Quick Installation Script
+# VideoControl v3.2.0 - Quick Installation Script
 # ========================================
 # Полная установка системы на чистый Ubuntu/Debian сервер
 #
@@ -15,11 +15,11 @@
 #
 # ИСПОЛЬЗОВАНИЕ:
 #   # Интерактивная установка
-#   sudo bash dev/scripts/quick-install.sh /vid/videocontrol
+#   sudo bash dev/scripts/quick-install.sh /var/lib/mmrc
 #
 #   # Non-interactive (production)
 #   AUTO_CONFIRM=1 STORAGE_MODE=external DATA_ROOT=/mnt/videocontrol-data \
-#     sudo bash dev/scripts/quick-install.sh /vid/videocontrol
+#     sudo bash dev/scripts/quick-install.sh /var/lib/mmrc
 #
 # ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ:
 #   AUTO_CONFIRM=1          - Отключает все вопросы "y/n" (для автоматической установки)
@@ -59,7 +59,7 @@
 #   - Hero Panel: http://YOUR_SERVER_IP/hero/index.html
 #   - По умолчанию: admin / admin123 (ОБЯЗАТЕЛЬНО СМЕНИТЬ!)
 #
-# НОВОЕ В v3.1.1:
+# НОВОЕ В v3.2.0:
 #   - Динамические пути данных через config/app-settings.json
 #   - Автоматические миграции heroes.db
 #   - Дедупликация стримов (один FFmpeg на URL)
@@ -80,7 +80,7 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${BLUE}============================================${NC}"
-echo -e "${BLUE}  VideoControl v3.1.1 - Quick Install${NC}"
+echo -e "${BLUE}  VideoControl v3.2.0 - Quick Install${NC}"
 echo -e "${BLUE}============================================${NC}"
 echo ""
 
@@ -103,7 +103,7 @@ echo -e "${GREEN}✅ OS: $PRETTY_NAME${NC}"
 echo ""
 
 # Определяем установочную директорию
-INSTALL_DIR="${1:-/vid/videocontrol}"
+INSTALL_DIR="${1:-/var/lib/mmrc}"
 
 # Для продакшена всегда используем vcuser
 SERVICE_USER="vcuser"
@@ -494,7 +494,7 @@ echo "  Creating app-settings.json..."
 if [ ! -f config/app-settings.json ]; then
     # Определяем contentRoot в зависимости от режима хранения
     if [ "$STORAGE_MODE" = "local" ]; then
-        CONTENT_ROOT="$INSTALL_DIR/data"
+        CONTENT_ROOT="data"
     else
         CONTENT_ROOT="$DATA_ROOT"
     fi
@@ -502,7 +502,7 @@ if [ ! -f config/app-settings.json ]; then
     cat > config/app-settings.json << EOF
 {
   "contentRoot": "$CONTENT_ROOT",
-    "version": "3.1.1"
+    "version": "3.2.0"
 }
 EOF
     # Права будут установлены на vcuser в PHASE 7
@@ -656,7 +656,7 @@ fi
 # Создаем systemd unit файл
 cat > /etc/systemd/system/videocontrol.service << EOF
 [Unit]
-Description=VideoControl Server v3.1.1
+Description=VideoControl Server v3.2.0
 After=network.target
 
 [Service]
@@ -717,7 +717,7 @@ echo -e "${GREEN}============================================${NC}"
 echo -e "${GREEN}  ✅ Installation Complete!${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo ""
-echo "🎉 VideoControl v3.1.1 successfully installed!"
+echo "🎉 VideoControl v3.2.0 successfully installed!"
 echo ""
 echo "📂 Installation directory: $INSTALL_DIR"
 echo "👤 Service user: $SERVICE_USER ($SERVICE_GROUP)"

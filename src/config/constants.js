@@ -21,7 +21,7 @@ export const PUBLIC = path.join(ROOT, 'public');
 
 // Путь по умолчанию (используется только при первой инициализации)
 // ВАЖНО: После инициализации все пути берутся из настроек БД (config/app-settings.json)
-// По умолчанию используется локальная папка проекта (/vid/videocontrol/data)
+// По умолчанию используется локальная папка проекта (/var/lib/mmrc/data)
 // Админ может изменить на внешний диск через настройки (/mnt/videocontrol-data)
 export const DEFAULT_DATA_ROOT = path.join(ROOT, 'data');
 const useExternalDataDisk = process.env.DATA_ROOT && fs.existsSync(process.env.DATA_ROOT);

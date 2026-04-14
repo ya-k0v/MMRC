@@ -485,7 +485,7 @@ export async function initializeSettings() {
         // Если пути начинаются с другого корня - мигрируем
         if (!firstPath.startsWith(pathNormalized)) {
           // Пробуем определить старый корень из первого пути
-          // Например: /vid/videocontrol/public/content/video.mp4 -> /vid/videocontrol/public/content
+          // Например: /var/lib/mmrc/public/content/video.mp4 -> /var/lib/mmrc/public/content
           const oldRoot = firstPathRoot || trimTrailingPathSeparators(DEFAULT_DATA_ROOT);
           
           logger.info(`[Settings] 🔄 Detected path mismatch, migrating: ${oldRoot} -> ${pathNormalized}`);

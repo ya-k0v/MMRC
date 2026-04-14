@@ -1,57 +1,177 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-# 1. Проверка root
 if [[ $EUID -ne 0 ]]; then
   echo "Этот скрипт нужно запускать с правами root (sudo)!"
   exit 1
 fi
 
-# 2. Установка зависимостей
-apt update && apt install -y nodejs npm ffmpeg sqlite3
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# 3. Создание пользователя и группы (если не существует)
-if ! id "vcuser" &>/dev/null; then
-  useradd -r -s /bin/false vcuser
-fi
-if ! getent group vcgroup &>/dev/null; then
-  groupadd vcgroup
-fi
-usermod -a -G vcgroup vcuser
+INSTALL_DIR="${INSTALL_DIR:-/var/lib/mmrc}"
+SERVICE_NAME="${SERVICE_NAME:-videocontrol.service}"
+SERVICE_USER="${SERVICE_USER:-vcuser}"
+SERVICE_GROUP="${SERVICE_GROUP:-vcgroup}"
 
-# 4. Копирование .env.example -> .env, генерация JWT_SECRET
-cd /vid/videocontrol
-if [ ! -f .env ]; then
-  cp .env.example .env
-  SECRET=$(node -e "console.log(require('crypto').randomBytes(64).toString('hex'))")
-  sed -i "s|^JWT_SECRET=.*$|JWT_SECRET=$SECRET|" .env
-  echo "JWT_SECRET сгенерирован и добавлен в .env"
-fi
+echo "[install] Source directory: $SOURCE_DIR"
+echo "[install] Target directory: $INSTALL_DIR"
 
-# 5. Установка npm-зависимостей
-if [[ -f package-lock.json ]]; then
-  npm ci --omit=dev || npm install
-else
-  npm install
-fi
-npm run setup-hooks --silent || true
+escape_sed_replacement() {
+  printf '%s' "$1" | sed -e 's/[\\/&]/\\\\&/g'
+}
 
-# 6. Создание директорий
-mkdir -p config config/hero data/content data/streams data/converted data/logs data/temp
-chown -R vcuser:vcgroup data config
+install_dependencies() {
+  apt-get update -qq
+  apt-get install -y curl wget git build-essential ffmpeg libreoffice imagemagick graphicsmagick unzip sqlite3 nginx rsync
 
-# 6.1 Инициализация/миграция БД
-SKIP_NPM_INSTALL=1 SKIP_SERVICE_RESTART=1 bash ./scripts/post-pull-sync.sh
+  local need_node=1
+  if command -v node >/dev/null 2>&1; then
+    local current_major
+    current_major="$(node -v | sed -E 's/^v([0-9]+).*/\1/')"
+    if [[ "$current_major" =~ ^[0-9]+$ ]] && [[ "$current_major" -ge 20 ]]; then
+      need_node=0
+    fi
+  fi
 
-# 7. Копирование systemd unit
-cp videocontrol.service /etc/systemd/system/videocontrol.service
-chown root:root /etc/systemd/system/videocontrol.service
-chmod 644 /etc/systemd/system/videocontrol.service
+  if [[ "$need_node" -eq 1 ]]; then
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    apt-get install -y nodejs
+  fi
 
-# 8. Перезагрузка systemd и запуск сервиса
-systemctl daemon-reload
-systemctl enable videocontrol.service
-systemctl restart videocontrol.service
+  if ! command -v npm >/dev/null 2>&1; then
+    apt-get install -y npm
+  fi
+}
 
-# 9. Проверка статуса
-systemctl status --no-pager videocontrol.service
+ensure_service_account() {
+  if ! getent group "$SERVICE_GROUP" >/dev/null 2>&1; then
+    groupadd "$SERVICE_GROUP"
+  fi
+
+  if ! id "$SERVICE_USER" >/dev/null 2>&1; then
+    useradd -r -g "$SERVICE_GROUP" -d /home/$SERVICE_USER -s /usr/sbin/nologin "$SERVICE_USER"
+  fi
+}
+
+sync_project() {
+  mkdir -p "$INSTALL_DIR"
+
+  if [[ "$SOURCE_DIR" != "$INSTALL_DIR" ]]; then
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -a \
+        --delete \
+        --exclude='.git/' \
+        --exclude='node_modules/' \
+        --exclude='data/' \
+        --exclude='config/main.db' \
+        --exclude='config/main.db-*' \
+        --exclude='config/hero/heroes.db' \
+        --exclude='config/hero/heroes.db-*' \
+        --exclude='.env' \
+        "$SOURCE_DIR"/ "$INSTALL_DIR"/
+    else
+      cp -a "$SOURCE_DIR"/. "$INSTALL_DIR"/
+    fi
+  fi
+}
+
+prepare_runtime_files() {
+  cd "$INSTALL_DIR"
+
+  if [[ ! -f .env ]]; then
+    cp .env.example .env
+    local secret
+    secret="$(node -e "console.log(require('crypto').randomBytes(64).toString('hex'))")"
+    sed -i "s|^JWT_SECRET=.*$|JWT_SECRET=$secret|" .env
+  fi
+
+  mkdir -p config config/hero data/content data/streams data/converted data/logs data/temp .tmp
+
+  if [[ ! -f config/app-settings.json ]]; then
+    cat > config/app-settings.json <<'EOF'
+{
+  "contentRoot": "data"
+}
+EOF
+  else
+    node --input-type=module <<'EOF'
+import fs from 'fs';
+
+const filePath = 'config/app-settings.json';
+try {
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const data = JSON.parse(raw || '{}');
+  const contentRoot = String(data?.contentRoot || '').trim();
+  const localAbsoluteRoot = `${process.cwd()}/data`;
+  if (!contentRoot || contentRoot.startsWith('/vid/videocontrol') || contentRoot === localAbsoluteRoot) {
+    data.contentRoot = 'data';
+    fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+    console.log('[install] normalized contentRoot to "data"');
+  }
+} catch (error) {
+  console.error('[install] failed to normalize app-settings.json', error?.message || String(error));
+  process.exit(1);
+}
+EOF
+  fi
+
+  if [[ -f package-lock.json ]]; then
+    npm ci --omit=dev || npm install
+  else
+    npm install
+  fi
+  npm run setup-hooks --silent || true
+  npm run migrate-db --silent
+
+  chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR"
+  chmod 640 "$INSTALL_DIR/.env" || true
+}
+
+install_nginx_config() {
+  local target_conf="/etc/nginx/sites-available/videocontrol"
+  local escaped_install_dir
+  escaped_install_dir="$(escape_sed_replacement "$INSTALL_DIR")"
+
+  cp "$INSTALL_DIR/nginx/videocontrol-secure.conf" "$target_conf"
+  if [[ "$INSTALL_DIR" != "/var/lib/mmrc" ]]; then
+    sed -i "s#/var/lib/mmrc#${escaped_install_dir}#g" "$target_conf"
+  fi
+
+  rm -f /etc/nginx/sites-enabled/default
+  ln -sf "$target_conf" /etc/nginx/sites-enabled/videocontrol
+  nginx -t
+  systemctl enable nginx
+  systemctl restart nginx
+}
+
+install_service_unit() {
+  local target_unit="/etc/systemd/system/$SERVICE_NAME"
+  local tmp_unit
+  local escaped_install_dir
+
+  tmp_unit="$(mktemp)"
+  escaped_install_dir="$(escape_sed_replacement "$INSTALL_DIR")"
+
+  cp "$INSTALL_DIR/videocontrol.service" "$tmp_unit"
+  if [[ "$INSTALL_DIR" != "/var/lib/mmrc" ]]; then
+    sed -i "s#/var/lib/mmrc#${escaped_install_dir}#g" "$tmp_unit"
+  fi
+
+  install -m 644 "$tmp_unit" "$target_unit"
+  rm -f "$tmp_unit"
+
+  systemctl daemon-reload
+  systemctl enable "$SERVICE_NAME"
+  systemctl restart "$SERVICE_NAME"
+}
+
+install_dependencies
+ensure_service_account
+sync_project
+prepare_runtime_files
+install_nginx_config
+install_service_unit
+
+systemctl --no-pager --full status "$SERVICE_NAME" | sed -n '1,60p'
+echo "[install] Complete"
