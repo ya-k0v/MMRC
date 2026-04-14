@@ -9,6 +9,7 @@ import path from 'path';
 import crypto from 'crypto';
 import os from 'os';
 import archiver from 'archiver';
+import sanitizeFilename from 'sanitize-filename';
 import { spawn } from 'child_process';
 import { getDevicesPath, getDataRoot } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
@@ -237,11 +238,6 @@ function safeDownloadFileName(fileName = '', fallback = 'download') {
 
   const baseName = path.basename(normalized || fallback);
   return baseName || fallback;
-}
-
-function resolvePathInDataRoot(candidatePath) {
-  const dataRoot = getDataRoot();
-  return validatePath(path.resolve(candidatePath), dataRoot);
 }
 
 const router = express.Router();
@@ -4000,16 +3996,18 @@ export function createFilesRouter(deps) {
     }
 
     const rawName = String(req.params.name || '').trim();
+    const sanitizedRequestedName = sanitizeFilename(rawName);
     if (
       !rawName ||
       rawName.includes('\0') ||
       rawName.includes('..') ||
       /[\\/]/.test(rawName) ||
-      !/^[A-Za-z0-9._()\-\s]+$/.test(rawName)
+      !sanitizedRequestedName ||
+      sanitizedRequestedName !== rawName
     ) {
       return res.status(400).json({ error: 'Неверное имя файла' });
     }
-    const name = rawName;
+    const name = sanitizedRequestedName;
 
     const d = devices[id];
     if (!d) {
@@ -4046,17 +4044,20 @@ export function createFilesRouter(deps) {
       }
 
       const normalizedCandidate = candidateName.trim();
+      const sanitizedCandidate = sanitizeFilename(normalizedCandidate);
       if (
         !normalizedCandidate ||
         normalizedCandidate.includes('\0') ||
         normalizedCandidate.includes('..') ||
-        /[\\/]/.test(normalizedCandidate)
+        /[\\/]/.test(normalizedCandidate) ||
+        !sanitizedCandidate ||
+        sanitizedCandidate !== normalizedCandidate
       ) {
         return null;
       }
 
       try {
-        const resolvedCandidate = path.resolve(deviceFolder, normalizedCandidate);
+        const resolvedCandidate = path.resolve(deviceFolder, sanitizedCandidate);
         const candidateRealPath = fs.realpathSync(resolvedCandidate);
         if (!candidateRealPath.startsWith(deviceFolder + path.sep) && candidateRealPath !== deviceFolder) {
           return null;

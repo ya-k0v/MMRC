@@ -233,20 +233,16 @@ function isWritableDirectory(dirPath) {
       return false;
     }
 
+    const normalizedCandidate = path.resolve(trimmed);
     const projectRoot = path.resolve(ROOT);
-    const resolvedCandidate = path.resolve(projectRoot, trimmed);
-    if (!resolvedCandidate.startsWith(projectRoot + path.sep) && resolvedCandidate !== projectRoot) {
-      return false;
-    }
+    const mountRoot = path.resolve('/mnt');
 
-    fs.mkdirSync(resolvedCandidate, { recursive: true });
-    const safeDirPath = fs.realpathSync(resolvedCandidate);
-    if (!safeDirPath.startsWith(projectRoot + path.sep) && safeDirPath !== projectRoot) {
-      return false;
-    }
-
-    fs.accessSync(safeDirPath, fs.constants.W_OK);
-    return true;
+    return (
+      normalizedCandidate === projectRoot ||
+      normalizedCandidate.startsWith(projectRoot + path.sep) ||
+      normalizedCandidate === mountRoot ||
+      normalizedCandidate.startsWith(mountRoot + path.sep)
+    );
   } catch (error) {
     return false;
   }

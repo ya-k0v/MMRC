@@ -27,63 +27,36 @@ function sanitizeDirectoryPath(inputPath) {
   return path.resolve(trimmed);
 }
 
+const fallbackLogDir = path.resolve(path.join(process.cwd(), '.tmp', 'logs'));
+
+function isAllowedLogsDir(dirPath) {
+  if (!dirPath) {
+    return false;
+  }
+
+  const normalized = path.resolve(dirPath);
+  const projectRoot = path.resolve(ROOT);
+  const mountRoot = path.resolve('/mnt');
+
+  return (
+    normalized === projectRoot ||
+    normalized.startsWith(projectRoot + path.sep) ||
+    normalized === mountRoot ||
+    normalized.startsWith(mountRoot + path.sep)
+  );
+}
+
 try {
   const configuredLogsDir = sanitizeDirectoryPath(getLogsDir());
-  if (!configuredLogsDir) {
-    throw new Error('Invalid logs directory path');
-  }
-
-  const projectRoot = path.resolve(ROOT);
-  const resolvedLogDirCandidate = path.resolve(projectRoot, configuredLogsDir);
-  if (!resolvedLogDirCandidate.startsWith(projectRoot + path.sep) && resolvedLogDirCandidate !== projectRoot) {
-    throw new Error('Logs directory is outside project root');
-  }
-
-  fs.mkdirSync(path.dirname(resolvedLogDirCandidate), { recursive: true });
-  LOG_DIR = fs.realpathSync(path.dirname(resolvedLogDirCandidate));
-  if (!LOG_DIR.startsWith(projectRoot + path.sep) && LOG_DIR !== projectRoot) {
-    throw new Error('Invalid logs base directory');
-  }
-
-  LOG_DIR = path.join(LOG_DIR, path.basename(resolvedLogDirCandidate));
-
-  // Попытка создать директорию и проверить доступ на запись
-  try {
-    fs.mkdirSync(LOG_DIR, { recursive: true });
-    LOG_DIR = fs.realpathSync(LOG_DIR);
-    if (!LOG_DIR.startsWith(projectRoot + path.sep) && LOG_DIR !== projectRoot) {
-      throw new Error('Resolved logs directory is outside project root');
-    }
-    fs.accessSync(LOG_DIR, fs.constants.W_OK);
-  } catch (err) {
-    // Если не удалось создать/записать - переключаемся на fallback
-    FILE_LOGGING_ENABLED = false;
-    const fallback = path.join(process.cwd(), '.tmp', 'logs');
-    try {
-      fs.mkdirSync(fallback, { recursive: true });
-      LOG_DIR = fallback;
-      FILE_LOGGING_ENABLED = true;
-    } catch (e) {
-      // Последняя инстанция: оставляем LOG_DIR null and disable file logging
-      LOG_DIR = null;
-      FILE_LOGGING_ENABLED = false;
-    }
-    try {
-      process.stderr.write(`[Logger] File logging disabled for ${getLogsDir()} - using fallback ${LOG_DIR}\n`);
-    } catch (e) {
-      // ignore
-    }
-  }
+  LOG_DIR = isAllowedLogsDir(configuredLogsDir) ? configuredLogsDir : fallbackLogDir;
 } catch (err) {
-  FILE_LOGGING_ENABLED = false;
-  const fallback = path.join(process.cwd(), '.tmp', 'logs');
-  try {
-    fs.mkdirSync(fallback, { recursive: true });
-    LOG_DIR = fallback;
-    FILE_LOGGING_ENABLED = true;
-  } catch (e) {
-    LOG_DIR = null;
-  }
+  LOG_DIR = fallbackLogDir;
+}
+
+try {
+  fs.mkdirSync(fallbackLogDir, { recursive: true });
+} catch (e) {
+  // ignore
 }
 
 // Форматирование логов
