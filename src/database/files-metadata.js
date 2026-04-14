@@ -512,7 +512,7 @@ export function updateFileOriginalName(deviceId, safeName, newOriginalName) {
 
 /**
  * Обновить пути файлов при смене content root
- * @param {string} oldRoot - Старый корневой путь (например: /vid/videocontrol/public/content)
+ * @param {string} oldRoot - Старый корневой путь (например: /var/lib/mmrc/public/content)
  * @param {string} newRoot - Новый корневой путь (например: /mnt/vc-content)
  * @returns {number} - Количество обновленных записей
  */
@@ -562,8 +562,8 @@ export function migrateFilePaths(oldRoot, newRoot) {
     `);
     
     // Вычисляем позицию начала остатка пути (после старого корня + слэш)
-    // Например: "/vid/videocontrol/public/content/video.mp4"
-    // oldRoot = "/vid/videocontrol/public/content" (32 символа)
+    // Например: "/var/lib/mmrc/public/content/video.mp4"
+    // oldRoot = "/var/lib/mmrc/public/content" (28 символов)
     // SUBSTR начиная с позиции 33 вернет "/video.mp4"
     const oldRootLength = normalizedOldRoot.length;
     const substrStart = oldRootLength + 1; // +1 для слэша после старого корня

@@ -1,15 +1,23 @@
 {
   "name": "mmrc",
-  "version": "3.1.1",
+  "version": "3.2.0",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "scripts": {
     "start": "node server.js",
+    "test": "npm run test:ci",
+    "test:ci": "bash ./scripts/ci-test.sh",
     "doctor:start": "node scripts/check-startup-compat.js",
+    "migrate-db": "node src/database/migrate.js",
+    "post-pull:sync": "bash ./scripts/post-pull-sync.sh",
+    "setup-hooks": "bash ./scripts/setup-git-hooks.sh",
+    "install-git-hooks": "npm run setup-hooks --silent",
+    "postinstall": "npm run setup-hooks --silent || true",
     "ytdlp:install": "bash ./scripts/install-yt-dlp-local.sh",
     "ytdlp:version": "./bin/yt-dlp --version"
   },
   "dependencies": {
+    "archiver": "^7.0.1",
     "bcrypt": "^6.0.0",
     "better-sqlite3": "^12.8.0",
     "dotenv": "^17.4.0",
@@ -19,10 +27,12 @@
     "express-validator": "^7.3.2",
     "file-type": "^21.3.4",
     "jsonwebtoken": "^9.0.3",
+    "ldapts": "^7.4.0",
     "mime": "^4.0.4",
     "multer": "^2.1.1",
     "pdf-lib": "^1.17.1",
     "pdf2pic": "^3.2.0",
+    "sanitize-filename": "^1.6.4",
     "socket.io": "^4.8.3",
     "winston": "^3.19.0",
     "winston-daily-rotate-file": "^5.0.0"

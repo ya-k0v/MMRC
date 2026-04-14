@@ -1,18 +1,18 @@
 [Unit]
-Description=MMRC Server v3.1.1
+Description=MMRC Server v3.2.0
 After=network-online.target local-fs.target
 Wants=network-online.target
 StartLimitIntervalSec=60
 StartLimitBurst=5
-RequiresMountsFor=/mnt/videocontrol-data
 
 [Service]
 Type=simple
 User=vcuser
 Group=vcgroup
-WorkingDirectory=/vid/videocontrol
-ExecStartPre=/usr/bin/node /vid/videocontrol/scripts/check-startup-compat.js
-ExecStart=/usr/bin/node /vid/videocontrol/server.js
+WorkingDirectory=/var/lib/mmrc
+ExecStartPre=/usr/bin/node /var/lib/mmrc/scripts/check-startup-compat.js
+ExecStartPre=/usr/bin/node /var/lib/mmrc/src/database/migrate.js
+ExecStart=/usr/bin/node /var/lib/mmrc/server.js
 Restart=on-failure
 RestartSec=3
 TimeoutStartSec=120
@@ -24,11 +24,9 @@ SyslogIdentifier=mmrc
 # Security
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=strict
-# ReadWritePaths настраиваются динамически в зависимости от contentRoot из настроек
-# По умолчанию: /vid/videocontrol/data и /vid/videocontrol/config
-# Если используется внешний диск, добавьте его путь сюда
-ReadWritePaths=/vid/videocontrol/data /vid/videocontrol/config /mnt/videocontrol-data
+# Позволяет менять contentRoot через админку без правки systemd unit.
+# Защищает системные директории (/usr, /boot, /etc), но не ограничивает data-директорию.
+ProtectSystem=full
 
 # Resource limits
 LimitNOFILE=65535
@@ -36,7 +34,7 @@ LimitNOFILE=65535
 # Environment
 Environment=NODE_ENV=production
 # Загружаем переменные из .env файла
-EnvironmentFile=-/vid/videocontrol/.env
+EnvironmentFile=-/var/lib/mmrc/.env
 
 [Install]
 WantedBy=multi-user.target

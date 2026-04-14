@@ -12,7 +12,6 @@ import {
 } from './src/config/constants.js';
 import { createSocketServer } from './src/config/socket-config.js';
 import { 
-  initDatabase, 
   closeDatabase, 
   getDatabase, 
   getAllDeviceVolumeStates, 
@@ -21,6 +20,7 @@ import {
   stopWalCheckpointInterval,
   performWalCheckpoint
 } from './src/database/database.js';
+import { runMigrations } from './src/database/migrate.js';
 import { 
   loadDevicesFromDB, 
   saveDevicesToDB, 
@@ -48,7 +48,8 @@ import { createHeroRouter } from './src/hero/index.js';
 import { createVolumeRouter } from './src/routes/volume.js';
 import fileResolverRouter from './src/routes/file-resolver.js';
 import { createNotificationsRouter } from './src/routes/notifications.js';
-import { createUploadMiddleware } from './src/middleware/multer-config.js';
+import multer from 'multer';
+import { createUploadMiddleware, validateUploadSize } from './src/middleware/multer-config.js';
 import { requireAuth, requireAdmin, requireHeroAdmin, requireSpeaker } from './src/middleware/auth.js';
 import { globalLimiter, apiSpeedLimiter } from './src/middleware/rate-limit.js';
 import { setupExpressMiddleware, setupStaticFiles } from './src/middleware/express-config.js';
@@ -60,6 +61,7 @@ import logger, { httpLoggerMiddleware } from './src/utils/logger.js';
 import { cleanupResolutionCache, getResolutionCacheSize } from './src/video/resolution-cache.js';
 import { circuitBreakers } from './src/utils/circuit-breaker.js';
 import { getSettings, updateContentRootPath, getDataRoot, getDevicesPath, getStreamsOutputDir, getConvertedCache, getLogsDir, getTempDir } from './src/config/settings-manager.js';
+import { validatePath } from './src/utils/path-validator.js';
 import { getMetrics } from './src/utils/metrics.js';
 import { timerRegistry } from './src/utils/timer-registry.js';
 import adminRouter from './src/routes/admin.js';
@@ -113,7 +115,13 @@ app.use('/api/', apiSpeedLimiter);
 // DATABASE INITIALIZATION
 // ========================================
 const DB_PATH = path.join(ROOT, 'config', 'main.db');
-initDatabase(DB_PATH);
+try {
+  // Run migrations / ensure schema before continuing startup
+  runMigrations(DB_PATH);
+} catch (err) {
+  logger.error('[Server] Database migration failed, aborting startup', { error: err?.message || String(err) });
+  throw err;
+}
 
 // Запускаем периодический WAL checkpoint для стабильности БД
 // Проверяет размер WAL файла каждую минуту и выполняет checkpoint если > 100MB
@@ -419,6 +427,265 @@ app.get('/favicon.ico', (req, res) => {
 // ========================================
 // ADMIN ENDPOINTS
 // ========================================
+const AUTO_RESTART_AFTER_DB_IMPORT = process.env.AUTO_RESTART_AFTER_DB_IMPORT !== '0';
+const DB_IMPORT_RESTART_DELAY_MS = Math.max(300, Number(process.env.DB_IMPORT_RESTART_DELAY_MS || 800));
+const MANUAL_RESTART_DELAY_MS = Math.max(500, Number(process.env.MANUAL_RESTART_DELAY_MS || 1200));
+const SERVICE_LOGS_MAX_LINES = Math.max(50, Number(process.env.SERVICE_LOGS_MAX_LINES || 2000));
+const SERVICE_LOGS_DEFAULT_LINES = Math.max(20, Number(process.env.SERVICE_LOGS_DEFAULT_LINES || 200));
+const SERVICE_LOGS_MAX_CHUNK_BYTES = Math.max(64 * 1024, Number(process.env.SERVICE_LOGS_MAX_CHUNK_BYTES || 512 * 1024));
+const ADMIN_SERVICE_LOGS_DIR = path.join(ROOT, '.tmp', 'logs');
+const ADMIN_DB_IMPORT_DIR = path.join(ROOT, '.tmp', 'db-import');
+let isServiceRestartScheduled = false;
+
+function scheduleServiceRestart(reason = 'admin_restart', delayMs = DB_IMPORT_RESTART_DELAY_MS) {
+  if (isServiceRestartScheduled) {
+    return true;
+  }
+
+  isServiceRestartScheduled = true;
+  logger.warn('[Admin] Service restart scheduled', { reason, delayMs });
+
+  setTimeout(() => {
+    gracefulShutdown(reason, 1).catch((err) => {
+      logger.error('[Admin] Graceful service restart failed', { reason, error: err?.message || String(err) });
+      process.exit(1);
+    });
+  }, delayMs);
+
+  return true;
+}
+
+function scheduleRestartAfterDbImport() {
+  if (!AUTO_RESTART_AFTER_DB_IMPORT) {
+    logger.info('[Admin] Auto restart after DB import is disabled');
+    return false;
+  }
+
+  return scheduleServiceRestart('db_import_restart', DB_IMPORT_RESTART_DELAY_MS);
+}
+
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return parsed;
+}
+
+function clampInt(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function resolveLatestServiceLogFilePath() {
+  const candidateDirs = [path.resolve(ADMIN_SERVICE_LOGS_DIR)];
+
+  const seenDirs = new Set();
+  for (const dirPath of candidateDirs) {
+    if (!dirPath || seenDirs.has(dirPath)) continue;
+    seenDirs.add(dirPath);
+
+    try {
+        const safeDirPath = validatePath(path.resolve(dirPath), ADMIN_SERVICE_LOGS_DIR);
+      if (!fs.existsSync(safeDirPath)) continue;
+
+      const files = fs.readdirSync(safeDirPath)
+        .filter((name) => /^combined-\d{4}-\d{2}-\d{2}\.log$/.test(name))
+        .sort();
+
+      if (!files.length) continue;
+      return path.join(safeDirPath, files[files.length - 1]);
+    } catch (error) {
+      logger.warn('[Admin] Failed to inspect logs directory', {
+        dirPath: path.resolve(dirPath),
+        error: error?.message || String(error)
+      });
+    }
+  }
+
+  return null;
+}
+
+function readLastLinesFromFile(filePath, lineLimit) {
+  const safeLimit = clampInt(parsePositiveInt(lineLimit, SERVICE_LOGS_DEFAULT_LINES), 1, SERVICE_LOGS_MAX_LINES);
+  const safeFilePath = validatePath(path.resolve(String(filePath || '')), ADMIN_SERVICE_LOGS_DIR);
+  const isAllowedLogFileName = /^combined-\d{4}-\d{2}-\d{2}\.log$/.test(path.basename(safeFilePath));
+  if (!isAllowedLogFileName) {
+    throw new Error('Invalid service log path');
+  }
+  const fd = fs.openSync(safeFilePath, 'r');
+
+  try {
+    const stats = fs.fstatSync(fd);
+    if (!stats.size) {
+      return { lines: [], size: 0, truncated: false };
+    }
+
+    const chunkSize = 64 * 1024;
+    let position = stats.size;
+    let content = '';
+    let linesFound = 0;
+
+    while (position > 0 && linesFound <= safeLimit) {
+      const bytesToRead = Math.min(chunkSize, position);
+      position -= bytesToRead;
+      const buffer = Buffer.alloc(bytesToRead);
+      fs.readSync(fd, buffer, 0, bytesToRead, position);
+      content = buffer.toString('utf8') + content;
+      linesFound = content.split(/\r?\n/).length - 1;
+    }
+
+    const lines = content
+      .split(/\r?\n/)
+      .map((line) => line.trimEnd())
+      .filter((line) => line.length > 0)
+      .slice(-safeLimit);
+
+    return {
+      lines,
+      size: stats.size,
+      truncated: false
+    };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function readLinesFromOffset(filePath, offset) {
+  const safeOffset = Math.max(0, parsePositiveInt(offset, 0));
+  const safeFilePath = validatePath(path.resolve(String(filePath || '')), ADMIN_SERVICE_LOGS_DIR);
+  const isAllowedLogFileName = /^combined-\d{4}-\d{2}-\d{2}\.log$/.test(path.basename(safeFilePath));
+  if (!isAllowedLogFileName) {
+    throw new Error('Invalid service log path');
+  }
+  const fd = fs.openSync(safeFilePath, 'r');
+
+  try {
+    const stats = fs.fstatSync(fd);
+    if (safeOffset >= stats.size) {
+      return { lines: [], size: stats.size, truncated: false, reset: false };
+    }
+
+    let startOffset = safeOffset;
+    let truncated = false;
+    const unreadBytes = stats.size - startOffset;
+
+    if (unreadBytes > SERVICE_LOGS_MAX_CHUNK_BYTES) {
+      startOffset = stats.size - SERVICE_LOGS_MAX_CHUNK_BYTES;
+      truncated = true;
+    }
+
+    const bytesToRead = stats.size - startOffset;
+    if (bytesToRead <= 0) {
+      return { lines: [], size: stats.size, truncated, reset: false };
+    }
+
+    const buffer = Buffer.alloc(bytesToRead);
+    fs.readSync(fd, buffer, 0, bytesToRead, startOffset);
+
+    const lines = buffer
+      .toString('utf8')
+      .split(/\r?\n/)
+      .map((line) => line.trimEnd())
+      .filter((line) => line.length > 0);
+
+    return {
+      lines,
+      size: stats.size,
+      truncated,
+      reset: false
+    };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+app.post('/api/admin/restart-service', requireAuth, requireAdmin, (req, res) => {
+  const restartScheduled = scheduleServiceRestart('admin_manual_restart', MANUAL_RESTART_DELAY_MS);
+  logger.warn('[Admin] Manual service restart requested', {
+    user: req.user?.username || 'unknown',
+    restartScheduled
+  });
+
+  return res.json({
+    ok: true,
+    restartScheduled,
+    message: 'Перезапуск сервиса запущен. Подождите 3-10 секунд и обновите страницу.'
+  });
+});
+
+app.get('/api/admin/service-logs', requireAuth, requireAdmin, (req, res) => {
+  try {
+    const requestedLines = clampInt(
+      parsePositiveInt(req.query.lines, SERVICE_LOGS_DEFAULT_LINES),
+      1,
+      SERVICE_LOGS_MAX_LINES
+    );
+    const requestedOffset = parsePositiveInt(req.query.offset, -1);
+    const requestedFileName = typeof req.query.fileName === 'string' ? req.query.fileName : '';
+
+    const logFilePath = resolveLatestServiceLogFilePath();
+    if (!logFilePath) {
+      return res.json({
+        ok: true,
+        lines: [],
+        nextOffset: 0,
+        fileName: null,
+        reset: true,
+        truncated: false,
+        source: 'combined'
+      });
+    }
+
+    const fileName = path.basename(logFilePath);
+
+    // Первый запрос (без offset) - отдаем хвост последних N строк
+    if (requestedOffset < 0) {
+      const snapshot = readLastLinesFromFile(logFilePath, requestedLines);
+      return res.json({
+        ok: true,
+        lines: snapshot.lines,
+        nextOffset: snapshot.size,
+        fileName,
+        reset: true,
+        truncated: snapshot.truncated,
+        source: 'combined'
+      });
+    }
+
+    const chunkProbe = readLinesFromOffset(logFilePath, requestedOffset);
+    const fileChanged = Boolean(requestedFileName) && requestedFileName !== fileName;
+    const offsetOutOfRange = requestedOffset > chunkProbe.size;
+
+    if (fileChanged || offsetOutOfRange) {
+      const snapshot = readLastLinesFromFile(logFilePath, requestedLines);
+      return res.json({
+        ok: true,
+        lines: snapshot.lines,
+        nextOffset: snapshot.size,
+        fileName,
+        reset: true,
+        truncated: snapshot.truncated,
+        source: 'combined'
+      });
+    }
+
+    const chunk = chunkProbe;
+    return res.json({
+      ok: true,
+      lines: chunk.lines,
+      nextOffset: chunk.size,
+      fileName,
+      reset: chunk.reset,
+      truncated: chunk.truncated,
+      source: 'combined'
+    });
+  } catch (error) {
+    logger.error('[Admin] Failed to read service logs', { error: error?.message || String(error) });
+    return res.status(500).json({
+      ok: false,
+      error: 'Не удалось получить логи сервиса'
+    });
+  }
+});
+
 // Экспорт базы данных (только для админов)
 app.get('/api/admin/export-database', requireAuth, requireAdmin, (req, res) => {
   try {
@@ -442,6 +709,177 @@ app.get('/api/admin/export-database', requireAuth, requireAdmin, (req, res) => {
   } catch (error) {
     logger.error('[Admin] Error exporting database:', error);
     res.status(500).json({ error: 'Failed to export database' });
+  }
+});
+
+// Импорт базы данных (замена текущей БД). Принимает FormData с полем `file` (.db).
+app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUploadSize, (req, res) => {
+  try {
+    const tempUploadDir = ADMIN_DB_IMPORT_DIR;
+    if (!fs.existsSync(tempUploadDir)) fs.mkdirSync(tempUploadDir, { recursive: true });
+
+    const storage = multer.diskStorage({
+      destination: (r, f, cb) => cb(null, tempUploadDir),
+        filename: (r, f, cb) => cb(null, `import_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.dbupload`)
+    });
+
+    const uploadSingle = multer({ storage, limits: { fileSize: MAX_FILE_SIZE } }).single('file');
+
+    uploadSingle(req, res, async (err) => {
+      if (err) {
+        logger.warn('[Admin] Import DB upload failed', { error: err.message });
+        return res.status(400).json({ error: err.message || 'Upload failed' });
+      }
+
+      const file = req.file;
+      if (!file) return res.status(400).json({ error: 'No file uploaded' });
+
+      let uploadedPath;
+      try {
+          const uploadedName = String(file.filename || '');
+          if (!/^[A-Za-z0-9._-]+$/.test(uploadedName)) {
+            throw new Error('Invalid uploaded filename');
+          }
+          uploadedPath = validatePath(path.join(tempUploadDir, uploadedName), tempUploadDir);
+      } catch (pathError) {
+        return res.status(400).json({ error: 'Invalid uploaded file path' });
+      }
+
+      const ext = path.extname(file.originalname || '').toLowerCase();
+      if (ext !== '.db') {
+        try { fs.unlinkSync(uploadedPath); } catch (_) {}
+        return res.status(400).json({ error: 'Unsupported file type. Expected .db' });
+      }
+
+      // Быстрая проверка сигнатуры SQLite файла
+      try {
+        const fd = fs.openSync(uploadedPath, 'r');
+        const headerBuffer = Buffer.alloc(16);
+        try {
+          fs.readSync(fd, headerBuffer, 0, 16, 0);
+        } finally {
+          fs.closeSync(fd);
+        }
+
+        const signature = headerBuffer.toString('utf8');
+        if (signature !== 'SQLite format 3\u0000') {
+          try { fs.unlinkSync(uploadedPath); } catch (_) {}
+          return res.status(400).json({ error: 'Invalid SQLite database file' });
+        }
+      } catch (signatureError) {
+        try { fs.unlinkSync(uploadedPath); } catch (_) {}
+        return res.status(400).json({ error: signatureError.message || 'Failed to validate file' });
+      }
+
+      const backupPath = `${DB_PATH}.bak.${Date.now()}`;
+      const walPath = `${DB_PATH}-wal`;
+      const shmPath = `${DB_PATH}-shm`;
+      let checkpointStopped = false;
+      let backupCreated = false;
+
+      const removeWalShmFiles = () => {
+        [walPath, shmPath].forEach((p) => {
+          try {
+            if (fs.existsSync(p)) fs.unlinkSync(p);
+          } catch (cleanupError) {
+            logger.warn('[Admin] Failed to remove SQLite sidecar file', {
+              file: p,
+              error: cleanupError.message
+            });
+          }
+        });
+      };
+
+      try {
+        // Создаём резервную копию текущей БД если она существует
+        if (fs.existsSync(DB_PATH)) {
+          fs.copyFileSync(DB_PATH, backupPath);
+          backupCreated = true;
+          logger.info('[Admin] Database backup created', { backupPath });
+        }
+
+        // Остановим периодический checkpoint и попробуем корректно завершить БД
+        try {
+          stopWalCheckpointInterval();
+          checkpointStopped = true;
+        } catch (e) {
+          logger.warn('[Admin] Failed to stop WAL checkpoint interval', { error: e.message });
+        }
+
+        try {
+          performWalCheckpoint(true);
+        } catch (e) {
+          logger.warn('[Admin] WAL checkpoint warning', { error: e.message });
+        }
+
+        try {
+          closeDatabase();
+        } catch (e) {
+          logger.warn('[Admin] closeDatabase warning', { error: e.message });
+        }
+
+        // Важно: удаляем -wal/-shm перед подменой файла базы
+        removeWalShmFiles();
+
+        // Копируем загруженный файл на место основной БД
+        fs.copyFileSync(uploadedPath, DB_PATH);
+        logger.info('[Admin] Database file replaced', { dbPath: DB_PATH });
+
+        // Применяем миграции на новой базе
+        runMigrations(DB_PATH);
+
+        // Перезагрузим in-memory данные (devices, fileNamesMap)
+        devices = loadDevicesFromDB();
+        fileNamesMap = loadFileNamesFromDB();
+        io.emit('devices/updated');
+
+        const restartScheduled = scheduleRestartAfterDbImport();
+
+        res.json({
+          ok: true,
+          restartScheduled,
+          message: restartScheduled
+            ? 'Импорт завершён. Сервис будет автоматически перезапущен.'
+            : 'Импорт завершён.'
+        });
+        logger.info('[Admin] Database import completed', {
+          user: req.user?.username || 'unknown',
+          restartScheduled
+        });
+      } catch (error) {
+        logger.error('[Admin] Database import failed', { error: error?.message || String(error) });
+        // Попытка восстановления из бэкапа
+        try {
+          if (backupCreated && fs.existsSync(backupPath)) {
+            removeWalShmFiles();
+            fs.copyFileSync(backupPath, DB_PATH);
+            runMigrations(DB_PATH);
+            devices = loadDevicesFromDB();
+            fileNamesMap = loadFileNamesFromDB();
+            io.emit('devices/updated');
+            logger.info('[Admin] Database restored from backup after import error and state reloaded', { backupPath });
+          }
+        } catch (restoreErr) {
+          logger.error('[Admin] Failed to restore database from backup', { error: restoreErr.message });
+        }
+
+        return res.status(500).json({ error: error.message || 'Import failed' });
+      } finally {
+        if (checkpointStopped) {
+          try {
+            startWalCheckpointInterval(WAL_CHECKPOINT_INTERVAL_MS);
+          } catch (restartErr) {
+            logger.warn('[Admin] Failed to restart WAL checkpoint interval', { error: restartErr.message });
+          }
+        }
+
+        // Удалим временный файл
+        try { if (fs.existsSync(uploadedPath)) fs.unlinkSync(uploadedPath); } catch (_) {}
+      }
+    });
+  } catch (outerErr) {
+    logger.error('[Admin] Unexpected error in import-database route', { error: outerErr.message });
+    return res.status(500).json({ error: outerErr.message || 'Unexpected error' });
   }
 });
 
@@ -862,7 +1300,7 @@ const cleanupInterval = timerRegistry.setInterval(() => {
 
 let isShuttingDown = false;
 
-async function gracefulShutdown(signal) {
+async function gracefulShutdown(signal, exitCode = 0) {
   if (isShuttingDown) return;
   isShuttingDown = true;
   
@@ -906,10 +1344,10 @@ async function gracefulShutdown(signal) {
     await new Promise(resolve => setTimeout(resolve, 2000));
     
     logger.info('✅ Graceful shutdown completed');
-    process.exit(0);
+    process.exit(exitCode);
   } catch (e) {
     logger.error('❌ Error during shutdown:', e);
-    process.exit(1);
+    process.exit(exitCode === 0 ? 1 : exitCode);
   }
 }
 

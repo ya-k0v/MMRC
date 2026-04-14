@@ -6,10 +6,58 @@
 import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
+import fs from 'fs';
 import { getLogsDir } from '../config/settings-manager.js';
+import { ROOT } from '../config/constants.js';
 
 // Директория для логов (вычисляется динамически из настроек БД)
-const LOG_DIR = getLogsDir();
+let LOG_DIR = null;
+let FILE_LOGGING_ENABLED = true;
+
+function sanitizeDirectoryPath(inputPath) {
+  if (typeof inputPath !== 'string') {
+    return null;
+  }
+
+  const trimmed = inputPath.trim();
+  if (!trimmed || trimmed.includes('\0') || !/^[a-zA-Z0-9_./\-\s]+$/.test(trimmed)) {
+    return null;
+  }
+
+  return path.resolve(trimmed);
+}
+
+const fallbackLogDir = path.resolve(path.join(process.cwd(), '.tmp', 'logs'));
+
+function isAllowedLogsDir(dirPath) {
+  if (!dirPath) {
+    return false;
+  }
+
+  const normalized = path.resolve(dirPath);
+  const projectRoot = path.resolve(ROOT);
+  const mountRoot = path.resolve('/mnt');
+
+  return (
+    normalized === projectRoot ||
+    normalized.startsWith(projectRoot + path.sep) ||
+    normalized === mountRoot ||
+    normalized.startsWith(mountRoot + path.sep)
+  );
+}
+
+try {
+  const configuredLogsDir = sanitizeDirectoryPath(getLogsDir());
+  LOG_DIR = isAllowedLogsDir(configuredLogsDir) ? configuredLogsDir : fallbackLogDir;
+} catch (err) {
+  LOG_DIR = fallbackLogDir;
+}
+
+try {
+  fs.mkdirSync(fallbackLogDir, { recursive: true });
+} catch (e) {
+  // ignore
+}
 
 // Форматирование логов
 const logFormat = winston.format.combine(
@@ -25,7 +73,7 @@ const logLevelMap = {
   off: 'off',
   debug: 'debug',
   info: 'info',
-  warning: 'error',
+  warning: 'warn',
   warn: 'warn',
   error: 'error'
 };
@@ -46,26 +94,37 @@ const consoleFormat = winston.format.combine(
   })
 );
 
-// Транспорт: файлы с ротацией (error)
-const errorFileTransport = new DailyRotateFile({
-  filename: path.join(LOG_DIR, 'error-%DATE%.log'),
-  datePattern: 'YYYY-MM-DD',
-  level: 'error',
-  maxSize: '20m',
-  maxFiles: '30d', // Хранить 30 дней
-  format: logFormat,
-  silent: isLogSilent
-});
+let errorFileTransport = null;
+let combinedFileTransport = null;
+if (LOG_DIR) {
+  try {
+    errorFileTransport = new DailyRotateFile({
+      filename: path.join(LOG_DIR, 'error-%DATE%.log'),
+      datePattern: 'YYYY-MM-DD',
+      level: 'error',
+      maxSize: '20m',
+      maxFiles: '30d', // Хранить 30 дней
+      format: logFormat,
+      silent: isLogSilent
+    });
 
-// Транспорт: файлы с ротацией (combined - все уровни)
-const combinedFileTransport = new DailyRotateFile({
-  filename: path.join(LOG_DIR, 'combined-%DATE%.log'),
-  datePattern: 'YYYY-MM-DD',
-  maxSize: '20m',
-  maxFiles: '14d', // Хранить 14 дней
-  format: logFormat,
-  silent: isLogSilent
-});
+    combinedFileTransport = new DailyRotateFile({
+      filename: path.join(LOG_DIR, 'combined-%DATE%.log'),
+      datePattern: 'YYYY-MM-DD',
+      maxSize: '20m',
+      maxFiles: '14d', // Хранить 14 дней
+      format: logFormat,
+      silent: isLogSilent
+    });
+  } catch (err) {
+    FILE_LOGGING_ENABLED = false;
+    try { process.stderr.write(`[Logger] Failed to initialize file transports: ${err.message}\n`); } catch (_) {}
+    errorFileTransport = null;
+    combinedFileTransport = null;
+  }
+} else {
+  try { process.stderr.write(`[Logger] File logging disabled; using console only\n`); } catch (_) {}
+}
 
 // Транспорт: консоль (уровень задается через LOG_LEVEL)
 const consoleTransport = new winston.transports.Console({
@@ -81,26 +140,31 @@ const logger = winston.createLogger({
   silent: isLogSilent,
   format: logFormat,
   defaultMeta: { service: 'mmrc' },
+  exitOnError: false,
   transports: [
-    errorFileTransport,
-    combinedFileTransport,
+    ...(errorFileTransport ? [errorFileTransport] : []),
+    ...(combinedFileTransport ? [combinedFileTransport] : []),
     consoleTransport
   ],
   exceptionHandlers: [
-    new DailyRotateFile({
-      filename: path.join(LOG_DIR, 'exceptions-%DATE%.log'),
-      datePattern: 'YYYY-MM-DD',
-      maxSize: '20m',
-      maxFiles: '30d'
-    })
+    ...(FILE_LOGGING_ENABLED && LOG_DIR
+      ? [new DailyRotateFile({
+          filename: path.join(LOG_DIR, 'exceptions-%DATE%.log'),
+          datePattern: 'YYYY-MM-DD',
+          maxSize: '20m',
+          maxFiles: '30d'
+        })]
+      : [])
   ],
   rejectionHandlers: [
-    new DailyRotateFile({
-      filename: path.join(LOG_DIR, 'rejections-%DATE%.log'),
-      datePattern: 'YYYY-MM-DD',
-      maxSize: '20m',
-      maxFiles: '30d'
-    })
+    ...(FILE_LOGGING_ENABLED && LOG_DIR
+      ? [new DailyRotateFile({
+          filename: path.join(LOG_DIR, 'rejections-%DATE%.log'),
+          datePattern: 'YYYY-MM-DD',
+          maxSize: '20m',
+          maxFiles: '30d'
+        })]
+      : [])
   ]
 });
 
@@ -150,7 +214,25 @@ export const httpLoggerMiddleware = (req, res, next) => {
       logData.role = req.user.role;
     }
 
-    const level = res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info';
+    const rawUrl = req.originalUrl || req.url || '';
+    const urlPath = rawUrl.split('?')[0];
+    const isAdminApi = urlPath.startsWith('/api/admin/');
+    const isAdminWrite = isAdminApi && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
+    const isServiceLogsPoll = urlPath === '/api/admin/service-logs';
+
+    let level = 'info';
+    if (res.statusCode >= 500) {
+      level = 'error';
+    } else if (res.statusCode >= 400) {
+      level = 'warn';
+    } else if (isServiceLogsPoll) {
+      // Polling-эндпоинт viewer'а не должен засорять логи.
+      level = 'debug';
+    } else if (isAdminWrite) {
+      // Админские изменяющие операции оставляем заметными.
+      level = 'warn';
+    }
+
     logAPI(level, `${req.method} ${req.originalUrl || req.url}`, logData);
 
     // Записываем метрики (асинхронно, не блокируем ответ)

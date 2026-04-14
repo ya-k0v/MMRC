@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+dev/
 
 # Logs & runtime artifacts
 data/
@@ -16,6 +17,7 @@ config/main.db-wal
 config/main.db-shm
 config/main.db.backup
 config/main.db.backup.*
+config/*.db.bak.*
 config/json-backup-*/
 config/heroes.db
 config/heroes.db-wal
@@ -74,7 +76,7 @@ bin/yt-dlp.tmp-*
 *.tar.gz
 *.zip
 *.apk
-!MMRCPlayer-v3.1.1.apk
+!MMRCPlayer-v3.2.0.apk
 *.ap_
 *.aab
 

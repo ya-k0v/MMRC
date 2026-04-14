@@ -22,15 +22,15 @@
 
 ```bash
 # На новом сервере (Ubuntu/Debian)
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/main/dev/scripts/quick-install.sh)" /vid/videocontrol
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/main/dev/scripts/quick-install.sh)" /var/lib/mmrc
 ```
 
 Или если уже клонировали репозиторий:
 
 ```bash
-git clone https://github.com/ya-k0v/MMRC.git /vid/videocontrol
-cd /vid/videocontrol
-sudo bash dev/scripts/quick-install.sh /vid/videocontrol
+git clone https://github.com/ya-k0v/MMRC.git /var/lib/mmrc
+cd /var/lib/mmrc
+sudo bash dev/scripts/quick-install.sh /var/lib/mmrc
 ```
 
 **Скрипт автоматически:**
@@ -49,7 +49,7 @@ AUTO_CONFIRM=1 \
 STORAGE_MODE=external \
 CONTENT_DIR=/mnt/vc-content \
 CONTENT_SOURCE="UUID=xxxx-xxxx" \
-sudo bash dev/scripts/quick-install.sh /vid/videocontrol
+sudo bash dev/scripts/quick-install.sh /var/lib/mmrc
 ```
 
 **Параметры:**
@@ -107,8 +107,8 @@ libreoffice --version
 
 ```bash
 # Клонируем репозиторий
-git clone https://github.com/ya-k0v/MMRC.git /vid/videocontrol
-cd /vid/videocontrol
+git clone https://github.com/ya-k0v/MMRC.git /var/lib/mmrc
+cd /var/lib/mmrc
 
 # Устанавливаем зависимости
 npm install
@@ -231,8 +231,8 @@ tail -f data/logs/combined-*.log
 
 ```bash
 # На новом сервере
-git clone https://github.com/ya-k0v/MMRC.git /vid/videocontrol
-cd /vid/videocontrol
+git clone https://github.com/ya-k0v/MMRC.git /var/lib/mmrc
+cd /var/lib/mmrc
 npm install
 cp .env.example .env
 # Отредактируйте .env с вашими настройками
@@ -243,7 +243,7 @@ nano .env
 
 ```bash
 # На старом сервере - создайте архив
-cd /vid/videocontrol
+cd /var/lib/mmrc
 tar --exclude='node_modules' \
     --exclude='data' \
     --exclude='config/*.db' \
@@ -278,7 +278,7 @@ tar -czf videocontrol-data-backup.tar.gz \
 scp videocontrol-data-backup.tar.gz user@new-server:/tmp/
 
 # На новом сервере - восстановите
-cd /vid/videocontrol
+cd /var/lib/mmrc
 tar -xzf /tmp/videocontrol-data-backup.tar.gz
 
 # Установите правильные права
@@ -290,7 +290,7 @@ sudo chown -R $USER:$USER config/ data/
 ## 🔄 Обновление
 
 ```bash
-cd /vid/videocontrol
+cd /var/lib/mmrc
 sudo systemctl stop videocontrol
 
 # Бэкап
@@ -428,7 +428,7 @@ npm start
 sudo journalctl -u videocontrol -n 100
 node --version  # должно быть 20.x
 sudo netstat -tuln | grep 3000
-ls -la /vid/videocontrol/config/main.db
+ls -la /var/lib/mmrc/config/main.db
 ```
 
 ### Проблема: Nginx ошибка
@@ -452,4 +452,4 @@ sudo tail -50 /var/log/nginx/videocontrol_error.log
 
 ---
 
-**Версия:** 3.1.1
+**Версия:** 3.2.0

@@ -89,7 +89,9 @@ function main() {
   validateRoutePatterns(expressMajor, issues);
 
   const settings = readJson(path.join(ROOT, 'config', 'app-settings.json'), {});
-  const contentRoot = settings.contentRoot || path.join(ROOT, 'data');
+  const envContentRoot = (process.env.CONTENT_ROOT || '').trim();
+  const requestedContentRoot = envContentRoot || settings.contentRoot || path.join(ROOT, 'data');
+  const contentRoot = path.resolve(requestedContentRoot);
 
   const requiredDirs = [
     path.join(ROOT, 'config'),

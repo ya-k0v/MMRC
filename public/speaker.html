@@ -22,6 +22,38 @@
   <link rel="stylesheet" href="/css/tablet-improvements.css"/>
   <style>
     /* Speaker-specific adjustments */
+    :root {
+      --speaker-base-font-size: clamp(14px, 1.15vw + 10px, 18px);
+      --speaker-control-height: clamp(38px, 4.8dvh, 52px);
+      --speaker-control-padding-y: clamp(6px, 0.9dvh, 10px);
+      --speaker-control-padding-x: clamp(10px, 1.6vw, 16px);
+      --speaker-pager-btn-min-width: clamp(72px, 12vw, 112px);
+      --speaker-preview-close-size: clamp(38px, 4.6dvh, 46px);
+      --speaker-tv-pager-btn-min-width: clamp(50px, 8vw, 72px);
+      --speaker-tv-pager-btn-height: clamp(34px, 4.1dvh, 42px);
+      --speaker-tv-pager-btn-padding-y: clamp(3px, 0.45dvh, 6px);
+      --speaker-tv-pager-btn-padding-x: clamp(6px, 0.85vw, 10px);
+      --speaker-file-item-min-height: clamp(52px, 6.4dvh, 70px);
+      --speaker-file-info-padding: clamp(2px, 0.45dvh, 6px) clamp(8px, 1.3vw, 12px);
+      --speaker-file-name-gap: 2px;
+      --speaker-file-meta-gap: 3px;
+      --speaker-file-name-size: clamp(0.92rem, 0.38vw + 0.84rem, 1.04rem);
+      --speaker-badge-font-size: clamp(0.68rem, 0.24vw + 0.6rem, 0.8rem);
+      --speaker-play-icon-size: clamp(1.55rem, 1.25vw + 1.2rem, 2rem);
+      --speaker-play-min-width: clamp(64px, 10vw, 84px);
+      --speaker-tile-min-height: clamp(74px, 10dvh, 96px);
+      --speaker-controls-gap: clamp(6px, 1vw, 10px);
+    }
+
+    html {
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+    }
+
+    body.maintenance-ui {
+      font-size: var(--speaker-base-font-size);
+    }
+
     /* По умолчанию (<1024px): всё вертикально */
     .speaker-layout {
       display: grid;
@@ -36,6 +68,106 @@
       grid-template-columns: 1fr;
       gap: var(--space-md);
       min-height: 0;
+    }
+
+    .speaker-layout .file-item {
+      min-height: var(--speaker-file-item-min-height) !important;
+      max-height: none !important;
+    }
+
+    .speaker-layout .file-item .file-info {
+      padding: var(--speaker-file-info-padding) !important;
+    }
+
+    .speaker-layout .file-item .file-item-name {
+      font-size: var(--speaker-file-name-size) !important;
+    }
+
+    .speaker-layout .file-item .file-type-badge,
+    .speaker-layout .file-item .resolution-badge,
+    .speaker-layout .file-item .device-badge {
+      font-size: var(--speaker-badge-font-size) !important;
+    }
+
+    .speaker-layout .playBtn {
+      min-width: var(--speaker-play-min-width) !important;
+      font-size: var(--speaker-play-icon-size) !important;
+    }
+
+    #playerControls {
+      gap: var(--speaker-controls-gap) !important;
+    }
+
+    #tvPager {
+      flex-wrap: nowrap !important;
+      gap: clamp(4px, 0.7vw, 8px) !important;
+    }
+
+    #tvPager > button {
+      flex: 1 1 0;
+      min-width: 0;
+    }
+
+    #tvPager > span {
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
+
+    #filesPaneMeta {
+      display: none;
+    }
+
+    @media (min-width: 1200px) and (hover: hover) and (pointer: fine) {
+      #filesPaneMeta {
+        display: block;
+      }
+    }
+
+    @media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
+      #filesPaneMeta {
+        display: none !important;
+      }
+    }
+
+    #playerControls button,
+    #filesModeSwitch button,
+    #tvPager button,
+    #filePager button,
+    .preview-controls button:not(#pdfCloseBtn) {
+      min-height: var(--speaker-control-height) !important;
+      height: auto !important;
+      min-width: var(--speaker-pager-btn-min-width) !important;
+      padding: var(--speaker-control-padding-y) var(--speaker-control-padding-x) !important;
+    }
+
+    #pdfCloseBtn {
+      min-width: var(--speaker-preview-close-size) !important;
+      width: var(--speaker-preview-close-size) !important;
+      min-height: var(--speaker-preview-close-size) !important;
+      height: var(--speaker-preview-close-size) !important;
+      padding: 0 !important;
+      flex: 0 0 var(--speaker-preview-close-size) !important;
+      aspect-ratio: 1 / 1;
+      line-height: 1;
+      align-self: center;
+    }
+
+    #tvPager > button.secondary {
+      min-width: var(--speaker-tv-pager-btn-min-width) !important;
+      min-height: var(--speaker-tv-pager-btn-height) !important;
+      height: var(--speaker-tv-pager-btn-height) !important;
+      padding: var(--speaker-tv-pager-btn-padding-y) var(--speaker-tv-pager-btn-padding-x) !important;
+      font-size: clamp(0.78rem, 0.2vw + 0.72rem, 0.9rem);
+      line-height: 1.1;
+    }
+
+    #tvPager > span {
+      font-size: clamp(0.78rem, 0.2vw + 0.72rem, 0.9rem);
+    }
+
+    .speaker-layout .tvTile,
+    .speaker-layout #tvList li {
+      min-height: var(--speaker-tile-min-height) !important;
     }
     
     /* КРИТИЧНО: Ограничиваем ширину панели файлов */
@@ -74,6 +206,11 @@
     
     /* Широкий экран (≥1024px): всё горизонтально */
     @media (min-width: 1024px) {
+      :root {
+        --speaker-base-font-size: clamp(14px, 0.9vw + 10px, 18px);
+        --speaker-file-item-min-height: clamp(54px, 5.8dvh, 72px);
+      }
+
       .speaker-layout {
         grid-template-columns: 280px 1fr;
       }
@@ -180,6 +317,13 @@
     
     /* ===== Мобильная версия ===== */
     @media (max-width: 767px) {
+      :root {
+        --speaker-base-font-size: clamp(14px, 2.9vw, 16px);
+        --speaker-control-height: clamp(40px, 5.5dvh, 50px);
+        --speaker-file-item-min-height: clamp(52px, 8dvh, 74px);
+        --speaker-play-min-width: clamp(62px, 21vw, 84px);
+      }
+
       /* Увеличиваем высоту плиток устройств на мобильных */
       .speaker-layout .tvTile {
         height: 90px !important;
@@ -285,7 +429,7 @@
       </div>
       <div style="display:flex; flex-direction:column; gap:var(--space-md); flex:1 1 auto; min-height:0">
         <ul id="tvList" class="list" style="flex:1 1 auto; min-height:0; overflow-y:visible; overflow-x:hidden; display:flex; flex-direction:column; gap:var(--space-sm)"></ul>
-        <div id="tvPager" class="meta" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); flex-wrap:wrap"></div>
+        <div id="tvPager" class="meta" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); flex-wrap:nowrap"></div>
       </div>
     </aside>
     <section class="speaker-main">

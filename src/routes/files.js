@@ -7,14 +7,19 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import os from 'os';
+import archiver from 'archiver';
+import sanitizeFilename from 'sanitize-filename';
 import { spawn } from 'child_process';
-import { getDevicesPath } from '../config/settings-manager.js';
+import { getDevicesPath, getDataRoot } from '../config/settings-manager.js';
+import { ROOT } from '../config/constants.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { extractZipToFolder, getFolderImagesCount } from '../converters/folder-converter.js';
 import { makeSafeFolderName, makeSafeFilename } from '../utils/transliterate.js';
-import { uploadLimiter, deleteLimiter } from '../middleware/rate-limit.js';
+import { uploadLimiter, deleteLimiter, readLimiter } from '../middleware/rate-limit.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import logger, { logFile, logSecurity } from '../utils/logger.js';
+import { validatePath } from '../utils/path-validator.js';
 import { getCachedResolution, clearResolutionCache } from '../video/resolution-cache.js';
 import { processUploadedFilesAsync, processUploadedStaticContent } from '../utils/file-metadata-processor.js';
 import { getFileMetadata, deleteFileMetadata, getDeviceFilesMetadata, deleteDeviceFilesMetadata, saveFileMetadata, countFileReferences, updateFileOriginalName, createStreamingEntry, updateStreamMetadata, cleanupMissingFiles } from '../database/files-metadata.js';
@@ -22,6 +27,7 @@ import { setFileStatus as setGlobalFileStatus } from '../video/file-status.js';
 import { getStreamPlaybackUrl, getStreamRestreamStatus, upsertStreamJob, removeStreamJob } from '../streams/stream-manager.js';
 import { getTrailerPath } from '../video/trailer-generator.js';
 import { requireSpeaker } from '../middleware/auth.js';
+import { getUserDevices, hasDeviceAccess } from '../middleware/device-access.js';
 import { validateUploadSize } from '../middleware/multer-config.js';
 import { validateFilesAsync } from '../middleware/file-validation.js';
 import { getDatabase } from '../database/database.js';
@@ -36,6 +42,8 @@ const STREAM_PROTOCOLS = new Set(['auto', 'hls', 'dash', 'mpegts']);
 const VIDEO_PROCESSING_EXTENSIONS = new Set(['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi', '.m4v']);
 const YTDLP_FINAL_PATH_MARKER = '__VC_FINAL_PATH__';
 const YTDLP_TITLE_MARKER = '__VC_TITLE__';
+const STREAM_DIRECT_HLS_ENABLED = process.env.STREAM_DIRECT_HLS_ENABLED === '1';
+const STREAM_DIRECT_DASH_ENABLED = process.env.STREAM_DIRECT_DASH_ENABLED === '1';
 
 function detectStreamProtocolFromUrl(url = '') {
   const lower = (url || '').toLowerCase();
@@ -74,6 +82,11 @@ function normalizeStreamProtocol(protocol, url, mimeType) {
     return byMime;
   }
   return detectStreamProtocolFromUrl(url);
+}
+
+function isDirectPlaybackAvailable(protocol) {
+  return (protocol === 'hls' && STREAM_DIRECT_HLS_ENABLED) ||
+         (protocol === 'dash' && STREAM_DIRECT_DASH_ENABLED);
 }
 
 function stripWrappingQuotes(value = '') {
@@ -199,6 +212,33 @@ async function probeMediaInfo(filePath, timeoutMs = 30000) {
       }
     });
   });
+}
+
+async function createZipArchiveFromFolder(sourceFolderPath, outputZipPath) {
+  const folderPath = validatePath(path.resolve(sourceFolderPath), getDataRoot());
+  const safeOutputZipPath = validatePath(path.resolve(outputZipPath), os.tmpdir());
+
+  await new Promise((resolve, reject) => {
+    const output = fs.createWriteStream(safeOutputZipPath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
+
+    output.on('close', resolve);
+    output.on('error', reject);
+    archive.on('error', reject);
+
+    archive.pipe(output);
+    archive.directory(folderPath, false);
+    archive.finalize();
+  });
+}
+
+function safeDownloadFileName(fileName = '', fallback = 'download') {
+  const normalized = String(fileName || '')
+    .replace(/[\r\n]/g, '')
+    .trim();
+
+  const baseName = path.basename(normalized || fallback);
+  return baseName || fallback;
 }
 
 const router = express.Router();
@@ -820,9 +860,35 @@ export function createFilesRouter(deps) {
   const YTDLP_ACTIVE_STATUSES = new Set(['queued', 'waiting_resources', 'preparing', 'downloading', 'processing']);
   const YTDLP_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
   const ytDlpNotificationSnapshot = new Map();
+  const ytDlpDeviceQueue = new Map();
   const ytDlpResourceCpuUnits = Math.max(1, Number.parseInt(process.env.YTDLP_RESOURCE_CPU_UNITS || '1', 10) || 1);
   const ytDlpResourceMemoryMb = Math.max(128, Number.parseInt(process.env.YTDLP_RESOURCE_MEMORY_MB || '512', 10) || 512);
-  const ytDlpResourceTimeoutMs = Math.max(10000, Number.parseInt(process.env.YTDLP_RESOURCE_TIMEOUT_MS || '180000', 10) || 180000);
+  const ytDlpResourceTimeoutRaw = Number.parseInt(process.env.YTDLP_RESOURCE_TIMEOUT_MS || '0', 10);
+  const ytDlpResourceTimeoutMs = Number.isFinite(ytDlpResourceTimeoutRaw) && ytDlpResourceTimeoutRaw >= 0
+    ? ytDlpResourceTimeoutRaw
+    : 0;
+
+  function enqueueYtDlpDeviceJob(deviceId, runner) {
+    const queueKey = String(deviceId || 'unknown');
+    const previousTask = ytDlpDeviceQueue.get(queueKey) || Promise.resolve();
+
+    const nextTask = previousTask
+      .catch((err) => {
+        logger.warn('[yt-dlp] Previous queued job failed', {
+          deviceId: queueKey,
+          error: err?.message || String(err)
+        });
+      })
+      .then(async () => await runner())
+      .finally(() => {
+        if (ytDlpDeviceQueue.get(queueKey) === nextTask) {
+          ytDlpDeviceQueue.delete(queueKey);
+        }
+      });
+
+    ytDlpDeviceQueue.set(queueKey, nextTask);
+    return nextTask;
+  }
 
   function getYtDlpStatusLabel(status) {
     switch (status) {
@@ -1362,11 +1428,38 @@ export function createFilesRouter(deps) {
     const excludeDevice = sanitizeDeviceId(req.query.excludeDevice); // Исключить файлы выбранного устройства
     const limit = Math.min(Math.max(parseInt(req.query.limit || '200', 10) || 200, 1), 500);
     const offset = Math.max(parseInt(req.query.offset || '0', 10) || 0, 0);
+    const isSpeaker = req.user?.role === 'speaker';
+    const allowedDevices = isSpeaker ? getUserDevices(req.user.userId) : [];
+    const allowedDevicesSet = new Set(allowedDevices);
+
+    if (isSpeaker && allowedDevices.length === 0) {
+      return res.json({
+        items: [],
+        total: 0,
+        limit,
+        offset,
+        count: 0,
+        hasMore: false
+      });
+    }
+
+    if (isSpeaker && deviceFilter && !allowedDevicesSet.has(deviceFilter)) {
+      return res.status(403).json({ error: 'Доступ к устройству запрещен', deviceId: deviceFilter });
+    }
+
+    if (isSpeaker && excludeDevice && !allowedDevicesSet.has(excludeDevice)) {
+      return res.status(403).json({ error: 'Доступ к устройству запрещен', deviceId: excludeDevice });
+    }
 
     try {
       const db = getDatabase();
       const params = [];
       const where = [];
+
+      if (isSpeaker) {
+        where.push(`device_id IN (${allowedDevices.map(() => '?').join(',')})`);
+        params.push(...allowedDevices);
+      }
 
       if (deviceFilter) {
         where.push('device_id = ?');
@@ -1450,6 +1543,7 @@ export function createFilesRouter(deps) {
 
       // Добавляем псевдо-записи для папок/презентаций, которых нет в БД
       for (const [deviceId, device] of Object.entries(devices)) {
+        if (isSpeaker && !allowedDevicesSet.has(deviceId)) continue;
         // Исключаем файлы выбранного устройства
         if (excludeDevice && deviceId === excludeDevice) continue;
         
@@ -1511,6 +1605,15 @@ export function createFilesRouter(deps) {
 
     if (!sourceDeviceId || !targetDeviceId || !safeName) {
       return res.status(400).json({ error: 'sourceDeviceId, targetDeviceId и safeName обязательны' });
+    }
+
+    if (req.user?.role === 'speaker') {
+      const hasSourceAccess = hasDeviceAccess(req.user.userId, sourceDeviceId, req.user.role);
+      const hasTargetAccess = hasDeviceAccess(req.user.userId, targetDeviceId, req.user.role);
+
+      if (!hasSourceAccess || !hasTargetAccess) {
+        return res.status(403).json({ error: 'Доступ к одному из устройств запрещен' });
+      }
     }
 
     let sourceMeta = getFileMetadata(sourceDeviceId, safeName);
@@ -1835,18 +1938,32 @@ export function createFilesRouter(deps) {
       return res.status(404).json({ error: 'Стрим не найден' });
     }
 
+    const protocol = normalizeStreamProtocol(metadata.stream_protocol, metadata.stream_url, metadata.mime_type);
+    const directPlaybackAvailable = isDirectPlaybackAvailable(protocol);
+    const preferDirectPlayback = directPlaybackAvailable && (
+      req.query.direct === '1' || req.query.preferDirect === '1'
+    );
+
     // КРИТИЧНО: Lazy loading - запускаем FFmpeg только когда стрим запрашивается для воспроизведения
     // Это экономит ресурсы, так как не все стримы используются одновременно
     const { getStreamManager } = await import('../streams/stream-manager.js');
     const streamManager = getStreamManager();
     let streamProxyUrl = null;
-    
-    if (streamManager) {
+    let proxyFallbackUrl = null;
+    let playbackStrategy = 'proxy';
+
+    if (preferDirectPlayback) {
+      streamProxyUrl = metadata.stream_url;
+      proxyFallbackUrl = getStreamPlaybackUrl(id, safeName);
+      playbackStrategy = protocol === 'dash' ? 'direct_dash' : 'direct_hls';
+    } else if (streamManager) {
       // Запускаем FFmpeg, если еще не запущен (lazy loading)
       streamProxyUrl = await streamManager.ensureStreamRunning(id, safeName, metadata);
+      proxyFallbackUrl = streamProxyUrl;
     } else {
       // Fallback: используем старый метод
       streamProxyUrl = getStreamPlaybackUrl(id, safeName);
+      proxyFallbackUrl = streamProxyUrl;
     }
 
     res.json({
@@ -1854,7 +1971,11 @@ export function createFilesRouter(deps) {
       originalName: metadata.original_name,
       streamUrl: metadata.stream_url,
       streamProxyUrl: streamProxyUrl,
-      protocol: normalizeStreamProtocol(metadata.stream_protocol, metadata.stream_url, metadata.mime_type)
+      directStreamUrl: preferDirectPlayback ? metadata.stream_url : null,
+      proxyStreamUrl: proxyFallbackUrl,
+      protocol,
+      playbackStrategy,
+      directPlaybackAvailable
     });
   });
 
@@ -1967,6 +2088,11 @@ export function createFilesRouter(deps) {
   router.post('/:id/streams/:safeName/stop-preview', requireSpeaker[0], requireSpeaker[1], jsonParser, async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
     if (!id) return res.status(400).json({ error: 'Неверный ID устройства' });
+
+    if (!hasDeviceAccess(req.user.userId, id, req.user.role)) {
+      return res.status(403).json({ error: 'Доступ к устройству запрещен' });
+    }
+
     const safeName = req.params.safeName;
     if (!safeName) return res.status(400).json({ error: 'Неверное название стрима' });
 
@@ -2075,18 +2201,6 @@ export function createFilesRouter(deps) {
       return res.status(400).json({ error: 'Поддерживаются только HTTP/HTTPS ссылки' });
     }
 
-    const activeJob = Array.from(ytDlpJobs.values()).find((job) => {
-      return job.deviceId === id && isYtDlpJobActive(job);
-    });
-
-    if (activeJob) {
-      return res.status(409).json({
-        error: 'Для этого устройства уже выполняется загрузка по ссылке',
-        jobId: activeJob.id,
-        status: activeJob.status
-      });
-    }
-
     const job = createYtDlpJob({
       deviceId: id,
       url: parsedUrl.toString(),
@@ -2099,13 +2213,18 @@ export function createFilesRouter(deps) {
       status: job.status
     });
 
-    Promise.resolve().then(async () => {
+    enqueueYtDlpDeviceJob(id, async () => {
       let finalPathCandidate = null;
       let titleCandidate = null;
       let lastErrorLine = null;
       let resourceReservation = null;
 
       try {
+        const queuedJob = ytDlpJobs.get(job.id);
+        if (!queuedJob || queuedJob.cancelRequested || queuedJob.status === 'cancelled') {
+          return;
+        }
+
         updateYtDlpJob(job.id, {
           status: 'waiting_resources',
           progress: 0,
@@ -2117,7 +2236,7 @@ export function createFilesRouter(deps) {
           jobType: 'yt-dlp-download',
           cpuUnits: ytDlpResourceCpuUnits,
           memoryMb: ytDlpResourceMemoryMb,
-          priority: 2,
+          priority: 1,
           timeoutMs: ytDlpResourceTimeoutMs,
           meta: {
             deviceId: id,
@@ -3863,6 +3982,233 @@ export function createFilesRouter(deps) {
       res.status(500).json({ error: 'Ошибка переименования', details: e.message });
     }
   });
+
+  // GET /api/devices/:id/files/:name/download - Скачать файл или папку
+  // Папки скачиваются как ZIP архив
+  router.get('/:id/files/:name/download', readLimiter, requireSpeaker[0], requireSpeaker[1], async (req, res) => {
+    const id = sanitizeDeviceId(req.params.id);
+
+    if (!id) {
+      return res.status(400).json({ error: 'Неверный ID устройства' });
+    }
+
+    if (!hasDeviceAccess(req.user.userId, id, req.user.role)) {
+      return res.status(403).json({ error: 'Доступ к устройству запрещен' });
+    }
+
+    const rawName = String(req.params.name || '').trim();
+    const sanitizedRequestedName = sanitizeFilename(rawName);
+    if (
+      !rawName ||
+      rawName.includes('\0') ||
+      rawName.includes('..') ||
+      /[\\/]/.test(rawName) ||
+      !sanitizedRequestedName ||
+      sanitizedRequestedName !== rawName
+    ) {
+      return res.status(400).json({ error: 'Неверное имя файла' });
+    }
+    const name = sanitizedRequestedName;
+
+    const d = devices[id];
+    if (!d) {
+      return res.status(404).json({ error: 'Устройство не найдено' });
+    }
+
+    const rawDeviceFolderName = String(d.folder || id || '').trim();
+    const safeDeviceFolderName = sanitizeDeviceId(rawDeviceFolderName);
+    if (!safeDeviceFolderName) {
+      return res.status(400).json({ error: 'Неверный путь устройства' });
+    }
+
+    const appRoot = path.resolve(ROOT);
+    const mountRoot = path.resolve('/mnt');
+    const devicesPath = path.resolve(getDevicesPath());
+
+    let devicesBaseDir = null;
+    if (devicesPath === appRoot || devicesPath.startsWith(appRoot + path.sep)) {
+      devicesBaseDir = appRoot;
+    } else if (devicesPath === mountRoot || devicesPath.startsWith(mountRoot + path.sep)) {
+      devicesBaseDir = mountRoot;
+    }
+
+    if (!devicesBaseDir) {
+      return res.status(400).json({ error: 'Неверный корневой путь контента' });
+    }
+
+    let safeDevicesPath;
+    try {
+      safeDevicesPath = validatePath(devicesPath, devicesBaseDir);
+    } catch (error) {
+      return res.status(400).json({ error: 'Неверный корневой путь контента' });
+    }
+
+    let deviceFolder = null;
+    try {
+      const resolvedDeviceFolder = validatePath(path.resolve(safeDevicesPath, safeDeviceFolderName), safeDevicesPath);
+      deviceFolder = validatePath(fs.realpathSync(resolvedDeviceFolder), safeDevicesPath);
+    } catch (error) {
+      return res.status(404).json({ error: 'Устройство не найдено' });
+    }
+
+    const metadata = getFileMetadata(id, name);
+
+    if (metadata?.content_type === 'streaming') {
+      return res.status(400).json({ error: 'Стримы нельзя скачать как файл' });
+    }
+
+    let entries = [];
+    try {
+      const safeFolderForRead = validatePath(deviceFolder, safeDevicesPath);
+      entries = fs.readdirSync(safeFolderForRead, { withFileTypes: true });
+    } catch (error) {
+      logger.error('[download] Failed to read device folder', {
+        deviceId: id,
+        deviceFolder,
+        error: error.message
+      });
+      return res.status(500).json({ error: 'Не удалось прочитать содержимое устройства' });
+    }
+
+    const allowedDownloadPaths = new Map();
+    for (const entry of entries) {
+      if (!entry || (!entry.isFile() && !entry.isDirectory())) {
+        continue;
+      }
+
+      const safeEntryName = sanitizeFilename(String(entry.name || '').trim());
+      if (!safeEntryName || safeEntryName !== entry.name) {
+        continue;
+      }
+
+      try {
+        const resolvedEntryPath = validatePath(path.resolve(deviceFolder, safeEntryName), deviceFolder);
+        const entryRealPath = validatePath(fs.realpathSync(resolvedEntryPath), deviceFolder);
+        allowedDownloadPaths.set(entry.name, entryRealPath);
+      } catch (error) {
+        continue;
+      }
+    }
+
+    const folderCandidateName = name.replace(/\.(pdf|pptx|zip)$/i, '');
+    const targetPath = allowedDownloadPaths.get(name) || allowedDownloadPaths.get(folderCandidateName);
+
+    if (!targetPath) {
+      return res.status(404).json({ error: 'Файл или папка не найдены' });
+    }
+
+    let safeTargetPath;
+    let safeDeviceRoot;
+    try {
+      safeDeviceRoot = validatePath(fs.realpathSync(deviceFolder), safeDevicesPath);
+      safeTargetPath = validatePath(fs.realpathSync(targetPath), safeDeviceRoot);
+    } catch (error) {
+      return res.status(404).json({ error: 'Файл или папка не найдены' });
+    }
+
+    if (!safeTargetPath.startsWith(safeDeviceRoot + path.sep) && safeTargetPath !== safeDeviceRoot) {
+      return res.status(400).json({ error: 'Неверный путь к файлу' });
+    }
+
+    let downloadTargetPath;
+    try {
+      downloadTargetPath = validatePath(safeTargetPath, safeDeviceRoot);
+    } catch (error) {
+      return res.status(400).json({ error: 'Неверный путь к файлу' });
+    }
+
+    let stat;
+    try {
+      stat = fs.statSync(downloadTargetPath);
+    } catch (error) {
+      logger.error('[download] Failed to stat target', {
+        deviceId: id,
+        name,
+        targetPath: safeTargetPath,
+        error: error.message
+      });
+      return res.status(500).json({ error: 'Не удалось получить информацию о файле' });
+    }
+
+    if (stat.isDirectory()) {
+      const originalName = metadata?.original_name || name.replace(/\.(zip|pdf|pptx)$/i, '') || path.basename(safeTargetPath);
+      const zipName = safeDownloadFileName(
+        /\.zip$/i.test(originalName) ? originalName : `${originalName}.zip`,
+        `${path.basename(downloadTargetPath)}.zip`
+      );
+
+      let tempDirPath = null;
+
+      const cleanupTemp = () => {
+        if (!tempDirPath) return;
+        fs.rm(tempDirPath, { recursive: true, force: true }, () => {});
+        tempDirPath = null;
+      };
+
+      try {
+        tempDirPath = fs.mkdtempSync(path.join(os.tmpdir(), 'videocontrol-download-'));
+        const zipPath = path.join(tempDirPath, `${Date.now()}-${crypto.randomBytes(4).toString('hex')}.zip`);
+
+          await createZipArchiveFromFolder(downloadTargetPath, zipPath);
+
+        res.setHeader('X-Download-Filename', zipName);
+        return res.download(zipPath, zipName, (error) => {
+          cleanupTemp();
+          if (!error) return;
+
+          logger.error('[download] Failed to send ZIP archive', {
+            deviceId: id,
+            name,
+              targetPath: downloadTargetPath,
+            zipName,
+            error: error.message
+          });
+
+          if (!res.headersSent) {
+            res.status(500).json({ error: 'Ошибка передачи ZIP архива' });
+          }
+        });
+      } catch (error) {
+        cleanupTemp();
+        logger.error('[download] Failed to create ZIP archive', {
+          deviceId: id,
+          name,
+            targetPath: downloadTargetPath,
+          error: error.message
+        });
+        return res.status(500).json({ error: 'Не удалось создать ZIP архив' });
+      }
+    }
+
+    if (!stat.isFile()) {
+      return res.status(400).json({ error: 'Поддерживается скачивание только файлов и папок' });
+    }
+
+    const resolvedBaseName = path.basename(downloadTargetPath);
+    const metadataOriginalName = metadata?.original_name || fileNamesMap[id]?.[name] || resolvedBaseName;
+    const ext = path.extname(resolvedBaseName);
+    const fileNameForDownload = safeDownloadFileName(
+      path.extname(metadataOriginalName) ? metadataOriginalName : `${metadataOriginalName}${ext}`,
+        path.basename(downloadTargetPath)
+    );
+
+    res.setHeader('X-Download-Filename', fileNameForDownload);
+    return res.download(downloadTargetPath, fileNameForDownload, (error) => {
+      if (!error) return;
+
+      logger.error('[download] Failed to send file', {
+        deviceId: id,
+        name,
+        targetPath: downloadTargetPath,
+        fileNameForDownload,
+        error: error.message
+      });
+
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Ошибка передачи файла' });
+      }
+    });
+  });
   
   // DELETE /api/devices/:id/files/:name - Удаление файла или папки
   // DELETE /api/devices/:id/files - Полная очистка устройства
@@ -4234,12 +4580,16 @@ export function createFilesRouter(deps) {
   });
   
   // GET /api/devices/:id/files-with-status - Получить список файлов со статусами
-  router.get('/:id/files-with-status', async (req, res) => {
+  router.get('/:id/files-with-status', readLimiter, requireSpeaker[0], requireSpeaker[1], async (req, res) => {
     const readyOnly = req.query.readyOnly === '1' || req.query.readyOnly === 'true';
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
       return res.status(400).json({ error: 'Неверный ID устройства' });
+    }
+
+    if (!hasDeviceAccess(req.user.userId, id, req.user.role)) {
+      return res.status(403).json({ error: 'Доступ к устройству запрещен' });
     }
     
     const d = devices[id];

@@ -13,11 +13,86 @@ import {
   getSuccessIcon, 
   getSettingsIcon, 
   getDownloadIcon, 
+  getUpDownloadIcon,
   getCloseIcon 
 } from '../shared/svg-icons.js';
 import { escapeHtml } from '../shared/utils.js';
 
 const escapeJsStringForAttr = (value) => escapeHtml(JSON.stringify(value ?? ''));
+const modalHistoryStack = [];
+let activeModalEscHandler = null;
+const SERVICE_LOGS_POLL_INTERVAL_MS = 1200;
+const SERVICE_LOGS_TYPING_CHUNK = 84;
+const SERVICE_LOGS_TYPING_DELAY_MS = 10;
+const SERVICE_LOGS_FAST_APPEND_THRESHOLD = 3200;
+const SERVICE_LOGS_MAX_TYPING_QUEUE = 24000;
+const SERVICE_LOGS_MAX_CHARS = 350000;
+let serviceLogsViewerState = null;
+
+function bindModalOverlayHandlers(overlay) {
+  if (!overlay) return;
+
+  // Закрываем только при "точном" клике по фону:
+  // pointerdown и pointerup должны произойти на overlay.
+  let pointerDownOnOverlay = false;
+  overlay.onclick = null;
+  overlay.onpointerdown = (e) => {
+    pointerDownOnOverlay = e.target === overlay;
+  };
+  overlay.onpointerup = (e) => {
+    const shouldClose = pointerDownOnOverlay && e.target === overlay;
+    pointerDownOnOverlay = false;
+    if (shouldClose) {
+      closeModal();
+    }
+  };
+  overlay.onpointercancel = () => {
+    pointerDownOnOverlay = false;
+  };
+}
+
+function bindModalEscHandler() {
+  if (activeModalEscHandler) {
+    document.removeEventListener('keydown', activeModalEscHandler);
+  }
+
+  activeModalEscHandler = (e) => {
+    if (e.key !== 'Escape') return;
+
+    if (modalHistoryStack.length > 0) {
+      goBackModal();
+      return;
+    }
+
+    closeModal();
+  };
+
+  document.addEventListener('keydown', activeModalEscHandler);
+}
+
+export function goBackModal() {
+  stopServiceLogsViewer();
+
+  const overlay = document.getElementById('modalOverlay');
+  const modalContent = document.getElementById('modalContent');
+  if (!overlay || !modalContent) return;
+
+  const previousState = modalHistoryStack.pop();
+  if (!previousState) return;
+
+  while (modalContent.firstChild) {
+    modalContent.removeChild(modalContent.firstChild);
+  }
+
+  modalContent.style.maxWidth = previousState.maxWidth || '600px';
+  previousState.nodes.forEach((node) => {
+    modalContent.appendChild(node);
+  });
+
+  overlay.style.display = 'flex';
+  bindModalOverlayHandlers(overlay);
+  bindModalEscHandler();
+}
 
 async function reportModalNotification(payload = {}) {
   try {
@@ -41,18 +116,366 @@ async function reportModalNotification(payload = {}) {
   }
 }
 
-export function showModal(title, content) {
+function stopServiceLogsViewer() {
+  const state = serviceLogsViewerState;
+  if (!state) return;
+
+  if (state.pollTimer) {
+    clearInterval(state.pollTimer);
+  }
+
+  if (state.typeTimer) {
+    clearTimeout(state.typeTimer);
+  }
+
+  serviceLogsViewerState = null;
+}
+
+function getServiceLogsElements() {
+  return {
+    outputEl: document.getElementById('serviceLogsOutput'),
+    statusEl: document.getElementById('serviceLogsStatus'),
+    linesSelectEl: document.getElementById('serviceLogsLinesSelect'),
+    autoscrollEl: document.getElementById('serviceLogsAutoscroll')
+  };
+}
+
+function clampServiceLogsLines(value) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed)) return 200;
+  return Math.max(20, Math.min(2000, parsed));
+}
+
+function setServiceLogsStatus(text, color = 'var(--text-secondary)') {
+  const { statusEl } = getServiceLogsElements();
+  if (!statusEl) return;
+  statusEl.textContent = text || '';
+  statusEl.style.color = color;
+}
+
+function trimServiceLogsOutput(outputEl) {
+  if (!outputEl || outputEl.textContent.length <= SERVICE_LOGS_MAX_CHARS) return;
+
+  const tailText = outputEl.textContent.slice(-(SERVICE_LOGS_MAX_CHARS + 4096));
+  const firstLineBreak = tailText.indexOf('\n');
+  outputEl.textContent = firstLineBreak >= 0 ? tailText.slice(firstLineBreak + 1) : tailText;
+}
+
+function flushServiceLogsTypewriterQueue(state, outputEl) {
+  if (!outputEl) return;
+
+  if (state.typeTimer) {
+    clearTimeout(state.typeTimer);
+    state.typeTimer = null;
+  }
+
+  state.isTyping = false;
+
+  if (state.textQueue) {
+    outputEl.textContent += state.textQueue;
+    state.textQueue = '';
+    trimServiceLogsOutput(outputEl);
+
+    if (state.autoScroll) {
+      outputEl.scrollTop = outputEl.scrollHeight;
+    }
+  }
+}
+
+function runServiceLogsTypewriter() {
+  const state = serviceLogsViewerState;
+  if (!state || state.isTyping) return;
+
+  const { outputEl } = getServiceLogsElements();
+  if (!outputEl) {
+    stopServiceLogsViewer();
+    return;
+  }
+
+  state.isTyping = true;
+
+  const step = () => {
+    const activeState = serviceLogsViewerState;
+    if (!activeState || activeState !== state) return;
+
+    const { outputEl: liveOutput } = getServiceLogsElements();
+    if (!liveOutput) {
+      stopServiceLogsViewer();
+      return;
+    }
+
+    if (!activeState.textQueue.length) {
+      activeState.isTyping = false;
+      activeState.typeTimer = null;
+      return;
+    }
+
+    const chunkSize = Math.min(SERVICE_LOGS_TYPING_CHUNK, activeState.textQueue.length);
+    const chunk = activeState.textQueue.slice(0, chunkSize);
+    activeState.textQueue = activeState.textQueue.slice(chunk.length);
+    liveOutput.textContent += chunk;
+    trimServiceLogsOutput(liveOutput);
+
+    if (activeState.autoScroll) {
+      liveOutput.scrollTop = liveOutput.scrollHeight;
+    }
+
+    activeState.typeTimer = window.setTimeout(step, SERVICE_LOGS_TYPING_DELAY_MS);
+  };
+
+  step();
+}
+
+function enqueueServiceLogsText(text, options = {}) {
+  if (!text || !serviceLogsViewerState) return;
+
+  const state = serviceLogsViewerState;
+  const { outputEl } = getServiceLogsElements();
+  if (!outputEl) return;
+
+  const forceImmediate = Boolean(options.forceImmediate);
+  const hasPendingOverflow = (state.textQueue.length + text.length) > SERVICE_LOGS_MAX_TYPING_QUEUE;
+  const shouldAppendImmediately = forceImmediate || text.length >= SERVICE_LOGS_FAST_APPEND_THRESHOLD || hasPendingOverflow;
+
+  if (shouldAppendImmediately) {
+    flushServiceLogsTypewriterQueue(state, outputEl);
+    outputEl.textContent += text;
+    trimServiceLogsOutput(outputEl);
+
+    if (state.autoScroll) {
+      outputEl.scrollTop = outputEl.scrollHeight;
+    }
+    return;
+  }
+
+  state.textQueue += text;
+  runServiceLogsTypewriter();
+}
+
+async function fetchServiceLogsChunk(adminFetch, { reset = false } = {}) {
+  const state = serviceLogsViewerState;
+  if (!state || state.isFetching) return;
+
+  const { outputEl, linesSelectEl } = getServiceLogsElements();
+  if (!outputEl) {
+    stopServiceLogsViewer();
+    return;
+  }
+
+  const linesLimit = clampServiceLogsLines(linesSelectEl?.value || state.linesLimit || 200);
+  state.linesLimit = linesLimit;
+  state.isFetching = true;
+
+  try {
+    const params = new URLSearchParams();
+    params.set('lines', String(linesLimit));
+
+    if (!reset && Number.isFinite(state.offset) && state.offset >= 0) {
+      params.set('offset', String(state.offset));
+    }
+
+    if (!reset && state.fileName) {
+      params.set('fileName', state.fileName);
+    }
+
+    const response = await adminFetch(`/api/admin/service-logs?${params.toString()}`);
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Ошибка загрузки логов' }));
+      throw new Error(error.error || 'Ошибка загрузки логов');
+    }
+
+    const result = await response.json().catch(() => ({ ok: true, lines: [], nextOffset: 0 }));
+    if (!serviceLogsViewerState || serviceLogsViewerState !== state) return;
+
+    if (result.reset || reset) {
+      if (state.typeTimer) {
+        clearTimeout(state.typeTimer);
+        state.typeTimer = null;
+      }
+
+      state.isTyping = false;
+      outputEl.textContent = '';
+      state.textQueue = '';
+    }
+
+    const nextOffset = Number.parseInt(String(result.nextOffset ?? ''), 10);
+    if (Number.isFinite(nextOffset) && nextOffset >= 0) {
+      state.offset = nextOffset;
+    }
+
+    state.fileName = typeof result.fileName === 'string' ? result.fileName : '';
+
+    const lines = Array.isArray(result.lines) ? result.lines : [];
+    if (lines.length) {
+      const chunkText = `${lines.join('\n')}\n`;
+      const useTypewriter = !result.truncated && lines.length <= 120 && chunkText.length <= 5000 && state.linesLimit <= 300;
+      enqueueServiceLogsText(chunkText, { forceImmediate: !useTypewriter });
+    } else if ((result.reset || reset) && !outputEl.textContent.trim()) {
+      outputEl.textContent = 'Логи пока пусты.\n';
+    }
+
+    if (result.truncated) {
+      setServiceLogsStatus('Показана только последняя часть логов (ограничение объема).', 'var(--warning)');
+    } else {
+      const sourceText = state.fileName ? `Файл: ${state.fileName}` : 'Логи сервиса';
+      setServiceLogsStatus(`${sourceText} • строк: ${linesLimit}`, 'var(--text-secondary)');
+    }
+  } catch (error) {
+    if (serviceLogsViewerState === state) {
+      setServiceLogsStatus(`Ошибка: ${error.message || 'не удалось загрузить логи'}`, 'var(--danger)');
+    }
+  } finally {
+    if (serviceLogsViewerState === state) {
+      state.isFetching = false;
+    }
+  }
+}
+
+function openServiceLogsModal(adminFetch) {
+  stopServiceLogsViewer();
+
+  const content = `
+    <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
+      <div style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap;">
+        <label class="meta" for="serviceLogsLinesSelect" style="display:flex; align-items:center; gap:6px;">
+          Строк:
+          <select id="serviceLogsLinesSelect" class="input" style="min-width:92px; padding:6px 8px;">
+            <option value="100" selected>100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+            <option value="1000">1000</option>
+            <option value="2000">2000</option>
+          </select>
+        </label>
+
+        <label class="meta" style="display:flex; align-items:center; gap:6px;">
+          <input id="serviceLogsAutoscroll" type="checkbox" checked />
+          Автопрокрутка
+        </label>
+
+        <button id="serviceLogsRefreshBtn" class="secondary" type="button" style="min-width:auto;">Обновить</button>
+        <button id="serviceLogsClearBtn" class="secondary" type="button" style="min-width:auto;">Очистить</button>
+      </div>
+
+      <div id="serviceLogsStatus" class="meta" style="min-height:1.2em; color:var(--text-secondary);"></div>
+
+      <pre id="serviceLogsOutput" style="margin:0; padding:12px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--panel); color:var(--text-primary); font-family:'Fira Code', Consolas, 'Courier New', monospace; font-size:0.84rem; line-height:1.35; white-space:pre-wrap; word-break:break-word; height:min(72vh, 760px); overflow:auto;"></pre>
+    </div>
+  `;
+
+  showModal(`${getSettingsIcon(18)} Логи сервиса`, content, { maxWidth: 'min(96vw, 1400px)' });
+
+  setTimeout(() => {
+    const linesSelectEl = document.getElementById('serviceLogsLinesSelect');
+    const autoscrollEl = document.getElementById('serviceLogsAutoscroll');
+    const refreshBtn = document.getElementById('serviceLogsRefreshBtn');
+    const clearBtn = document.getElementById('serviceLogsClearBtn');
+    const outputEl = document.getElementById('serviceLogsOutput');
+
+    if (!outputEl || !linesSelectEl || !autoscrollEl || !refreshBtn || !clearBtn) return;
+
+    serviceLogsViewerState = {
+      pollTimer: null,
+      typeTimer: null,
+      isTyping: false,
+      isFetching: false,
+      textQueue: '',
+      autoScroll: true,
+      linesLimit: clampServiceLogsLines(linesSelectEl.value),
+      offset: -1,
+      fileName: ''
+    };
+
+    autoscrollEl.onchange = () => {
+      if (!serviceLogsViewerState) return;
+      serviceLogsViewerState.autoScroll = autoscrollEl.checked;
+      if (serviceLogsViewerState.autoScroll) {
+        outputEl.scrollTop = outputEl.scrollHeight;
+      }
+    };
+
+    linesSelectEl.onchange = async () => {
+      if (!serviceLogsViewerState) return;
+      serviceLogsViewerState.linesLimit = clampServiceLogsLines(linesSelectEl.value);
+      serviceLogsViewerState.offset = -1;
+      await fetchServiceLogsChunk(adminFetch, { reset: true });
+    };
+
+    refreshBtn.onclick = async () => {
+      if (!serviceLogsViewerState) return;
+      serviceLogsViewerState.offset = -1;
+      await fetchServiceLogsChunk(adminFetch, { reset: true });
+    };
+
+    clearBtn.onclick = () => {
+      outputEl.textContent = '';
+      if (serviceLogsViewerState) {
+        if (serviceLogsViewerState.typeTimer) {
+          clearTimeout(serviceLogsViewerState.typeTimer);
+          serviceLogsViewerState.typeTimer = null;
+        }
+        serviceLogsViewerState.isTyping = false;
+        serviceLogsViewerState.textQueue = '';
+      }
+      setServiceLogsStatus('Окно логов очищено.', 'var(--text-secondary)');
+    };
+
+    fetchServiceLogsChunk(adminFetch, { reset: true });
+
+    serviceLogsViewerState.pollTimer = window.setInterval(() => {
+      const overlay = document.getElementById('modalOverlay');
+      const outputStillVisible = document.getElementById('serviceLogsOutput');
+      if (!overlay || overlay.style.display !== 'flex' || !outputStillVisible) {
+        stopServiceLogsViewer();
+        return;
+      }
+
+      fetchServiceLogsChunk(adminFetch);
+    }, SERVICE_LOGS_POLL_INTERVAL_MS);
+  }, 0);
+}
+
+export function showModal(title, content, options = {}) {
   const overlay = document.getElementById('modalOverlay');
   const modalContent = document.getElementById('modalContent');
   
   if (!overlay || !modalContent) return;
+
+  const isNestedModal = overlay.style.display === 'flex' && modalContent.childNodes.length > 0;
+  if (!isNestedModal) {
+    modalHistoryStack.length = 0;
+  } else if (options.pushHistory !== false) {
+    modalHistoryStack.push({
+      nodes: Array.from(modalContent.childNodes),
+      maxWidth: modalContent.style.maxWidth || '600px'
+    });
+  }
+
+  const requestedMaxWidth = typeof options.maxWidth === 'string' && options.maxWidth.trim()
+    ? options.maxWidth.trim()
+    : '600px';
+  modalContent.style.maxWidth = requestedMaxWidth;
   
   // Очищаем содержимое модального окна безопасным способом
-  modalContent.innerHTML = '';
+  while (modalContent.firstChild) {
+    modalContent.removeChild(modalContent.firstChild);
+  }
   
   const header = document.createElement('div');
   header.className = 'header';
   header.style.cssText = 'display:flex; justify-content:space-between; align-items:center;';
+
+  const headerLeft = document.createElement('div');
+  headerLeft.style.cssText = 'display:flex; align-items:center; gap:8px; min-width:0; flex:1;';
+
+  if (modalHistoryStack.length > 0 && options.showBack !== false) {
+    const backBtn = document.createElement('button');
+    backBtn.className = 'secondary';
+    backBtn.onclick = goBackModal;
+    backBtn.style.cssText = 'min-width:auto; padding:8px 10px; display:flex; align-items:center; justify-content:center;';
+    backBtn.textContent = '← Назад';
+    headerLeft.appendChild(backBtn);
+  }
   
   const titleEl = document.createElement('div');
   titleEl.className = 'title';
@@ -80,7 +503,47 @@ export function showModal(title, content) {
     titleEl.appendChild(titleText);
   }
   
-  header.appendChild(titleEl);
+  headerLeft.appendChild(titleEl);
+  header.appendChild(headerLeft);
+
+  const headerRight = document.createElement('div');
+  headerRight.style.cssText = 'display:flex; align-items:center; gap:8px; flex-shrink:0;';
+
+  if (typeof options.onViewServiceLogs === 'function') {
+    const logsBtn = document.createElement('button');
+    logsBtn.className = 'secondary';
+    logsBtn.type = 'button';
+    logsBtn.title = 'Просмотр логов сервиса';
+    logsBtn.style.cssText = 'min-width:auto; padding:8px 10px; display:flex; align-items:center; justify-content:center;';
+    logsBtn.textContent = 'Логи';
+    logsBtn.onclick = async () => {
+      if (logsBtn.disabled) return;
+      try {
+        await options.onViewServiceLogs(logsBtn);
+      } catch (error) {
+        console.error('[Modal] View service logs action failed:', error);
+      }
+    };
+    headerRight.appendChild(logsBtn);
+  }
+
+  if (typeof options.onRestartService === 'function') {
+    const restartBtn = document.createElement('button');
+    restartBtn.className = 'secondary';
+    restartBtn.type = 'button';
+    restartBtn.title = 'Перезапустить сервис';
+    restartBtn.style.cssText = 'min-width:auto; padding:8px 10px; display:flex; align-items:center; justify-content:center; font-weight:700;';
+    restartBtn.textContent = '↻';
+    restartBtn.onclick = async () => {
+      if (restartBtn.disabled) return;
+      try {
+        await options.onRestartService(restartBtn);
+      } catch (error) {
+        console.error('[Modal] Restart service action failed:', error);
+      }
+    };
+    headerRight.appendChild(restartBtn);
+  }
   
   const closeBtn = document.createElement('button');
   closeBtn.className = 'secondary';
@@ -88,8 +551,9 @@ export function showModal(title, content) {
   closeBtn.style.cssText = 'min-width:auto; padding:8px; display:flex; align-items:center; justify-content:center;';
   // getCloseIcon возвращает безопасную SVG иконку из константы
   closeBtn.insertAdjacentHTML('beforeend', getCloseIcon(18));
-  
-  header.appendChild(closeBtn);
+
+  headerRight.appendChild(closeBtn);
+  header.appendChild(headerRight);
   modalContent.appendChild(header);
   
   const contentDiv = document.createElement('div');
@@ -115,33 +579,29 @@ export function showModal(title, content) {
   modalContent.appendChild(contentDiv);
   
   overlay.style.display = 'flex';
-  
-  // Закрытие по клику на overlay
-  overlay.onclick = (e) => {
-    if (e.target === overlay) {
-      closeModal();
-    }
-  };
-  
-  // Закрытие по ESC
-  const escHandler = (e) => {
-    if (e.key === 'Escape') {
-      closeModal();
-      document.removeEventListener('keydown', escHandler);
-    }
-  };
-  document.addEventListener('keydown', escHandler);
+
+  bindModalOverlayHandlers(overlay);
+  bindModalEscHandler();
 }
 
 export function closeModal() {
+  stopServiceLogsViewer();
+
   const overlay = document.getElementById('modalOverlay');
   if (overlay) {
     overlay.style.display = 'none';
+  }
+
+  modalHistoryStack.length = 0;
+  if (activeModalEscHandler) {
+    document.removeEventListener('keydown', activeModalEscHandler);
+    activeModalEscHandler = null;
   }
 }
 
 // Глобальные функции для onclick
 window.closeModal = closeModal;
+window.goBackModal = goBackModal;
 window.showUsersModal = showUsersModal;
 
 export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevice, renderFilesPane) {
@@ -149,12 +609,12 @@ export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevi
     <div style="display:flex; flex-direction:column; gap:var(--space-md);">
       <div>
         <label style="display:block; margin-bottom:4px; font-weight:500;">ID устройства</label>
-        <input id="modalDeviceId" class="input" placeholder="tv-001" required />
+        <input id="modalDeviceId" class="input" placeholder="TV001" required />
       </div>
       
       <div>
         <label style="display:block; margin-bottom:4px; font-weight:500;">Имя устройства</label>
-        <input id="modalDeviceName" class="input" placeholder="Living Room TV" />
+        <input id="modalDeviceName" class="input" placeholder="001 Комната на первом этаже" />
       </div>
       
       <div id="modalError" style="color:var(--danger); font-size:0.875rem; display:none;"></div>
@@ -233,33 +693,92 @@ export async function showUsersModal(adminFetch) {
     filteredUsers: [],
     currentPage: 1,
     itemsPerPage: 5,
-    searchQuery: ''
+    searchQuery: '',
+    authTab: 'local',
+    selectedUserId: null,
+    allDevicesById: {}
   };
   
   const content = `
-    <div style="display:flex; flex-direction:column; gap:var(--space-lg);">
-      <!-- Форма создания пользователя -->
-      <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm);">
-        <div style="margin-bottom:var(--space-md); font-weight:600;">Создать пользователя</div>
-        <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
-          <input id="modalUsername" class="input" placeholder="Логин" />
-          <input id="modalFullName" class="input" placeholder="ФИО" />
-          <input id="modalPassword" class="input" type="password" placeholder="Пароль (мин. 8 символов)" />
-          <select id="modalRole" class="input">
-            <option value="speaker">Speaker (управление контентом)</option>
-            <option value="admin">Admin (полный доступ)</option>
-            <option value="hero_admin">Hero Admin (управление карточками героев)</option>
-          </select>
-          <div id="modalUserError" style="color:var(--danger); font-size:0.875rem; display:none;"></div>
-          <button id="modalCreateUser" class="primary">Создать пользователя</button>
+    <style>
+      #usersModalLayout {
+        display: grid;
+        grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+        gap: var(--space-md);
+      }
+
+      #usersModalLayout .users-modal-panel {
+        padding: var(--space-md);
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+      }
+
+      #usersModalLayout .modal-user-row {
+        cursor: pointer;
+        border: 1px solid transparent;
+        transition: background-color 0.15s ease, border-color 0.15s ease;
+      }
+
+      #usersModalLayout .modal-user-row:hover {
+        background: var(--panel-2);
+      }
+
+      #usersModalLayout .modal-user-row.selected {
+        border-color: var(--brand);
+        background: var(--panel-2);
+      }
+
+      #usersModalLayout .users-tab-btn.active {
+        background: var(--brand);
+        border-color: var(--brand);
+        color: var(--panel);
+      }
+
+      @media (max-width: 960px) {
+        #usersModalLayout {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+
+    <div id="usersModalLayout">
+      <div style="display:flex; flex-direction:column; gap:var(--space-md);">
+        <div class="users-modal-panel">
+          <div style="margin-bottom:var(--space-md); font-weight:600;">Создать пользователя</div>
+          <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
+            <input id="modalUsername" class="input" placeholder="Логин" />
+            <input id="modalFullName" class="input" placeholder="ФИО" />
+            <input id="modalPassword" class="input" type="password" placeholder="Пароль (мин. 8 символов)" />
+            <select id="modalRole" class="input">
+              <option value="speaker">Speaker (управление контентом)</option>
+              <option value="admin">Admin (полный доступ)</option>
+              <option value="hero_admin">Hero Admin (управление карточками героев)</option>
+            </select>
+            <div id="modalUserError" style="color:var(--danger); font-size:0.875rem; display:none;"></div>
+            <button id="modalCreateUser" class="primary">Создать пользователя</button>
+          </div>
+        </div>
+
+        <div class="users-modal-panel">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:var(--space-sm); margin-bottom:var(--space-sm);">
+            <div style="font-weight:600;">Устройства пользователя</div>
+            <div class="meta" id="modalSelectedUserDevicesCount" style="color:var(--text-secondary);"></div>
+          </div>
+          <div id="modalSelectedUserDevicesPanel" style="display:flex; flex-direction:column; gap:var(--space-xs); min-height:140px; max-height:280px; overflow-y:auto;">
+            <div class="meta" style="color:var(--text-secondary);">Выберите пользователя в списке справа, чтобы увидеть доступные ему устройства.</div>
+          </div>
         </div>
       </div>
-      
-      <!-- Список пользователей -->
-      <div>
+
+      <div class="users-modal-panel" style="display:flex; flex-direction:column; min-height:520px;">
         <div style="margin-bottom:var(--space-md); font-weight:600;">Список пользователей</div>
-        
-        <!-- Поле поиска -->
+
+        <div style="display:flex; gap:var(--space-xs); margin-bottom:var(--space-sm);">
+          <button id="modalUsersTabLocal" class="secondary users-tab-btn active" data-users-auth-tab="local" style="flex:1;">LOCAL</button>
+          <button id="modalUsersTabLdap" class="secondary users-tab-btn" data-users-auth-tab="ldap" style="flex:1;">LDAP</button>
+        </div>
+
         <div style="margin-bottom:var(--space-sm);">
           <input 
             id="modalUsersSearch" 
@@ -269,14 +788,12 @@ export async function showUsersModal(adminFetch) {
             style="width:100%;"
           />
         </div>
-        
-        <!-- Список пользователей -->
-        <div id="modalUsersList" style="display:flex; flex-direction:column; gap:var(--space-sm); min-height:200px;">
+
+        <div id="modalUsersList" style="display:flex; flex-direction:column; gap:var(--space-sm); min-height:280px;">
           <div class="meta" style="text-align:center; padding:var(--space-lg);">Загрузка...</div>
         </div>
-        
-        <!-- Пагинация -->
-        <div id="modalUsersPagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:var(--space-md); padding-top:var(--space-md); border-top:1px solid var(--border);">
+
+        <div id="modalUsersPagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:auto; padding-top:var(--space-md); border-top:1px solid var(--border);">
           <div class="meta" id="modalUsersPaginationInfo" style="color:var(--text-secondary);"></div>
           <div style="display:flex; gap:var(--space-xs); align-items:center;">
             <button 
@@ -302,7 +819,7 @@ export async function showUsersModal(adminFetch) {
     </div>
   `;
   
-  showModal(`${getUsersIcon(18)} Управление пользователями`, content);
+  showModal(`${getUsersIcon(18)} Управление пользователями`, content, { maxWidth: '1200px' });
   
   // Загружаем список пользователей
   setTimeout(() => {
@@ -332,7 +849,7 @@ export async function showUsersModal(adminFetch) {
         errorEl.style.display = 'block';
         return;
       }
-      
+
       if (password.length < 8) {
         errorEl.textContent = 'Пароль минимум 8 символов';
         errorEl.style.display = 'block';
@@ -389,27 +906,55 @@ async function loadModalUsersList(adminFetch) {
       filteredUsers: [],
       currentPage: 1,
       itemsPerPage: 5,
-      searchQuery: ''
+      searchQuery: '',
+      authTab: 'local',
+      selectedUserId: null,
+      allDevicesById: {}
     };
   }
   
   try {
-    const res = await adminFetch('/api/auth/users');
-    const users = await res.json();
+    const [usersRes, devicesRes] = await Promise.all([
+      adminFetch('/api/auth/users'),
+      adminFetch('/api/devices')
+    ]);
+    const users = await usersRes.json();
+    const devices = await devicesRes.json();
+
+    window.usersModalState.allDevicesById = Array.isArray(devices)
+      ? devices.reduce((acc, d) => {
+        if (d && d.device_id) {
+          acc[d.device_id] = d;
+        }
+        return acc;
+      }, {})
+      : {};
     
     // Загружаем количество устройств для каждого пользователя
     const usersWithDeviceCount = await Promise.all(users.map(async (u) => {
       try {
         const devicesRes = await adminFetch(`/api/auth/users/${u.id}/devices`);
         const deviceIds = await devicesRes.json();
-        return { ...u, deviceCount: Array.isArray(deviceIds) ? deviceIds.length : 0 };
+        const normalizedDeviceIds = Array.isArray(deviceIds) ? deviceIds : [];
+        return {
+          ...u,
+          deviceIds: normalizedDeviceIds,
+          deviceCount: normalizedDeviceIds.length
+        };
       } catch (err) {
-        return { ...u, deviceCount: 0 };
+        return { ...u, deviceIds: [], deviceCount: 0 };
       }
     }));
     
     // Сохраняем всех пользователей в состояние
     window.usersModalState.allUsers = usersWithDeviceCount;
+
+    if (window.usersModalState.selectedUserId !== null) {
+      const stillExists = usersWithDeviceCount.some((u) => Number(u.id) === Number(window.usersModalState.selectedUserId));
+      if (!stillExists) {
+        window.usersModalState.selectedUserId = null;
+      }
+    }
     
     // Применяем фильтрацию и пагинацию
     filterAndRenderUsers(adminFetch);
@@ -423,8 +968,19 @@ function setupUsersModalHandlers(adminFetch) {
   const searchInput = document.getElementById('modalUsersSearch');
   const prevBtn = document.getElementById('modalUsersPrevPage');
   const nextBtn = document.getElementById('modalUsersNextPage');
+  const tabButtons = Array.from(document.querySelectorAll('[data-users-auth-tab]'));
   
   if (!searchInput || !prevBtn || !nextBtn) return;
+
+  tabButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const nextTab = btn.getAttribute('data-users-auth-tab') === 'ldap' ? 'ldap' : 'local';
+      if (window.usersModalState.authTab === nextTab) return;
+      window.usersModalState.authTab = nextTab;
+      window.usersModalState.currentPage = 1;
+      filterAndRenderUsers(adminFetch);
+    });
+  });
   
   // Обработчик поиска с debounce
   let searchTimeout;
@@ -461,21 +1017,48 @@ function filterAndRenderUsers(adminFetch) {
   const pageInfo = document.getElementById('modalUsersPageInfo');
   const prevBtn = document.getElementById('modalUsersPrevPage');
   const nextBtn = document.getElementById('modalUsersNextPage');
+  const localTabBtn = document.getElementById('modalUsersTabLocal');
+  const ldapTabBtn = document.getElementById('modalUsersTabLdap');
   
   if (!container) return;
+
+  const localCount = state.allUsers.filter((u) => String(u.auth_source || 'local').toLowerCase() !== 'ldap').length;
+  const ldapCount = state.allUsers.filter((u) => String(u.auth_source || 'local').toLowerCase() === 'ldap').length;
+
+  if (localTabBtn) {
+    localTabBtn.textContent = `LOCAL (${localCount})`;
+    localTabBtn.classList.toggle('active', state.authTab !== 'ldap');
+  }
+  if (ldapTabBtn) {
+    ldapTabBtn.textContent = `LDAP (${ldapCount})`;
+    ldapTabBtn.classList.toggle('active', state.authTab === 'ldap');
+  }
   
   // Фильтрация пользователей
-  if (state.searchQuery) {
-    state.filteredUsers = state.allUsers.filter(u => 
+  state.filteredUsers = state.allUsers.filter((u) => {
+    const authSource = String(u.auth_source || 'local').toLowerCase();
+    const matchesTab = state.authTab === 'ldap' ? authSource === 'ldap' : authSource !== 'ldap';
+    if (!matchesTab) return false;
+
+    if (!state.searchQuery) return true;
+    return (
       u.username.toLowerCase().includes(state.searchQuery) ||
       (u.full_name && u.full_name.toLowerCase().includes(state.searchQuery))
     );
-  } else {
-    state.filteredUsers = [...state.allUsers];
+  });
+
+  const hasSelectedInCurrentFilter = state.filteredUsers.some((u) => Number(u.id) === Number(state.selectedUserId));
+  if (!hasSelectedInCurrentFilter) {
+    state.selectedUserId = null;
   }
   
   // Вычисляем пагинацию
   const totalPages = Math.ceil(state.filteredUsers.length / state.itemsPerPage);
+  if (totalPages === 0) {
+    state.currentPage = 1;
+  } else if (state.currentPage > totalPages) {
+    state.currentPage = totalPages;
+  }
   const startIndex = (state.currentPage - 1) * state.itemsPerPage;
   const endIndex = startIndex + state.itemsPerPage;
   const pageUsers = state.filteredUsers.slice(startIndex, endIndex);
@@ -506,21 +1089,26 @@ function filterAndRenderUsers(adminFetch) {
     container.innerHTML = state.searchQuery 
       ? '<div class="meta" style="text-align:center; padding:var(--space-lg);">Ничего не найдено</div>'
       : '<div class="meta" style="text-align:center; padding:var(--space-lg);">Нет пользователей</div>';
+    renderSelectedUserDevicesPanel();
     return;
   }
   
   container.innerHTML = pageUsers.map(u => {
     const safeUsername = escapeHtml(u.username || '');
     const safeFullName = escapeHtml(u.full_name || '');
+    const authSource = String(u.auth_source || 'local').toLowerCase();
     const deviceCountLabel = Number.isFinite(Number(u.deviceCount)) ? Number(u.deviceCount) : 0;
     const safeUserId = Number.isFinite(Number(u.id)) ? Number(u.id) : 0;
     const usernameArg = escapeJsStringForAttr(u.username || '');
     const roleArg = escapeJsStringForAttr(u.role || '');
+    const isLdapUser = authSource === 'ldap';
+    const isSelected = Number(state.selectedUserId) === safeUserId;
     return `
-      <div class="item" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm);">
+      <div class="item modal-user-row ${isSelected ? 'selected' : ''}" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm);" onclick="selectUserInUsersModal(${safeUserId})">
         <div style="flex:1; min-width:0;">
           <div style="display:flex; align-items:center; gap:var(--space-xs); flex-wrap:wrap;">
             <strong>${safeUsername}</strong>
+            ${isLdapUser ? '<span style="background:var(--warning); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">LDAP</span>' : '<span style="background:var(--panel-2); color:var(--text-secondary); padding:2px 6px; border-radius:4px; font-size:0.7rem;">LOCAL</span>'}
             ${u.role === 'admin' ? '<span style="background:var(--brand); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">ADMIN</span>' : ''}
             ${u.role === 'speaker' ? '<span style="background:var(--success); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">SPEAKER</span>' : ''}
             ${u.role === 'hero_admin' ? '<span style="background:var(--warning); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">HERO ADMIN</span>' : ''}
@@ -530,18 +1118,30 @@ function filterAndRenderUsers(adminFetch) {
           ${u.role === 'speaker' ? `<div class="meta" style="font-size:0.75rem; color:var(--text-secondary);">Устройств: ${deviceCountLabel}</div>` : ''}
         </div>
         <div style="display:flex; gap:4px; flex-shrink:0;">
-          ${u.role === 'speaker' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})" title="Управление устройствами">${getSettingsIcon(16)}</button>` : ''}
-          ${u.role === 'admin' || u.role === 'hero_admin' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})" title="Информация об устройствах">${getSettingsIcon(16)}</button>` : ''}
-          <button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="resetUserPasswordInModal(${safeUserId}, ${usernameArg})" title="Сбросить пароль">${getKeyIcon(16)}</button>
+          ${u.role === 'speaker' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})" title="Управление устройствами">${getSettingsIcon(16)}</button>` : ''}
+          ${u.role === 'admin' || u.role === 'hero_admin' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})" title="Информация об устройствах">${getSettingsIcon(16)}</button>` : ''}
+          ${isLdapUser
+            ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center; opacity:0.6;" disabled title="Пароль LDAP меняется в AD">${getKeyIcon(16)}</button>`
+            : `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); resetUserPasswordInModal(${safeUserId}, ${usernameArg})" title="Сбросить пароль">${getKeyIcon(16)}</button>`}
           ${u.is_active 
-            ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="toggleUserInModal(${safeUserId}, false)" title="Отключить">${getLockIcon(16)}</button>`
-            : `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="toggleUserInModal(${safeUserId}, true)" title="Включить">${getUnlockIcon(16)}</button>`
+            ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); toggleUserInModal(${safeUserId}, false)" title="Отключить">${getLockIcon(16)}</button>`
+            : `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); toggleUserInModal(${safeUserId}, true)" title="Включить">${getUnlockIcon(16)}</button>`
           }
-          ${u.id !== 1 ? `<button class="danger meta-lg" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="deleteUserInModal(${safeUserId}, ${usernameArg})" title="Удалить">${getTrashIcon(16)}</button>` : ''}
+          ${u.id !== 1 ? `<button class="danger meta-lg" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); deleteUserInModal(${safeUserId}, ${usernameArg})" title="Удалить">${getTrashIcon(16)}</button>` : ''}
         </div>
       </div>
     `;
   }).join('');
+
+  renderSelectedUserDevicesPanel();
+
+  if (!window.selectUserInUsersModal) {
+    window.selectUserInUsersModal = (userId) => {
+      if (!window.usersModalState) return;
+      window.usersModalState.selectedUserId = Number(userId);
+      filterAndRenderUsers(window.adminFetch);
+    };
+  }
     
   // Регистрируем глобальные функции для onclick (если еще не зарегистрированы)
   if (!window.toggleUserInModal) {
@@ -692,6 +1292,79 @@ function filterAndRenderUsers(adminFetch) {
       }, 100);
     };
   }
+}
+
+function renderSelectedUserDevicesPanel() {
+  const panel = document.getElementById('modalSelectedUserDevicesPanel');
+  const countEl = document.getElementById('modalSelectedUserDevicesCount');
+  const state = window.usersModalState;
+  if (!panel || !state) return;
+
+  const selectedUser = state.allUsers.find((u) => Number(u.id) === Number(state.selectedUserId));
+
+  if (!selectedUser) {
+    if (countEl) countEl.textContent = '';
+    panel.innerHTML = '<div class="meta" style="color:var(--text-secondary);">Выберите пользователя в списке справа, чтобы увидеть доступные ему устройства.</div>';
+    return;
+  }
+
+  const safeUsername = escapeHtml(selectedUser.username || '');
+  const safeRole = escapeHtml(selectedUser.role || '');
+  const usernameArg = escapeJsStringForAttr(selectedUser.username || '');
+  const roleArg = escapeJsStringForAttr(selectedUser.role || '');
+  const safeUserId = Number.isFinite(Number(selectedUser.id)) ? Number(selectedUser.id) : 0;
+
+  if (selectedUser.role === 'admin') {
+    if (countEl) countEl.textContent = 'Все устройства';
+    panel.innerHTML = `
+      <div style="font-weight:600; margin-bottom:4px;">${safeUsername}</div>
+      <div class="meta" style="color:var(--text-secondary);">Роль <strong>ADMIN</strong> имеет доступ ко всем устройствам автоматически.</div>
+    `;
+    return;
+  }
+
+  if (selectedUser.role === 'hero_admin') {
+    if (countEl) countEl.textContent = 'Без устройств';
+    panel.innerHTML = `
+      <div style="font-weight:600; margin-bottom:4px;">${safeUsername}</div>
+      <div class="meta" style="color:var(--text-secondary);">Роль <strong>HERO ADMIN</strong> работает в своей панели и не использует назначения устройств.</div>
+    `;
+    return;
+  }
+
+  const deviceIds = Array.isArray(selectedUser.deviceIds) ? selectedUser.deviceIds : [];
+  if (countEl) countEl.textContent = `${deviceIds.length} шт.`;
+
+  if (deviceIds.length === 0) {
+    panel.innerHTML = `
+      <div style="font-weight:600; margin-bottom:4px;">${safeUsername}</div>
+      <div class="meta" style="color:var(--text-secondary); margin-bottom:var(--space-sm);">Роль: ${safeRole}</div>
+      <div class="meta" style="color:var(--text-secondary);">Назначенных устройств нет.</div>
+      <button class="secondary" style="margin-top:var(--space-sm);" onclick="showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})">Назначить устройства</button>
+    `;
+    return;
+  }
+
+  const devicesHtml = deviceIds.map((deviceId) => {
+    const item = state.allDevicesById?.[deviceId];
+    const safeDeviceName = escapeHtml(item?.device_name || deviceId || 'Без названия');
+    const safeDeviceId = escapeHtml(deviceId || '');
+    return `
+      <div style="padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--panel);">
+        <div style="font-weight:600; font-size:0.9rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${safeDeviceName}</div>
+        <div class="meta" style="font-size:0.75rem; color:var(--text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${safeDeviceId}</div>
+      </div>
+    `;
+  }).join('');
+
+  panel.innerHTML = `
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:var(--space-sm); margin-bottom:var(--space-xs);">
+      <div style="font-weight:600; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${safeUsername}</div>
+      <button class="secondary meta" style="min-width:auto; padding:6px 10px;" onclick="showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})">Изменить</button>
+    </div>
+    <div class="meta" style="color:var(--text-secondary); margin-bottom:var(--space-xs);">Роль: ${safeRole}</div>
+    <div style="display:grid; gap:var(--space-xs);">${devicesHtml}</div>
+  `;
 }
 
 // Глобальная функция для открытия модального окна назначения устройств
@@ -1045,6 +1718,44 @@ export function showSettingsModal() {
     import('./system-monitor.js'),
     import('./auth.js')
   ]).then(([{ getSystemMonitorHTML, initSystemMonitor }, { adminFetch }]) => {
+    const restartServiceFromSettings = async (buttonEl) => {
+      if (!confirm('Перезапустить сервис сейчас?')) return;
+
+      const initialText = buttonEl.textContent;
+      buttonEl.disabled = true;
+      buttonEl.textContent = '...';
+
+      try {
+        const response = await adminFetch('/api/admin/restart-service', {
+          method: 'POST'
+        });
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ error: 'Ошибка перезапуска сервиса' }));
+          throw new Error(error.error || 'Ошибка перезапуска сервиса');
+        }
+
+        const result = await response.json().catch(() => ({ ok: true }));
+        const message = result.message || 'Перезапуск сервиса запущен. Подождите несколько секунд.';
+
+        showModal(`${getSuccessIcon(18)} Перезапуск`, `
+          <div style="text-align:center; padding:var(--space-lg);">
+            ${escapeHtml(message)}
+          </div>
+          <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-md);">OK</button>
+        `);
+      } catch (err) {
+        await reportModalNotification({
+          type: 'service_restart_error',
+          title: 'Ошибка перезапуска сервиса',
+          message: err.message || 'Неизвестная ошибка'
+        });
+      } finally {
+        buttonEl.disabled = false;
+        buttonEl.textContent = initialText;
+      }
+    };
+
     const content = `
       <div id="settingsModalSystemMonitor" style="margin-bottom:var(--space-md);">
         ${getSystemMonitorHTML()}
@@ -1054,7 +1765,10 @@ export function showSettingsModal() {
       </div>
     `;
     
-    showModal(`${getSettingsIcon(18)} Настройки`, content);
+    showModal(`${getSettingsIcon(18)} Настройки`, content, {
+      onRestartService: restartServiceFromSettings,
+      onViewServiceLogs: () => openServiceLogsModal(adminFetch)
+    });
     
     // Инициализируем системный монитор в модальном окне после того как DOM обновлен
     setTimeout(() => {
@@ -1069,12 +1783,53 @@ export function showSettingsModal() {
   }).catch(() => {
     // Fallback если импорт не удался
     import('./auth.js').then(({ adminFetch }) => {
+      const restartServiceFromSettings = async (buttonEl) => {
+        if (!confirm('Перезапустить сервис сейчас?')) return;
+
+        const initialText = buttonEl.textContent;
+        buttonEl.disabled = true;
+        buttonEl.textContent = '...';
+
+        try {
+          const response = await adminFetch('/api/admin/restart-service', {
+            method: 'POST'
+          });
+
+          if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Ошибка перезапуска сервиса' }));
+            throw new Error(error.error || 'Ошибка перезапуска сервиса');
+          }
+
+          const result = await response.json().catch(() => ({ ok: true }));
+          const message = result.message || 'Перезапуск сервиса запущен. Подождите несколько секунд.';
+
+          showModal(`${getSuccessIcon(18)} Перезапуск`, `
+            <div style="text-align:center; padding:var(--space-lg);">
+              ${escapeHtml(message)}
+            </div>
+            <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-md);">OK</button>
+          `);
+        } catch (err) {
+          await reportModalNotification({
+            type: 'service_restart_error',
+            title: 'Ошибка перезапуска сервиса',
+            message: err.message || 'Неизвестная ошибка'
+          });
+        } finally {
+          buttonEl.disabled = false;
+          buttonEl.textContent = initialText;
+        }
+      };
+
       const content = `
         <div id="settingsModalContainer" style="display:flex; flex-direction:column; gap:var(--space-lg);">
           <div class="meta" style="text-align:center;">Загрузка настроек...</div>
         </div>
       `;
-      showModal(`${getSettingsIcon(18)} Настройки`, content);
+      showModal(`${getSettingsIcon(18)} Настройки`, content, {
+        onRestartService: restartServiceFromSettings,
+        onViewServiceLogs: () => openServiceLogsModal(adminFetch)
+      });
       loadSettingsContent(adminFetch);
     });
   });
@@ -1162,6 +1917,8 @@ async function loadSettingsContent(adminFetch) {
   storageContent.appendChild(contentRootSaveBtn);
   storageSection.appendChild(storageTitle);
   storageSection.appendChild(storageContent);
+
+  // (LDAP/AD UI removed — configuration moved to server .env)
   
   // Разделитель
   const divider1 = document.createElement('div');
@@ -1188,9 +1945,23 @@ async function loadSettingsContent(adminFetch) {
   exportDatabaseBtn.className = 'primary';
   exportDatabaseBtn.style.cssText = 'flex-shrink:0;';
   exportDatabaseBtn.innerHTML = `${getDownloadIcon(16)} Экспорт`;
+
+  // Кнопка импорта базы данных (скрытый input + кнопка)
+  const importDatabaseBtn = document.createElement('button');
+  importDatabaseBtn.id = 'importDatabaseBtn';
+  importDatabaseBtn.className = 'secondary';
+  importDatabaseBtn.style.cssText = 'flex-shrink:0; margin-left:8px;';
+  importDatabaseBtn.innerHTML = `${getUpDownloadIcon(16)} Импорт`;
+
+  const importFileInput = document.createElement('input');
+  importFileInput.type = 'file';
+  importFileInput.accept = '.db';
+  importFileInput.style.display = 'none';
   
   dbContent.appendChild(dbDescription);
   dbContent.appendChild(exportDatabaseBtn);
+  dbContent.appendChild(importDatabaseBtn);
+  dbSection.appendChild(importFileInput);
   dbSection.appendChild(dbTitle);
   dbSection.appendChild(dbContent);
   
@@ -1402,10 +2173,12 @@ async function loadSettingsContent(adminFetch) {
   const saveBtn = contentRootSaveBtn;
   const statusEl = contentRootStatus;
   const exportBtn = exportDatabaseBtn;
+  const importBtn = importDatabaseBtn;
+  const importFileEl = importFileInput;
   const cleanupStatusEl = cleanupStatus;
   const orphanedStatusEl = orphanedStatus;
   
-  if (!inputEl || !saveBtn || !statusEl || !exportBtn || !checkFilesBtn || !cleanupFilesBtn || !cleanupStatusEl || !checkOrphanedBtn || !cleanupOrphanedBtn || !orphanedStatusEl) return;
+  if (!inputEl || !saveBtn || !statusEl || !exportBtn || !importBtn || !importFileEl || !checkFilesBtn || !cleanupFilesBtn || !cleanupStatusEl || !checkOrphanedBtn || !cleanupOrphanedBtn || !orphanedStatusEl) return;
   
   let lastSavedValue = currentContentRoot;
   inputEl.value = currentContentRoot;
@@ -1460,7 +2233,7 @@ async function loadSettingsContent(adminFetch) {
       toggleSaveState();
     }
   };
-  
+
   exportBtn.onclick = async () => {
       exportBtn.disabled = true;
       exportBtn.textContent = 'Экспорт...';
@@ -1500,6 +2273,69 @@ async function loadSettingsContent(adminFetch) {
         });
         exportBtn.disabled = false;
         exportBtn.innerHTML = `${getDownloadIcon(16)} Экспорт`;
+      }
+    };
+
+    // Импорт базы данных
+    importBtn.onclick = async () => {
+      if (!confirm('Импорт базы данных перезапишет текущую базу. Продолжить?')) return;
+      // Открываем диалог выбора файла
+      importFileEl.value = null;
+      importFileEl.click();
+    };
+
+    importFileEl.onchange = async () => {
+      const file = importFileEl.files && importFileEl.files[0];
+      if (!file) return;
+
+      importBtn.disabled = true;
+      importBtn.textContent = 'Импорт...';
+
+      try {
+        const form = new FormData();
+        form.append('file', file);
+
+        // Используем adminFetch — он может добавлять CSRF/авторизацию
+        const resp = await adminFetch('/api/admin/import-database', {
+          method: 'POST',
+          body: form
+        });
+
+        if (!resp.ok) {
+          const error = await resp.json().catch(() => ({ error: 'Ошибка импорта' }));
+          throw new Error(error.error || 'Ошибка импорта');
+        }
+
+        const result = await resp.json().catch(() => ({ ok: true }));
+
+        if (result.ok || resp.ok) {
+          const restartScheduled = !!result.restartScheduled;
+          const statusText = restartScheduled
+            ? 'Импорт базы данных завершён успешно. Сервис перезапускается, подождите 3-10 секунд.'
+            : 'Импорт базы данных завершён успешно.';
+
+          showModal(`${getSuccessIcon(18)} Успешно`, `
+            <div style="text-align:center; padding:var(--space-lg);">
+              ${statusText}
+            </div>
+            <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-md);">OK</button>
+          `);
+        } else {
+          await reportModalNotification({
+            type: 'database_import_error',
+            title: 'Ошибка импорта базы данных',
+            message: result.error || 'Ошибка импорта'
+          });
+        }
+      } catch (err) {
+        await reportModalNotification({
+          type: 'database_import_error',
+          title: 'Ошибка импорта базы данных',
+          message: err.message || 'Неизвестная ошибка'
+        });
+      } finally {
+        importBtn.disabled = false;
+        importBtn.innerHTML = `${getUpDownloadIcon(16)} Импорт`;
       }
     };
 

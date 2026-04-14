@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
+import { hasDeviceAccess } from '../middleware/device-access.js';
 import { getFolderImages, getFolderImagesCount } from '../converters/folder-converter.js';
 import logger from '../utils/logger.js';
 
@@ -48,6 +49,10 @@ export function createFoldersRouter(deps) {
     
     if (!id || !devices[id]) {
       return res.status(404).json({ error: 'Устройство не найдено' });
+    }
+
+    if (!hasDeviceAccess(req.user.userId, id, req.user.role)) {
+      return res.status(403).json({ error: 'Доступ к устройству запрещен' });
     }
     
     if (!folderName) {

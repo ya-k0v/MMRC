@@ -814,6 +814,87 @@ function getMobilePageSize(itemType = null) {
   return getPageSize(itemType);
 }
 
+function getSpeakerMeasuredFileRowHeight(listEl) {
+  if (!listEl) return 0;
+
+  const sampleItem = listEl.querySelector('.file-item');
+  if (sampleItem) {
+    const measured = sampleItem.getBoundingClientRect().height;
+    if (Number.isFinite(measured) && measured > 0) {
+      return measured;
+    }
+  }
+
+  return 0;
+}
+
+function getSpeakerAutoFilePageSize() {
+  const listEl = document.getElementById('fileList');
+  if (!listEl) {
+    return getMobilePageSize('file');
+  }
+
+  const listHeight = listEl.clientHeight || listEl.getBoundingClientRect().height || 0;
+  if (!Number.isFinite(listHeight) || listHeight <= 0) {
+    return getMobilePageSize('file');
+  }
+
+  const listStyles = getComputedStyle(listEl);
+  const rowGap = parseFloat(listStyles.rowGap || listStyles.gap || '0') || 0;
+
+  // Базируемся на фактической высоте отрисованной карточки, а не на предположениях.
+  let rowHeight = getSpeakerMeasuredFileRowHeight(listEl);
+  if (!Number.isFinite(rowHeight) || rowHeight <= 0) {
+    const rootFontSize = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    rowHeight = Math.max(32, rootFontSize * 2.5);
+  }
+
+  const availableHeight = Math.max(1, listHeight - 2);
+  const rowPitch = Math.max(1, rowHeight + rowGap);
+  const estimated = Math.floor((availableHeight + rowGap) / rowPitch);
+
+  return Math.max(1, Math.min(200, estimated || 1));
+}
+
+function sortSpeakerFilesLikeAdmin(files) {
+  if (!Array.isArray(files) || files.length < 2) return files;
+
+  files.sort((a, b) => {
+    if (a?.isPlaceholder && !b?.isPlaceholder) return -1;
+    if (!a?.isPlaceholder && b?.isPlaceholder) return 1;
+
+    const aName = String(a?.originalName || a?.safeName || '');
+    const bName = String(b?.originalName || b?.safeName || '');
+    return aName.localeCompare(bName, 'ru', { numeric: true });
+  });
+
+  return files;
+}
+
+function scheduleSpeakerFilePaginationStabilize({ mode, renderedPageSize, stabilizeAttempt = 0, deviceId = null }) {
+  if (stabilizeAttempt >= 2) return;
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const measuredPageSize = getSpeakerAutoFilePageSize();
+      if (!Number.isFinite(measuredPageSize) || measuredPageSize <= 0) return;
+      if (measuredPageSize === renderedPageSize) return;
+
+      if (mode === 'all') {
+        if (fileListMode === 'all') {
+          loadAllFilesAggregated(stabilizeAttempt + 1);
+        }
+        return;
+      }
+
+      if (fileListMode === 'all') return;
+      if (!currentDevice) return;
+      if (deviceId && currentDevice !== deviceId) return;
+      loadFiles(stabilizeAttempt + 1);
+    });
+  });
+}
+
 function clearVolumeFallback(deviceId) {
   if (!deviceId) return;
   const timer = volumeFallbackTimers.get(deviceId);
@@ -2099,9 +2180,9 @@ function renderTVList() {
   if (pager) {
     if (totalPages > 1) {
       pager.innerHTML = `
-        <button class="secondary" id="tvPrev" ${tvPage<=0?'disabled':''} style="min-width:80px">Назад</button>
-        <span style="white-space:nowrap">${tvPage+1} из ${totalPages}</span>
-        <button class="secondary" id="tvNext" ${tvPage>=totalPages-1?'disabled':''} style="min-width:80px">Вперёд</button>
+        <button class="secondary" id="tvPrev" ${tvPage<=0?'disabled':''} style="flex:1 1 0; min-width:var(--speaker-tv-pager-btn-min-width,52px); min-height:var(--speaker-tv-pager-btn-height,36px)">Назад</button>
+        <span style="white-space:nowrap; flex:0 0 auto">${tvPage+1} из ${totalPages}</span>
+        <button class="secondary" id="tvNext" ${tvPage>=totalPages-1?'disabled':''} style="flex:1 1 0; min-width:var(--speaker-tv-pager-btn-min-width,52px); min-height:var(--speaker-tv-pager-btn-height,36px)">Вперёд</button>
       `;
       const prev = document.getElementById('tvPrev');
       const next = document.getElementById('tvNext');
@@ -2242,11 +2323,13 @@ async function selectDevice(id, resetPage = true, { preserveSelection = false } 
 }
 
 /* Загрузка и рендер файлов для текущего ТВ или агрегата */
-async function loadFiles() {
+async function loadFiles(stabilizeAttempt = 0) {
   if (fileListMode === 'all') {
-    return loadAllFilesAggregated();
+    return loadAllFilesAggregated(stabilizeAttempt);
   }
   if (!currentDevice) return;
+
+  const renderDeviceId = currentDevice;
   
   const device = devices.find(d => d.device_id === currentDevice);
   const deviceName = device ? (device.name || nodeNames[currentDevice] || currentDevice) : currentDevice;
@@ -2270,7 +2353,7 @@ async function loadFiles() {
       .filter(item => !(typeof item === 'object' && item.isPlaceholder))
       .map(item => {
         if (typeof item === 'string') {
-          return { safeName: item, originalName: item, resolution: null, durationSeconds: null, folderImageCount: null, contentType: null, streamUrl: null, streamProxyUrl: null, streamProtocol: null, sourceDeviceId: currentDevice };
+          return { safeName: item, originalName: item, resolution: null, durationSeconds: null, folderImageCount: null, contentType: null, streamUrl: null, streamProxyUrl: null, streamProtocol: null, sourceDeviceId: currentDevice, isPlaceholder: false };
         }
         const itemSafeName = item.name || item.safeName || item.originalName;
         return { 
@@ -2287,9 +2370,12 @@ async function loadFiles() {
           streamProtocol: item.streamProtocol || null,
           hasTrailer: item.hasTrailer || false,
           trailerUrl: item.trailerUrl || null,
-          sourceDeviceId: currentDevice
+          sourceDeviceId: currentDevice,
+          isPlaceholder: !!item.isPlaceholder
         };
       });
+
+    sortSpeakerFilesLikeAdmin(allFiles);
 
     cacheDeviceFileMeta(currentDevice, allFiles);
     refreshTvTilePlaybackInfo(currentDevice);
@@ -2314,7 +2400,7 @@ async function loadFiles() {
   
   updatePlaybackInfoUI();
 
-  const pageSize = getMobilePageSize('file');
+  const pageSize = getSpeakerAutoFilePageSize();
   const totalPages = Math.max(1, Math.ceil(allFiles.length / pageSize));
   if (filePage >= totalPages) filePage = totalPages - 1;
   const start = filePage * pageSize;
@@ -2398,6 +2484,7 @@ async function loadFiles() {
           style="
             display:grid; 
             grid-template-columns:3fr 1fr; 
+            gap:0;
             cursor:pointer; 
             padding:0; 
             border-radius:var(--radius-md);
@@ -2405,12 +2492,12 @@ async function loadFiles() {
             overflow:hidden;
             background:transparent;
             transition:all 0.2s;
-            min-height:72px;
+            min-height:var(--speaker-file-item-min-height,52px);
           ">
         
         <!-- Левая часть: информация о файле (75%) -->
         <div class="file-info" style="
-          padding:8px 12px; 
+          padding:var(--speaker-file-info-padding, 3px 8px); 
           min-width:0; 
           display:flex; 
           flex-direction:column; 
@@ -2418,34 +2505,34 @@ async function loadFiles() {
           background:var(--panel);
         ">
           <div class="file-item-name" title="${displayName}" 
-               style="font-size:1rem; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-bottom:3px; line-height:1.3;">
+            style="display:block; flex:0 0 auto; font-size:var(--speaker-file-name-size, 1rem); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:0 0 var(--speaker-file-name-gap, 2px) 0; line-height:1.12;">
             ${displayName}
           </div>
-          <div class="file-meta" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+          <div class="file-meta" style="display:flex; align-items:center; gap:var(--speaker-file-meta-gap, 3px); flex-wrap:wrap; margin:0; margin-top:auto;">
             <span class="file-type-badge" style="
               display:inline-block;
-              padding:2px 6px;
+              padding:0 5px;
               border:1px solid rgba(255,255,255,0.15);
               border-radius:3px;
-              font-size:0.75rem;
+              font-size:var(--speaker-badge-font-size, 0.75rem);
               font-weight:500;
               color:var(--text);
               background:rgba(255,255,255,0.05);
               white-space:nowrap;
-              line-height:1.2;
+              line-height:1.1;
             ">${typeBadgeLabel}</span>
             ${resolutionLabel ? `
               <span class="resolution-badge" style="
                 display:inline-block;
-                padding:2px 6px;
+                padding:0 5px;
                 border:1px solid var(--brand);
                 border-radius:3px;
-                font-size:0.75rem;
+                font-size:var(--speaker-badge-font-size, 0.75rem);
                 font-weight:500;
                 color:var(--brand);
                 background:var(--brand-light);
                 white-space:nowrap;
-                line-height:1.2;
+                line-height:1.1;
               ">${resolutionLabel}</span>
             ` : ''}
           </div>
@@ -2462,7 +2549,8 @@ async function loadFiles() {
                display:flex;
                align-items:center;
                justify-content:center;
-               font-size:2rem;
+               font-size:var(--speaker-play-icon-size, 2rem);
+               min-width:var(--speaker-play-min-width,72px);
                cursor:pointer;
                transition:background 0.2s;
                user-select:none;
@@ -2493,9 +2581,9 @@ async function loadFiles() {
   if (filePager) {
     if (totalPages > 1) {
       filePager.innerHTML = `
-        <button class="secondary" id="filePrev" ${filePage<=0?'disabled':''} style="min-width:80px">Назад</button>
+        <button class="secondary" id="filePrev" ${filePage<=0?'disabled':''} style="min-width:var(--speaker-pager-btn-min-width,80px); min-height:var(--speaker-control-height,40px)">Назад</button>
         <span style="white-space:nowrap">${filePage+1} из ${totalPages}</span>
-        <button class="secondary" id="fileNext" ${filePage>=totalPages-1?'disabled':''} style="min-width:80px">Вперёд</button>
+        <button class="secondary" id="fileNext" ${filePage>=totalPages-1?'disabled':''} style="min-width:var(--speaker-pager-btn-min-width,80px); min-height:var(--speaker-control-height,40px)">Вперёд</button>
       `;
       const prev = document.getElementById('filePrev');
       const next = document.getElementById('fileNext');
@@ -2780,6 +2868,13 @@ async function loadFiles() {
       socket.emit('control/play', { device_id: targetDeviceId, file: safeName });
     };
   });
+
+  scheduleSpeakerFilePaginationStabilize({
+    mode: 'device',
+    renderedPageSize: pageSize,
+    stabilizeAttempt,
+    deviceId: renderDeviceId
+  });
   
   } catch (error) {
     console.error('Не удалось отобразить файлы:', error);
@@ -2790,7 +2885,7 @@ async function loadFiles() {
 }
 
 /* Агрегированный список файлов по всем устройствам с запуском на выбранные устройства */
-async function loadAllFilesAggregated() {
+async function loadAllFilesAggregated(stabilizeAttempt = 0) {
   const title = document.getElementById('filesPaneTitle');
   const meta = document.getElementById('filesPaneMeta');
 
@@ -2841,9 +2936,12 @@ async function loadAllFilesAggregated() {
         hasTrailer: false,
         trailerUrl: null,
         sourceDeviceId: item.deviceId,
-        sourceDeviceName: getDeviceDisplayName(item.deviceId)
+        sourceDeviceName: getDeviceDisplayName(item.deviceId),
+        isPlaceholder: !!item.isPlaceholder
       };
     });
+
+    sortSpeakerFilesLikeAdmin(allFiles);
 
     // КРИТИЧНО: Сохраняем копию в кэш для поиска файлов после переключения режимов
     allFilesCache = [...allFiles];
@@ -2866,7 +2964,7 @@ async function loadAllFilesAggregated() {
       meta.textContent = formatFilesMetaWithSelection(filesText);
     }
 
-    const pageSize = getMobilePageSize('file');
+    const pageSize = getSpeakerAutoFilePageSize();
     const totalPages = Math.max(1, Math.ceil(allFiles.length / pageSize));
     if (filePage >= totalPages) filePage = totalPages - 1;
     const start = filePage * pageSize;
@@ -2929,6 +3027,7 @@ async function loadAllFilesAggregated() {
             style="
               display:grid; 
               grid-template-columns:3fr 1fr; 
+              gap:0;
               cursor:pointer; 
               padding:0; 
               border-radius:var(--radius-md);
@@ -2936,11 +3035,11 @@ async function loadAllFilesAggregated() {
               overflow:hidden;
               background:transparent;
               transition:all 0.2s;
-              min-height:78px;
+              min-height:var(--speaker-file-item-min-height,52px);
             ">
           
           <div class="file-info" style="
-            padding:8px 12px; 
+            padding:var(--speaker-file-info-padding, 3px 8px); 
             min-width:0; 
             display:flex; 
             flex-direction:column; 
@@ -2948,47 +3047,47 @@ async function loadAllFilesAggregated() {
             background:var(--panel);
           ">
             <div class="file-item-name" title="${displayName}" 
-                 style="font-size:1rem; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-bottom:3px; line-height:1.3;">
+              style="display:block; flex:0 0 auto; font-size:var(--speaker-file-name-size, 1rem); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:0 0 var(--speaker-file-name-gap, 2px) 0; line-height:1.12;">
               ${displayName}
             </div>
-            <div class="file-meta" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+              <div class="file-meta" style="display:flex; align-items:center; gap:var(--speaker-file-meta-gap, 3px); flex-wrap:wrap; margin:0; margin-top:auto;">
               <span class="file-type-badge" style="
                 display:inline-block;
-                padding:2px 6px;
+                padding:0 5px;
                 border:1px solid rgba(255,255,255,0.15);
                 border-radius:3px;
-                font-size:0.75rem;
+                font-size:var(--speaker-badge-font-size, 0.75rem);
                 font-weight:500;
                 color:var(--text);
                 background:rgba(255,255,255,0.05);
                 white-space:nowrap;
-                line-height:1.2;
+                line-height:1.1;
               ">${typeBadgeLabel}</span>
               ${resolutionLabel ? `
                 <span class="resolution-badge" style="
                   display:inline-block;
-                  padding:2px 6px;
+                  padding:0 5px;
                   border:1px solid var(--brand);
                   border-radius:3px;
-                  font-size:0.75rem;
+                  font-size:var(--speaker-badge-font-size, 0.75rem);
                   font-weight:500;
                   color:var(--brand);
                   background:var(--brand-light);
                   white-space:nowrap;
-                  line-height:1.2;
+                  line-height:1.1;
                 ">${resolutionLabel}</span>
               ` : ''}
               <span class="device-badge" style="
                 display:inline-block;
-                padding:2px 6px;
+                padding:0 5px;
                 border:1px solid rgba(255,255,255,0.15);
                 border-radius:3px;
-                font-size:0.75rem;
+                font-size:var(--speaker-badge-font-size, 0.75rem);
                 font-weight:500;
                 color:var(--text);
                 background:rgba(255,255,255,0.08);
                 white-space:nowrap;
-                line-height:1.2;
+                line-height:1.1;
               ">${sourceDeviceName || sourceDeviceId}</span>
             </div>
           </div>
@@ -3002,12 +3101,12 @@ async function loadAllFilesAggregated() {
                  display:flex; 
                  align-items:center; 
                  justify-content:center; 
-                 font-size:2rem;
+                 font-size:var(--speaker-play-icon-size, 2rem);
                  background:var(--brand);
                  color:white;
                  transition:background 0.2s;
                  min-height:100%;
-                 min-width:72px;
+                 min-width:var(--speaker-play-min-width,72px);
                  cursor:pointer;
                  user-select:none;
                "
@@ -3026,9 +3125,9 @@ async function loadAllFilesAggregated() {
     if (filePager) {
       if (totalPages > 1) {
         filePager.innerHTML = `
-          <button class="secondary" id="filePrev" ${filePage<=0?'disabled':''} style="min-width:80px">Назад</button>
+          <button class="secondary" id="filePrev" ${filePage<=0?'disabled':''} style="min-width:var(--speaker-pager-btn-min-width,80px); min-height:var(--speaker-control-height,40px)">Назад</button>
           <span style="white-space:nowrap">${filePage+1} из ${totalPages}</span>
-          <button class="secondary" id="fileNext" ${filePage>=totalPages-1?'disabled':''} style="min-width:80px">Вперёд</button>
+          <button class="secondary" id="fileNext" ${filePage>=totalPages-1?'disabled':''} style="min-width:var(--speaker-pager-btn-min-width,80px); min-height:var(--speaker-control-height,40px)">Вперёд</button>
         `;
         const prev = document.getElementById('filePrev');
         const next = document.getElementById('fileNext');
@@ -3093,6 +3192,12 @@ async function loadAllFilesAggregated() {
         const row = btn.closest('.file-item');
         await handlePlayAggregated({ sourceDeviceId, safeName, contentType, streamProtocol, rowEl: row });
       };
+    });
+
+    scheduleSpeakerFilePaginationStabilize({
+      mode: 'all',
+      renderedPageSize: pageSize,
+      stabilizeAttempt
     });
 
   } catch (error) {

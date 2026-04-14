@@ -1,8 +1,8 @@
-# 📺 MMRC 3.1.1
+# 📺 MMRC 3.2.0
 
 **Система управления медиаконтентом для цифровых дисплеев**
 
-![Version](https://img.shields.io/badge/version-3.1.1-blue)
+![Version](https://img.shields.io/badge/version-3.2.0-blue)
 ![Node](https://img.shields.io/badge/node-20.x-green)
 ![License](https://img.shields.io/badge/license-Personal_Use_Only-red)
 
@@ -126,7 +126,7 @@ videocontrol/
 
 ## 📱 Клиенты
 
-- **Android TV / Media Player** — APK в корне проекта (`MMRCplayer-v3.1.1.apk`)
+- **Android TV / Media Player** — APK в корне проекта (`MMRCplayer-v3.2.0.apk`)
 - **MPV Player (Linux)** — нативный медиаплеер
 - **Browser** — веб-плеер через Video.js
 
@@ -135,10 +135,12 @@ videocontrol/
 ## 🔄 Обновление
 
 ```bash
-cd /vid/videocontrol
+cd /var/lib/mmrc
 sudo systemctl stop videocontrol
 git pull origin main
 npm install
+npm run setup-hooks --silent || true
+npm run migrate-db --silent
 
 # Проверяем, что .env файл существует и содержит все необходимые переменные
 if [ ! -f .env ]; then
@@ -170,7 +172,7 @@ sudo systemctl start videocontrol
 
 **ya-k0v** - [GitHub](https://github.com/ya-k0v/MMRC)
 
-**Версия:** 3.1.1
+**Версия:** 3.2.0
 
 ---
 

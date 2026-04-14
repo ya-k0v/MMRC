@@ -242,7 +242,7 @@ export CONTENT_FSTAB_OPTS="ext4 defaults,noatime 0 2"
 
 # Неблокирующий запуск
 sudo AUTO_CONFIRM=1 STORAGE_MODE=external CONTENT_DIR=/mnt/vc-content \
-     bash dev/scripts/quick-install.sh /vid/videocontrol
+     bash dev/scripts/quick-install.sh /var/lib/mmrc
 
 # Быстрая установка server-only (без Nginx) с автоответами
 sudo AUTO_CONFIRM=1 bash dev/scripts/install-server.sh
@@ -255,7 +255,7 @@ sudo mkdir -p /mnt/vc-content
 echo '/dev/sdb1 /mnt/vc-content ext4 defaults,noatime 0 2' | sudo tee -a /etc/fstab
 sudo mount -a
 
-sudo mkdir -p /vid/videocontrol && cd /vid/videocontrol
+sudo mkdir -p /var/lib/mmrc && cd /var/lib/mmrc
 sudo apt-get update -y && sudo apt-get install -y git
 sudo git clone https://github.com/ya-k0v/MMRC.git .
 
@@ -264,7 +264,7 @@ export CONTENT_DIR=/mnt/vc-content
 export CONTENT_SOURCE=/dev/sdb1
 export CONTENT_FSTAB_OPTS="ext4 defaults,noatime 0 2"
 
-printf 'y\ny\n' | sudo bash dev/scripts/quick-install.sh /vid/videocontrol
+printf 'y\ny\n' | sudo bash dev/scripts/quick-install.sh /var/lib/mmrc
 
 sudo systemctl status videocontrol
 sudo nginx -t && sudo systemctl restart nginx
@@ -286,5 +286,5 @@ adb -s SERIAL shell ping -c 3 <SERVER_IP>
 
 ---
 
-**Версия:** 3.1.1
+**Версия:** 3.2.0
 

@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS users (
   username TEXT UNIQUE NOT NULL,
   full_name TEXT NOT NULL,
   password_hash TEXT NOT NULL,
+  auth_source TEXT NOT NULL DEFAULT 'local' CHECK(auth_source IN ('local', 'ldap')),
+  ldap_dn TEXT,
   role TEXT DEFAULT 'speaker' CHECK(role IN ('admin', 'speaker', 'hero_admin')),
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -23,6 +25,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active);
+
 
 -- ========================================
 -- REFRESH TOKENS TABLE
