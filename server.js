@@ -474,12 +474,6 @@ function clampInt(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function isPathInsideBase(candidatePath, baseDir) {
-  const resolvedCandidate = path.resolve(candidatePath);
-  const resolvedBase = path.resolve(baseDir);
-  return resolvedCandidate === resolvedBase || resolvedCandidate.startsWith(`${resolvedBase}${path.sep}`);
-}
-
 function resolveLatestServiceLogFilePath() {
   const candidateDirs = [path.resolve(ADMIN_SERVICE_LOGS_DIR)];
 
