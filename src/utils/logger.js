@@ -96,7 +96,7 @@ const consoleFormat = winston.format.combine(
 
 let errorFileTransport = null;
 let combinedFileTransport = null;
-if (FILE_LOGGING_ENABLED && LOG_DIR) {
+if (LOG_DIR) {
   try {
     errorFileTransport = new DailyRotateFile({
       filename: path.join(LOG_DIR, 'error-%DATE%.log'),
