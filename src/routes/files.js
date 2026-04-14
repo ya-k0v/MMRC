@@ -4022,18 +4022,31 @@ export function createFilesRouter(deps) {
     }
 
     const appRoot = path.resolve(ROOT);
+    const mountRoot = path.resolve('/mnt');
     const devicesPath = path.resolve(getDevicesPath());
-    if (devicesPath !== appRoot && !devicesPath.startsWith(appRoot + path.sep)) {
+
+    let devicesBaseDir = null;
+    if (devicesPath === appRoot || devicesPath.startsWith(appRoot + path.sep)) {
+      devicesBaseDir = appRoot;
+    } else if (devicesPath === mountRoot || devicesPath.startsWith(mountRoot + path.sep)) {
+      devicesBaseDir = mountRoot;
+    }
+
+    if (!devicesBaseDir) {
+      return res.status(400).json({ error: 'Неверный корневой путь контента' });
+    }
+
+    let safeDevicesPath;
+    try {
+      safeDevicesPath = validatePath(devicesPath, devicesBaseDir);
+    } catch (error) {
       return res.status(400).json({ error: 'Неверный корневой путь контента' });
     }
 
     let deviceFolder = null;
     try {
-      const resolvedDeviceFolder = path.resolve(devicesPath, safeDeviceFolderName);
-      deviceFolder = fs.realpathSync(resolvedDeviceFolder);
-      if (!deviceFolder.startsWith(devicesPath + path.sep) && deviceFolder !== devicesPath) {
-        return res.status(400).json({ error: 'Неверный путь устройства' });
-      }
+      const resolvedDeviceFolder = validatePath(path.resolve(safeDevicesPath, safeDeviceFolderName), safeDevicesPath);
+      deviceFolder = validatePath(fs.realpathSync(resolvedDeviceFolder), safeDevicesPath);
     } catch (error) {
       return res.status(404).json({ error: 'Устройство не найдено' });
     }
@@ -4046,7 +4059,8 @@ export function createFilesRouter(deps) {
 
     let entries = [];
     try {
-      entries = fs.readdirSync(deviceFolder, { withFileTypes: true });
+      const safeFolderForRead = validatePath(deviceFolder, safeDevicesPath);
+      entries = fs.readdirSync(safeFolderForRead, { withFileTypes: true });
     } catch (error) {
       logger.error('[download] Failed to read device folder', {
         deviceId: id,
@@ -4068,11 +4082,8 @@ export function createFilesRouter(deps) {
       }
 
       try {
-        const resolvedEntryPath = path.resolve(deviceFolder, safeEntryName);
-        const entryRealPath = fs.realpathSync(resolvedEntryPath);
-        if (!entryRealPath.startsWith(deviceFolder + path.sep) && entryRealPath !== deviceFolder) {
-          continue;
-        }
+        const resolvedEntryPath = validatePath(path.resolve(deviceFolder, safeEntryName), deviceFolder);
+        const entryRealPath = validatePath(fs.realpathSync(resolvedEntryPath), deviceFolder);
         allowedDownloadPaths.set(entry.name, entryRealPath);
       } catch (error) {
         continue;
@@ -4089,8 +4100,8 @@ export function createFilesRouter(deps) {
     let safeTargetPath;
     let safeDeviceRoot;
     try {
-      safeDeviceRoot = fs.realpathSync(deviceFolder);
-      safeTargetPath = fs.realpathSync(targetPath);
+      safeDeviceRoot = validatePath(fs.realpathSync(deviceFolder), safeDevicesPath);
+      safeTargetPath = validatePath(fs.realpathSync(targetPath), safeDeviceRoot);
     } catch (error) {
       return res.status(404).json({ error: 'Файл или папка не найдены' });
     }
@@ -4099,9 +4110,16 @@ export function createFilesRouter(deps) {
       return res.status(400).json({ error: 'Неверный путь к файлу' });
     }
 
+    let downloadTargetPath;
+    try {
+      downloadTargetPath = validatePath(safeTargetPath, safeDeviceRoot);
+    } catch (error) {
+      return res.status(400).json({ error: 'Неверный путь к файлу' });
+    }
+
     let stat;
     try {
-      stat = fs.statSync(safeTargetPath);
+      stat = fs.statSync(downloadTargetPath);
     } catch (error) {
       logger.error('[download] Failed to stat target', {
         deviceId: id,
@@ -4116,7 +4134,7 @@ export function createFilesRouter(deps) {
       const originalName = metadata?.original_name || name.replace(/\.(zip|pdf|pptx)$/i, '') || path.basename(safeTargetPath);
       const zipName = safeDownloadFileName(
         /\.zip$/i.test(originalName) ? originalName : `${originalName}.zip`,
-        `${path.basename(safeTargetPath)}.zip`
+        `${path.basename(downloadTargetPath)}.zip`
       );
 
       let tempDirPath = null;
@@ -4131,7 +4149,7 @@ export function createFilesRouter(deps) {
         tempDirPath = fs.mkdtempSync(path.join(os.tmpdir(), 'videocontrol-download-'));
         const zipPath = path.join(tempDirPath, `${Date.now()}-${crypto.randomBytes(4).toString('hex')}.zip`);
 
-        await createZipArchiveFromFolder(safeTargetPath, zipPath);
+          await createZipArchiveFromFolder(downloadTargetPath, zipPath);
 
         res.setHeader('X-Download-Filename', zipName);
         return res.download(zipPath, zipName, (error) => {
@@ -4141,7 +4159,7 @@ export function createFilesRouter(deps) {
           logger.error('[download] Failed to send ZIP archive', {
             deviceId: id,
             name,
-            targetPath: safeTargetPath,
+              targetPath: downloadTargetPath,
             zipName,
             error: error.message
           });
@@ -4155,7 +4173,7 @@ export function createFilesRouter(deps) {
         logger.error('[download] Failed to create ZIP archive', {
           deviceId: id,
           name,
-          targetPath: safeTargetPath,
+            targetPath: downloadTargetPath,
           error: error.message
         });
         return res.status(500).json({ error: 'Не удалось создать ZIP архив' });
@@ -4166,22 +4184,22 @@ export function createFilesRouter(deps) {
       return res.status(400).json({ error: 'Поддерживается скачивание только файлов и папок' });
     }
 
-    const resolvedBaseName = path.basename(safeTargetPath);
+    const resolvedBaseName = path.basename(downloadTargetPath);
     const metadataOriginalName = metadata?.original_name || fileNamesMap[id]?.[name] || resolvedBaseName;
     const ext = path.extname(resolvedBaseName);
     const fileNameForDownload = safeDownloadFileName(
       path.extname(metadataOriginalName) ? metadataOriginalName : `${metadataOriginalName}${ext}`,
-      path.basename(safeTargetPath)
+        path.basename(downloadTargetPath)
     );
 
     res.setHeader('X-Download-Filename', fileNameForDownload);
-    return res.download(safeTargetPath, fileNameForDownload, (error) => {
+    return res.download(downloadTargetPath, fileNameForDownload, (error) => {
       if (!error) return;
 
       logger.error('[download] Failed to send file', {
         deviceId: id,
         name,
-        targetPath: safeTargetPath,
+        targetPath: downloadTargetPath,
         fileNameForDownload,
         error: error.message
       });

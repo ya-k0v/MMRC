@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { ROOT, DEFAULT_DEVICES_PATH, DEFAULT_DATA_ROOT, setDevicesPath, DEVICES } from './constants.js';
+import { validatePath } from '../utils/path-validator.js';
 
 // КРИТИЧНО: НЕ импортируем logger здесь, так как это создает циклическую зависимость:
 // logger.js -> settings-manager.js (getLogsDir) -> logger.js
@@ -35,6 +36,52 @@ const LDAP_DEFAULTS = {
 
 const ALLOWED_SEARCH_SCOPES = new Set(['base', 'one', 'sub']);
 const ALLOWED_USER_ROLES = new Set(['admin', 'speaker', 'hero_admin']);
+const PROJECT_ROOT = path.resolve(ROOT);
+const MOUNT_ROOT = path.resolve('/mnt');
+
+function getAllowedBaseDir(candidatePath) {
+  const normalizedCandidate = path.resolve(String(candidatePath || ''));
+
+  if (
+    normalizedCandidate === PROJECT_ROOT ||
+    normalizedCandidate.startsWith(PROJECT_ROOT + path.sep)
+  ) {
+    return PROJECT_ROOT;
+  }
+
+  if (
+    normalizedCandidate === MOUNT_ROOT ||
+    normalizedCandidate.startsWith(MOUNT_ROOT + path.sep)
+  ) {
+    return MOUNT_ROOT;
+  }
+
+  throw new Error('Путь должен находиться внутри разрешенных директорий (/mnt или папки проекта)');
+}
+
+function sanitizeManagedPath(candidatePath) {
+  const normalizedCandidate = path.resolve(String(candidatePath || ''));
+  const baseDir = getAllowedBaseDir(normalizedCandidate);
+  return validatePath(normalizedCandidate, baseDir);
+}
+
+function trimTrailingPathSeparators(value) {
+  const input = String(value || '');
+  if (!input) {
+    return input;
+  }
+
+  let end = input.length;
+  while (end > 1) {
+    const code = input.charCodeAt(end - 1);
+    if (code !== 47 && code !== 92) {
+      break;
+    }
+    end -= 1;
+  }
+
+  return input.slice(0, end);
+}
 
 function normalizeBoolean(value, fallback = false) {
   if (typeof value === 'boolean') {
@@ -229,20 +276,12 @@ function isWritableDirectory(dirPath) {
     }
 
     const trimmed = dirPath.trim();
-    if (!trimmed || trimmed.includes('\0') || !/^[a-zA-Z0-9_./\-\s]+$/.test(trimmed)) {
+    if (!trimmed || trimmed.includes('\0')) {
       return false;
     }
 
-    const normalizedCandidate = path.resolve(trimmed);
-    const projectRoot = path.resolve(ROOT);
-    const mountRoot = path.resolve('/mnt');
-
-    return (
-      normalizedCandidate === projectRoot ||
-      normalizedCandidate.startsWith(projectRoot + path.sep) ||
-      normalizedCandidate === mountRoot ||
-      normalizedCandidate.startsWith(mountRoot + path.sep)
-    );
+    sanitizeManagedPath(trimmed);
+    return true;
   } catch (error) {
     return false;
   }
@@ -368,8 +407,9 @@ function ensureDirectory(dirPath) {
 
 function ensureDirectoryStrict(dirPath, label = null) {
   try {
-    fs.mkdirSync(dirPath, { recursive: true });
-    const stat = fs.statSync(dirPath);
+    const safeDirPath = sanitizeManagedPath(dirPath);
+    fs.mkdirSync(safeDirPath, { recursive: true });
+    const stat = fs.statSync(safeDirPath);
     if (!stat.isDirectory()) {
       throw new Error('Путь существует и не является директорией');
     }
@@ -429,7 +469,7 @@ export async function initializeSettings() {
   
   // КРИТИЧНО: Проверяем и мигрируем пути в БД при старте, если нужно
   // Проверяем, отличается ли путь от значения по умолчанию
-  const defaultDataRoot = DEFAULT_DATA_ROOT.replace(/\/+$/, '');
+  const defaultDataRoot = trimTrailingPathSeparators(DEFAULT_DATA_ROOT);
   const normalizedDefault = path.resolve(defaultDataRoot);
   if (normalizedPath !== normalizedDefault) {
     try {
@@ -439,14 +479,14 @@ export async function initializeSettings() {
       if (allPaths.length > 0) {
         // Проверяем первый путь чтобы понять, нужна ли миграция
         const firstPath = allPaths[0];
-        const pathNormalized = normalizedPath.replace(/\/+$/, '');
+        const pathNormalized = trimTrailingPathSeparators(normalizedPath);
         const firstPathRoot = firstPath.split('/').slice(0, -1).join('/'); // Путь без имени файла
         
         // Если пути начинаются с другого корня - мигрируем
         if (!firstPath.startsWith(pathNormalized)) {
           // Пробуем определить старый корень из первого пути
           // Например: /vid/videocontrol/public/content/video.mp4 -> /vid/videocontrol/public/content
-          const oldRoot = firstPathRoot || DEFAULT_DATA_ROOT.replace(/\/+$/, '');
+          const oldRoot = firstPathRoot || trimTrailingPathSeparators(DEFAULT_DATA_ROOT);
           
           logger.info(`[Settings] 🔄 Detected path mismatch, migrating: ${oldRoot} -> ${pathNormalized}`);
           const updated = migrateFilePaths(oldRoot, pathNormalized);
@@ -571,7 +611,7 @@ export async function updateContentRootPath(newPath) {
     throw new Error('Укажите абсолютный путь (начинается с /)');
   }
 
-  const normalized = path.resolve(trimmed);
+  const normalized = sanitizeManagedPath(trimmed);
 
   if (!isWritableDirectory(normalized)) {
     throw new Error('Путь должен находиться внутри разрешенных директорий (/mnt или папки проекта)');
@@ -581,11 +621,7 @@ export async function updateContentRootPath(newPath) {
   try {
     // Разрешаем указывать отсутствующую директорию: создаем ее автоматически.
     ensureDirectoryStrict(normalized, 'корневую директорию данных');
-    canonicalRoot = fs.realpathSync(normalized);
-    const rootStat = fs.statSync(canonicalRoot);
-    if (!rootStat.isDirectory()) {
-      throw new Error('Укажите путь к директории');
-    }
+    canonicalRoot = sanitizeManagedPath(fs.realpathSync(normalized));
   } catch (error) {
     throw new Error(error?.message || 'Указанный путь не существует или недоступен');
   }
@@ -597,8 +633,8 @@ export async function updateContentRootPath(newPath) {
 
   // КРИТИЧНО: Сохраняем старый путь для миграции
   const oldRoot = currentContentRoot || DEFAULT_DATA_ROOT;
-  const normalizedOldRoot = oldRoot.replace(/\/+$/, '');
-  const normalizedNewRoot = canonicalRoot.replace(/\/+$/, '');
+  const normalizedOldRoot = trimTrailingPathSeparators(oldRoot);
+  const normalizedNewRoot = trimTrailingPathSeparators(canonicalRoot);
 
   // КРИТИЧНО: Создаем все необходимые поддиректории до сохранения настроек,
   // чтобы не сохранять нерабочий путь в app-settings.json.
