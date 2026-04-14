@@ -9,9 +9,10 @@ import { execFile } from 'child_process';
 import util from 'util';
 import { fromPath } from 'pdf2pic';
 import { PDFDocument } from 'pdf-lib';
-import { getDevicesPath } from '../config/settings-manager.js';
+import { getDataRoot, getDevicesPath } from '../config/settings-manager.js';
 import { setFileStatus } from '../video/file-status.js';
 import logger from '../utils/logger.js';
+import { validatePath } from '../utils/path-validator.js';
 
 const execFileAsync = util.promisify(execFile);
 
@@ -67,11 +68,12 @@ export async function getPdfPageSize(pdfPath, pageIndex = 0) {
  * @returns {Promise<number>} Количество конвертированных страниц
  */
 export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) {
-  const safeOutputDir = path.resolve(outputDir);
-  const outputDirPrefix = `${safeOutputDir}${path.sep}`;
+  const dataRoot = getDataRoot();
+  const safeOutputDir = validatePath(path.resolve(outputDir), dataRoot);
+  const safePdfPath = validatePath(path.resolve(pdfPath), dataRoot);
 
   // Получаем размеры первой страницы для определения пропорций
-  const pageSize = await getPdfPageSize(pdfPath, 0);
+  const pageSize = await getPdfPageSize(safePdfPath, 0);
   const { width: pdfWidth, height: pdfHeight, aspectRatio } = pageSize;
   
   // Максимальные размеры для экрана (16:9)
@@ -109,7 +111,7 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
   
   // Используем GraphicsMagick/ImageMagick напрямую для конвертации PDF в PNG
   // Это гарантирует сохранение правильных пропорций
-  const pageCount = await getPdfPageCount(pdfPath);
+  const pageCount = await getPdfPageCount(safePdfPath);
   
   logger.info(`[Converter] Начало конвертации PDF: ${pageCount} страниц, целевой размер: ${targetWidth}x${targetHeight}`);
   
@@ -180,7 +182,7 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
       
       if (convertCommand) {
         // Используем GraphicsMagick/ImageMagick напрямую
-        const { command, args } = convertCommand(pdfPath, i, imagePath);
+        const { command, args } = convertCommand(safePdfPath, i, imagePath);
         await execFileAsync(command, args);
         
         // Проверяем что файл создан
@@ -210,7 +212,7 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
           savePath: outputDir,
           format: "png",
         };
-        const convert = fromPath(pdfPath, options);
+        const convert = fromPath(safePdfPath, options);
         const result = await convert(i);
         
         // pdf2pic возвращает объект с полями: { name, path, size, fileSize, page }
@@ -254,15 +256,12 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
                 if (pdf2picResizeCommand) {
                   const tempPath = `${imagePath}.tmp`;
                   try {
+                    const safeImagePath = validatePath(path.resolve(imagePath), safeOutputDir);
+                    const safeTempPath = validatePath(path.resolve(tempPath), safeOutputDir);
                     const { command, args } = pdf2picResizeCommand(imagePath, tempPath);
                     await execFileAsync(command, args);
-                    if (fs.existsSync(tempPath) && fs.statSync(tempPath).size > 0) {
-                      const resolvedTempPath = path.resolve(tempPath);
-                      const resolvedImagePath = path.resolve(imagePath);
-                      if (!resolvedTempPath.startsWith(outputDirPrefix) || !resolvedImagePath.startsWith(outputDirPrefix)) {
-                        throw new Error('Refusing to move resized image outside output directory');
-                      }
-                      fs.renameSync(resolvedTempPath, resolvedImagePath);
+                      if (fs.existsSync(safeTempPath) && fs.statSync(safeTempPath).size > 0) {
+                        fs.renameSync(safeTempPath, safeImagePath);
                       convertedPages.push({ page: i, path: imagePath });
                       logger.info(`[Converter] ✅ Страница ${i} конвертирована (pdf2pic + resize): ${imagePath}`);
                     }
@@ -304,6 +303,8 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
         
         const tempPath = `${imagePath}.tmp`;
         try {
+            const safeImagePath = validatePath(path.resolve(imagePath), safeOutputDir);
+            const safeTempPath = validatePath(path.resolve(tempPath), safeOutputDir);
           // Получаем реальные размеры перед масштабированием
           let originalWidth, originalHeight;
           try {
@@ -325,13 +326,8 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
           const { command, args } = pdf2picResizeCommand(imagePath, tempPath);
           await execFileAsync(command, args);
           
-          if (fs.existsSync(tempPath) && fs.statSync(tempPath).size > 0) {
-              const resolvedTempPath = path.resolve(tempPath);
-              const resolvedImagePath = path.resolve(imagePath);
-              if (!resolvedTempPath.startsWith(outputDirPrefix) || !resolvedImagePath.startsWith(outputDirPrefix)) {
-                throw new Error('Refusing to move resized image outside output directory');
-              }
-              fs.renameSync(resolvedTempPath, resolvedImagePath);
+          if (fs.existsSync(safeTempPath) && fs.statSync(safeTempPath).size > 0) {
+              fs.renameSync(safeTempPath, safeImagePath);
             try {
               const finalResult = await execFileAsync('identify', ['-format', '%wx%h', imagePath]);
               const finalDimensions = finalResult.stdout.trim().split('x');

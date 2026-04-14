@@ -239,13 +239,9 @@ export function createHeroRouter({ requireHeroAdmin }) {
       }
 
       try {
-        const resolvedUploadedPath = path.resolve(uploadedPathRaw);
-        const uploadPrefix = `${HERO_DB_UPLOAD_DIR}${path.sep}`;
-        if (!resolvedUploadedPath.startsWith(uploadPrefix)) {
-          throw new Error('Uploaded file path is outside import directory');
-        }
-        uploadedPath = resolvedUploadedPath;
+          uploadedPath = validatePath(path.resolve(uploadedPathRaw), HERO_DB_UPLOAD_DIR);
       } catch (pathError) {
+          try { if (uploadedPathRaw && fs.existsSync(uploadedPathRaw)) fs.unlinkSync(uploadedPathRaw); } catch (_) {}
         return res.status(400).json({ error: 'Некорректный путь загруженного файла' });
       }
 

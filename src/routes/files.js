@@ -240,19 +240,11 @@ function runCommandWithStderr(command, args = [], options = {}) {
 }
 
 async function createZipArchiveFromFolder(sourceFolderPath, outputZipPath) {
-  const folderPath = path.resolve(sourceFolderPath);
-  const dataRootPrefix = `${path.resolve(getDataRoot())}${path.sep}`;
-  if (!folderPath.startsWith(dataRootPrefix)) {
-    throw new Error('Folder path is outside data root');
-  }
+  const folderPath = validatePath(path.resolve(sourceFolderPath), getDataRoot());
 
   const parentDir = path.dirname(folderPath);
   const folderName = path.basename(folderPath);
-  const safeOutputZipPath = path.resolve(outputZipPath);
-  const tmpRootPrefix = `${path.resolve(os.tmpdir())}${path.sep}`;
-  if (!safeOutputZipPath.startsWith(tmpRootPrefix)) {
-    throw new Error('ZIP output path is outside temporary directory');
-  }
+  const safeOutputZipPath = validatePath(path.resolve(outputZipPath), os.tmpdir());
 
   try {
     await runCommandWithStderr('zip', ['-r', '-q', safeOutputZipPath, folderName], { cwd: parentDir });

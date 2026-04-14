@@ -433,6 +433,8 @@ const MANUAL_RESTART_DELAY_MS = Math.max(500, Number(process.env.MANUAL_RESTART_
 const SERVICE_LOGS_MAX_LINES = Math.max(50, Number(process.env.SERVICE_LOGS_MAX_LINES || 2000));
 const SERVICE_LOGS_DEFAULT_LINES = Math.max(20, Number(process.env.SERVICE_LOGS_DEFAULT_LINES || 200));
 const SERVICE_LOGS_MAX_CHUNK_BYTES = Math.max(64 * 1024, Number(process.env.SERVICE_LOGS_MAX_CHUNK_BYTES || 512 * 1024));
+const ADMIN_SERVICE_LOGS_DIR = path.join(ROOT, '.tmp', 'logs');
+const ADMIN_DB_IMPORT_DIR = path.join(ROOT, '.tmp', 'db-import');
 let isServiceRestartScheduled = false;
 
 function scheduleServiceRestart(reason = 'admin_restart', delayMs = DB_IMPORT_RESTART_DELAY_MS) {
@@ -500,21 +502,7 @@ function resolveSafeServiceLogPath(filePath) {
 }
 
 function resolveLatestServiceLogFilePath() {
-  const allowedDirs = [
-    path.resolve(getLogsDir()),
-    path.resolve(path.join(process.cwd(), '.tmp', 'logs'))
-  ];
-
-  const candidateDirs = [];
-
-  try {
-    const configuredLogsDir = getLogsDir();
-    if (configuredLogsDir) candidateDirs.push(configuredLogsDir);
-  } catch (_) {
-    // ignore and fallback below
-  }
-
-  candidateDirs.push(path.join(process.cwd(), '.tmp', 'logs'));
+  const candidateDirs = [path.resolve(ADMIN_SERVICE_LOGS_DIR)];
 
   const seenDirs = new Set();
   for (const dirPath of candidateDirs) {
@@ -522,13 +510,7 @@ function resolveLatestServiceLogFilePath() {
     seenDirs.add(dirPath);
 
     try {
-      const resolvedDirPath = path.resolve(dirPath);
-      const matchedBase = allowedDirs.find((baseDir) => (
-        resolvedDirPath === baseDir || resolvedDirPath.startsWith(`${baseDir}${path.sep}`)
-      ));
-      if (!matchedBase) continue;
-
-      const safeDirPath = resolvedDirPath;
+        const safeDirPath = validatePath(path.resolve(dirPath), ADMIN_SERVICE_LOGS_DIR);
       if (!fs.existsSync(safeDirPath)) continue;
 
       const files = fs.readdirSync(safeDirPath)
@@ -550,15 +532,9 @@ function resolveLatestServiceLogFilePath() {
 
 function readLastLinesFromFile(filePath, lineLimit) {
   const safeLimit = clampInt(parsePositiveInt(lineLimit, SERVICE_LOGS_DEFAULT_LINES), 1, SERVICE_LOGS_MAX_LINES);
-  const safeFilePath = path.resolve(String(filePath || ''));
-  const logsDirPrimary = path.resolve(getLogsDir());
-  const logsDirFallback = path.resolve(path.join(process.cwd(), '.tmp', 'logs'));
+  const safeFilePath = validatePath(path.resolve(String(filePath || '')), ADMIN_SERVICE_LOGS_DIR);
   const isAllowedLogFileName = /^combined-\d{4}-\d{2}-\d{2}\.log$/.test(path.basename(safeFilePath));
-  const isAllowedLogPath = (
-    safeFilePath === logsDirPrimary || safeFilePath.startsWith(`${logsDirPrimary}${path.sep}`) ||
-    safeFilePath === logsDirFallback || safeFilePath.startsWith(`${logsDirFallback}${path.sep}`)
-  );
-  if (!isAllowedLogFileName || !isAllowedLogPath) {
+  if (!isAllowedLogFileName) {
     throw new Error('Invalid service log path');
   }
   const fd = fs.openSync(safeFilePath, 'r');
@@ -601,15 +577,9 @@ function readLastLinesFromFile(filePath, lineLimit) {
 
 function readLinesFromOffset(filePath, offset) {
   const safeOffset = Math.max(0, parsePositiveInt(offset, 0));
-  const safeFilePath = path.resolve(String(filePath || ''));
-  const logsDirPrimary = path.resolve(getLogsDir());
-  const logsDirFallback = path.resolve(path.join(process.cwd(), '.tmp', 'logs'));
+  const safeFilePath = validatePath(path.resolve(String(filePath || '')), ADMIN_SERVICE_LOGS_DIR);
   const isAllowedLogFileName = /^combined-\d{4}-\d{2}-\d{2}\.log$/.test(path.basename(safeFilePath));
-  const isAllowedLogPath = (
-    safeFilePath === logsDirPrimary || safeFilePath.startsWith(`${logsDirPrimary}${path.sep}`) ||
-    safeFilePath === logsDirFallback || safeFilePath.startsWith(`${logsDirFallback}${path.sep}`)
-  );
-  if (!isAllowedLogFileName || !isAllowedLogPath) {
+  if (!isAllowedLogFileName) {
     throw new Error('Invalid service log path');
   }
   const fd = fs.openSync(safeFilePath, 'r');
@@ -772,9 +742,7 @@ app.get('/api/admin/export-database', requireAuth, requireAdmin, (req, res) => {
 // Импорт базы данных (замена текущей БД). Принимает FormData с полем `file` (.db).
 app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUploadSize, (req, res) => {
   try {
-    const safeDataRoot = getDataRoot();
-    const safeTempRoot = validatePath(path.resolve(getTempDir()), safeDataRoot);
-    const tempUploadDir = path.join(safeTempRoot, 'db-import');
+    const tempUploadDir = ADMIN_DB_IMPORT_DIR;
     if (!fs.existsSync(tempUploadDir)) fs.mkdirSync(tempUploadDir, { recursive: true });
 
     const storage = multer.diskStorage({
@@ -795,12 +763,7 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
 
       let uploadedPath;
       try {
-          const resolvedUploadedPath = path.resolve(file.path);
-          const uploadPrefix = `${path.resolve(tempUploadDir)}${path.sep}`;
-          if (!resolvedUploadedPath.startsWith(uploadPrefix)) {
-            throw new Error('Uploaded file path is outside import directory');
-          }
-          uploadedPath = resolvedUploadedPath;
+            uploadedPath = validatePath(path.resolve(file.path), tempUploadDir);
       } catch (pathError) {
         try { if (file.path && fs.existsSync(file.path)) fs.unlinkSync(file.path); } catch (_) {}
         return res.status(400).json({ error: 'Invalid uploaded file path' });
