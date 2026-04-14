@@ -54,6 +54,7 @@ node server.js
 - [`dev/INSTALL.md`](dev/INSTALL.md) — подробная инструкция по установке на новую ОС
 - [`dev/QUICK-START.md`](dev/QUICK-START.md) — быстрый старт и настройка
 - [`dev/DEPLOYMENT.md`](dev/DEPLOYMENT.md) — развертывание в продакшене
+- [`dev/GITHUB_ACTIONS_CICD.md`](dev/GITHUB_ACTIONS_CICD.md) — полный CI/CD для GitHub Actions (jobs, pipeline, deploy)
 - [`dev/MANUAL.md`](dev/MANUAL.md) — эксплуатация, мониторинг, бэкапы
 - [`dev/ANDROID_README.md`](dev/ANDROID_README.md) — Android клиент и ADB инструкции
 - И другие документы в папке `dev/`

@@ -1,0 +1,190 @@
+name: CD (Manual Deploy)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        required: true
+        default: staging
+        options:
+          - staging
+          - production
+      deploy_ref:
+        description: "Branch, tag or SHA to deploy (default: current ref)"
+        type: string
+        required: false
+      skip_migration:
+        description: "Skip DB migrations on remote host"
+        type: boolean
+        required: false
+        default: false
+      skip_service_restart:
+        description: "Skip service restart on remote host"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  quality_gate:
+    name: Quality gate (CI)
+    uses: ./.github/workflows/app-test.yml
+    secrets: inherit
+
+  resolve_target:
+    name: Resolve deployment target
+    runs-on: ubuntu-latest
+    needs: quality_gate
+    outputs:
+      environment: ${{ steps.resolve.outputs.environment }}
+      deploy_ref: ${{ steps.resolve.outputs.deploy_ref }}
+      skip_migration: ${{ steps.resolve.outputs.skip_migration }}
+      skip_service_restart: ${{ steps.resolve.outputs.skip_service_restart }}
+
+    steps:
+      - name: Resolve deploy inputs
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          target_env="${{ inputs.environment }}"
+          deploy_ref="${{ inputs.deploy_ref }}"
+          skip_migration="0"
+          skip_service_restart="0"
+
+          if [[ -z "$deploy_ref" ]]; then
+            deploy_ref="${{ github.ref_name }}"
+          fi
+          if [[ "${{ inputs.skip_migration }}" == "true" ]]; then
+            skip_migration="1"
+          fi
+          if [[ "${{ inputs.skip_service_restart }}" == "true" ]]; then
+            skip_service_restart="1"
+          fi
+
+          echo "environment=$target_env" >> "$GITHUB_OUTPUT"
+          echo "deploy_ref=$deploy_ref" >> "$GITHUB_OUTPUT"
+          echo "skip_migration=$skip_migration" >> "$GITHUB_OUTPUT"
+          echo "skip_service_restart=$skip_service_restart" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: resolve_target
+    environment: ${{ needs.resolve_target.outputs.environment }}
+
+    steps:
+      - name: Validate required secrets
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for key in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_PRIVATE_KEY DEPLOY_PATH; do
+            if [[ -z "${!key:-}" ]]; then
+              echo "::error::Missing required secret: $key"
+              missing=1
+            fi
+          done
+          if [[ "$missing" -ne 0 ]]; then
+            exit 1
+          fi
+
+      - name: Configure SSH
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+
+          if [[ -n "${DEPLOY_KNOWN_HOSTS:-}" ]]; then
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          else
+            ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" > "$HOME/.ssh/known_hosts"
+          fi
+
+          chmod 644 "$HOME/.ssh/known_hosts"
+
+      - name: Deploy on remote host
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_SERVICE: ${{ secrets.DEPLOY_SERVICE || 'videocontrol.service' }}
+          DEPLOY_REF: ${{ needs.resolve_target.outputs.deploy_ref }}
+          SKIP_MIGRATION: ${{ needs.resolve_target.outputs.skip_migration }}
+          SKIP_SERVICE_RESTART: ${{ needs.resolve_target.outputs.skip_service_restart }}
+        run: |
+          set -euo pipefail
+
+          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" 'bash -s' -- \
+            "$DEPLOY_PATH" "$DEPLOY_REF" "$DEPLOY_SERVICE" "$SKIP_MIGRATION" "$SKIP_SERVICE_RESTART" <<'REMOTE'
+          set -euo pipefail
+
+          DEPLOY_PATH="$1"
+          DEPLOY_REF="$2"
+          SERVICE_NAME="$3"
+          SKIP_MIGRATION="$4"
+          SKIP_SERVICE_RESTART="$5"
+
+          if [[ ! -d "$DEPLOY_PATH/.git" ]]; then
+            echo "[cd] Repository not found at $DEPLOY_PATH"
+            exit 1
+          fi
+
+          cd "$DEPLOY_PATH"
+          git fetch --all --tags --prune
+
+          if git rev-parse -q --verify "refs/tags/$DEPLOY_REF" >/dev/null; then
+            git checkout -f "tags/$DEPLOY_REF"
+          elif git rev-parse -q --verify "refs/remotes/origin/$DEPLOY_REF" >/dev/null; then
+            git checkout -B "$DEPLOY_REF" "origin/$DEPLOY_REF"
+          else
+            git checkout -f "$DEPLOY_REF"
+          fi
+
+          SERVICE_NAME="$SERVICE_NAME" \
+          SKIP_NPM_INSTALL=0 \
+          SKIP_MIGRATION="$SKIP_MIGRATION" \
+          SKIP_SERVICE_RESTART="$SKIP_SERVICE_RESTART" \
+          bash ./scripts/post-pull-sync.sh
+
+          if command -v curl >/dev/null 2>&1; then
+            curl -fsS http://127.0.0.1:3000/health >/dev/null || true
+          fi
+          REMOTE
+
+      - name: Deployment summary
+        shell: bash
+        run: |
+          {
+            echo "### CD deployment completed"
+            echo ""
+            echo "- Environment: ${{ needs.resolve_target.outputs.environment }}"
+            echo "- Ref: ${{ needs.resolve_target.outputs.deploy_ref }}"
+            echo "- Skip migration: ${{ needs.resolve_target.outputs.skip_migration }}"
+            echo "- Skip service restart: ${{ needs.resolve_target.outputs.skip_service_restart }}"
+          } >> "$GITHUB_STEP_SUMMARY"

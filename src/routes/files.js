@@ -38,6 +38,8 @@ const STREAM_PROTOCOLS = new Set(['auto', 'hls', 'dash', 'mpegts']);
 const VIDEO_PROCESSING_EXTENSIONS = new Set(['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi', '.m4v']);
 const YTDLP_FINAL_PATH_MARKER = '__VC_FINAL_PATH__';
 const YTDLP_TITLE_MARKER = '__VC_TITLE__';
+const STREAM_DIRECT_HLS_ENABLED = process.env.STREAM_DIRECT_HLS_ENABLED === '1';
+const STREAM_DIRECT_DASH_ENABLED = process.env.STREAM_DIRECT_DASH_ENABLED === '1';
 
 function detectStreamProtocolFromUrl(url = '') {
   const lower = (url || '').toLowerCase();
@@ -76,6 +78,11 @@ function normalizeStreamProtocol(protocol, url, mimeType) {
     return byMime;
   }
   return detectStreamProtocolFromUrl(url);
+}
+
+function isDirectPlaybackAvailable(protocol) {
+  return (protocol === 'hls' && STREAM_DIRECT_HLS_ENABLED) ||
+         (protocol === 'dash' && STREAM_DIRECT_DASH_ENABLED);
 }
 
 function stripWrappingQuotes(value = '') {
@@ -878,9 +885,35 @@ export function createFilesRouter(deps) {
   const YTDLP_ACTIVE_STATUSES = new Set(['queued', 'waiting_resources', 'preparing', 'downloading', 'processing']);
   const YTDLP_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
   const ytDlpNotificationSnapshot = new Map();
+  const ytDlpDeviceQueue = new Map();
   const ytDlpResourceCpuUnits = Math.max(1, Number.parseInt(process.env.YTDLP_RESOURCE_CPU_UNITS || '1', 10) || 1);
   const ytDlpResourceMemoryMb = Math.max(128, Number.parseInt(process.env.YTDLP_RESOURCE_MEMORY_MB || '512', 10) || 512);
-  const ytDlpResourceTimeoutMs = Math.max(10000, Number.parseInt(process.env.YTDLP_RESOURCE_TIMEOUT_MS || '180000', 10) || 180000);
+  const ytDlpResourceTimeoutRaw = Number.parseInt(process.env.YTDLP_RESOURCE_TIMEOUT_MS || '0', 10);
+  const ytDlpResourceTimeoutMs = Number.isFinite(ytDlpResourceTimeoutRaw) && ytDlpResourceTimeoutRaw >= 0
+    ? ytDlpResourceTimeoutRaw
+    : 0;
+
+  function enqueueYtDlpDeviceJob(deviceId, runner) {
+    const queueKey = String(deviceId || 'unknown');
+    const previousTask = ytDlpDeviceQueue.get(queueKey) || Promise.resolve();
+
+    const nextTask = previousTask
+      .catch((err) => {
+        logger.warn('[yt-dlp] Previous queued job failed', {
+          deviceId: queueKey,
+          error: err?.message || String(err)
+        });
+      })
+      .then(async () => await runner())
+      .finally(() => {
+        if (ytDlpDeviceQueue.get(queueKey) === nextTask) {
+          ytDlpDeviceQueue.delete(queueKey);
+        }
+      });
+
+    ytDlpDeviceQueue.set(queueKey, nextTask);
+    return nextTask;
+  }
 
   function getYtDlpStatusLabel(status) {
     switch (status) {
@@ -1930,18 +1963,32 @@ export function createFilesRouter(deps) {
       return res.status(404).json({ error: 'Стрим не найден' });
     }
 
+    const protocol = normalizeStreamProtocol(metadata.stream_protocol, metadata.stream_url, metadata.mime_type);
+    const directPlaybackAvailable = isDirectPlaybackAvailable(protocol);
+    const preferDirectPlayback = directPlaybackAvailable && (
+      req.query.direct === '1' || req.query.preferDirect === '1'
+    );
+
     // КРИТИЧНО: Lazy loading - запускаем FFmpeg только когда стрим запрашивается для воспроизведения
     // Это экономит ресурсы, так как не все стримы используются одновременно
     const { getStreamManager } = await import('../streams/stream-manager.js');
     const streamManager = getStreamManager();
     let streamProxyUrl = null;
-    
-    if (streamManager) {
+    let proxyFallbackUrl = null;
+    let playbackStrategy = 'proxy';
+
+    if (preferDirectPlayback) {
+      streamProxyUrl = metadata.stream_url;
+      proxyFallbackUrl = getStreamPlaybackUrl(id, safeName);
+      playbackStrategy = protocol === 'dash' ? 'direct_dash' : 'direct_hls';
+    } else if (streamManager) {
       // Запускаем FFmpeg, если еще не запущен (lazy loading)
       streamProxyUrl = await streamManager.ensureStreamRunning(id, safeName, metadata);
+      proxyFallbackUrl = streamProxyUrl;
     } else {
       // Fallback: используем старый метод
       streamProxyUrl = getStreamPlaybackUrl(id, safeName);
+      proxyFallbackUrl = streamProxyUrl;
     }
 
     res.json({
@@ -1949,7 +1996,11 @@ export function createFilesRouter(deps) {
       originalName: metadata.original_name,
       streamUrl: metadata.stream_url,
       streamProxyUrl: streamProxyUrl,
-      protocol: normalizeStreamProtocol(metadata.stream_protocol, metadata.stream_url, metadata.mime_type)
+      directStreamUrl: preferDirectPlayback ? metadata.stream_url : null,
+      proxyStreamUrl: proxyFallbackUrl,
+      protocol,
+      playbackStrategy,
+      directPlaybackAvailable
     });
   });
 
@@ -2175,18 +2226,6 @@ export function createFilesRouter(deps) {
       return res.status(400).json({ error: 'Поддерживаются только HTTP/HTTPS ссылки' });
     }
 
-    const activeJob = Array.from(ytDlpJobs.values()).find((job) => {
-      return job.deviceId === id && isYtDlpJobActive(job);
-    });
-
-    if (activeJob) {
-      return res.status(409).json({
-        error: 'Для этого устройства уже выполняется загрузка по ссылке',
-        jobId: activeJob.id,
-        status: activeJob.status
-      });
-    }
-
     const job = createYtDlpJob({
       deviceId: id,
       url: parsedUrl.toString(),
@@ -2199,13 +2238,18 @@ export function createFilesRouter(deps) {
       status: job.status
     });
 
-    Promise.resolve().then(async () => {
+    enqueueYtDlpDeviceJob(id, async () => {
       let finalPathCandidate = null;
       let titleCandidate = null;
       let lastErrorLine = null;
       let resourceReservation = null;
 
       try {
+        const queuedJob = ytDlpJobs.get(job.id);
+        if (!queuedJob || queuedJob.cancelRequested || queuedJob.status === 'cancelled') {
+          return;
+        }
+
         updateYtDlpJob(job.id, {
           status: 'waiting_resources',
           progress: 0,
@@ -2217,7 +2261,7 @@ export function createFilesRouter(deps) {
           jobType: 'yt-dlp-download',
           cpuUnits: ytDlpResourceCpuUnits,
           memoryMb: ytDlpResourceMemoryMb,
-          priority: 2,
+          priority: 1,
           timeoutMs: ytDlpResourceTimeoutMs,
           meta: {
             deviceId: id,
