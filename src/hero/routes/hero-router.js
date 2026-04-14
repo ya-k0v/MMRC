@@ -6,7 +6,6 @@ import path from 'path';
 import fs from 'fs';
 import logger from '../../utils/logger.js';
 import { createLimiter, deleteLimiter } from '../../middleware/rate-limit.js';
-import { validatePath } from '../../utils/path-validator.js';
 
 const HERO_DB_UPLOAD_DIR = path.resolve('/tmp');
 
@@ -240,9 +239,13 @@ export function createHeroRouter({ requireHeroAdmin }) {
       }
 
       try {
-        uploadedPath = validatePath(path.resolve(uploadedPathRaw), HERO_DB_UPLOAD_DIR);
+        const resolvedUploadedPath = path.resolve(uploadedPathRaw);
+        const uploadPrefix = `${HERO_DB_UPLOAD_DIR}${path.sep}`;
+        if (!resolvedUploadedPath.startsWith(uploadPrefix)) {
+          throw new Error('Uploaded file path is outside import directory');
+        }
+        uploadedPath = resolvedUploadedPath;
       } catch (pathError) {
-        try { if (uploadedPathRaw && fs.existsSync(uploadedPathRaw)) fs.unlinkSync(uploadedPathRaw); } catch (_) {}
         return res.status(400).json({ error: 'Некорректный путь загруженного файла' });
       }
 

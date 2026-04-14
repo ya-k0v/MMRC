@@ -67,6 +67,9 @@ export async function getPdfPageSize(pdfPath, pageIndex = 0) {
  * @returns {Promise<number>} Количество конвертированных страниц
  */
 export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) {
+  const safeOutputDir = path.resolve(outputDir);
+  const outputDirPrefix = `${safeOutputDir}${path.sep}`;
+
   // Получаем размеры первой страницы для определения пропорций
   const pageSize = await getPdfPageSize(pdfPath, 0);
   const { width: pdfWidth, height: pdfHeight, aspectRatio } = pageSize;
@@ -254,7 +257,12 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
                     const { command, args } = pdf2picResizeCommand(imagePath, tempPath);
                     await execFileAsync(command, args);
                     if (fs.existsSync(tempPath) && fs.statSync(tempPath).size > 0) {
-                      fs.renameSync(tempPath, imagePath);
+                      const resolvedTempPath = path.resolve(tempPath);
+                      const resolvedImagePath = path.resolve(imagePath);
+                      if (!resolvedTempPath.startsWith(outputDirPrefix) || !resolvedImagePath.startsWith(outputDirPrefix)) {
+                        throw new Error('Refusing to move resized image outside output directory');
+                      }
+                      fs.renameSync(resolvedTempPath, resolvedImagePath);
                       convertedPages.push({ page: i, path: imagePath });
                       logger.info(`[Converter] ✅ Страница ${i} конвертирована (pdf2pic + resize): ${imagePath}`);
                     }
@@ -318,7 +326,12 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
           await execFileAsync(command, args);
           
           if (fs.existsSync(tempPath) && fs.statSync(tempPath).size > 0) {
-            fs.renameSync(tempPath, imagePath);
+              const resolvedTempPath = path.resolve(tempPath);
+              const resolvedImagePath = path.resolve(imagePath);
+              if (!resolvedTempPath.startsWith(outputDirPrefix) || !resolvedImagePath.startsWith(outputDirPrefix)) {
+                throw new Error('Refusing to move resized image outside output directory');
+              }
+              fs.renameSync(resolvedTempPath, resolvedImagePath);
             try {
               const finalResult = await execFileAsync('identify', ['-format', '%wx%h', imagePath]);
               const finalDimensions = finalResult.stdout.trim().split('x');

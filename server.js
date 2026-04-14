@@ -523,10 +523,12 @@ function resolveLatestServiceLogFilePath() {
 
     try {
       const resolvedDirPath = path.resolve(dirPath);
-      const matchedBase = allowedDirs.find((baseDir) => isPathInsideBase(resolvedDirPath, baseDir));
+      const matchedBase = allowedDirs.find((baseDir) => (
+        resolvedDirPath === baseDir || resolvedDirPath.startsWith(`${baseDir}${path.sep}`)
+      ));
       if (!matchedBase) continue;
 
-      const safeDirPath = validatePath(resolvedDirPath, matchedBase);
+      const safeDirPath = resolvedDirPath;
       if (!fs.existsSync(safeDirPath)) continue;
 
       const files = fs.readdirSync(safeDirPath)
@@ -548,7 +550,17 @@ function resolveLatestServiceLogFilePath() {
 
 function readLastLinesFromFile(filePath, lineLimit) {
   const safeLimit = clampInt(parsePositiveInt(lineLimit, SERVICE_LOGS_DEFAULT_LINES), 1, SERVICE_LOGS_MAX_LINES);
-  const safeFilePath = resolveSafeServiceLogPath(filePath);
+  const safeFilePath = path.resolve(String(filePath || ''));
+  const logsDirPrimary = path.resolve(getLogsDir());
+  const logsDirFallback = path.resolve(path.join(process.cwd(), '.tmp', 'logs'));
+  const isAllowedLogFileName = /^combined-\d{4}-\d{2}-\d{2}\.log$/.test(path.basename(safeFilePath));
+  const isAllowedLogPath = (
+    safeFilePath === logsDirPrimary || safeFilePath.startsWith(`${logsDirPrimary}${path.sep}`) ||
+    safeFilePath === logsDirFallback || safeFilePath.startsWith(`${logsDirFallback}${path.sep}`)
+  );
+  if (!isAllowedLogFileName || !isAllowedLogPath) {
+    throw new Error('Invalid service log path');
+  }
   const fd = fs.openSync(safeFilePath, 'r');
 
   try {
@@ -589,7 +601,17 @@ function readLastLinesFromFile(filePath, lineLimit) {
 
 function readLinesFromOffset(filePath, offset) {
   const safeOffset = Math.max(0, parsePositiveInt(offset, 0));
-  const safeFilePath = resolveSafeServiceLogPath(filePath);
+  const safeFilePath = path.resolve(String(filePath || ''));
+  const logsDirPrimary = path.resolve(getLogsDir());
+  const logsDirFallback = path.resolve(path.join(process.cwd(), '.tmp', 'logs'));
+  const isAllowedLogFileName = /^combined-\d{4}-\d{2}-\d{2}\.log$/.test(path.basename(safeFilePath));
+  const isAllowedLogPath = (
+    safeFilePath === logsDirPrimary || safeFilePath.startsWith(`${logsDirPrimary}${path.sep}`) ||
+    safeFilePath === logsDirFallback || safeFilePath.startsWith(`${logsDirFallback}${path.sep}`)
+  );
+  if (!isAllowedLogFileName || !isAllowedLogPath) {
+    throw new Error('Invalid service log path');
+  }
   const fd = fs.openSync(safeFilePath, 'r');
 
   try {
@@ -670,7 +692,6 @@ app.get('/api/admin/service-logs', requireAuth, requireAdmin, (req, res) => {
     }
 
     const fileName = path.basename(logFilePath);
-    const safeLogFilePath = resolveSafeServiceLogPath(logFilePath);
 
     // Первый запрос (без offset) - отдаем хвост последних N строк
     if (requestedOffset < 0) {
@@ -686,9 +707,9 @@ app.get('/api/admin/service-logs', requireAuth, requireAdmin, (req, res) => {
       });
     }
 
-    const fileStats = fs.statSync(safeLogFilePath);
+    const chunkProbe = readLinesFromOffset(logFilePath, requestedOffset);
     const fileChanged = Boolean(requestedFileName) && requestedFileName !== fileName;
-    const offsetOutOfRange = requestedOffset > fileStats.size;
+    const offsetOutOfRange = requestedOffset > chunkProbe.size;
 
     if (fileChanged || offsetOutOfRange) {
       const snapshot = readLastLinesFromFile(logFilePath, requestedLines);
@@ -703,7 +724,7 @@ app.get('/api/admin/service-logs', requireAuth, requireAdmin, (req, res) => {
       });
     }
 
-    const chunk = readLinesFromOffset(safeLogFilePath, requestedOffset);
+    const chunk = chunkProbe;
     return res.json({
       ok: true,
       lines: chunk.lines,
@@ -774,7 +795,12 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
 
       let uploadedPath;
       try {
-        uploadedPath = validatePath(path.resolve(file.path), tempUploadDir);
+          const resolvedUploadedPath = path.resolve(file.path);
+          const uploadPrefix = `${path.resolve(tempUploadDir)}${path.sep}`;
+          if (!resolvedUploadedPath.startsWith(uploadPrefix)) {
+            throw new Error('Uploaded file path is outside import directory');
+          }
+          uploadedPath = resolvedUploadedPath;
       } catch (pathError) {
         try { if (file.path && fs.existsSync(file.path)) fs.unlinkSync(file.path); } catch (_) {}
         return res.status(400).json({ error: 'Invalid uploaded file path' });
