@@ -12,8 +12,25 @@ import { getLogsDir } from '../config/settings-manager.js';
 // Директория для логов (вычисляется динамически из настроек БД)
 let LOG_DIR = null;
 let FILE_LOGGING_ENABLED = true;
+
+function sanitizeDirectoryPath(inputPath) {
+  if (typeof inputPath !== 'string') {
+    return null;
+  }
+
+  const trimmed = inputPath.trim();
+  if (!trimmed || trimmed.includes('\0') || !/^[a-zA-Z0-9_./\-\s]+$/.test(trimmed)) {
+    return null;
+  }
+
+  return path.resolve(trimmed);
+}
+
 try {
-  LOG_DIR = getLogsDir();
+  LOG_DIR = sanitizeDirectoryPath(getLogsDir());
+  if (!LOG_DIR) {
+    throw new Error('Invalid logs directory path');
+  }
   // Попытка создать директорию и проверить доступ на запись
   try {
     fs.mkdirSync(LOG_DIR, { recursive: true });

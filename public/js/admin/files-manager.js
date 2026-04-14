@@ -290,7 +290,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
   
   // Пагинация файлов (используем специальный режим расчёта для файлов)
   // Поддерживаем выбор пользователя: auto (сколько влезет) или фиксированные 10/25/50
-  let savedPerPage = 'auto';
+  let savedPerPage;
   try { savedPerPage = localStorage.getItem('admin_files_per_page') || 'auto'; } catch (e) { savedPerPage = 'auto'; }
   let pageSize = Math.max(1, Math.min(200, parseInt(savedPerPage === 'auto' ? '0' : savedPerPage, 10) || getPageSize('file')));
   // Если выбран auto - рассчитываем количество элементов так, чтобы список внутри `panelEl` помещался без скролла

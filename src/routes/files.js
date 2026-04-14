@@ -3999,8 +3999,13 @@ export function createFilesRouter(deps) {
       return res.status(403).json({ error: 'Доступ к устройству запрещен' });
     }
 
-    const name = String(req.params.name || '');
-    if (!name || name.includes('..') || name.startsWith('/') || name.startsWith('\\')) {
+    const rawName = String(req.params.name || '').trim();
+    if (!rawName) {
+      return res.status(400).json({ error: 'Неверное имя файла' });
+    }
+
+    const name = path.basename(rawName);
+    if (name !== rawName || name.includes('..') || /[\\/]/.test(name)) {
       return res.status(400).json({ error: 'Неверное имя файла' });
     }
 
@@ -4017,38 +4022,30 @@ export function createFilesRouter(deps) {
       return res.status(400).json({ error: 'Стримы нельзя скачать как файл' });
     }
 
-    let targetPath = null;
-    if (metadata?.file_path && fs.existsSync(metadata.file_path)) {
-      try {
-        targetPath = resolvePathInDataRoot(metadata.file_path);
-      } catch (error) {
-        logger.warn('[download] Metadata path is outside data root', {
-          deviceId: id,
-          name,
-          metadataPath: metadata.file_path,
-          error: error?.message || String(error)
-        });
-      }
+    let entries = [];
+    try {
+      entries = fs.readdirSync(deviceFolder, { withFileTypes: true });
+    } catch (error) {
+      logger.error('[download] Failed to read device folder', {
+        deviceId: id,
+        deviceFolder,
+        error: error.message
+      });
+      return res.status(500).json({ error: 'Не удалось прочитать содержимое устройства' });
     }
 
-    if (!targetPath) {
-      const filePath = resolvePathInDataRoot(path.join(deviceFolder, name));
-      const folderPath = resolvePathInDataRoot(path.join(deviceFolder, name.replace(/\.(pdf|pptx|zip)$/i, '')));
+    const folderCandidateName = name.replace(/\.(pdf|pptx|zip)$/i, '');
+    const directFileEntry = entries.find((entry) => entry.isFile() && entry.name === name);
+    const folderEntry = entries.find((entry) => entry.isDirectory() && entry.name === folderCandidateName);
+    const matchedEntry = directFileEntry || folderEntry;
 
-      if (fs.existsSync(filePath)) {
-        targetPath = filePath;
-      } else if (fs.existsSync(folderPath)) {
-        targetPath = folderPath;
-      }
-    }
-
-    if (!targetPath || !fs.existsSync(targetPath)) {
+    if (!matchedEntry) {
       return res.status(404).json({ error: 'Файл или папка не найдены' });
     }
 
-    try {
-      targetPath = resolvePathInDataRoot(targetPath);
-    } catch (error) {
+    const targetPath = path.resolve(deviceFolder, matchedEntry.name);
+    const normalizedDeviceFolder = path.resolve(deviceFolder);
+    if (!targetPath.startsWith(normalizedDeviceFolder + path.sep) && targetPath !== normalizedDeviceFolder) {
       return res.status(400).json({ error: 'Неверный путь к файлу' });
     }
 
@@ -4119,8 +4116,8 @@ export function createFilesRouter(deps) {
       return res.status(400).json({ error: 'Поддерживается скачивание только файлов и папок' });
     }
 
-    const metadataOriginalName = metadata?.original_name || fileNamesMap[id]?.[name] || path.basename(targetPath);
-    const ext = path.extname(name);
+    const metadataOriginalName = metadata?.original_name || fileNamesMap[id]?.[name] || matchedEntry.name;
+    const ext = path.extname(matchedEntry.name);
     const fileNameForDownload = safeDownloadFileName(
       path.extname(metadataOriginalName) ? metadataOriginalName : `${metadataOriginalName}${ext}`,
       path.basename(targetPath)

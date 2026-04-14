@@ -224,8 +224,18 @@ try {
 
 function isWritableDirectory(dirPath) {
   try {
-    fs.mkdirSync(dirPath, { recursive: true });
-    fs.accessSync(dirPath, fs.constants.W_OK);
+    if (typeof dirPath !== 'string') {
+      return false;
+    }
+
+    const trimmed = dirPath.trim();
+    if (!trimmed || trimmed.includes('\0') || !/^[a-zA-Z0-9_./\-\s]+$/.test(trimmed)) {
+      return false;
+    }
+
+    const safeDirPath = path.resolve(trimmed);
+    fs.mkdirSync(safeDirPath, { recursive: true });
+    fs.accessSync(safeDirPath, fs.constants.W_OK);
     return true;
   } catch (error) {
     return false;
