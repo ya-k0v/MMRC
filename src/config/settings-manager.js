@@ -331,7 +331,8 @@ function readLdapAuthSettingsFromEnv() {
   return normalizeLdapAuthSettings(raw, LDAP_DEFAULTS);
 }
 
-function safeWriteSettings() {
+function safeWriteSettings(options = {}) {
+  const throwOnError = options?.throwOnError === true;
   try {
     fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
     const { ldapAuth, ...persistableSettings } = settings;
@@ -343,6 +344,10 @@ function safeWriteSettings() {
     }).catch(() => {
       // Игнорируем ошибки логирования
     });
+
+    if (throwOnError) {
+      throw new Error(`Не удалось сохранить настройки: ${error.message}`);
+    }
   }
 }
 
@@ -358,6 +363,19 @@ function ensureDirectory(dirPath) {
       // ignore
     }
     return;
+  }
+}
+
+function ensureDirectoryStrict(dirPath, label = null) {
+  try {
+    fs.mkdirSync(dirPath, { recursive: true });
+    const stat = fs.statSync(dirPath);
+    if (!stat.isDirectory()) {
+      throw new Error('Путь существует и не является директорией');
+    }
+  } catch (error) {
+    const target = label || dirPath;
+    throw new Error(`Не удалось создать ${target}: ${error.message}`);
   }
 }
 
@@ -555,21 +573,26 @@ export async function updateContentRootPath(newPath) {
 
   const normalized = path.resolve(trimmed);
 
-  let rootStat;
-  let canonicalRoot;
-  try {
-    rootStat = fs.statSync(normalized);
-    if (!rootStat.isDirectory()) {
-      throw new Error('Укажите путь к существующей директории');
-    }
-    canonicalRoot = fs.realpathSync(normalized);
-  } catch (error) {
-    throw new Error('Указанный путь не существует или недоступен');
+  if (!isWritableDirectory(normalized)) {
+    throw new Error('Путь должен находиться внутри разрешенных директорий (/mnt или папки проекта)');
   }
 
-  const appRoot = path.resolve(ROOT);
-  if (canonicalRoot !== appRoot && !canonicalRoot.startsWith(appRoot + path.sep)) {
-    throw new Error('Путь должен находиться внутри разрешенной директории приложения');
+  let canonicalRoot;
+  try {
+    // Разрешаем указывать отсутствующую директорию: создаем ее автоматически.
+    ensureDirectoryStrict(normalized, 'корневую директорию данных');
+    canonicalRoot = fs.realpathSync(normalized);
+    const rootStat = fs.statSync(canonicalRoot);
+    if (!rootStat.isDirectory()) {
+      throw new Error('Укажите путь к директории');
+    }
+  } catch (error) {
+    throw new Error(error?.message || 'Указанный путь не существует или недоступен');
+  }
+
+  // Проверяем снова уже после realpath, чтобы исключить обход через симлинки.
+  if (!isWritableDirectory(canonicalRoot)) {
+    throw new Error('Путь должен находиться внутри разрешенных директорий (/mnt или папки проекта)');
   }
 
   // КРИТИЧНО: Сохраняем старый путь для миграции
@@ -577,18 +600,26 @@ export async function updateContentRootPath(newPath) {
   const normalizedOldRoot = oldRoot.replace(/\/+$/, '');
   const normalizedNewRoot = canonicalRoot.replace(/\/+$/, '');
 
-  // Обновляем настройки
-  settings.contentRoot = canonicalRoot;
-  safeWriteSettings();
-  setDevicesPath(getDevicesPath()); // contentRoot/content
+  // КРИТИЧНО: Создаем все необходимые поддиректории до сохранения настроек,
+  // чтобы не сохранять нерабочий путь в app-settings.json.
+  ensureDirectoryStrict(canonicalRoot, 'корневую директорию данных');
+  ensureDirectoryStrict(path.join(canonicalRoot, 'content'), 'директорию content');
+  ensureDirectoryStrict(path.join(canonicalRoot, 'streams'), 'директорию streams');
+  ensureDirectoryStrict(path.join(canonicalRoot, 'converted'), 'директорию converted');
+  ensureDirectoryStrict(path.join(canonicalRoot, 'logs'), 'директорию logs');
+  ensureDirectoryStrict(path.join(canonicalRoot, 'temp'), 'директорию temp');
 
-  // КРИТИЧНО: Создаем все необходимые поддиректории
-  ensureDirectory(canonicalRoot); // dataRoot (contentRoot из настроек)
-  ensureDirectory(getDevicesPath()); // dataRoot/content (DEVICES)
-  ensureDirectory(getStreamsOutputDir()); // dataRoot/streams
-  ensureDirectory(getConvertedCache()); // dataRoot/converted
-  ensureDirectory(getLogsDir()); // dataRoot/logs
-  ensureDirectory(getTempDir()); // dataRoot/temp
+  // Обновляем настройки. Если запись в файл не удалась,
+  // откатываем значение в памяти, чтобы не оставлять несогласованное состояние.
+  const previousContentRoot = settings.contentRoot;
+  settings.contentRoot = canonicalRoot;
+  try {
+    safeWriteSettings({ throwOnError: true });
+  } catch (error) {
+    settings.contentRoot = previousContentRoot;
+    throw error;
+  }
+  setDevicesPath(path.join(canonicalRoot, 'content'));
 
   // КРИТИЧНО: Используем lazy import logger, чтобы избежать циклической зависимости
   const { default: logger } = await import('../utils/logger.js');

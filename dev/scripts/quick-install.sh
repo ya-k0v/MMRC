@@ -630,13 +630,6 @@ if [ "$STORAGE_MODE" != "local" ]; then
 fi
 echo -e "  ${GREEN}✅ Permissions set for $SERVICE_USER${NC}"
 
-# Определяем ReadWritePaths для systemd (v3.0.0 - динамические пути)
-if [ "$STORAGE_MODE" = "local" ]; then
-    READ_WRITE_PATHS="$INSTALL_DIR/data $INSTALL_DIR/config"
-else
-    READ_WRITE_PATHS="$DATA_ROOT $INSTALL_DIR/config"
-fi
-
 # Читаем JWT_SECRET из .env
 JWT_SECRET_VALUE=""
 if [ -f "$INSTALL_DIR/.env" ]; then
@@ -680,8 +673,9 @@ StandardError=journal
 # Security
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=strict
-ReadWritePaths=$READ_WRITE_PATHS
+# Разрешаем менять contentRoot через админку без изменения systemd unit.
+# Системные директории остаются read-only.
+ProtectSystem=full
 
 # Environment
 Environment=NODE_ENV=production
@@ -698,7 +692,7 @@ chmod 600 "$INSTALL_DIR/.env"
 
 echo -e "  ${GREEN}✅ Systemd unit file created${NC}"
 echo -e "  ${GREEN}✅ Service user: $SERVICE_USER${NC}"
-echo -e "  ${GREEN}✅ ReadWritePaths: $READ_WRITE_PATHS${NC}"
+echo -e "  ${GREEN}✅ ProtectSystem: full${NC}"
 
 systemctl daemon-reload
 systemctl enable videocontrol

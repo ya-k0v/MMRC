@@ -24,11 +24,9 @@ SyslogIdentifier=mmrc
 # Security
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=strict
-# ReadWritePaths настраиваются динамически в зависимости от contentRoot из настроек
-# По умолчанию: /vid/videocontrol/data и /vid/videocontrol/config
-# Если используется внешний диск, добавьте его путь в drop-in конфиг systemd
-ReadWritePaths=/vid/videocontrol/data /vid/videocontrol/config /vid/videocontrol/.tmp
+# Позволяет менять contentRoot через админку без правки systemd unit.
+# Защищает системные директории (/usr, /boot, /etc), но не ограничивает data-директорию.
+ProtectSystem=full
 
 # Resource limits
 LimitNOFILE=65535
