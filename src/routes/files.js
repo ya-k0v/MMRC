@@ -12,6 +12,7 @@ import archiver from 'archiver';
 import sanitizeFilename from 'sanitize-filename';
 import { spawn } from 'child_process';
 import { getDevicesPath, getDataRoot } from '../config/settings-manager.js';
+import { ROOT } from '../config/constants.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { extractZipToFolder, getFolderImagesCount } from '../converters/folder-converter.js';
 import { makeSafeFolderName, makeSafeFilename } from '../utils/transliterate.js';
@@ -4020,7 +4021,12 @@ export function createFilesRouter(deps) {
       return res.status(400).json({ error: 'Неверный путь устройства' });
     }
 
+    const appRoot = path.resolve(ROOT);
     const devicesPath = path.resolve(getDevicesPath());
+    if (devicesPath !== appRoot && !devicesPath.startsWith(appRoot + path.sep)) {
+      return res.status(400).json({ error: 'Неверный корневой путь контента' });
+    }
+
     let deviceFolder = null;
     try {
       const resolvedDeviceFolder = path.resolve(devicesPath, safeDeviceFolderName);
