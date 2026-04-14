@@ -284,17 +284,17 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
         if (!fs.existsSync(imagePath)) continue;
         
         try {
-            const safeImagePath = validatePath(path.resolve(imagePath), safeOutputDir);
+          const safeImagePath = validatePath(path.resolve(imagePath), safeOutputDir);
           // Получаем реальные размеры перед масштабированием
           let originalWidth, originalHeight;
           try {
-              const identifyResult = await execFileAsync('identify', ['-format', '%wx%h', safeImagePath]);
+            const identifyResult = await execFileAsync('identify', ['-format', '%wx%h', safeImagePath]);
             const dimensions = identifyResult.stdout.trim().split('x');
             originalWidth = parseInt(dimensions[0]);
             originalHeight = parseInt(dimensions[1]);
           } catch (e) {
             try {
-                const gmResult = await execFileAsync('gm', ['identify', '-format', '%wx%h', safeImagePath]);
+              const gmResult = await execFileAsync('gm', ['identify', '-format', '%wx%h', safeImagePath]);
               const dimensions = gmResult.stdout.trim().split('x');
               originalWidth = parseInt(dimensions[0]);
               originalHeight = parseInt(dimensions[1]);
@@ -302,20 +302,18 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
               // Игнорируем
             }
           }
-          
-            const { command, args } = pdf2picResizeCommand(safeImagePath);
+
+          const { command, args } = pdf2picResizeCommand(safeImagePath);
           await execFileAsync(command, args);
-          
-            if (fs.existsSync(safeImagePath) && fs.statSync(safeImagePath).size > 0) {
-            try {
-                const finalResult = await execFileAsync('identify', ['-format', '%wx%h', safeImagePath]);
-              const finalDimensions = finalResult.stdout.trim().split('x');
-              const finalWidth = parseInt(finalDimensions[0]);
-              const finalHeight = parseInt(finalDimensions[1]);
-              logger.info(`[Converter] ✅ Изображение ${page} масштабировано: ${originalWidth || '?'}x${originalHeight || '?'} → ${finalWidth}x${finalHeight} (целевой: ${targetWidth}x${targetHeight})`);
-            } catch (e) {
-              logger.debug(`[Converter] Изображение ${page} масштабировано до ${targetWidth}x${targetHeight}`);
-            }
+
+          try {
+            const finalResult = await execFileAsync('identify', ['-format', '%wx%h', safeImagePath]);
+            const finalDimensions = finalResult.stdout.trim().split('x');
+            const finalWidth = parseInt(finalDimensions[0]);
+            const finalHeight = parseInt(finalDimensions[1]);
+            logger.info(`[Converter] ✅ Изображение ${page} масштабировано: ${originalWidth || '?'}x${originalHeight || '?'} → ${finalWidth}x${finalHeight} (целевой: ${targetWidth}x${targetHeight})`);
+          } catch (e) {
+            logger.debug(`[Converter] Изображение ${page} масштабировано до ${targetWidth}x${targetHeight}`);
           }
         } catch (error) {
           logger.warn(`[Converter] Не удалось изменить размер изображения ${page}`, { error: error.message });

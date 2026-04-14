@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import os from 'os';
+import archiver from 'archiver';
 import { spawn } from 'child_process';
 import { getDevicesPath, getDataRoot } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
@@ -211,50 +212,22 @@ async function probeMediaInfo(filePath, timeoutMs = 30000) {
   });
 }
 
-function runCommandWithStderr(command, args = [], options = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      ...options,
-      stdio: ['ignore', 'ignore', 'pipe']
-    });
-
-    let stderr = '';
-
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    child.on('error', (error) => {
-      reject(error);
-    });
-
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-
-      reject(new Error(stderr.trim() || `${command} exited with code ${code}`));
-    });
-  });
-}
-
 async function createZipArchiveFromFolder(sourceFolderPath, outputZipPath) {
   const folderPath = validatePath(path.resolve(sourceFolderPath), getDataRoot());
   const safeOutputZipPath = validatePath(path.resolve(outputZipPath), os.tmpdir());
 
-  try {
-    await runCommandWithStderr('zip', ['-r', '-q', safeOutputZipPath, '.'], { cwd: folderPath });
-    return;
-  } catch (zipError) {
-    logger.warn('[download] zip command failed, trying 7z fallback', {
-      folderPath,
-      outputZipPath: safeOutputZipPath,
-      error: zipError.message
-    });
-  }
+  await new Promise((resolve, reject) => {
+    const output = fs.createWriteStream(safeOutputZipPath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
 
-  await runCommandWithStderr('7z', ['a', '-tzip', '-y', safeOutputZipPath, '.'], { cwd: folderPath });
+    output.on('close', resolve);
+    output.on('error', reject);
+    archive.on('error', reject);
+
+    archive.pipe(output);
+    archive.directory(folderPath, false);
+    archive.finalize();
+  });
 }
 
 function safeDownloadFileName(fileName = '', fallback = 'download') {

@@ -162,7 +162,7 @@ function trimServiceLogsOutput(outputEl) {
 }
 
 function flushServiceLogsTypewriterQueue(state, outputEl) {
-  if (!state || !outputEl) return;
+  if (!outputEl) return;
 
   if (state.typeTimer) {
     clearTimeout(state.typeTimer);

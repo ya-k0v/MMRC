@@ -480,27 +480,6 @@ function isPathInsideBase(candidatePath, baseDir) {
   return resolvedCandidate === resolvedBase || resolvedCandidate.startsWith(`${resolvedBase}${path.sep}`);
 }
 
-function resolveSafeServiceLogPath(filePath) {
-  const resolvedPath = path.resolve(String(filePath || ''));
-  const fileName = path.basename(resolvedPath);
-
-  if (!/^combined-\d{4}-\d{2}-\d{2}\.log$/.test(fileName)) {
-    throw new Error('Invalid service log filename');
-  }
-
-  const allowedDirs = [
-    path.resolve(getLogsDir()),
-    path.resolve(path.join(process.cwd(), '.tmp', 'logs'))
-  ];
-
-  const matchedBase = allowedDirs.find((baseDir) => isPathInsideBase(resolvedPath, baseDir));
-  if (!matchedBase) {
-    throw new Error('Service log path is outside allowed directories');
-  }
-
-  return validatePath(resolvedPath, matchedBase);
-}
-
 function resolveLatestServiceLogFilePath() {
   const candidateDirs = [path.resolve(ADMIN_SERVICE_LOGS_DIR)];
 
