@@ -624,20 +624,20 @@ export async function updateContentRootPath(newPath) {
       }
     } catch (error) {
       logger.error('[Settings] Failed to migrate file paths', {
-  currentContentRoot = normalizedNewRoot;
         stack: error.stack,
         oldRoot: normalizedOldRoot,
-    dataRoot: normalizedNewRoot,
+        dataRoot: normalizedNewRoot,
       });
       // НЕ прерываем выполнение - путь всё равно обновлен в настройках
     }
   } else {
     logger.info(`[Settings] 🔄 Content root updated (same path, no migration needed)`, {
       path: normalizedNewRoot
-  return normalizedNewRoot;
+    });
   }
 
-  currentContentRoot = canonicalRoot;
+  currentContentRoot = normalizedNewRoot;
+  return normalizedNewRoot;
   
   logger.info(`[Settings] 📁 Updated paths:`, {
     dataRoot: canonicalRoot,
