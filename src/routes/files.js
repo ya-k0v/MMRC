@@ -241,13 +241,10 @@ function runCommandWithStderr(command, args = [], options = {}) {
 
 async function createZipArchiveFromFolder(sourceFolderPath, outputZipPath) {
   const folderPath = validatePath(path.resolve(sourceFolderPath), getDataRoot());
-
-  const parentDir = path.dirname(folderPath);
-  const folderName = path.basename(folderPath);
   const safeOutputZipPath = validatePath(path.resolve(outputZipPath), os.tmpdir());
 
   try {
-    await runCommandWithStderr('zip', ['-r', '-q', safeOutputZipPath, folderName], { cwd: parentDir });
+    await runCommandWithStderr('zip', ['-r', '-q', safeOutputZipPath, '.'], { cwd: folderPath });
     return;
   } catch (zipError) {
     logger.warn('[download] zip command failed, trying 7z fallback', {
@@ -257,7 +254,7 @@ async function createZipArchiveFromFolder(sourceFolderPath, outputZipPath) {
     });
   }
 
-  await runCommandWithStderr('7z', ['a', '-tzip', '-y', safeOutputZipPath, folderName], { cwd: parentDir });
+  await runCommandWithStderr('7z', ['a', '-tzip', '-y', safeOutputZipPath, '.'], { cwd: folderPath });
 }
 
 function safeDownloadFileName(fileName = '', fallback = 'download') {

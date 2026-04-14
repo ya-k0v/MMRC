@@ -747,7 +747,7 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
 
     const storage = multer.diskStorage({
       destination: (r, f, cb) => cb(null, tempUploadDir),
-      filename: (r, f, cb) => cb(null, `import_${Date.now()}${path.extname(f.originalname)}`)
+        filename: (r, f, cb) => cb(null, `import_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.dbupload`)
     });
 
     const uploadSingle = multer({ storage, limits: { fileSize: MAX_FILE_SIZE } }).single('file');
@@ -763,9 +763,12 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
 
       let uploadedPath;
       try {
-            uploadedPath = validatePath(path.resolve(file.path), tempUploadDir);
+          const uploadedName = String(file.filename || '');
+          if (!/^[A-Za-z0-9._-]+$/.test(uploadedName)) {
+            throw new Error('Invalid uploaded filename');
+          }
+          uploadedPath = validatePath(path.join(tempUploadDir, uploadedName), tempUploadDir);
       } catch (pathError) {
-        try { if (file.path && fs.existsSync(file.path)) fs.unlinkSync(file.path); } catch (_) {}
         return res.status(400).json({ error: 'Invalid uploaded file path' });
       }
 

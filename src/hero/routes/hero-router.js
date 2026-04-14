@@ -230,18 +230,20 @@ export function createHeroRouter({ requireHeroAdmin }) {
 
   // Импорт базы героев: файл подменяется атомарно, применение после перезапуска сервиса.
   router.post('/import-database', requireHeroAdmin, heroDbImportUpload.single('file'), (req, res) => {
-    const uploadedPathRaw = req.file?.path;
     let uploadedPath = null;
 
     try {
-      if (!uploadedPathRaw) {
+      if (!req.file) {
         return res.status(400).json({ error: 'Файл не загружен' });
       }
 
       try {
-          uploadedPath = validatePath(path.resolve(uploadedPathRaw), HERO_DB_UPLOAD_DIR);
+        const uploadedName = String(req.file.filename || '');
+        if (!/^[A-Za-z0-9._-]+$/.test(uploadedName)) {
+          throw new Error('Invalid uploaded filename');
+        }
+        uploadedPath = validatePath(path.join(HERO_DB_UPLOAD_DIR, uploadedName), HERO_DB_UPLOAD_DIR);
       } catch (pathError) {
-          try { if (uploadedPathRaw && fs.existsSync(uploadedPathRaw)) fs.unlinkSync(uploadedPathRaw); } catch (_) {}
         return res.status(400).json({ error: 'Некорректный путь загруженного файла' });
       }
 
