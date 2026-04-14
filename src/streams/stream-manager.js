@@ -18,16 +18,21 @@ import { jobResourceManager } from '../utils/job-resource-manager.js';
 const execAsync = promisify(exec);
 
 const STREAM_KEY_SEPARATOR = '::';
-const STREAM_WORKER_ACTIVE_STATUSES = new Set(['starting', 'running', 'restarting']);
+const STREAM_WORKER_ACTIVE_STATUSES = new Set(['waiting_resources', 'starting', 'running', 'restarting']);
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function parseNonNegativeInt(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 const STREAM_RESOURCE_CPU_UNITS = Math.max(1, parsePositiveInt(process.env.STREAM_RESOURCE_CPU_UNITS, 1));
 const STREAM_RESOURCE_MEMORY_MB = Math.max(128, parsePositiveInt(process.env.STREAM_RESOURCE_MEMORY_MB, 384));
-const STREAM_RESOURCE_TIMEOUT_MS = Math.max(10000, parsePositiveInt(process.env.STREAM_RESOURCE_TIMEOUT_MS, 180000));
+const STREAM_RESOURCE_TIMEOUT_MS = parseNonNegativeInt(process.env.STREAM_RESOURCE_TIMEOUT_MS, 0);
 
 // КРИТИЧНО: Максимальный размер stderr буфера для предотвращения утечек памяти
 const MAX_STDERR_BUFFER_SIZE = 10 * 1024; // 10KB
@@ -184,6 +189,8 @@ class StreamManager extends EventEmitter {
     switch (status) {
       case 'starting':
         return 'Запуск';
+      case 'waiting_resources':
+        return 'Ожидание ресурсов';
       case 'running':
         return 'Работает';
       case 'restarting':
@@ -1341,6 +1348,14 @@ class StreamManager extends EventEmitter {
       isDash,
       ffmpegPath: this.options.ffmpegPath,
       args: args.join(' ')
+    });
+
+    this._publishStreamWorkerNotification({
+      deviceId: device_id,
+      safeName: safeNameSanitized,
+      status: 'waiting_resources',
+      severity: 'info',
+      message: 'Ожидание ресурсов для запуска FFmpeg'
     });
 
     try {

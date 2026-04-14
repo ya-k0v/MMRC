@@ -12,6 +12,16 @@ import { checkVideoParameters } from './ffmpeg-wrapper.js';
 import { setFileStatus, deleteFileStatus } from './file-status.js';
 import { needsFaststart } from './mp4-faststart.js';
 import logger from '../utils/logger.js';
+import { jobResourceManager } from '../utils/job-resource-manager.js';
+
+function parseNonNegativeInt(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+const VIDEO_OPT_RESOURCE_CPU_UNITS = Math.max(1, Number.parseInt(process.env.VIDEO_OPT_RESOURCE_CPU_UNITS || '1', 10) || 1);
+const VIDEO_OPT_RESOURCE_MEMORY_MB = Math.max(128, Number.parseInt(process.env.VIDEO_OPT_RESOURCE_MEMORY_MB || '512', 10) || 512);
+const VIDEO_OPT_RESOURCE_TIMEOUT_MS = parseNonNegativeInt(process.env.VIDEO_OPT_RESOURCE_TIMEOUT_MS, 0);
 
 // Загрузка конфигурации оптимизации
 let videoOptConfig = {};
@@ -102,82 +112,122 @@ function resolveTargetProfile(params = {}) {
 }
 
 async function runFfmpegWithProgress({ deviceId, fileName, ffmpegArgs, io, timeoutMs = 30 * 60 * 1000 }) {
-  await new Promise((resolve, reject) => {
-    const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+  const resourceRequestId = `video-opt:${deviceId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+  let resourceReservation = null;
 
-    let duration = 0;
-    let stderr = '';
-    let isResolved = false;
-    let lastProgress = -1;
-
-    const timeout = setTimeout(() => {
-      if (!isResolved) {
-        logger.error('[VideoOpt] ⏱️ FFmpeg timeout', { deviceId, fileName, timeoutMs });
-        ffmpegProcess.kill('SIGKILL');
-        reject(new Error('FFmpeg timeout'));
+  try {
+    resourceReservation = await jobResourceManager.acquire({
+      id: resourceRequestId,
+      jobType: 'video-opt',
+      cpuUnits: VIDEO_OPT_RESOURCE_CPU_UNITS,
+      memoryMb: VIDEO_OPT_RESOURCE_MEMORY_MB,
+      priority: 0,
+      timeoutMs: VIDEO_OPT_RESOURCE_TIMEOUT_MS,
+      meta: {
+        deviceId,
+        fileName
       }
-    }, timeoutMs);
+    });
+  } catch (resourceError) {
+    const message = resourceError.message === 'Resource acquisition timeout'
+      ? 'Нет свободных ресурсов для оптимизации видео'
+      : (resourceError.message || 'Не удалось зарезервировать ресурсы для оптимизации');
+    throw new Error(message);
+  }
 
-    ffmpegProcess.stderr.on('data', (data) => {
-      const output = data.toString();
-      stderr += output;
+  try {
+    await new Promise((resolve, reject) => {
+      const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
 
-      if (duration === 0) {
-        const durationMatch = output.match(/Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})/);
-        if (durationMatch) {
-          const hours = parseInt(durationMatch[1], 10);
-          const minutes = parseInt(durationMatch[2], 10);
-          const seconds = parseFloat(durationMatch[3]);
-          duration = hours * 3600 + minutes * 60 + seconds;
+      let duration = 0;
+      let stderr = '';
+      let isResolved = false;
+      let lastProgress = -1;
+
+      const timeout = setTimeout(() => {
+        if (!isResolved) {
+          logger.error('[VideoOpt] ⏱️ FFmpeg timeout', { deviceId, fileName, timeoutMs });
+          ffmpegProcess.kill('SIGKILL');
+          reject(new Error('FFmpeg timeout'));
         }
-      }
+      }, timeoutMs);
 
-      if (duration > 0) {
-        const timeMatch = output.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d{2})/);
-        if (timeMatch) {
-          const hours = parseInt(timeMatch[1], 10);
-          const minutes = parseInt(timeMatch[2], 10);
-          const seconds = parseFloat(timeMatch[3]);
-          const currentTime = hours * 3600 + minutes * 60 + seconds;
+      ffmpegProcess.stderr.on('data', (data) => {
+        const output = data.toString();
+        stderr += output;
 
-          const rawProgress = (currentTime / duration) * 100;
-          const progress = Math.min(90, Math.max(10, 10 + Math.round(rawProgress * 0.8)));
+        if (duration === 0) {
+          const durationMatch = output.match(/Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})/);
+          if (durationMatch) {
+            const hours = parseInt(durationMatch[1], 10);
+            const minutes = parseInt(durationMatch[2], 10);
+            const seconds = parseFloat(durationMatch[3]);
+            duration = hours * 3600 + minutes * 60 + seconds;
+          }
+        }
 
-          if (progress !== lastProgress) {
-            lastProgress = progress;
-            setFileStatus(deviceId, fileName, { status: 'processing', progress, canPlay: false });
+        if (duration > 0) {
+          const timeMatch = output.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d{2})/);
+          if (timeMatch) {
+            const hours = parseInt(timeMatch[1], 10);
+            const minutes = parseInt(timeMatch[2], 10);
+            const seconds = parseFloat(timeMatch[3]);
+            const currentTime = hours * 3600 + minutes * 60 + seconds;
 
-            if (progress % 2 === 0) {
-              io.emit('file/progress', { device_id: deviceId, file: fileName, progress });
+            const rawProgress = (currentTime / duration) * 100;
+            const progress = Math.min(90, Math.max(10, 10 + Math.round(rawProgress * 0.8)));
+
+            if (progress !== lastProgress) {
+              lastProgress = progress;
+              setFileStatus(deviceId, fileName, { status: 'processing', progress, canPlay: false });
+
+              if (progress % 2 === 0) {
+                io.emit('file/progress', { device_id: deviceId, file: fileName, progress });
+              }
             }
           }
         }
-      }
+      });
+
+      ffmpegProcess.on('close', (code) => {
+        clearTimeout(timeout);
+        isResolved = true;
+
+        if (code === 0) {
+          resolve();
+        } else {
+          logger.error('[VideoOpt] ❌ FFmpeg exited with error', {
+            deviceId,
+            fileName,
+            code,
+            stderr: stderr.substring(Math.max(0, stderr.length - 700))
+          });
+          reject(new Error(`FFmpeg exited with code ${code}`));
+        }
+      });
+
+      ffmpegProcess.on('error', (err) => {
+        clearTimeout(timeout);
+        isResolved = true;
+        reject(err);
+      });
     });
-
-    ffmpegProcess.on('close', (code) => {
-      clearTimeout(timeout);
-      isResolved = true;
-
-      if (code === 0) {
-        resolve();
-      } else {
-        logger.error('[VideoOpt] ❌ FFmpeg exited with error', {
+  } finally {
+    if (resourceReservation?.release) {
+      try {
+        resourceReservation.release();
+      } catch (releaseErr) {
+        logger.warn('[VideoOpt] Failed to release resource reservation', {
           deviceId,
           fileName,
-          code,
-          stderr: stderr.substring(Math.max(0, stderr.length - 700))
+          reservationId: resourceReservation.id,
+          error: releaseErr.message
         });
-        reject(new Error(`FFmpeg exited with code ${code}`));
       }
-    });
-
-    ffmpegProcess.on('error', (err) => {
-      clearTimeout(timeout);
-      isResolved = true;
-      reject(err);
-    });
-  });
+    } else {
+      jobResourceManager.release(resourceRequestId);
+    }
+  }
 }
 
 /**

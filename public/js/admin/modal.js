@@ -22,8 +22,10 @@ const escapeJsStringForAttr = (value) => escapeHtml(JSON.stringify(value ?? ''))
 const modalHistoryStack = [];
 let activeModalEscHandler = null;
 const SERVICE_LOGS_POLL_INTERVAL_MS = 1200;
-const SERVICE_LOGS_TYPING_CHUNK = 36;
-const SERVICE_LOGS_TYPING_DELAY_MS = 14;
+const SERVICE_LOGS_TYPING_CHUNK = 84;
+const SERVICE_LOGS_TYPING_DELAY_MS = 10;
+const SERVICE_LOGS_FAST_APPEND_THRESHOLD = 3200;
+const SERVICE_LOGS_MAX_TYPING_QUEUE = 24000;
 const SERVICE_LOGS_MAX_CHARS = 350000;
 let serviceLogsViewerState = null;
 
@@ -159,6 +161,27 @@ function trimServiceLogsOutput(outputEl) {
   outputEl.textContent = firstLineBreak >= 0 ? tailText.slice(firstLineBreak + 1) : tailText;
 }
 
+function flushServiceLogsTypewriterQueue(state, outputEl) {
+  if (!state || !outputEl) return;
+
+  if (state.typeTimer) {
+    clearTimeout(state.typeTimer);
+    state.typeTimer = null;
+  }
+
+  state.isTyping = false;
+
+  if (state.textQueue) {
+    outputEl.textContent += state.textQueue;
+    state.textQueue = '';
+    trimServiceLogsOutput(outputEl);
+
+    if (state.autoScroll) {
+      outputEl.scrollTop = outputEl.scrollHeight;
+    }
+  }
+}
+
 function runServiceLogsTypewriter() {
   const state = serviceLogsViewerState;
   if (!state || state.isTyping) return;
@@ -187,7 +210,8 @@ function runServiceLogsTypewriter() {
       return;
     }
 
-    const chunk = activeState.textQueue.slice(0, SERVICE_LOGS_TYPING_CHUNK);
+    const chunkSize = Math.min(SERVICE_LOGS_TYPING_CHUNK, activeState.textQueue.length);
+    const chunk = activeState.textQueue.slice(0, chunkSize);
     activeState.textQueue = activeState.textQueue.slice(chunk.length);
     liveOutput.textContent += chunk;
     trimServiceLogsOutput(liveOutput);
@@ -202,9 +226,29 @@ function runServiceLogsTypewriter() {
   step();
 }
 
-function enqueueServiceLogsText(text) {
+function enqueueServiceLogsText(text, options = {}) {
   if (!text || !serviceLogsViewerState) return;
-  serviceLogsViewerState.textQueue += text;
+
+  const state = serviceLogsViewerState;
+  const { outputEl } = getServiceLogsElements();
+  if (!outputEl) return;
+
+  const forceImmediate = Boolean(options.forceImmediate);
+  const hasPendingOverflow = (state.textQueue.length + text.length) > SERVICE_LOGS_MAX_TYPING_QUEUE;
+  const shouldAppendImmediately = forceImmediate || text.length >= SERVICE_LOGS_FAST_APPEND_THRESHOLD || hasPendingOverflow;
+
+  if (shouldAppendImmediately) {
+    flushServiceLogsTypewriterQueue(state, outputEl);
+    outputEl.textContent += text;
+    trimServiceLogsOutput(outputEl);
+
+    if (state.autoScroll) {
+      outputEl.scrollTop = outputEl.scrollHeight;
+    }
+    return;
+  }
+
+  state.textQueue += text;
   runServiceLogsTypewriter();
 }
 
@@ -244,6 +288,12 @@ async function fetchServiceLogsChunk(adminFetch, { reset = false } = {}) {
     if (!serviceLogsViewerState || serviceLogsViewerState !== state) return;
 
     if (result.reset || reset) {
+      if (state.typeTimer) {
+        clearTimeout(state.typeTimer);
+        state.typeTimer = null;
+      }
+
+      state.isTyping = false;
       outputEl.textContent = '';
       state.textQueue = '';
     }
@@ -257,7 +307,9 @@ async function fetchServiceLogsChunk(adminFetch, { reset = false } = {}) {
 
     const lines = Array.isArray(result.lines) ? result.lines : [];
     if (lines.length) {
-      enqueueServiceLogsText(`${lines.join('\n')}\n`);
+      const chunkText = `${lines.join('\n')}\n`;
+      const useTypewriter = !result.truncated && lines.length <= 120 && chunkText.length <= 5000 && state.linesLimit <= 300;
+      enqueueServiceLogsText(chunkText, { forceImmediate: !useTypewriter });
     } else if ((result.reset || reset) && !outputEl.textContent.trim()) {
       outputEl.textContent = 'Логи пока пусты.\n';
     }
@@ -358,6 +410,11 @@ function openServiceLogsModal(adminFetch) {
     clearBtn.onclick = () => {
       outputEl.textContent = '';
       if (serviceLogsViewerState) {
+        if (serviceLogsViewerState.typeTimer) {
+          clearTimeout(serviceLogsViewerState.typeTimer);
+          serviceLogsViewerState.typeTimer = null;
+        }
+        serviceLogsViewerState.isTyping = false;
         serviceLogsViewerState.textQueue = '';
       }
       setServiceLogsStatus('Окно логов очищено.', 'var(--text-secondary)');
