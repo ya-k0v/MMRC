@@ -554,8 +554,21 @@ export async function updateContentRootPath(newPath) {
   }
 
   const normalized = path.resolve(trimmed);
+  let canonicalRoot;
+  let rootStat;
+  try {
+    rootStat = fs.statSync(normalized);
+    canonicalRoot = fs.realpathSync(normalized);
+  } catch (error) {
+    throw new Error('Указанный путь не существует или недоступен');
+  }
+
+  if (!rootStat.isDirectory()) {
+    throw new Error('Укажите путь к существующей директории');
+  }
+
   const normalizedRoot = path.resolve(ROOT);
-  if (normalized !== normalizedRoot && !normalized.startsWith(normalizedRoot + path.sep)) {
+  if (canonicalRoot !== normalizedRoot && !canonicalRoot.startsWith(normalizedRoot + path.sep)) {
     throw new Error('Путь должен находиться внутри разрешенной директории приложения');
   }
   
@@ -622,17 +635,17 @@ export async function updateContentRootPath(newPath) {
     });
   }
 
-  currentContentRoot = normalized;
+  currentContentRoot = canonicalRoot;
   
   logger.info(`[Settings] 📁 Updated paths:`, {
-    dataRoot: normalized,
+    dataRoot: canonicalRoot,
     streams: getStreamsOutputDir(),
     converted: getConvertedCache(),
     logs: getLogsDir(),
     temp: getTempDir()
   });
   
-  return normalized;
+  return canonicalRoot;
 }
 
 // Инициализация при загрузке модуля (синхронная часть)
