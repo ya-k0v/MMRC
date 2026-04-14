@@ -14,16 +14,41 @@ import fs from 'fs';
  * @throws {Error} Если path traversal обнаружен
  */
 export function validatePath(userPath, baseDir) {
-  // Резолвим в абсолютный путь
-  const resolvedPath = path.resolve(baseDir, userPath);
-  const normalizedBase = path.resolve(baseDir);
-  
-  // Проверяем что путь внутри baseDir
-  if (!resolvedPath.startsWith(normalizedBase + path.sep) && resolvedPath !== normalizedBase) {
+  const normalizedBase = path.resolve(String(baseDir || ''));
+  if (!normalizedBase) {
+    throw new Error('Invalid base directory');
+  }
+
+  // Канонизируем базовую директорию (если существует), чтобы исключить обход через symlink
+  const canonicalBase = fs.existsSync(normalizedBase)
+    ? fs.realpathSync.native(normalizedBase)
+    : normalizedBase;
+
+  // userPath может быть как относительным, так и абсолютным
+  const requestedPath = path.resolve(canonicalBase, String(userPath || ''));
+
+  // Канонизируем целевой путь: если не существует, канонизируем ближайшего существующего родителя
+  let canonicalTarget;
+  if (fs.existsSync(requestedPath)) {
+    canonicalTarget = fs.realpathSync.native(requestedPath);
+  } else {
+    let parent = path.dirname(requestedPath);
+    while (parent !== path.dirname(parent) && !fs.existsSync(parent)) {
+      parent = path.dirname(parent);
+    }
+
+    const canonicalParent = fs.existsSync(parent)
+      ? fs.realpathSync.native(parent)
+      : canonicalBase;
+
+    canonicalTarget = path.resolve(canonicalParent, path.basename(requestedPath));
+  }
+
+  if (!canonicalTarget.startsWith(canonicalBase + path.sep) && canonicalTarget !== canonicalBase) {
     throw new Error('Path traversal attempt detected');
   }
-  
-  return resolvedPath;
+
+  return canonicalTarget;
 }
 
 /**
