@@ -13,14 +13,14 @@ import {
 } from './notifications.js';
 import { getSettings } from '../config/settings-manager.js';
 import { getDatabase } from '../database/database.js';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { timerRegistry } from './timer-registry.js';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 class SystemMonitor {
   constructor(streamManager, devices) {
@@ -104,8 +104,12 @@ class SystemMonitor {
           }
         }
         
-        const { stdout } = await execAsync(`df -k "${contentPath}" | tail -n +2`);
-        const line = stdout.trim();
+        const { stdout } = await execFileAsync('df', ['-k', contentPath]);
+        const line = stdout
+          .split(/\r?\n/)
+          .slice(1)
+          .map((item) => item.trim())
+          .find((item) => item.length > 0) || '';
         if (line) {
           const parts = line.trim().split(/\s+/);
           if (parts.length >= 5) {

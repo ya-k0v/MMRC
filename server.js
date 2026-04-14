@@ -61,6 +61,7 @@ import logger, { httpLoggerMiddleware } from './src/utils/logger.js';
 import { cleanupResolutionCache, getResolutionCacheSize } from './src/video/resolution-cache.js';
 import { circuitBreakers } from './src/utils/circuit-breaker.js';
 import { getSettings, updateContentRootPath, getDataRoot, getDevicesPath, getStreamsOutputDir, getConvertedCache, getLogsDir, getTempDir } from './src/config/settings-manager.js';
+import { validatePath } from './src/utils/path-validator.js';
 import { getMetrics } from './src/utils/metrics.js';
 import { timerRegistry } from './src/utils/timer-registry.js';
 import adminRouter from './src/routes/admin.js';
@@ -432,6 +433,8 @@ const MANUAL_RESTART_DELAY_MS = Math.max(500, Number(process.env.MANUAL_RESTART_
 const SERVICE_LOGS_MAX_LINES = Math.max(50, Number(process.env.SERVICE_LOGS_MAX_LINES || 2000));
 const SERVICE_LOGS_DEFAULT_LINES = Math.max(20, Number(process.env.SERVICE_LOGS_DEFAULT_LINES || 200));
 const SERVICE_LOGS_MAX_CHUNK_BYTES = Math.max(64 * 1024, Number(process.env.SERVICE_LOGS_MAX_CHUNK_BYTES || 512 * 1024));
+const ADMIN_SERVICE_LOGS_DIR = path.join(ROOT, '.tmp', 'logs');
+const ADMIN_DB_IMPORT_DIR = path.join(ROOT, '.tmp', 'db-import');
 let isServiceRestartScheduled = false;
 
 function scheduleServiceRestart(reason = 'admin_restart', delayMs = DB_IMPORT_RESTART_DELAY_MS) {
@@ -472,16 +475,7 @@ function clampInt(value, min, max) {
 }
 
 function resolveLatestServiceLogFilePath() {
-  const candidateDirs = [];
-
-  try {
-    const configuredLogsDir = getLogsDir();
-    if (configuredLogsDir) candidateDirs.push(configuredLogsDir);
-  } catch (_) {
-    // ignore and fallback below
-  }
-
-  candidateDirs.push(path.join(process.cwd(), '.tmp', 'logs'));
+  const candidateDirs = [path.resolve(ADMIN_SERVICE_LOGS_DIR)];
 
   const seenDirs = new Set();
   for (const dirPath of candidateDirs) {
@@ -489,16 +483,18 @@ function resolveLatestServiceLogFilePath() {
     seenDirs.add(dirPath);
 
     try {
-      if (!fs.existsSync(dirPath)) continue;
-      const files = fs.readdirSync(dirPath)
+        const safeDirPath = validatePath(path.resolve(dirPath), ADMIN_SERVICE_LOGS_DIR);
+      if (!fs.existsSync(safeDirPath)) continue;
+
+      const files = fs.readdirSync(safeDirPath)
         .filter((name) => /^combined-\d{4}-\d{2}-\d{2}\.log$/.test(name))
         .sort();
 
       if (!files.length) continue;
-      return path.join(dirPath, files[files.length - 1]);
+      return path.join(safeDirPath, files[files.length - 1]);
     } catch (error) {
       logger.warn('[Admin] Failed to inspect logs directory', {
-        dirPath,
+        dirPath: path.resolve(dirPath),
         error: error?.message || String(error)
       });
     }
@@ -509,7 +505,12 @@ function resolveLatestServiceLogFilePath() {
 
 function readLastLinesFromFile(filePath, lineLimit) {
   const safeLimit = clampInt(parsePositiveInt(lineLimit, SERVICE_LOGS_DEFAULT_LINES), 1, SERVICE_LOGS_MAX_LINES);
-  const fd = fs.openSync(filePath, 'r');
+  const safeFilePath = validatePath(path.resolve(String(filePath || '')), ADMIN_SERVICE_LOGS_DIR);
+  const isAllowedLogFileName = /^combined-\d{4}-\d{2}-\d{2}\.log$/.test(path.basename(safeFilePath));
+  if (!isAllowedLogFileName) {
+    throw new Error('Invalid service log path');
+  }
+  const fd = fs.openSync(safeFilePath, 'r');
 
   try {
     const stats = fs.fstatSync(fd);
@@ -549,7 +550,12 @@ function readLastLinesFromFile(filePath, lineLimit) {
 
 function readLinesFromOffset(filePath, offset) {
   const safeOffset = Math.max(0, parsePositiveInt(offset, 0));
-  const fd = fs.openSync(filePath, 'r');
+  const safeFilePath = validatePath(path.resolve(String(filePath || '')), ADMIN_SERVICE_LOGS_DIR);
+  const isAllowedLogFileName = /^combined-\d{4}-\d{2}-\d{2}\.log$/.test(path.basename(safeFilePath));
+  if (!isAllowedLogFileName) {
+    throw new Error('Invalid service log path');
+  }
+  const fd = fs.openSync(safeFilePath, 'r');
 
   try {
     const stats = fs.fstatSync(fd);
@@ -644,9 +650,9 @@ app.get('/api/admin/service-logs', requireAuth, requireAdmin, (req, res) => {
       });
     }
 
-    const fileStats = fs.statSync(logFilePath);
+    const chunkProbe = readLinesFromOffset(logFilePath, requestedOffset);
     const fileChanged = Boolean(requestedFileName) && requestedFileName !== fileName;
-    const offsetOutOfRange = requestedOffset > fileStats.size;
+    const offsetOutOfRange = requestedOffset > chunkProbe.size;
 
     if (fileChanged || offsetOutOfRange) {
       const snapshot = readLastLinesFromFile(logFilePath, requestedLines);
@@ -661,7 +667,7 @@ app.get('/api/admin/service-logs', requireAuth, requireAdmin, (req, res) => {
       });
     }
 
-    const chunk = readLinesFromOffset(logFilePath, requestedOffset);
+    const chunk = chunkProbe;
     return res.json({
       ok: true,
       lines: chunk.lines,
@@ -709,12 +715,12 @@ app.get('/api/admin/export-database', requireAuth, requireAdmin, (req, res) => {
 // Импорт базы данных (замена текущей БД). Принимает FormData с полем `file` (.db).
 app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUploadSize, (req, res) => {
   try {
-    const tempUploadDir = getTempDir();
+    const tempUploadDir = ADMIN_DB_IMPORT_DIR;
     if (!fs.existsSync(tempUploadDir)) fs.mkdirSync(tempUploadDir, { recursive: true });
 
     const storage = multer.diskStorage({
       destination: (r, f, cb) => cb(null, tempUploadDir),
-      filename: (r, f, cb) => cb(null, `import_${Date.now()}${path.extname(f.originalname)}`)
+        filename: (r, f, cb) => cb(null, `import_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.dbupload`)
     });
 
     const uploadSingle = multer({ storage, limits: { fileSize: MAX_FILE_SIZE } }).single('file');
@@ -728,15 +734,26 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
       const file = req.file;
       if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
+      let uploadedPath;
+      try {
+          const uploadedName = String(file.filename || '');
+          if (!/^[A-Za-z0-9._-]+$/.test(uploadedName)) {
+            throw new Error('Invalid uploaded filename');
+          }
+          uploadedPath = validatePath(path.join(tempUploadDir, uploadedName), tempUploadDir);
+      } catch (pathError) {
+        return res.status(400).json({ error: 'Invalid uploaded file path' });
+      }
+
       const ext = path.extname(file.originalname || '').toLowerCase();
       if (ext !== '.db') {
-        try { fs.unlinkSync(file.path); } catch (_) {}
+        try { fs.unlinkSync(uploadedPath); } catch (_) {}
         return res.status(400).json({ error: 'Unsupported file type. Expected .db' });
       }
 
       // Быстрая проверка сигнатуры SQLite файла
       try {
-        const fd = fs.openSync(file.path, 'r');
+        const fd = fs.openSync(uploadedPath, 'r');
         const headerBuffer = Buffer.alloc(16);
         try {
           fs.readSync(fd, headerBuffer, 0, 16, 0);
@@ -746,15 +763,14 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
 
         const signature = headerBuffer.toString('utf8');
         if (signature !== 'SQLite format 3\u0000') {
-          try { fs.unlinkSync(file.path); } catch (_) {}
+          try { fs.unlinkSync(uploadedPath); } catch (_) {}
           return res.status(400).json({ error: 'Invalid SQLite database file' });
         }
       } catch (signatureError) {
-        try { fs.unlinkSync(file.path); } catch (_) {}
+        try { fs.unlinkSync(uploadedPath); } catch (_) {}
         return res.status(400).json({ error: signatureError.message || 'Failed to validate file' });
       }
 
-      const uploadedPath = file.path;
       const backupPath = `${DB_PATH}.bak.${Date.now()}`;
       const walPath = `${DB_PATH}-wal`;
       const shmPath = `${DB_PATH}-shm`;

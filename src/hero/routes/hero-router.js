@@ -7,8 +7,10 @@ import fs from 'fs';
 import logger from '../../utils/logger.js';
 import { createLimiter, deleteLimiter } from '../../middleware/rate-limit.js';
 
+const HERO_DB_UPLOAD_DIR = path.resolve('/tmp');
+
 const heroDbImportUpload = multer({
-  dest: '/tmp',
+  dest: HERO_DB_UPLOAD_DIR,
   limits: { fileSize: 200 * 1024 * 1024 }
 });
 
@@ -228,11 +230,21 @@ export function createHeroRouter({ requireHeroAdmin }) {
 
   // Импорт базы героев: файл подменяется атомарно, применение после перезапуска сервиса.
   router.post('/import-database', requireHeroAdmin, heroDbImportUpload.single('file'), (req, res) => {
-    const uploadedPath = req.file?.path;
+    let uploadedPath = null;
 
     try {
-      if (!uploadedPath) {
+      if (!req.file) {
         return res.status(400).json({ error: 'Файл не загружен' });
+      }
+
+      try {
+        const uploadedName = String(req.file.filename || '');
+        if (!/^[A-Za-z0-9._-]+$/.test(uploadedName)) {
+          throw new Error('Invalid uploaded filename');
+        }
+        uploadedPath = validatePath(path.join(HERO_DB_UPLOAD_DIR, uploadedName), HERO_DB_UPLOAD_DIR);
+      } catch (pathError) {
+        return res.status(400).json({ error: 'Некорректный путь загруженного файла' });
       }
 
       const ext = path.extname(req.file.originalname || '').toLowerCase();

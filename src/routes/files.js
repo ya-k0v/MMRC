@@ -8,14 +8,16 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import os from 'os';
+import archiver from 'archiver';
 import { spawn } from 'child_process';
-import { getDevicesPath } from '../config/settings-manager.js';
+import { getDevicesPath, getDataRoot } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { extractZipToFolder, getFolderImagesCount } from '../converters/folder-converter.js';
 import { makeSafeFolderName, makeSafeFilename } from '../utils/transliterate.js';
-import { uploadLimiter, deleteLimiter } from '../middleware/rate-limit.js';
+import { uploadLimiter, deleteLimiter, readLimiter } from '../middleware/rate-limit.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import logger, { logFile, logSecurity } from '../utils/logger.js';
+import { validatePath } from '../utils/path-validator.js';
 import { getCachedResolution, clearResolutionCache } from '../video/resolution-cache.js';
 import { processUploadedFilesAsync, processUploadedStaticContent } from '../utils/file-metadata-processor.js';
 import { getFileMetadata, deleteFileMetadata, getDeviceFilesMetadata, deleteDeviceFilesMetadata, saveFileMetadata, countFileReferences, updateFileOriginalName, createStreamingEntry, updateStreamMetadata, cleanupMissingFiles } from '../database/files-metadata.js';
@@ -210,51 +212,22 @@ async function probeMediaInfo(filePath, timeoutMs = 30000) {
   });
 }
 
-function runCommandWithStderr(command, args = [], options = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      ...options,
-      stdio: ['ignore', 'ignore', 'pipe']
-    });
-
-    let stderr = '';
-
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    child.on('error', (error) => {
-      reject(error);
-    });
-
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-
-      reject(new Error(stderr.trim() || `${command} exited with code ${code}`));
-    });
-  });
-}
-
 async function createZipArchiveFromFolder(sourceFolderPath, outputZipPath) {
-  const folderPath = path.resolve(sourceFolderPath);
-  const parentDir = path.dirname(folderPath);
-  const folderName = path.basename(folderPath);
+  const folderPath = validatePath(path.resolve(sourceFolderPath), getDataRoot());
+  const safeOutputZipPath = validatePath(path.resolve(outputZipPath), os.tmpdir());
 
-  try {
-    await runCommandWithStderr('zip', ['-r', '-q', outputZipPath, folderName], { cwd: parentDir });
-    return;
-  } catch (zipError) {
-    logger.warn('[download] zip command failed, trying 7z fallback', {
-      folderPath,
-      outputZipPath,
-      error: zipError.message
-    });
-  }
+  await new Promise((resolve, reject) => {
+    const output = fs.createWriteStream(safeOutputZipPath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
 
-  await runCommandWithStderr('7z', ['a', '-tzip', '-y', outputZipPath, folderName], { cwd: parentDir });
+    output.on('close', resolve);
+    output.on('error', reject);
+    archive.on('error', reject);
+
+    archive.pipe(output);
+    archive.directory(folderPath, false);
+    archive.finalize();
+  });
 }
 
 function safeDownloadFileName(fileName = '', fallback = 'download') {
@@ -264,6 +237,11 @@ function safeDownloadFileName(fileName = '', fallback = 'download') {
 
   const baseName = path.basename(normalized || fallback);
   return baseName || fallback;
+}
+
+function resolvePathInDataRoot(candidatePath) {
+  const dataRoot = getDataRoot();
+  return validatePath(path.resolve(candidatePath), dataRoot);
 }
 
 const router = express.Router();
@@ -4010,7 +3988,7 @@ export function createFilesRouter(deps) {
 
   // GET /api/devices/:id/files/:name/download - Скачать файл или папку
   // Папки скачиваются как ZIP архив
-  router.get('/:id/files/:name/download', requireSpeaker[0], requireSpeaker[1], async (req, res) => {
+  router.get('/:id/files/:name/download', readLimiter, requireSpeaker[0], requireSpeaker[1], async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
 
     if (!id) {
@@ -4032,20 +4010,30 @@ export function createFilesRouter(deps) {
     }
 
     const devicesPath = getDevicesPath();
-    const deviceFolder = path.join(devicesPath, d.folder || id);
+    const deviceFolder = resolvePathInDataRoot(path.join(devicesPath, d.folder || id));
     const metadata = getFileMetadata(id, name);
 
     if (metadata?.content_type === 'streaming') {
       return res.status(400).json({ error: 'Стримы нельзя скачать как файл' });
     }
 
-    let targetPath = metadata?.file_path && fs.existsSync(metadata.file_path)
-      ? path.resolve(metadata.file_path)
-      : null;
+    let targetPath = null;
+    if (metadata?.file_path && fs.existsSync(metadata.file_path)) {
+      try {
+        targetPath = resolvePathInDataRoot(metadata.file_path);
+      } catch (error) {
+        logger.warn('[download] Metadata path is outside data root', {
+          deviceId: id,
+          name,
+          metadataPath: metadata.file_path,
+          error: error?.message || String(error)
+        });
+      }
+    }
 
     if (!targetPath) {
-      const filePath = path.join(deviceFolder, name);
-      const folderPath = path.join(deviceFolder, name.replace(/\.(pdf|pptx|zip)$/i, ''));
+      const filePath = resolvePathInDataRoot(path.join(deviceFolder, name));
+      const folderPath = resolvePathInDataRoot(path.join(deviceFolder, name.replace(/\.(pdf|pptx|zip)$/i, '')));
 
       if (fs.existsSync(filePath)) {
         targetPath = filePath;
@@ -4056,6 +4044,12 @@ export function createFilesRouter(deps) {
 
     if (!targetPath || !fs.existsSync(targetPath)) {
       return res.status(404).json({ error: 'Файл или папка не найдены' });
+    }
+
+    try {
+      targetPath = resolvePathInDataRoot(targetPath);
+    } catch (error) {
+      return res.status(400).json({ error: 'Неверный путь к файлу' });
     }
 
     let stat;
@@ -4520,7 +4514,7 @@ export function createFilesRouter(deps) {
   });
   
   // GET /api/devices/:id/files-with-status - Получить список файлов со статусами
-  router.get('/:id/files-with-status', requireSpeaker[0], requireSpeaker[1], async (req, res) => {
+  router.get('/:id/files-with-status', readLimiter, requireSpeaker[0], requireSpeaker[1], async (req, res) => {
     const readyOnly = req.query.readyOnly === '1' || req.query.readyOnly === 'true';
     const id = sanitizeDeviceId(req.params.id);
     
