@@ -5,14 +5,14 @@
 
 import fs from 'fs';
 import path from 'path';
-import { exec as execCallback } from 'child_process';
+import { execFile as execFileCallback } from 'child_process';
 import util from 'util';
 import { getDevicesPath, getConvertedCache } from '../config/settings-manager.js';
 import { getAnyFileMetadataBySafeName } from '../database/files-metadata.js';
 import { makeSafeFolderName } from '../utils/transliterate.js';
 import logger from '../utils/logger.js';
 
-const exec = util.promisify(execCallback);
+const execFileAsync = util.promisify(execFileCallback);
 
 /**
  * Распаковать ZIP архив с изображениями в папку
@@ -51,11 +51,11 @@ export async function extractZipToFolder(deviceId, zipFileName, deviceFolderName
     
     // Распаковываем ZIP с помощью unzip (доступен на большинстве Linux систем)
     try {
-      await exec(`unzip -q "${zipPath}" -d "${outputFolder}"`);
+      await execFileAsync('unzip', ['-q', zipPath, '-d', outputFolder]);
     } catch (err) {
       // Если unzip недоступен, пробуем 7z
       logger.info('[FolderConverter] unzip недоступен, пробую 7z...', { deviceId, zipFileName });
-      await exec(`7z x "${zipPath}" -o"${outputFolder}" -y`);
+      await execFileAsync('7z', ['x', zipPath, `-o${outputFolder}`, '-y']);
     }
     
     // Проверяем, что внутри есть изображения

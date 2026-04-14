@@ -5,7 +5,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import util from 'util';
 import { fromPath } from 'pdf2pic';
 import { PDFDocument } from 'pdf-lib';
@@ -13,7 +13,16 @@ import { getDevicesPath } from '../config/settings-manager.js';
 import { setFileStatus } from '../video/file-status.js';
 import logger from '../utils/logger.js';
 
-const execAsync = util.promisify(exec);
+const execFileAsync = util.promisify(execFile);
+
+async function commandExists(command) {
+  try {
+    await execFileAsync('which', [command]);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Получить количество страниц в PDF
@@ -105,29 +114,58 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
   let convertTool = null;
   let convertCommand = null;
   
-  try {
-    await execAsync('which gm');
+  if (await commandExists('gm')) {
     convertTool = 'gm';
     // GraphicsMagick: конвертируем PDF в PNG с сохранением пропорций
     // Используем density для качества, затем масштабируем
     convertCommand = (pdfPath, pageNum, outputPath) => {
-      // Сначала конвертируем с высоким quality, затем масштабируем
-      return `gm convert -density 200 "${pdfPath}[${pageNum - 1}]" -resize '${targetWidth}x${targetHeight}>' "${outputPath}"`;
+      return {
+        command: 'gm',
+        args: [
+          'convert',
+          '-density', '200',
+          `${pdfPath}[${pageNum - 1}]`,
+          '-resize', `${targetWidth}x${targetHeight}>`,
+          outputPath
+        ]
+      };
     };
     logger.info(`[Converter] Используем GraphicsMagick для конвертации PDF`);
-  } catch {
-    try {
-      await execAsync('which convert');
-      convertTool = 'convert';
-      // ImageMagick: конвертируем PDF в PNG с сохранением пропорций
-      convertCommand = (pdfPath, pageNum, outputPath) => {
-        return `convert -density 200 "${pdfPath}[${pageNum - 1}]" -resize '${targetWidth}x${targetHeight}>' "${outputPath}"`;
+  } else if (await commandExists('convert')) {
+    convertTool = 'convert';
+    // ImageMagick: конвертируем PDF в PNG с сохранением пропорций
+    convertCommand = (pdfPath, pageNum, outputPath) => {
+      return {
+        command: 'convert',
+        args: [
+          '-density', '200',
+          `${pdfPath}[${pageNum - 1}]`,
+          '-resize', `${targetWidth}x${targetHeight}>`,
+          outputPath
+        ]
       };
-      logger.info(`[Converter] Используем ImageMagick для конвертации PDF`);
-    } catch {
-      // Fallback на pdf2pic если GraphicsMagick/ImageMagick недоступны
-      logger.warn(`[Converter] GraphicsMagick и ImageMagick не найдены, используем pdf2pic`);
-      convertTool = 'pdf2pic';
+    };
+    logger.info(`[Converter] Используем ImageMagick для конвертации PDF`);
+  } else {
+    // Fallback на pdf2pic если GraphicsMagick/ImageMagick недоступны
+    logger.warn(`[Converter] GraphicsMagick и ImageMagick не найдены, используем pdf2pic`);
+    convertTool = 'pdf2pic';
+  }
+
+  let pdf2picResizeCommand = null;
+  if (convertTool === 'pdf2pic') {
+    if (await commandExists('gm')) {
+      pdf2picResizeCommand = (imagePath, tempPath) => ({
+        command: 'gm',
+        args: ['convert', imagePath, '-resize', `${targetWidth}x${targetHeight}>`, tempPath]
+      });
+    } else if (await commandExists('convert')) {
+      pdf2picResizeCommand = (imagePath, tempPath) => ({
+        command: 'convert',
+        args: [imagePath, '-resize', `${targetWidth}x${targetHeight}>`, tempPath]
+      });
+    } else {
+      logger.warn(`[Converter] GraphicsMagick и ImageMagick не найдены, пропускаем масштабирование`);
     }
   }
   
@@ -139,7 +177,8 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
       
       if (convertCommand) {
         // Используем GraphicsMagick/ImageMagick напрямую
-        await execAsync(convertCommand(pdfPath, i, imagePath));
+        const { command, args } = convertCommand(pdfPath, i, imagePath);
+        await execFileAsync(command, args);
         
         // Проверяем что файл создан
         if (fs.existsSync(imagePath)) {
@@ -209,11 +248,13 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
               const pngSignature = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
               if (buffer.equals(pngSignature)) {
                 // Масштабируем через GraphicsMagick/ImageMagick для сохранения пропорций
-                if (resizeCommand) {
+                if (pdf2picResizeCommand) {
                   const tempPath = `${imagePath}.tmp`;
                   try {
-                    await execAsync(resizeCommand(imagePath, tempPath));
+                    const { command, args } = pdf2picResizeCommand(imagePath, tempPath);
+                    await execFileAsync(command, args);
                     if (fs.existsSync(tempPath) && fs.statSync(tempPath).size > 0) {
+                      fs.renameSync(tempPath, imagePath);
                       convertedPages.push({ page: i, path: imagePath });
                       logger.info(`[Converter] ✅ Страница ${i} конвертирована (pdf2pic + resize): ${imagePath}`);
                     }
@@ -249,22 +290,7 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
   // Если использовали GraphicsMagick/ImageMagick напрямую, масштабирование уже выполнено
   // Если использовали pdf2pic, нужно дополнительно масштабировать
   if (convertTool === 'pdf2pic') {
-    // Масштабируем изображения, созданные через pdf2pic
-    let resizeCommand = null;
-    
-    try {
-      await execAsync('which gm');
-      resizeCommand = (imagePath, tempPath) => `gm convert "${imagePath}" -resize '${targetWidth}x${targetHeight}>' "${tempPath}" && mv "${tempPath}" "${imagePath}"`;
-    } catch {
-      try {
-        await execAsync('which convert');
-        resizeCommand = (imagePath, tempPath) => `convert "${imagePath}" -resize '${targetWidth}x${targetHeight}>' "${tempPath}" && mv "${tempPath}" "${imagePath}"`;
-      } catch {
-        logger.warn(`[Converter] GraphicsMagick и ImageMagick не найдены, пропускаем масштабирование`);
-      }
-    }
-    
-    if (resizeCommand) {
+    if (pdf2picResizeCommand) {
       for (const { page, path: imagePath } of convertedPages) {
         if (!fs.existsSync(imagePath)) continue;
         
@@ -273,13 +299,13 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
           // Получаем реальные размеры перед масштабированием
           let originalWidth, originalHeight;
           try {
-            const identifyResult = await execAsync(`identify -format "%wx%h" "${imagePath}"`);
+            const identifyResult = await execFileAsync('identify', ['-format', '%wx%h', imagePath]);
             const dimensions = identifyResult.stdout.trim().split('x');
             originalWidth = parseInt(dimensions[0]);
             originalHeight = parseInt(dimensions[1]);
           } catch (e) {
             try {
-              const gmResult = await execAsync(`gm identify -format "%wx%h" "${imagePath}"`);
+              const gmResult = await execFileAsync('gm', ['identify', '-format', '%wx%h', imagePath]);
               const dimensions = gmResult.stdout.trim().split('x');
               originalWidth = parseInt(dimensions[0]);
               originalHeight = parseInt(dimensions[1]);
@@ -288,11 +314,13 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
             }
           }
           
-          await execAsync(resizeCommand(imagePath, tempPath));
+          const { command, args } = pdf2picResizeCommand(imagePath, tempPath);
+          await execFileAsync(command, args);
           
           if (fs.existsSync(tempPath) && fs.statSync(tempPath).size > 0) {
+            fs.renameSync(tempPath, imagePath);
             try {
-              const finalResult = await execAsync(`identify -format "%wx%h" "${tempPath}"`);
+              const finalResult = await execFileAsync('identify', ['-format', '%wx%h', imagePath]);
               const finalDimensions = finalResult.stdout.trim().split('x');
               const finalWidth = parseInt(finalDimensions[0]);
               const finalHeight = parseInt(finalDimensions[1]);
@@ -315,7 +343,7 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
     for (const { page, path: imagePath } of convertedPages) {
       if (fs.existsSync(imagePath)) {
         try {
-          const identifyResult = await execAsync(`identify -format "%wx%h" "${imagePath}"`);
+          const identifyResult = await execFileAsync('identify', ['-format', '%wx%h', imagePath]);
           const dimensions = identifyResult.stdout.trim().split('x');
           const finalWidth = parseInt(dimensions[0]);
           const finalHeight = parseInt(dimensions[1]);
@@ -342,7 +370,7 @@ export async function convertPptxToImages(pptxPath, outputDir, onProgress = null
   
   try {
     // Конвертируем PPTX в PDF через LibreOffice
-    await execAsync(`soffice --headless --convert-to pdf --outdir "${outputDir}" "${pptxPath}"`);
+    await execFileAsync('soffice', ['--headless', '--convert-to', 'pdf', '--outdir', outputDir, pptxPath]);
     if (onProgress) onProgress(5); // Начальная стадия конвертации PPTX -> PDF
     
     // Проверяем что PDF создан
