@@ -554,6 +554,10 @@ export async function updateContentRootPath(newPath) {
   }
 
   const normalized = path.resolve(trimmed);
+  const normalizedRoot = path.resolve(ROOT);
+  if (normalized !== normalizedRoot && !normalized.startsWith(normalizedRoot + path.sep)) {
+    throw new Error('Путь должен находиться внутри разрешенной директории приложения');
+  }
   
   // КРИТИЧНО: Сохраняем старый путь для миграции
   const oldRoot = currentContentRoot || DEFAULT_DATA_ROOT;
