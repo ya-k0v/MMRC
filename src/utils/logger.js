@@ -8,6 +8,7 @@ import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
 import fs from 'fs';
 import { getLogsDir } from '../config/settings-manager.js';
+import { ROOT } from '../config/constants.js';
 
 // Директория для логов (вычисляется динамически из настроек БД)
 let LOG_DIR = null;
@@ -27,13 +28,32 @@ function sanitizeDirectoryPath(inputPath) {
 }
 
 try {
-  LOG_DIR = sanitizeDirectoryPath(getLogsDir());
-  if (!LOG_DIR) {
+  const configuredLogsDir = sanitizeDirectoryPath(getLogsDir());
+  if (!configuredLogsDir) {
     throw new Error('Invalid logs directory path');
   }
+
+  const projectRoot = path.resolve(ROOT);
+  const resolvedLogDirCandidate = path.resolve(projectRoot, configuredLogsDir);
+  if (!resolvedLogDirCandidate.startsWith(projectRoot + path.sep) && resolvedLogDirCandidate !== projectRoot) {
+    throw new Error('Logs directory is outside project root');
+  }
+
+  fs.mkdirSync(path.dirname(resolvedLogDirCandidate), { recursive: true });
+  LOG_DIR = fs.realpathSync(path.dirname(resolvedLogDirCandidate));
+  if (!LOG_DIR.startsWith(projectRoot + path.sep) && LOG_DIR !== projectRoot) {
+    throw new Error('Invalid logs base directory');
+  }
+
+  LOG_DIR = path.join(LOG_DIR, path.basename(resolvedLogDirCandidate));
+
   // Попытка создать директорию и проверить доступ на запись
   try {
     fs.mkdirSync(LOG_DIR, { recursive: true });
+    LOG_DIR = fs.realpathSync(LOG_DIR);
+    if (!LOG_DIR.startsWith(projectRoot + path.sep) && LOG_DIR !== projectRoot) {
+      throw new Error('Resolved logs directory is outside project root');
+    }
     fs.accessSync(LOG_DIR, fs.constants.W_OK);
   } catch (err) {
     // Если не удалось создать/записать - переключаемся на fallback

@@ -4000,53 +4000,78 @@ export function createFilesRouter(deps) {
     }
 
     const rawName = String(req.params.name || '').trim();
-    if (!rawName) {
+    if (
+      !rawName ||
+      rawName.includes('\0') ||
+      rawName.includes('..') ||
+      /[\\/]/.test(rawName) ||
+      !/^[A-Za-z0-9._()\-\s]+$/.test(rawName)
+    ) {
       return res.status(400).json({ error: 'Неверное имя файла' });
     }
-
-    const name = path.basename(rawName);
-    if (name !== rawName || name.includes('..') || /[\\/]/.test(name)) {
-      return res.status(400).json({ error: 'Неверное имя файла' });
-    }
+    const name = rawName;
 
     const d = devices[id];
     if (!d) {
       return res.status(404).json({ error: 'Устройство не найдено' });
     }
 
-    const devicesPath = getDevicesPath();
-    const deviceFolder = resolvePathInDataRoot(path.join(devicesPath, d.folder || id));
+    const rawDeviceFolderName = String(d.folder || id || '').trim();
+    const safeDeviceFolderName = sanitizeDeviceId(rawDeviceFolderName);
+    if (!safeDeviceFolderName) {
+      return res.status(400).json({ error: 'Неверный путь устройства' });
+    }
+
+    const devicesPath = path.resolve(getDevicesPath());
+    let deviceFolder = null;
+    try {
+      const resolvedDeviceFolder = path.resolve(devicesPath, safeDeviceFolderName);
+      deviceFolder = fs.realpathSync(resolvedDeviceFolder);
+      if (!deviceFolder.startsWith(devicesPath + path.sep) && deviceFolder !== devicesPath) {
+        return res.status(400).json({ error: 'Неверный путь устройства' });
+      }
+    } catch (error) {
+      return res.status(404).json({ error: 'Устройство не найдено' });
+    }
+
     const metadata = getFileMetadata(id, name);
 
     if (metadata?.content_type === 'streaming') {
       return res.status(400).json({ error: 'Стримы нельзя скачать как файл' });
     }
 
-    let entries = [];
-    try {
-      entries = fs.readdirSync(deviceFolder, { withFileTypes: true });
-    } catch (error) {
-      logger.error('[download] Failed to read device folder', {
-        deviceId: id,
-        deviceFolder,
-        error: error.message
-      });
-      return res.status(500).json({ error: 'Не удалось прочитать содержимое устройства' });
-    }
+    const resolveExistingTargetPath = (candidateName) => {
+      if (typeof candidateName !== 'string') {
+        return null;
+      }
+
+      const normalizedCandidate = candidateName.trim();
+      if (
+        !normalizedCandidate ||
+        normalizedCandidate.includes('\0') ||
+        normalizedCandidate.includes('..') ||
+        /[\\/]/.test(normalizedCandidate)
+      ) {
+        return null;
+      }
+
+      try {
+        const resolvedCandidate = path.resolve(deviceFolder, normalizedCandidate);
+        const candidateRealPath = fs.realpathSync(resolvedCandidate);
+        if (!candidateRealPath.startsWith(deviceFolder + path.sep) && candidateRealPath !== deviceFolder) {
+          return null;
+        }
+        return candidateRealPath;
+      } catch (error) {
+        return null;
+      }
+    };
 
     const folderCandidateName = name.replace(/\.(pdf|pptx|zip)$/i, '');
-    const directFileEntry = entries.find((entry) => entry.isFile() && entry.name === name);
-    const folderEntry = entries.find((entry) => entry.isDirectory() && entry.name === folderCandidateName);
-    const matchedEntry = directFileEntry || folderEntry;
+    const targetPath = resolveExistingTargetPath(name) || resolveExistingTargetPath(folderCandidateName);
 
-    if (!matchedEntry) {
+    if (!targetPath) {
       return res.status(404).json({ error: 'Файл или папка не найдены' });
-    }
-
-    const targetPath = path.resolve(deviceFolder, matchedEntry.name);
-    const normalizedDeviceFolder = path.resolve(deviceFolder);
-    if (!targetPath.startsWith(normalizedDeviceFolder + path.sep) && targetPath !== normalizedDeviceFolder) {
-      return res.status(400).json({ error: 'Неверный путь к файлу' });
     }
 
     let stat;
@@ -4116,8 +4141,9 @@ export function createFilesRouter(deps) {
       return res.status(400).json({ error: 'Поддерживается скачивание только файлов и папок' });
     }
 
-    const metadataOriginalName = metadata?.original_name || fileNamesMap[id]?.[name] || matchedEntry.name;
-    const ext = path.extname(matchedEntry.name);
+    const resolvedBaseName = path.basename(targetPath);
+    const metadataOriginalName = metadata?.original_name || fileNamesMap[id]?.[name] || resolvedBaseName;
+    const ext = path.extname(resolvedBaseName);
     const fileNameForDownload = safeDownloadFileName(
       path.extname(metadataOriginalName) ? metadataOriginalName : `${metadataOriginalName}${ext}`,
       path.basename(targetPath)
