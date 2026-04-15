@@ -1851,6 +1851,10 @@ body.admin-page #filesPane .file-item-actions .optimize-actions-wrap {
   flex: 0 0 auto;
 }
 
+body.admin-page #filesPane .file-item-actions .optimize-actions-wrap.is-open {
+  z-index: calc(var(--z-sticky) + 3);
+}
+
 body.admin-page #filesPane .file-item-actions .optimizeMenuTrigger {
   width: 32px;
   min-width: 32px;
@@ -1949,7 +1953,7 @@ body.admin-page #filesPane .file-item {
   display: grid;
   grid-template-rows: auto auto;
   align-content: start;
-  overflow: hidden;
+  overflow: visible;
 }
 
 body.admin-page #filesPane .file-item-name {
