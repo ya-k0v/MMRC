@@ -118,7 +118,6 @@ async function createDeviceViaApi({ deviceId, deviceName, incomingAuthHeader }) 
   error.apiUrl = apiUrl;
   throw error;
 }
-
 // Fallback для случаев, когда route вызван без Bearer токена.
 async function getAdminAccessToken(apiBaseUrl) {
   const fetch = (await import('node-fetch')).default;
@@ -221,7 +220,7 @@ router.post('/install-apk', requireAdmin, upload.single('apk'), async (req, res)
     return res.status(400).json({ ok: false, error: 'IP, ID и имя устройства обязательны' });
   }
 
-  if (!apkPath) {
+  if (!apkPath || !fs.existsSync(apkPath)) {
     return res.status(400).json({
       ok: false,
       error: 'APK файл не найден. Загрузите APK вручную или соберите Android клиент (app-release.apk).'
@@ -234,13 +233,26 @@ router.post('/install-apk', requireAdmin, upload.single('apk'), async (req, res)
     await installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl });
     installCompleted = true;
 
-    // После успешной настройки устройство должно быть создано так же, как при ручном добавлении через Devices.
-    const incomingAuthHeader = req.get('authorization');
-    const { deviceAdded, deviceAlreadyExists } = await createDeviceViaApi({
-      deviceId,
-      deviceName,
-      incomingAuthHeader
-    });
+    // После успешной настройки — создать устройство через основной API
+    let deviceAdded = false;
+    let deviceAlreadyExists = false;
+    try {
+      const incomingAuthHeader = req.get('authorization');
+      const result = await createDeviceViaApi({ deviceId, deviceName, incomingAuthHeader });
+      deviceAdded = !!result.deviceAdded;
+      deviceAlreadyExists = !!result.deviceAlreadyExists;
+    } catch (err) {
+      // Если установка прошла, но создание устройства через API не получилось,
+      // возвращаем понятный ответ с сохранённым APK установкой.
+      if (installCompleted) {
+        const statusCode = err?.status === 409 ? 409 : 500;
+        return res.status(statusCode).json({
+          ok: false,
+          error: `APK установлен, но устройство создать не удалось: ${err?.message || 'неизвестная ошибка'}`
+        });
+      }
+      logger.warn('Не удалось создать устройство через API', { error: err?.message });
+    }
 
     // 6. Возвращаем успешный ответ
     // Обновляем панели
@@ -259,7 +271,6 @@ router.post('/install-apk', requireAdmin, upload.single('apk'), async (req, res)
         error: `APK установлен, но устройство создать не удалось: ${e?.message || 'неизвестная ошибка'}`
       });
     }
-
     return res.status(500).json({ ok: false, error: e?.message || 'Ошибка при установке APK на устройство' });
   } finally {
     // Удаляем временный файл, если он был загружен
