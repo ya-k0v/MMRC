@@ -7,16 +7,35 @@ import { requireAdmin } from '../middleware/auth.js';
 import logger from '../utils/logger.js';
 import { installAndSetupApk } from '../utils/apk-installer.js';
 import { getSettings } from '../config/settings-manager.js';
+import { validatePath } from '../utils/path-validator.js';
 
 // Для поддержки __dirname в ES-модулях
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
+const APK_UPLOAD_DIR = path.resolve(process.env.MMRC_APK_UPLOAD_DIR || '/tmp/mmrc-apk-upload');
+
+if (!fs.existsSync(APK_UPLOAD_DIR)) {
+  fs.mkdirSync(APK_UPLOAD_DIR, { recursive: true, mode: 0o700 });
+}
 
 const router = express.Router();
 
 // Хранилище для временного сохранения APK
-const upload = multer({ dest: '/tmp', limits: { fileSize: 200 * 1024 * 1024 } });
+const upload = multer({ dest: APK_UPLOAD_DIR, limits: { fileSize: 200 * 1024 * 1024 } });
+
+function resolveUploadedApkPath(file) {
+  if (!file || typeof file.filename !== 'string') {
+    return null;
+  }
+
+  const safeFileName = file.filename.trim();
+  if (!/^[A-Za-z0-9._-]+$/.test(safeFileName)) {
+    throw new Error('Некорректное имя загруженного APK файла');
+  }
+
+  return validatePath(path.join(APK_UPLOAD_DIR, safeFileName), APK_UPLOAD_DIR);
+}
 
 function getInternalApiBaseUrl() {
   const configured = String(process.env.ADMIN_INTERNAL_API_URL || '').trim();
@@ -113,8 +132,18 @@ router.post('/install-apk', requireAdmin, upload.single('apk'), async (req, res)
   // Например, если сервер работает на 80 порту и доступен по IP сервера:
   const serverUrl = settings.serverUrl || process.env.SERVER_URL || `http://${req.headers.host || '127.0.0.1:3000'}`;
 
+  let uploadedApkPath = null;
+  if (req.file) {
+    try {
+      uploadedApkPath = resolveUploadedApkPath(req.file);
+    } catch (error) {
+      logger.warn('Некорректный путь загруженного APK', { error: error.message });
+      return res.status(400).json({ ok: false, error: 'Некорректный путь загруженного APK файла' });
+    }
+  }
+
   // Если файл не загружен через multipart, ищем APK в стандартных путях и build output.
-  let apkPath = req.file?.path || resolveDefaultApkPath();
+  let apkPath = uploadedApkPath || resolveDefaultApkPath();
 
   if (!ip || !deviceId || !deviceName) {
     return res.status(400).json({ ok: false, error: 'IP, ID и имя устройства обязательны' });
@@ -191,9 +220,9 @@ router.post('/install-apk', requireAdmin, upload.single('apk'), async (req, res)
     return res.status(500).json({ ok: false, error: e?.message || 'Ошибка при установке APK на устройство' });
   } finally {
     // Удаляем временный файл, если он был загружен
-    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+    if (uploadedApkPath && fs.existsSync(uploadedApkPath)) {
       try {
-        fs.unlinkSync(req.file.path);
+        fs.unlinkSync(uploadedApkPath);
       } catch {
         // Ignore cleanup errors for temporary uploads.
       }

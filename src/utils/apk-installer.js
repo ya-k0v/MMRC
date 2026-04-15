@@ -3,35 +3,65 @@
 
 import fs from 'fs';
 import net from 'net';
+import os from 'os';
+import path from 'path';
+import crypto from 'crypto';
 import { execFileSync, spawnSync } from 'child_process';
+import { validatePath } from './path-validator.js';
+
+const APK_UPLOAD_DIR = path.resolve(process.env.MMRC_APK_UPLOAD_DIR || '/tmp/mmrc-apk-upload');
+const PROJECT_ROOT = path.resolve(process.cwd());
 
 function commandExists(command) {
   const probe = spawnSync('bash', ['-lc', `command -v ${command}`], { stdio: 'ignore' });
   return probe.status === 0;
 }
 
-async function ensureTcpPortOpen(host, port, timeoutMs = 2000) {
-  await new Promise((resolve, reject) => {
-    let settled = false;
-    const socket = new net.Socket();
+function normalizeDeviceId(deviceId) {
+  const value = String(deviceId || '').trim();
+  if (!/^[A-Za-z0-9._-]{1,128}$/.test(value)) {
+    throw new Error('Некорректный deviceId');
+  }
+  return value;
+}
 
-    const finish = (error = null) => {
-      if (settled) return;
-      settled = true;
-      socket.destroy();
-      if (error) {
-        reject(error);
-      } else {
-        resolve();
-      }
-    };
+function normalizeHost(ip) {
+  const value = String(ip || '').trim();
+  if (net.isIP(value) !== 4) {
+    throw new Error('IP должен быть валидным IPv4 адресом');
+  }
+  if (value === '0.0.0.0' || value === '255.255.255.255') {
+    throw new Error('IP адрес недопустим');
+  }
+  return value;
+}
 
-    socket.setTimeout(timeoutMs);
-    socket.once('connect', () => finish());
-    socket.once('timeout', () => finish(new Error(`Порт ${port} на ${host} не отвечает (таймаут ${timeoutMs}мс)`)));
-    socket.once('error', (error) => finish(new Error(`Не удалось подключиться к ${host}:${port}: ${error.message}`)));
-    socket.connect(port, host);
+function resolveAndValidateApkPath(apkPath) {
+  const inputPath = String(apkPath || '').trim();
+  if (!inputPath || inputPath.includes('\0')) {
+    throw new Error('Некорректный путь к APK');
+  }
+
+  const resolved = path.resolve(inputPath);
+  if (!resolved.toLowerCase().endsWith('.apk')) {
+    throw new Error('Некорректный тип файла APK');
+  }
+
+  const allowedRoots = [PROJECT_ROOT, APK_UPLOAD_DIR];
+  const isAllowed = allowedRoots.some((baseDir) => {
+    try {
+      validatePath(resolved, baseDir);
+      return true;
+    } catch {
+      return false;
+    }
   });
+
+  if (!isAllowed) {
+    throw new Error('Путь к APK находится вне разрешенных директорий');
+  }
+
+  return resolved;
 }
 
 function runAdb(args, options = {}) {
@@ -40,8 +70,9 @@ function runAdb(args, options = {}) {
 
 // Установка и настройка APK на Android-устройстве
 export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl }) {
-  const host = String(ip || '').trim();
-  const safeDeviceId = String(deviceId || '').trim();
+  const host = normalizeHost(ip);
+  const safeDeviceId = normalizeDeviceId(deviceId);
+  const safeApkPath = resolveAndValidateApkPath(apkPath);
 
   if (!host || !safeDeviceId) {
     throw new Error('IP и deviceId обязательны');
@@ -51,14 +82,16 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
     throw new Error('adb не установлен в системе. Установите пакет android-tools/adb и повторите попытку.');
   }
 
-  if (!apkPath || !fs.existsSync(apkPath)) {
+  if (!fs.existsSync(safeApkPath)) {
     throw new Error('APK файл не найден');
   }
 
-  const adbTarget = `${host}:5555`;
+  const apkStats = fs.statSync(safeApkPath);
+  if (!apkStats.isFile()) {
+    throw new Error('APK путь должен указывать на файл');
+  }
 
-  // Проверка доступности устройства по TCP без зависимости от nc.
-  await ensureTcpPortOpen(host, 5555, 2000);
+  const adbTarget = `${host}:5555`;
 
   // Проверяем adb connect
   const out = runAdb(['connect', adbTarget], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -68,7 +101,7 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
 
   // Установка APK
   runAdb(['connect', adbTarget], { stdio: 'ignore' });
-  runAdb(['-s', adbTarget, 'install', '-r', apkPath], { stdio: 'ignore' });
+  runAdb(['-s', adbTarget, 'install', '-r', safeApkPath], { stdio: 'ignore' });
 
   // Запуск приложения для создания папок
   runAdb(['-s', adbTarget, 'shell', 'monkey', '-p', 'com.videocontrol.mediaplayer', '-c', 'android.intent.category.LAUNCHER', '1'], { stdio: 'ignore' });
@@ -81,8 +114,9 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
   const safeServerUrl = String(serverUrl || '').trim();
   const urlForXml = safeServerUrl.replace(/^https?:\/\//, '');
   const xmlSettings = `<?xml version="1.0" encoding="utf-8"?>\n<map>\n    <string name="server_url">${urlForXml}</string>\n    <string name="device_id">${safeDeviceId}</string>\n    <boolean name="show_status" value="false" />\n</map>`;
-  const tmpXmlPath = `/tmp/VCMediaPlayerSettings_${safeDeviceId}.xml`;
-  fs.writeFileSync(tmpXmlPath, xmlSettings);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mmrc-apk-'));
+  const tmpXmlPath = path.join(tmpDir, `VCMediaPlayerSettings_${safeDeviceId}_${crypto.randomUUID()}.xml`);
+  fs.writeFileSync(tmpXmlPath, xmlSettings, { mode: 0o600, flag: 'wx' });
 
   // Копируем XML на устройство и в shared_prefs
   const tmpDevicePath = `/data/local/tmp/VCMediaPlayerSettings_${safeDeviceId}.xml`;
@@ -92,12 +126,10 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
     runAdb(['-s', adbTarget, 'push', tmpXmlPath, tmpDevicePath], { stdio: 'inherit' });
     runAdb(['-s', adbTarget, 'shell', 'run-as', 'com.videocontrol.mediaplayer', 'cp', tmpDevicePath, prefsPath], { stdio: 'inherit' });
   } finally {
-    if (fs.existsSync(tmpXmlPath)) {
-      try {
-        fs.unlinkSync(tmpXmlPath);
-      } catch {
-        // Ignore cleanup errors for temporary host file.
-      }
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors for temporary host files.
     }
   }
 
