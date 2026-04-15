@@ -50,6 +50,31 @@ function applySquareActionButtonStyle(button) {
 
 let optimizeMenuDocumentCloseBound = false;
 
+function closeOptimizeMenuWrap(wrap) {
+  if (!wrap) return;
+  wrap.classList.remove('is-open');
+  const fileItem = wrap.closest('.file-item');
+  if (fileItem) {
+    fileItem.classList.remove('is-optimize-menu-open');
+  }
+}
+
+function openOptimizeMenuWrap(wrap) {
+  if (!wrap) return;
+
+  document.querySelectorAll('.optimize-actions-wrap.is-open').forEach((opened) => {
+    if (opened !== wrap) {
+      closeOptimizeMenuWrap(opened);
+    }
+  });
+
+  wrap.classList.add('is-open');
+  const fileItem = wrap.closest('.file-item');
+  if (fileItem) {
+    fileItem.classList.add('is-optimize-menu-open');
+  }
+}
+
 function ensureOptimizeMenuCloseHandler() {
   if (optimizeMenuDocumentCloseBound || typeof document === 'undefined') {
     return;
@@ -59,7 +84,7 @@ function ensureOptimizeMenuCloseHandler() {
     const target = event.target;
     document.querySelectorAll('.optimize-actions-wrap.is-open').forEach((wrap) => {
       if (!wrap.contains(target)) {
-        wrap.classList.remove('is-open');
+        closeOptimizeMenuWrap(wrap);
       }
     });
   });
@@ -67,7 +92,7 @@ function ensureOptimizeMenuCloseHandler() {
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
     document.querySelectorAll('.optimize-actions-wrap.is-open').forEach((wrap) => {
-      wrap.classList.remove('is-open');
+      closeOptimizeMenuWrap(wrap);
     });
   });
 
@@ -426,6 +451,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
 
     files.forEach(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, streamUrl, streamProtocol, hasTrailer, trailerUrl }) => {
       const safeExt = getFileExtension(safeName);
+      const originalExt = getFileExtension(originalName);
       const displayName = originalName.replace(/\.[^.]+$/, '');
       let typeLabel = 'VID';
       const normalizedType = resolveContentType({ contentType, fileName: safeName, originalName, fallbackToFolder: true });
@@ -437,7 +463,11 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
 
       const isStreaming = contentType === 'streaming';
       const isEligible = !isStreaming && /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp)$/i.test(safeName);
-      const isVideo = !isStreaming && (normalizedType === 'video' || VIDEO_EXTENSIONS.includes(safeExt));
+      const isVideo = !isStreaming && (
+        normalizedType === 'video' ||
+        VIDEO_EXTENSIONS.includes(safeExt) ||
+        VIDEO_EXTENSIONS.includes(originalExt)
+      );
       const fileStatus = status || 'ready';
       const isProcessing = fileStatus === 'processing' || fileStatus === 'checking';
       const isNightScheduled = fileStatus === 'scheduled_night';
@@ -568,6 +598,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         optimizeMenuBtn.type = 'button';
         optimizeMenuBtn.title = 'Действия обработки';
         optimizeMenuBtn.innerHTML = toIconOnlySvg(getSettingsIcon(14));
+        applySquareActionButtonStyle(optimizeMenuBtn);
         optimizeWrap.appendChild(optimizeMenuBtn);
 
         const optimizeMenu = document.createElement('div');
@@ -626,6 +657,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         
         // safeExt из safeName - для проверок типа файла на диске
         const safeExt = getFileExtension(safeName);
+        const originalExt = getFileExtension(originalName);
         
         // НОВОЕ: Убираем расширение из отображаемого имени (как на спикере)
         const displayName = originalName.replace(/\.[^.]+$/, '');
@@ -646,7 +678,11 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         }
         
         // НОВОЕ: Определяем статус для видео из safeExt (фактический файл)
-        const isVideo = !isStreaming && (normalizedType === 'video' || VIDEO_EXTENSIONS.includes(safeExt));
+        const isVideo = !isStreaming && (
+          normalizedType === 'video' ||
+          VIDEO_EXTENSIONS.includes(safeExt) ||
+          VIDEO_EXTENSIONS.includes(originalExt)
+        );
         const fileStatus = status || 'ready';
         const isProcessing = fileStatus === 'processing' || fileStatus === 'checking';
         const isNightScheduled = fileStatus === 'scheduled_night';
@@ -861,6 +897,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           optimizeMenuBtn.type = 'button';
           optimizeMenuBtn.title = 'Действия обработки';
           optimizeMenuBtn.innerHTML = toIconOnlySvg(getSettingsIcon(14));
+          applySquareActionButtonStyle(optimizeMenuBtn);
           optimizeWrap.appendChild(optimizeMenuBtn);
 
           const optimizeMenu = document.createElement('div');
@@ -1365,11 +1402,11 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
 
       const shouldOpen = !wrap.classList.contains('is-open');
       panelEl.querySelectorAll('.optimize-actions-wrap.is-open').forEach((opened) => {
-        opened.classList.remove('is-open');
+        closeOptimizeMenuWrap(opened);
       });
 
       if (shouldOpen) {
-        wrap.classList.add('is-open');
+        openOptimizeMenuWrap(wrap);
       }
     };
   });
@@ -1378,7 +1415,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
     btn.addEventListener('click', () => {
       const wrap = btn.closest('.optimize-actions-wrap');
       if (wrap) {
-        wrap.classList.remove('is-open');
+        closeOptimizeMenuWrap(wrap);
       }
     });
   });
@@ -1387,7 +1424,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
     btn.onclick = async () => {
       const wrap = btn.closest('.optimize-actions-wrap');
       if (wrap) {
-        wrap.classList.remove('is-open');
+        closeOptimizeMenuWrap(wrap);
       }
 
       const safeName = decodeURIComponent(btn.getAttribute('data-safe') || '');
@@ -1427,7 +1464,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
     btn.onclick = async () => {
       const wrap = btn.closest('.optimize-actions-wrap');
       if (wrap) {
-        wrap.classList.remove('is-open');
+        closeOptimizeMenuWrap(wrap);
       }
 
       const safeName = decodeURIComponent(btn.getAttribute('data-safe') || '');

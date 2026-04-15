@@ -1832,16 +1832,17 @@ body.admin-page #filesPane .file-item-actions {
   gap: 6px;
   flex-wrap: nowrap;
   align-items: center;
+  overflow: visible;
 }
 
 body.admin-page #filesPane .file-item-actions button {
   flex: 0 0 auto;
-  width: 92px;
-  min-width: 84px;
-  max-width: 96px;
+  width: 32px;
+  min-width: 32px;
+  max-width: 32px;
   min-height: 32px;
   height: 32px;
-  padding: 4px 8px;
+  padding: 0;
   font-size: 0.82rem;
   justify-content: center;
 }
@@ -1865,6 +1866,10 @@ body.admin-page #filesPane .file-item-actions .optimizeMenuTrigger {
   border-radius: 50%;
 }
 
+body.admin-page #filesPane .file-item-actions .optimizeMenuTrigger svg {
+  display: block;
+}
+
 body.admin-page #filesPane .file-item-actions .optimizeActionsMenu {
   display: none;
   position: absolute;
@@ -1878,7 +1883,7 @@ body.admin-page #filesPane .file-item-actions .optimizeActionsMenu {
   box-shadow: var(--shadow-md);
   flex-direction: column;
   gap: 4px;
-  z-index: calc(var(--z-sticky) + 2);
+  z-index: calc(var(--z-sticky) + 6);
 }
 
 body.admin-page #filesPane .file-item-actions .optimize-actions-wrap.is-open .optimizeActionsMenu {
@@ -1954,6 +1959,12 @@ body.admin-page #filesPane .file-item {
   grid-template-rows: auto auto;
   align-content: start;
   overflow: visible;
+  position: relative;
+  z-index: 1;
+}
+
+body.admin-page #filesPane .file-item.is-optimize-menu-open {
+  z-index: calc(var(--z-sticky) + 5);
 }
 
 body.admin-page #filesPane .file-item-name {
@@ -1974,6 +1985,75 @@ body.admin-page #detailPane > .card {
   min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+body.admin-page .device-service-meta {
+  margin-top: var(--space-sm);
+  margin-bottom: var(--space-sm);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+body.admin-page .device-meta-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-2);
+  background: var(--panel-2);
+  color: var(--text-2);
+  font-size: 0.76rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+body.admin-page .device-meta-chip .device-meta-chip-icon {
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
+}
+
+body.admin-page .device-meta-chip .device-meta-chip-icon svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+body.admin-page .device-meta-chip.is-device {
+  border-color: rgba(59, 130, 246, 0.45);
+  background: rgba(59, 130, 246, 0.14);
+  color: var(--text);
+}
+
+body.admin-page .device-meta-chip.is-id {
+  border-color: rgba(148, 163, 184, 0.45);
+}
+
+body.admin-page .device-meta-chip.is-success {
+  border-color: rgba(16, 185, 129, 0.45);
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--success);
+}
+
+body.admin-page .device-meta-chip.is-danger {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--danger);
+}
+
+body.admin-page a.device-meta-chip.is-link {
+  color: var(--brand-hover);
+  text-decoration: none;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+body.admin-page a.device-meta-chip.is-link:hover {
+  border-color: rgba(59, 130, 246, 0.55);
+  background: rgba(59, 130, 246, 0.18);
 }
 
 /* Убираем пустые поля по бокам на широких экранах */
