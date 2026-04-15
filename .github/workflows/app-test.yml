@@ -45,7 +45,7 @@ jobs:
 
       - name: Upload CI logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ci-logs
           path: .tmp/*.log
@@ -104,7 +104,7 @@ jobs:
           npm audit --omit=dev --audit-level=high --json > .tmp/npm-audit.json || true
 
       - name: Upload audit report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: npm-audit
           path: .tmp/npm-audit.json
@@ -135,7 +135,7 @@ jobs:
               -czf .tmp/videocontrol-${{ github.sha }}.tar.gz .
 
       - name: Upload release artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-tarball
           path: .tmp/videocontrol-${{ github.sha }}.tar.gz
