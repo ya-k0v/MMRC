@@ -197,11 +197,23 @@ export function setupDeviceHandlers(socket, deps) {
           });
           devices[device_id].current = { type: 'idle', file: null, state: 'idle' };
           socket.emit('player/state', devices[device_id].current);
+          socket.emit('player/registered', {
+            device_id,
+            current: devices[device_id].current,
+            timestamp: Date.now(),
+            repeatRegistration: true
+          });
           return;
         }
       }
       
       socket.emit('player/state', devices[device_id].current);
+      socket.emit('player/registered', {
+        device_id,
+        current: devices[device_id].current,
+        timestamp: Date.now(),
+        repeatRegistration: true
+      });
       return;
         }
       }
@@ -499,8 +511,8 @@ export function setupDeviceHandlers(socket, deps) {
     
     const timeSinceLastPing = Date.now() - (socket.data.lastPing || 0);
     
-    // Отключаем если нет активности 30 секунд
-    if (timeSinceLastPing > 30000) {
+    // Отключаем если нет активности 60 секунд
+    if (timeSinceLastPing > 60000) {
       const did = socket.data.device_id;
       const sockets = deviceSockets.get(did);
       
