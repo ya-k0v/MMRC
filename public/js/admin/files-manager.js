@@ -53,6 +53,32 @@ function applyWideActionButtonStyle(button) {
   button.style.cssText = 'height:30px; padding:0 10px; display:inline-flex; align-items:center; justify-content:center; line-height:1; border-radius:var(--radius-sm); font-size:12px;';
 }
 
+let optimizeMenuDocumentCloseBound = false;
+
+function ensureOptimizeMenuCloseHandler() {
+  if (optimizeMenuDocumentCloseBound || typeof document === 'undefined') {
+    return;
+  }
+
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    document.querySelectorAll('.optimize-actions-wrap.is-open').forEach((wrap) => {
+      if (!wrap.contains(target)) {
+        wrap.classList.remove('is-open');
+      }
+    });
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    document.querySelectorAll('.optimize-actions-wrap.is-open').forEach((wrap) => {
+      wrap.classList.remove('is-open');
+    });
+  });
+
+  optimizeMenuDocumentCloseBound = true;
+}
+
 /**
  * Универсальная функция для показа модального окна стрима (добавление/редактирование)
  * @param {Object} options
@@ -507,7 +533,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           cancelBtn.type = 'button';
           cancelBtn.title = 'Отменить обработку';
           cancelBtn.textContent = '×';
-          cancelBtn.style.cssText = 'width:16px; height:16px; min-width:16px; padding:0; border:1px solid currentColor; border-radius:50%; background:transparent; color:inherit; display:inline-flex; align-items:center; justify-content:center; font-size:12px; line-height:1; cursor:pointer;';
+          cancelBtn.style.cssText = 'width:16px; height:16px; min-width:16px; min-height:16px; max-width:16px; max-height:16px; padding:0; border:1px solid currentColor; border-radius:50%; background:transparent; color:inherit; display:inline-flex; align-items:center; justify-content:center; font-size:12px; line-height:1; cursor:pointer;';
           statusSpan.appendChild(cancelBtn);
         }
         const statusTextSpan = document.createElement('span');
@@ -539,25 +565,39 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       }
       const canManualProcess = isVideo && !isStreaming;
       if (canManualProcess) {
+        const optimizeWrap = document.createElement('div');
+        optimizeWrap.className = 'optimize-actions-wrap';
+
+        const optimizeMenuBtn = document.createElement('button');
+        optimizeMenuBtn.className = 'secondary meta-lg optimizeMenuTrigger';
+        optimizeMenuBtn.type = 'button';
+        optimizeMenuBtn.title = 'Действия обработки';
+        optimizeMenuBtn.innerHTML = toIconOnlySvg(getSettingsIcon(14));
+        optimizeWrap.appendChild(optimizeMenuBtn);
+
+        const optimizeMenu = document.createElement('div');
+        optimizeMenu.className = 'optimizeActionsMenu';
+
         const optimizeBtn = document.createElement('button');
-        optimizeBtn.className = 'secondary meta-lg optimizeNowBtn';
+        optimizeBtn.className = 'secondary meta-lg optimizeNowBtn optimizeMenuOption';
         optimizeBtn.setAttribute('data-safe', encodeURIComponent(safeName));
         optimizeBtn.setAttribute('data-original', encodeURIComponent(originalName));
         optimizeBtn.title = 'Запустить обработку сейчас';
         optimizeBtn.textContent = 'Обработать';
         optimizeBtn.disabled = isProcessing;
-        applyWideActionButtonStyle(optimizeBtn);
-        actions.appendChild(optimizeBtn);
+        optimizeMenu.appendChild(optimizeBtn);
 
         const optimizeNightBtn = document.createElement('button');
-        optimizeNightBtn.className = 'secondary meta-lg optimizeNightBtn';
+        optimizeNightBtn.className = 'secondary meta-lg optimizeNightBtn optimizeMenuOption';
         optimizeNightBtn.setAttribute('data-safe', encodeURIComponent(safeName));
         optimizeNightBtn.setAttribute('data-original', encodeURIComponent(originalName));
         optimizeNightBtn.title = 'Запланировать обработку на ночь';
         optimizeNightBtn.textContent = isNightScheduled ? 'Запланировано' : 'Обработать ночью';
         optimizeNightBtn.disabled = isProcessing || isNightScheduled;
-        applyWideActionButtonStyle(optimizeNightBtn);
-        actions.appendChild(optimizeNightBtn);
+        optimizeMenu.appendChild(optimizeNightBtn);
+
+        optimizeWrap.appendChild(optimizeMenu);
+        actions.appendChild(optimizeWrap);
       }
       if (isEligible) { const makeDefaultBtn = document.createElement('button'); makeDefaultBtn.className = 'meta-lg makeDefaultBtn'; makeDefaultBtn.setAttribute('data-safe', encodeURIComponent(safeName)); makeDefaultBtn.setAttribute('data-original', encodeURIComponent(originalName)); makeDefaultBtn.title = 'Сделать заглушкой'; makeDefaultBtn.disabled = !canPlay; makeDefaultBtn.textContent = '📌'; applySquareActionButtonStyle(makeDefaultBtn); actions.appendChild(makeDefaultBtn); }
       const delBtn = document.createElement('button'); delBtn.className = 'danger meta-lg delFileBtn'; delBtn.setAttribute('data-safe', encodeURIComponent(safeName)); delBtn.setAttribute('data-original', encodeURIComponent(originalName)); delBtn.title = 'Удалить'; delBtn.innerHTML = toIconOnlySvg(getTrashIcon(14)); applySquareActionButtonStyle(delBtn); actions.appendChild(delBtn);
@@ -746,7 +786,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
             cancelBtn.type = 'button';
             cancelBtn.title = 'Отменить обработку';
             cancelBtn.textContent = '×';
-            cancelBtn.style.cssText = 'width:16px; height:16px; min-width:16px; padding:0; border:1px solid currentColor; border-radius:50%; background:transparent; color:inherit; display:inline-flex; align-items:center; justify-content:center; font-size:12px; line-height:1; cursor:pointer;';
+            cancelBtn.style.cssText = 'width:16px; height:16px; min-width:16px; min-height:16px; max-width:16px; max-height:16px; padding:0; border:1px solid currentColor; border-radius:50%; background:transparent; color:inherit; display:inline-flex; align-items:center; justify-content:center; font-size:12px; line-height:1; cursor:pointer;';
             statusSpan.appendChild(cancelBtn);
           }
 
@@ -818,25 +858,39 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
 
         const canManualProcess = isVideo && !isStreaming;
         if (canManualProcess) {
+          const optimizeWrap = document.createElement('div');
+          optimizeWrap.className = 'optimize-actions-wrap';
+
+          const optimizeMenuBtn = document.createElement('button');
+          optimizeMenuBtn.className = 'secondary meta-lg optimizeMenuTrigger';
+          optimizeMenuBtn.type = 'button';
+          optimizeMenuBtn.title = 'Действия обработки';
+          optimizeMenuBtn.innerHTML = toIconOnlySvg(getSettingsIcon(14));
+          optimizeWrap.appendChild(optimizeMenuBtn);
+
+          const optimizeMenu = document.createElement('div');
+          optimizeMenu.className = 'optimizeActionsMenu';
+
           const optimizeBtn = document.createElement('button');
-          optimizeBtn.className = 'secondary meta-lg optimizeNowBtn';
+          optimizeBtn.className = 'secondary meta-lg optimizeNowBtn optimizeMenuOption';
           optimizeBtn.setAttribute('data-safe', encodeURIComponent(safeName));
           optimizeBtn.setAttribute('data-original', encodeURIComponent(originalName));
           optimizeBtn.title = 'Запустить обработку сейчас';
           optimizeBtn.textContent = 'Обработать';
           optimizeBtn.disabled = isProcessing;
-          applyWideActionButtonStyle(optimizeBtn);
-          actions.appendChild(optimizeBtn);
+          optimizeMenu.appendChild(optimizeBtn);
 
           const optimizeNightBtn = document.createElement('button');
-          optimizeNightBtn.className = 'secondary meta-lg optimizeNightBtn';
+          optimizeNightBtn.className = 'secondary meta-lg optimizeNightBtn optimizeMenuOption';
           optimizeNightBtn.setAttribute('data-safe', encodeURIComponent(safeName));
           optimizeNightBtn.setAttribute('data-original', encodeURIComponent(originalName));
           optimizeNightBtn.title = 'Запланировать обработку на ночь';
           optimizeNightBtn.textContent = isNightScheduled ? 'Запланировано' : 'Обработать ночью';
           optimizeNightBtn.disabled = isProcessing || isNightScheduled;
-          applyWideActionButtonStyle(optimizeNightBtn);
-          actions.appendChild(optimizeNightBtn);
+          optimizeMenu.appendChild(optimizeNightBtn);
+
+          optimizeWrap.appendChild(optimizeMenu);
+          actions.appendChild(optimizeWrap);
         }
 
         if (isEligible) {
@@ -1304,8 +1358,43 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
     };
   });
 
+  ensureOptimizeMenuCloseHandler();
+
+  panelEl.querySelectorAll('.optimizeMenuTrigger').forEach(btn => {
+    btn.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const wrap = btn.closest('.optimize-actions-wrap');
+      if (!wrap) return;
+
+      const shouldOpen = !wrap.classList.contains('is-open');
+      panelEl.querySelectorAll('.optimize-actions-wrap.is-open').forEach((opened) => {
+        opened.classList.remove('is-open');
+      });
+
+      if (shouldOpen) {
+        wrap.classList.add('is-open');
+      }
+    };
+  });
+
+  panelEl.querySelectorAll('.optimizeMenuOption').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const wrap = btn.closest('.optimize-actions-wrap');
+      if (wrap) {
+        wrap.classList.remove('is-open');
+      }
+    });
+  });
+
   panelEl.querySelectorAll('.optimizeNowBtn').forEach(btn => {
     btn.onclick = async () => {
+      const wrap = btn.closest('.optimize-actions-wrap');
+      if (wrap) {
+        wrap.classList.remove('is-open');
+      }
+
       const safeName = decodeURIComponent(btn.getAttribute('data-safe') || '');
       const originalName = decodeURIComponent(btn.getAttribute('data-original') || safeName);
       const originalText = btn.textContent;
@@ -1341,6 +1430,11 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
 
   panelEl.querySelectorAll('.optimizeNightBtn').forEach(btn => {
     btn.onclick = async () => {
+      const wrap = btn.closest('.optimize-actions-wrap');
+      if (wrap) {
+        wrap.classList.remove('is-open');
+      }
+
       const safeName = decodeURIComponent(btn.getAttribute('data-safe') || '');
       const originalName = decodeURIComponent(btn.getAttribute('data-original') || safeName);
       const originalText = btn.textContent;

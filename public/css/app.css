@@ -1846,6 +1846,52 @@ body.admin-page #filesPane .file-item-actions button {
   justify-content: center;
 }
 
+body.admin-page #filesPane .file-item-actions .optimize-actions-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+body.admin-page #filesPane .file-item-actions .optimizeMenuTrigger {
+  width: 32px;
+  min-width: 32px;
+  max-width: 32px;
+  min-height: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+body.admin-page #filesPane .file-item-actions .optimizeActionsMenu {
+  display: none;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 176px;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  border: var(--border-2);
+  background: var(--panel);
+  box-shadow: var(--shadow-md);
+  flex-direction: column;
+  gap: 4px;
+  z-index: calc(var(--z-sticky) + 2);
+}
+
+body.admin-page #filesPane .file-item-actions .optimize-actions-wrap.is-open .optimizeActionsMenu {
+  display: flex;
+}
+
+body.admin-page #filesPane .file-item-actions .optimizeActionsMenu button {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  min-height: 30px;
+  height: 30px;
+  padding: 4px 10px;
+  font-size: 0.8rem;
+  justify-content: flex-start;
+}
+
 body.admin-page #filesPane #filePagerAdmin button {
   width: 96px;
   min-width: 96px;
