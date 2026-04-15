@@ -439,7 +439,7 @@ export function setupControlHandlers(socket, deps) {
             if (!existingUrl) {
               // FFmpeg не запущен - запускаем его (lazy loading)
               // КРИТИЧНО: Если стрим найден в устройстве-источнике, берем метаданные оттуда
-              const metadataDeviceId = (originDeviceId && originDeviceId !== device_id && streamEntry && !d.streams?.[file]) ? originDeviceId : device_id;
+              const metadataDeviceId = (originDeviceId && originDeviceId !== device_id && !d.streams?.[file]) ? originDeviceId : device_id;
               const metadata = getFileMetadata(metadataDeviceId, file);
               logger.info('[Control] 🔍 Checking metadata for stream', {
                 deviceId: device_id,
