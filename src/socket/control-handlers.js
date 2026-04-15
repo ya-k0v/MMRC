@@ -480,9 +480,7 @@ export function setupControlHandlers(socket, deps) {
                     });
                     
                     // КРИТИЧНО: Обновляем streamEntry.proxyUrl после запуска FFmpeg
-                    if (streamEntry) {
-                      streamEntry.proxyUrl = playbackStreamUrl;
-                    }
+                    streamEntry.proxyUrl = playbackStreamUrl;
                   }
                 } catch (err) {
                   logger.error('[Control] ❌ Failed to start stream', { 
