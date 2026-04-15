@@ -132,18 +132,6 @@ function buildYtInlineText(runtime) {
     return `${getYtStatusLabel(runtime.status)}: ${progress}%${speedText}${etaText}`;
   }
 
-  if (runtime.status === 'completed') {
-    return 'Готово';
-  }
-
-  if (runtime.status === 'cancelled') {
-    return 'Отменено';
-  }
-
-  if (runtime.status === 'failed') {
-    return 'Ошибка';
-  }
-
   return '';
 }
 
@@ -318,7 +306,8 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
     const runtime = getYtRuntime(deviceId);
     const state = getYtVisualState(runtime);
     const text = buildYtStatusText(runtime);
-    const inlineText = buildYtInlineText(runtime);
+    const hasPendingFiles = pending.length > 0;
+    const inlineText = (isUploading || hasPendingFiles) ? '' : buildYtInlineText(runtime);
 
     updateYtDownloadStatusUI({
       visible: Boolean(text),
@@ -329,8 +318,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
     });
 
     if (ytDownloadBtn) {
-      const hasActiveYtJob = Boolean(runtime.jobId && YTDLP_ACTIVE_STATUSES.has(runtime.status));
-      ytDownloadBtn.disabled = hasActiveYtJob || isUploading;
+      ytDownloadBtn.disabled = false;
     }
 
     if (runtime.status === 'completed' && !runtime.synced) {
@@ -757,52 +745,28 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
 
   if (ytDownloadBtn) {
     ytDownloadBtn.onclick = async () => {
-      const runtime = getYtRuntime(deviceId);
-      if (runtime.jobId && YTDLP_ACTIVE_STATUSES.has(runtime.status)) {
-        await reportUploadNotification({
-          type: 'yt_dlp_conflict',
-          severity: 'warning',
-          title: 'Загрузка по ссылке уже выполняется',
-          message: `Для устройства ${deviceId} уже идет загрузка по ссылке`,
-          key: `yt-dlp-conflict:${deviceId}`,
-          details: {
-            deviceId,
-            status: runtime.status,
-            jobId: runtime.jobId
-          }
-        });
-        return;
-      }
-
-      if (isUploading) {
-        await reportUploadNotification({
-          type: 'upload_busy',
-          severity: 'warning',
-          title: 'Идет загрузка файлов',
-          message: 'Дождитесь завершения текущей загрузки файлов перед запуском загрузки по ссылке',
-          key: `upload-busy:${deviceId}`,
-          details: {
-            deviceId
-          }
-        });
-        return;
-      }
+      const currentRuntime = getYtRuntime(deviceId);
+      const hasTrackedActiveJob = Boolean(
+        currentRuntime.jobId && YTDLP_ACTIVE_STATUSES.has(currentRuntime.status)
+      );
 
       const inputUrl = prompt('Вставьте ссылку на видео для загрузки через yt-dlp:');
       const targetUrl = (inputUrl || '').trim();
       if (!targetUrl) return;
 
-      setYtRuntime(deviceId, {
-        status: 'preparing',
-        progress: 0,
-        speed: null,
-        eta: null,
-        fileName: null,
-        title: null,
-        error: null,
-        visible: true,
-        synced: false
-      });
+      if (!hasTrackedActiveJob) {
+        setYtRuntime(deviceId, {
+          status: 'preparing',
+          progress: 0,
+          speed: null,
+          eta: null,
+          fileName: null,
+          title: null,
+          error: null,
+          visible: true,
+          synced: false
+        });
+      }
 
       try {
         const startRes = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/download-url`, {
@@ -814,6 +778,24 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
 
         if (!startRes.ok || !startData?.ok || !startData?.jobId) {
           throw new Error(startData?.error || 'Не удалось запустить загрузку');
+        }
+
+        if (hasTrackedActiveJob) {
+          await reportUploadNotification({
+            type: 'yt_dlp_queued',
+            severity: 'info',
+            title: 'Загрузка по ссылке добавлена в очередь',
+            message: `Новая задача поставлена в очередь для устройства ${deviceId}`,
+            key: `yt-dlp-queued:${deviceId}:${startData.jobId}`,
+            details: {
+              deviceId,
+              queuedJobId: startData.jobId,
+              status: startData.status || 'queued'
+            }
+          });
+
+          ensureYtDownloadPolling(deviceId);
+          return;
         }
 
         setYtRuntime(deviceId, {
@@ -828,6 +810,20 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
         });
         ensureYtDownloadPolling(deviceId);
       } catch (error) {
+        if (hasTrackedActiveJob) {
+          await reportUploadNotification({
+            type: 'yt_dlp_queue_error',
+            severity: 'warning',
+            title: 'Не удалось добавить задачу в очередь',
+            message: error.message,
+            key: `yt-dlp-queue-error:${deviceId}`,
+            details: {
+              deviceId
+            }
+          });
+          return;
+        }
+
         setYtRuntime(deviceId, {
           jobId: null,
           status: 'failed',
@@ -844,6 +840,9 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
 
   uploadBtn.onclick = async () => {
     if (!pending.length) return;
+
+    isUploading = true;
+    syncYtDownloadUI();
     
     uploadBtn.disabled = true;
     uploadBtn.textContent = 'Проверка...';
@@ -920,8 +919,6 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       
       // STEP 2: Загружаем только уникальные файлы ПО ОЧЕРЕДИ (последовательно)
       if (filesToUpload.length > 0) {
-        isUploading = true; // Устанавливаем флаг активной загрузки
-        syncYtDownloadUI();
         uploadBtn.textContent = `Загрузка (0/${filesToUpload.length})...`;
         
         let uploadedCount = 0;
