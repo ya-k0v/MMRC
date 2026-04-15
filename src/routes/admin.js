@@ -21,6 +21,21 @@ if (!fs.existsSync(APK_UPLOAD_DIR)) {
 
 const router = express.Router();
 
+async function doFetch(url, options) {
+  if (typeof globalThis.fetch === 'function') {
+    return globalThis.fetch(url, options);
+  }
+
+  try {
+    const { default: nodeFetch } = await import('node-fetch');
+    return nodeFetch(url, options);
+  } catch (error) {
+    throw new Error(
+      `HTTP client недоступен: globalThis.fetch отсутствует, а node-fetch не установлен (${error?.message || 'unknown error'})`
+    );
+  }
+}
+
 // Хранилище для временного сохранения APK
 const upload = multer({ dest: APK_UPLOAD_DIR, limits: { fileSize: 200 * 1024 * 1024 } });
 
@@ -65,7 +80,6 @@ function parseApiErrorMessage(rawBody, fallback = 'Неизвестная оши
 }
 
 async function createDeviceViaApi({ deviceId, deviceName, incomingAuthHeader }) {
-  const fetch = (await import('node-fetch')).default;
   const apiBaseUrl = getInternalApiBaseUrl();
   const apiUrl = `${apiBaseUrl}/api/devices`;
   const requestBody = JSON.stringify({ device_id: deviceId, name: deviceName });
@@ -77,7 +91,7 @@ async function createDeviceViaApi({ deviceId, deviceName, incomingAuthHeader }) 
     requestHeaders.Authorization = incomingAuthHeader;
   }
 
-  let resp = await fetch(apiUrl, {
+  let resp = await doFetch(apiUrl, {
     method: 'POST',
     headers: requestHeaders,
     body: requestBody
@@ -85,7 +99,7 @@ async function createDeviceViaApi({ deviceId, deviceName, incomingAuthHeader }) 
 
   if ((resp.status === 401 || resp.status === 403) && !incomingAuthHeader) {
     const accessToken = await getAdminAccessToken(apiBaseUrl);
-    resp = await fetch(apiUrl, {
+    resp = await doFetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -120,12 +134,11 @@ async function createDeviceViaApi({ deviceId, deviceName, incomingAuthHeader }) 
 }
 // Fallback для случаев, когда route вызван без Bearer токена.
 async function getAdminAccessToken(apiBaseUrl) {
-  const fetch = (await import('node-fetch')).default;
   const username = process.env.ADMIN_USERNAME || 'admin';
   const password = process.env.ADMIN_PASSWORD || 'admin123';
   const loginUrl = `${apiBaseUrl.replace(/\/$/, '')}/api/auth/login`;
 
-  const resp = await fetch(loginUrl, {
+  const resp = await doFetch(loginUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password })
