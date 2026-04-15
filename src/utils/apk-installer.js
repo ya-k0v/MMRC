@@ -3,9 +3,7 @@
 
 import fs from 'fs';
 import net from 'net';
-import os from 'os';
 import path from 'path';
-import crypto from 'crypto';
 import { execFileSync, spawnSync } from 'child_process';
 import { validatePath } from './path-validator.js';
 
@@ -68,6 +66,42 @@ function runAdb(args, options = {}) {
   return execFileSync('adb', args, options);
 }
 
+function escapeXml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function normalizeServerUrlForXml(serverUrl) {
+  const rawValue = String(serverUrl || '').trim();
+  if (!rawValue) {
+    throw new Error('serverUrl обязателен');
+  }
+
+  const withScheme = /^https?:\/\//i.test(rawValue) ? rawValue : `http://${rawValue}`;
+  let parsed;
+
+  try {
+    parsed = new URL(withScheme);
+  } catch {
+    throw new Error('Некорректный serverUrl');
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('Допустим только http/https serverUrl');
+  }
+
+  const host = parsed.host;
+  if (!host || host.length > 255) {
+    throw new Error('Некорректный host в serverUrl');
+  }
+
+  return host;
+}
+
 // Установка и настройка APK на Android-устройстве
 export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl }) {
   const host = normalizeHost(ip);
@@ -111,27 +145,21 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
   runAdb(['-s', adbTarget, 'shell', 'am', 'force-stop', 'com.videocontrol.mediaplayer'], { stdio: 'ignore' });
 
   // Формируем XML-файл настроек
-  const safeServerUrl = String(serverUrl || '').trim();
-  const urlForXml = safeServerUrl.replace(/^https?:\/\//, '');
-  const xmlSettings = `<?xml version="1.0" encoding="utf-8"?>\n<map>\n    <string name="server_url">${urlForXml}</string>\n    <string name="device_id">${safeDeviceId}</string>\n    <boolean name="show_status" value="false" />\n</map>`;
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mmrc-apk-'));
-  const tmpXmlPath = path.join(tmpDir, `VCMediaPlayerSettings_${safeDeviceId}_${crypto.randomUUID()}.xml`);
-  fs.writeFileSync(tmpXmlPath, xmlSettings, { mode: 0o600, flag: 'wx' });
+  const urlForXml = normalizeServerUrlForXml(serverUrl);
+  const xmlSettings = `<?xml version="1.0" encoding="utf-8"?>\n<map>\n    <string name="server_url">${escapeXml(urlForXml)}</string>\n    <string name="device_id">${escapeXml(safeDeviceId)}</string>\n    <boolean name="show_status" value="false" />\n</map>`;
 
   // Копируем XML на устройство и в shared_prefs
-  const tmpDevicePath = `/data/local/tmp/VCMediaPlayerSettings_${safeDeviceId}.xml`;
+  const tmpDevicePath = '/data/local/tmp/VCMediaPlayerSettings.xml';
   const prefsPath = `/data/data/com.videocontrol.mediaplayer/shared_prefs/VCMediaPlayerSettings.xml`;
 
-  try {
-    runAdb(['-s', adbTarget, 'push', tmpXmlPath, tmpDevicePath], { stdio: 'inherit' });
-    runAdb(['-s', adbTarget, 'shell', 'run-as', 'com.videocontrol.mediaplayer', 'cp', tmpDevicePath, prefsPath], { stdio: 'inherit' });
-  } finally {
-    try {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors for temporary host files.
-    }
-  }
+  // Передаем XML напрямую через stdin в файл на устройстве, не создавая временный файл на сервере.
+  runAdb(['-s', adbTarget, 'shell', 'sh', '-c', `cat > ${tmpDevicePath}`], {
+    input: xmlSettings,
+    encoding: 'utf-8',
+    stdio: ['pipe', 'ignore', 'pipe']
+  });
+  runAdb(['-s', adbTarget, 'shell', 'run-as', 'com.videocontrol.mediaplayer', 'cp', tmpDevicePath, prefsPath], { stdio: 'inherit' });
+  runAdb(['-s', adbTarget, 'shell', 'rm', '-f', tmpDevicePath], { stdio: 'ignore' });
 
   // Снова запускаем приложение с новыми настройками
   runAdb(['-s', adbTarget, 'shell', 'monkey', '-p', 'com.videocontrol.mediaplayer', '-c', 'android.intent.category.LAUNCHER', '1'], { stdio: 'ignore' });
