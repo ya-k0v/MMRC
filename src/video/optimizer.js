@@ -9,7 +9,7 @@ import { spawn } from 'child_process';
 import { VIDEO_OPTIMIZATION_CONFIG_PATH } from '../config/constants.js';
 import { getDevicesPath } from '../config/settings-manager.js';
 import { checkVideoParameters } from './ffmpeg-wrapper.js';
-import { setFileStatus, deleteFileStatus } from './file-status.js';
+import { setFileStatus, deleteFileStatus, getFileStatus } from './file-status.js';
 import { needsFaststart } from './mp4-faststart.js';
 import logger from '../utils/logger.js';
 import { jobResourceManager } from '../utils/job-resource-manager.js';
@@ -22,6 +22,89 @@ function parseNonNegativeInt(value, fallback) {
 const VIDEO_OPT_RESOURCE_CPU_UNITS = Math.max(1, Number.parseInt(process.env.VIDEO_OPT_RESOURCE_CPU_UNITS || '1', 10) || 1);
 const VIDEO_OPT_RESOURCE_MEMORY_MB = Math.max(128, Number.parseInt(process.env.VIDEO_OPT_RESOURCE_MEMORY_MB || '512', 10) || 512);
 const VIDEO_OPT_RESOURCE_TIMEOUT_MS = parseNonNegativeInt(process.env.VIDEO_OPT_RESOURCE_TIMEOUT_MS, 0);
+
+const activeOptimizationJobs = new Map();
+const optimizationCancelRequests = new Map();
+
+function makeOptimizationKey(deviceId, fileName) {
+  return `${deviceId}::${fileName}`;
+}
+
+function createOptimizationCancelError(message = 'Обработка отменена пользователем') {
+  const error = new Error(message);
+  error.code = 'EOPT_CANCELLED';
+  return error;
+}
+
+function isOptimizationCancelError(error) {
+  return error?.code === 'EOPT_CANCELLED';
+}
+
+function hasOptimizationCancelRequest(jobKey) {
+  return optimizationCancelRequests.has(jobKey);
+}
+
+function clearOptimizationCancelRequest(jobKey) {
+  optimizationCancelRequests.delete(jobKey);
+}
+
+function throwIfOptimizationCancelled(jobKey) {
+  if (!hasOptimizationCancelRequest(jobKey)) {
+    return;
+  }
+
+  const reason = optimizationCancelRequests.get(jobKey) || 'Обработка отменена пользователем';
+  throw createOptimizationCancelError(reason);
+}
+
+export function hasActiveOptimizationJob(deviceId, fileName) {
+  return activeOptimizationJobs.has(makeOptimizationKey(deviceId, fileName));
+}
+
+export function cancelOptimizationJob(deviceId, fileName, reason = 'Обработка отменена пользователем') {
+  const key = makeOptimizationKey(deviceId, fileName);
+  optimizationCancelRequests.set(key, reason);
+
+  const activeJob = activeOptimizationJobs.get(key);
+  if (!activeJob?.process) {
+    return {
+      requested: true,
+      active: false,
+      reason
+    };
+  }
+
+  activeJob.cancelRequested = true;
+  activeJob.cancelReason = reason;
+
+  try {
+    activeJob.process.kill('SIGTERM');
+  } catch (error) {
+    logger.warn('[VideoOpt] Failed to send SIGTERM on cancel', {
+      deviceId,
+      fileName,
+      error: error.message
+    });
+  }
+
+  const killTimer = setTimeout(() => {
+    try {
+      activeJob.process.kill('SIGKILL');
+    } catch (_error) {
+      // Процесс уже завершен — это нормальный сценарий.
+    }
+  }, 2500);
+
+  if (typeof killTimer.unref === 'function') {
+    killTimer.unref();
+  }
+
+  return {
+    requested: true,
+    active: true,
+    reason
+  };
+}
 
 // Загрузка конфигурации оптимизации
 let videoOptConfig = {};
@@ -111,11 +194,13 @@ function resolveTargetProfile(params = {}) {
   return { key: 'fallback', profile: fallbackProfile };
 }
 
-async function runFfmpegWithProgress({ deviceId, fileName, ffmpegArgs, io, timeoutMs = 30 * 60 * 1000 }) {
+async function runFfmpegWithProgress({ deviceId, fileName, ffmpegArgs, io, jobKey, timeoutMs = 30 * 60 * 1000 }) {
   const resourceRequestId = `video-opt:${deviceId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
   let resourceReservation = null;
 
   try {
+    throwIfOptimizationCancelled(jobKey);
+
     resourceReservation = await jobResourceManager.acquire({
       id: resourceRequestId,
       jobType: 'video-opt',
@@ -128,7 +213,13 @@ async function runFfmpegWithProgress({ deviceId, fileName, ffmpegArgs, io, timeo
         fileName
       }
     });
+
+    throwIfOptimizationCancelled(jobKey);
   } catch (resourceError) {
+    if (isOptimizationCancelError(resourceError)) {
+      throw resourceError;
+    }
+
     const message = resourceError.message === 'Resource acquisition timeout'
       ? 'Нет свободных ресурсов для оптимизации видео'
       : (resourceError.message || 'Не удалось зарезервировать ресурсы для оптимизации');
@@ -138,6 +229,22 @@ async function runFfmpegWithProgress({ deviceId, fileName, ffmpegArgs, io, timeo
   try {
     await new Promise((resolve, reject) => {
       const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+      activeOptimizationJobs.set(jobKey, {
+        deviceId,
+        fileName,
+        process: ffmpegProcess,
+        cancelRequested: hasOptimizationCancelRequest(jobKey),
+        cancelReason: optimizationCancelRequests.get(jobKey) || null,
+        startedAt: Date.now()
+      });
+
+      if (hasOptimizationCancelRequest(jobKey)) {
+        try {
+          ffmpegProcess.kill('SIGTERM');
+        } catch (_error) {
+          // Процесс может уже завершиться самостоятельно.
+        }
+      }
 
       let duration = 0;
       let stderr = '';
@@ -146,8 +253,10 @@ async function runFfmpegWithProgress({ deviceId, fileName, ffmpegArgs, io, timeo
 
       const timeout = setTimeout(() => {
         if (!isResolved) {
+          isResolved = true;
           logger.error('[VideoOpt] ⏱️ FFmpeg timeout', { deviceId, fileName, timeoutMs });
           ffmpegProcess.kill('SIGKILL');
+          activeOptimizationJobs.delete(jobKey);
           reject(new Error('FFmpeg timeout'));
         }
       }, timeoutMs);
@@ -190,8 +299,22 @@ async function runFfmpegWithProgress({ deviceId, fileName, ffmpegArgs, io, timeo
       });
 
       ffmpegProcess.on('close', (code) => {
+        if (isResolved) {
+          return;
+        }
+
         clearTimeout(timeout);
         isResolved = true;
+
+        const activeJob = activeOptimizationJobs.get(jobKey);
+        const cancelReason = activeJob?.cancelReason || optimizationCancelRequests.get(jobKey) || 'Обработка отменена пользователем';
+        const wasCancelled = Boolean(activeJob?.cancelRequested || hasOptimizationCancelRequest(jobKey));
+        activeOptimizationJobs.delete(jobKey);
+
+        if (wasCancelled) {
+          reject(createOptimizationCancelError(cancelReason));
+          return;
+        }
 
         if (code === 0) {
           resolve();
@@ -207,12 +330,25 @@ async function runFfmpegWithProgress({ deviceId, fileName, ffmpegArgs, io, timeo
       });
 
       ffmpegProcess.on('error', (err) => {
+        if (isResolved) {
+          return;
+        }
+
         clearTimeout(timeout);
         isResolved = true;
+        const activeJob = activeOptimizationJobs.get(jobKey);
+        activeOptimizationJobs.delete(jobKey);
+        if (activeJob?.cancelRequested || hasOptimizationCancelRequest(jobKey)) {
+          reject(createOptimizationCancelError(activeJob?.cancelReason || optimizationCancelRequests.get(jobKey) || 'Обработка отменена пользователем'));
+          return;
+        }
+
         reject(err);
       });
     });
   } finally {
+    activeOptimizationJobs.delete(jobKey);
+
     if (resourceReservation?.release) {
       try {
         resourceReservation.release();
@@ -272,6 +408,16 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
   const d = devices[deviceId];
   if (!d) return { success: false, message: 'Device not found' };
 
+  const optimizationKey = makeOptimizationKey(deviceId, fileName);
+  const currentStatus = getFileStatus(deviceId, fileName);
+  const currentState = String(currentStatus?.status || '').toLowerCase();
+
+  if (hasActiveOptimizationJob(deviceId, fileName) || currentState === 'checking' || currentState === 'processing') {
+    return { success: false, message: 'Optimization already in progress', alreadyRunning: true };
+  }
+
+  clearOptimizationCancelRequest(optimizationKey);
+
   if (!videoOptConfig.enabled) {
     return { success: false, message: 'Video optimization disabled' };
   }
@@ -305,6 +451,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
 
   // Устанавливаем статус "проверка"
   setFileStatus(deviceId, fileName, { status: 'checking', progress: 0, canPlay: false });
+  throwIfOptimizationCancelled(optimizationKey);
 
   // 1) Быстрый старт: берем из БД что есть
   let params = metadata
@@ -340,6 +487,8 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       params = { ...(params || {}), ...probed };
     }
   }
+
+  throwIfOptimizationCancelled(optimizationKey);
 
   if (!params || !params.codec) {
     deleteFileStatus(deviceId, fileName);
@@ -487,7 +636,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
   });
 
   try {
-    await runFfmpegWithProgress({ deviceId, fileName, ffmpegArgs, io });
+    await runFfmpegWithProgress({ deviceId, fileName, ffmpegArgs, io, jobKey: optimizationKey });
 
     setFileStatus(deviceId, fileName, { status: 'processing', progress: 90, canPlay: false });
     io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 90 });
@@ -601,6 +750,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     io.emit('file/progress', { device_id: deviceId, file: resultingSafeName, progress: 100 });
     io.emit('devices/updated');
     io.emit('file/ready', { device_id: deviceId, file: resultingSafeName });
+    clearOptimizationCancelRequest(optimizationKey);
 
     return { 
       success: true, 
@@ -625,6 +775,34 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     };
 
   } catch (error) {
+    const cancelled = isOptimizationCancelError(error) || hasOptimizationCancelRequest(optimizationKey);
+    if (cancelled) {
+      logger.info('[VideoOpt] ⏹️ Обработка отменена пользователем', {
+        deviceId,
+        fileName,
+        reason: error.message
+      });
+
+      if (tempPath && fs.existsSync(tempPath)) {
+        fs.unlinkSync(tempPath);
+      }
+
+      setFileStatus(deviceId, fileName, {
+        status: 'ready',
+        progress: 100,
+        canPlay: true
+      });
+      io.emit('devices/updated');
+      io.emit('file/cancelled', {
+        device_id: deviceId,
+        file: fileName,
+        reason: error.message || 'Обработка отменена пользователем'
+      });
+
+      clearOptimizationCancelRequest(optimizationKey);
+      return { success: false, cancelled: true, message: error.message || 'Обработка отменена пользователем' };
+    }
+
     logger.error(`[VideoOpt] ❌ Ошибка конвертации`, { error: error.message, stack: error.stack, deviceId, fileName });
 
     // Очищаем временный файл
@@ -651,6 +829,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     });
     io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 0 });
     io.emit('file/error', { device_id: deviceId, file: fileName, error: errorMessage });
+    clearOptimizationCancelRequest(optimizationKey);
 
     return { success: false, message: errorMessage };
   }

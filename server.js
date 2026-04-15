@@ -355,7 +355,9 @@ const videoInfoRouter = createVideoInfoRouter({
   devices,
   getFileStatus,
   checkVideoParameters,
-  autoOptimizeVideoWrapper
+  autoOptimizeVideoWrapper,
+  io,
+  requireAdmin
 });
 
 const conversionRouter = createConversionRouter({

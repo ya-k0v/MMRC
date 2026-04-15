@@ -48,6 +48,11 @@ function applySquareActionButtonStyle(button) {
   button.style.cssText = 'min-width:30px; width:30px; height:30px; padding:0; display:flex; align-items:center; justify-content:center; line-height:1; border-radius:var(--radius-sm);';
 }
 
+function applyWideActionButtonStyle(button) {
+  if (!button) return;
+  button.style.cssText = 'height:30px; padding:0 10px; display:inline-flex; align-items:center; justify-content:center; line-height:1; border-radius:var(--radius-sm); font-size:12px;';
+}
+
 /**
  * Универсальная функция для показа модального окна стрима (добавление/редактирование)
  * @param {Object} options
@@ -245,7 +250,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       safeName: item.safeName || item.name || '',
       originalName: item.originalName || item.safeName || item.name || 'unknown',
       status: item.status || 'ready',
-      progress: item.progress || 100,
+      progress: typeof item.progress === 'number' ? item.progress : 100,
       canPlay: item.canPlay !== false,
       error: item.error || null,
       resolution: item.resolution || null,
@@ -414,8 +419,9 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       const isVideo = !isStreaming && (normalizedType === 'video' || VIDEO_EXTENSIONS.includes(safeExt));
       const fileStatus = status || 'ready';
       const isProcessing = fileStatus === 'processing' || fileStatus === 'checking';
+      const isNightScheduled = fileStatus === 'scheduled_night';
       const hasError = fileStatus === 'error';
-      const fileProgress = progress || 100;
+      const fileProgress = typeof progress === 'number' ? progress : 100;
 
       let resolutionLabel = '';
       if (isVideo && resolution) {
@@ -436,6 +442,10 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           statusColor = 'var(--warning)';
           statusIcon = getClockIcon(14, statusColor);
           statusText = `Обработка... ${fileProgress}%`;
+        } else if (isNightScheduled) {
+          statusColor = 'var(--text-secondary)';
+          statusIcon = getClockIcon(14, statusColor);
+          statusText = 'Запланировано на ночь';
         } else if (hasError) {
           statusColor = 'var(--danger)';
           statusIcon = getCrossIcon(14, statusColor);
@@ -486,7 +496,25 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       const savePolyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline'); savePolyline.setAttribute('points', '20 6 9 17 4 12'); saveSvg.appendChild(savePolyline); saveBtn.appendChild(saveSvg);
       headerLeft.appendChild(nameSpan); headerLeft.appendChild(saveBtn);
       const headerRight = document.createElement('div'); headerRight.style.cssText = 'display:flex; align-items:center; gap:var(--space-sm);';
-      if (statusText) { const statusSpan = document.createElement('span'); statusSpan.style.cssText = `font-size:var(--font-size-sm); color:${statusColor}; white-space:nowrap; display:flex; align-items:center; gap:var(--space-xs);`; statusSpan.innerHTML = `${statusIcon} ${escapeHtml(statusText)}`; headerRight.appendChild(statusSpan); }
+      if (statusText) {
+        const statusSpan = document.createElement('span');
+        statusSpan.style.cssText = `font-size:var(--font-size-sm); color:${statusColor}; white-space:nowrap; display:flex; align-items:center; gap:var(--space-xs);`;
+        if (isProcessing) {
+          const cancelBtn = document.createElement('button');
+          cancelBtn.className = 'cancelProcessingBtn';
+          cancelBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+          cancelBtn.setAttribute('data-original', encodeURIComponent(originalName));
+          cancelBtn.type = 'button';
+          cancelBtn.title = 'Отменить обработку';
+          cancelBtn.textContent = '×';
+          cancelBtn.style.cssText = 'width:16px; height:16px; min-width:16px; padding:0; border:1px solid currentColor; border-radius:50%; background:transparent; color:inherit; display:inline-flex; align-items:center; justify-content:center; font-size:12px; line-height:1; cursor:pointer;';
+          statusSpan.appendChild(cancelBtn);
+        }
+        const statusTextSpan = document.createElement('span');
+        statusTextSpan.innerHTML = `${statusIcon} ${escapeHtml(statusText)}`;
+        statusSpan.appendChild(statusTextSpan);
+        headerRight.appendChild(statusSpan);
+      }
       const metaDiv = document.createElement('div'); metaDiv.style.cssText = 'display:flex; align-items:center; gap:4px; flex-wrap:wrap;';
       if (resolutionLabel) { const resSpan = document.createElement('span'); resSpan.style.cssText = 'font-size:10px; opacity:0.7;'; resSpan.textContent = resolutionLabel; metaDiv.appendChild(resSpan); }
       const typeSpan = document.createElement('span'); typeSpan.className = 'file-item-type'; typeSpan.textContent = typeBadge; metaDiv.appendChild(typeSpan);
@@ -508,6 +536,28 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         downloadBtn.innerHTML = toIconOnlySvg(getDownloadIcon(14));
         applySquareActionButtonStyle(downloadBtn);
         actions.appendChild(downloadBtn);
+      }
+      const canManualProcess = isVideo && !isStreaming;
+      if (canManualProcess) {
+        const optimizeBtn = document.createElement('button');
+        optimizeBtn.className = 'secondary meta-lg optimizeNowBtn';
+        optimizeBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+        optimizeBtn.setAttribute('data-original', encodeURIComponent(originalName));
+        optimizeBtn.title = 'Запустить обработку сейчас';
+        optimizeBtn.textContent = 'Обработать';
+        optimizeBtn.disabled = isProcessing;
+        applyWideActionButtonStyle(optimizeBtn);
+        actions.appendChild(optimizeBtn);
+
+        const optimizeNightBtn = document.createElement('button');
+        optimizeNightBtn.className = 'secondary meta-lg optimizeNightBtn';
+        optimizeNightBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+        optimizeNightBtn.setAttribute('data-original', encodeURIComponent(originalName));
+        optimizeNightBtn.title = 'Запланировать обработку на ночь';
+        optimizeNightBtn.textContent = isNightScheduled ? 'Запланировано' : 'Обработать ночью';
+        optimizeNightBtn.disabled = isProcessing || isNightScheduled;
+        applyWideActionButtonStyle(optimizeNightBtn);
+        actions.appendChild(optimizeNightBtn);
       }
       if (isEligible) { const makeDefaultBtn = document.createElement('button'); makeDefaultBtn.className = 'meta-lg makeDefaultBtn'; makeDefaultBtn.setAttribute('data-safe', encodeURIComponent(safeName)); makeDefaultBtn.setAttribute('data-original', encodeURIComponent(originalName)); makeDefaultBtn.title = 'Сделать заглушкой'; makeDefaultBtn.disabled = !canPlay; makeDefaultBtn.textContent = '📌'; applySquareActionButtonStyle(makeDefaultBtn); actions.appendChild(makeDefaultBtn); }
       const delBtn = document.createElement('button'); delBtn.className = 'danger meta-lg delFileBtn'; delBtn.setAttribute('data-safe', encodeURIComponent(safeName)); delBtn.setAttribute('data-original', encodeURIComponent(originalName)); delBtn.title = 'Удалить'; delBtn.innerHTML = toIconOnlySvg(getTrashIcon(14)); applySquareActionButtonStyle(delBtn); actions.appendChild(delBtn);
@@ -564,8 +614,9 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         const isVideo = !isStreaming && (normalizedType === 'video' || VIDEO_EXTENSIONS.includes(safeExt));
         const fileStatus = status || 'ready';
         const isProcessing = fileStatus === 'processing' || fileStatus === 'checking';
+        const isNightScheduled = fileStatus === 'scheduled_night';
         const hasError = fileStatus === 'error';
-        const fileProgress = progress || 100;
+        const fileProgress = typeof progress === 'number' ? progress : 100;
         
         // Определяем разрешение для видео
         let resolutionLabel = '';
@@ -596,6 +647,10 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
             statusColor = 'var(--warning)';
             statusIcon = getClockIcon(14, statusColor);
             statusText = `Обработка... ${fileProgress}%`;
+          } else if (isNightScheduled) {
+            statusColor = 'var(--text-secondary)';
+            statusIcon = getClockIcon(14, statusColor);
+            statusText = 'Запланировано на ночь';
           } else if (hasError) {
             statusColor = 'var(--danger)';
             statusIcon = getCrossIcon(14, statusColor);
@@ -683,7 +738,21 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         if (statusText) {
           const statusSpan = document.createElement('span');
           statusSpan.style.cssText = `font-size:var(--font-size-sm); color:${statusColor}; white-space:nowrap; display:flex; align-items:center; gap:var(--space-xs);`;
-          statusSpan.innerHTML = `${statusIcon} ${escapeHtml(statusText)}`;
+          if (isProcessing) {
+            const cancelBtn = document.createElement('button');
+            cancelBtn.className = 'cancelProcessingBtn';
+            cancelBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+            cancelBtn.setAttribute('data-original', encodeURIComponent(originalName));
+            cancelBtn.type = 'button';
+            cancelBtn.title = 'Отменить обработку';
+            cancelBtn.textContent = '×';
+            cancelBtn.style.cssText = 'width:16px; height:16px; min-width:16px; padding:0; border:1px solid currentColor; border-radius:50%; background:transparent; color:inherit; display:inline-flex; align-items:center; justify-content:center; font-size:12px; line-height:1; cursor:pointer;';
+            statusSpan.appendChild(cancelBtn);
+          }
+
+          const statusTextSpan = document.createElement('span');
+          statusTextSpan.innerHTML = `${statusIcon} ${escapeHtml(statusText)}`;
+          statusSpan.appendChild(statusTextSpan);
           headerRight.appendChild(statusSpan);
         }
         
@@ -745,6 +814,29 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           downloadBtn.innerHTML = toIconOnlySvg(getDownloadIcon(14));
           applySquareActionButtonStyle(downloadBtn);
           actions.appendChild(downloadBtn);
+        }
+
+        const canManualProcess = isVideo && !isStreaming;
+        if (canManualProcess) {
+          const optimizeBtn = document.createElement('button');
+          optimizeBtn.className = 'secondary meta-lg optimizeNowBtn';
+          optimizeBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+          optimizeBtn.setAttribute('data-original', encodeURIComponent(originalName));
+          optimizeBtn.title = 'Запустить обработку сейчас';
+          optimizeBtn.textContent = 'Обработать';
+          optimizeBtn.disabled = isProcessing;
+          applyWideActionButtonStyle(optimizeBtn);
+          actions.appendChild(optimizeBtn);
+
+          const optimizeNightBtn = document.createElement('button');
+          optimizeNightBtn.className = 'secondary meta-lg optimizeNightBtn';
+          optimizeNightBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+          optimizeNightBtn.setAttribute('data-original', encodeURIComponent(originalName));
+          optimizeNightBtn.title = 'Запланировать обработку на ночь';
+          optimizeNightBtn.textContent = isNightScheduled ? 'Запланировано' : 'Обработать ночью';
+          optimizeNightBtn.disabled = isProcessing || isNightScheduled;
+          applyWideActionButtonStyle(optimizeNightBtn);
+          actions.appendChild(optimizeNightBtn);
         }
 
         if (isEligible) {
@@ -1170,6 +1262,114 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       } finally {
         btn.disabled = false;
         btn.innerHTML = originalButtonHtml;
+      }
+    };
+  });
+
+  panelEl.querySelectorAll('.cancelProcessingBtn').forEach(btn => {
+    btn.onclick = async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const safeName = decodeURIComponent(btn.getAttribute('data-safe') || '');
+      const originalName = decodeURIComponent(btn.getAttribute('data-original') || safeName);
+      const originalButtonText = btn.textContent;
+
+      btn.disabled = true;
+      btn.textContent = '…';
+
+      try {
+        const response = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(safeName)}/cancel-optimize`, {
+          method: 'POST'
+        });
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok || payload.ok === false) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+
+        await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
+        socket.emit('devices/updated');
+      } catch (error) {
+        await reportFilesManagerNotification({
+          type: 'file_cancel_processing_error',
+          title: 'Не удалось отменить обработку',
+          message: error.message || 'Ошибка отмены обработки',
+          details: { deviceId, safeName, originalName }
+        });
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalButtonText;
+      }
+    };
+  });
+
+  panelEl.querySelectorAll('.optimizeNowBtn').forEach(btn => {
+    btn.onclick = async () => {
+      const safeName = decodeURIComponent(btn.getAttribute('data-safe') || '');
+      const originalName = decodeURIComponent(btn.getAttribute('data-original') || safeName);
+      const originalText = btn.textContent;
+
+      btn.disabled = true;
+      btn.textContent = 'Запуск...';
+
+      try {
+        const response = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(safeName)}/optimize`, {
+          method: 'POST'
+        });
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok || payload.success === false) {
+          throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
+        }
+
+        await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
+        socket.emit('devices/updated');
+      } catch (error) {
+        await reportFilesManagerNotification({
+          type: 'file_optimize_start_error',
+          title: 'Не удалось запустить обработку',
+          message: error.message || 'Ошибка запуска обработки',
+          details: { deviceId, safeName, originalName }
+        });
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    };
+  });
+
+  panelEl.querySelectorAll('.optimizeNightBtn').forEach(btn => {
+    btn.onclick = async () => {
+      const safeName = decodeURIComponent(btn.getAttribute('data-safe') || '');
+      const originalName = decodeURIComponent(btn.getAttribute('data-original') || safeName);
+      const originalText = btn.textContent;
+
+      btn.disabled = true;
+      btn.textContent = 'Планирование...';
+
+      try {
+        const response = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(safeName)}/schedule-optimize-night`, {
+          method: 'POST'
+        });
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok || payload.ok === false) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+
+        await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
+        socket.emit('devices/updated');
+      } catch (error) {
+        await reportFilesManagerNotification({
+          type: 'file_optimize_night_error',
+          title: 'Не удалось запланировать обработку',
+          message: error.message || 'Ошибка планирования ночной обработки',
+          details: { deviceId, safeName, originalName }
+        });
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
       }
     };
   });
