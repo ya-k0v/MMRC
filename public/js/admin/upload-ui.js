@@ -132,18 +132,6 @@ function buildYtInlineText(runtime) {
     return `${getYtStatusLabel(runtime.status)}: ${progress}%${speedText}${etaText}`;
   }
 
-  if (runtime.status === 'completed') {
-    return 'Готово';
-  }
-
-  if (runtime.status === 'cancelled') {
-    return 'Отменено';
-  }
-
-  if (runtime.status === 'failed') {
-    return 'Ошибка';
-  }
-
   return '';
 }
 
@@ -318,7 +306,8 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
     const runtime = getYtRuntime(deviceId);
     const state = getYtVisualState(runtime);
     const text = buildYtStatusText(runtime);
-    const inlineText = buildYtInlineText(runtime);
+    const hasPendingFiles = pending.length > 0;
+    const inlineText = (isUploading || hasPendingFiles) ? '' : buildYtInlineText(runtime);
 
     updateYtDownloadStatusUI({
       visible: Boolean(text),
@@ -330,7 +319,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
 
     if (ytDownloadBtn) {
       const hasActiveYtJob = Boolean(runtime.jobId && YTDLP_ACTIVE_STATUSES.has(runtime.status));
-      ytDownloadBtn.disabled = hasActiveYtJob || isUploading;
+      ytDownloadBtn.disabled = hasActiveYtJob;
     }
 
     if (runtime.status === 'completed' && !runtime.synced) {
@@ -774,20 +763,6 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
         return;
       }
 
-      if (isUploading) {
-        await reportUploadNotification({
-          type: 'upload_busy',
-          severity: 'warning',
-          title: 'Идет загрузка файлов',
-          message: 'Дождитесь завершения текущей загрузки файлов перед запуском загрузки по ссылке',
-          key: `upload-busy:${deviceId}`,
-          details: {
-            deviceId
-          }
-        });
-        return;
-      }
-
       const inputUrl = prompt('Вставьте ссылку на видео для загрузки через yt-dlp:');
       const targetUrl = (inputUrl || '').trim();
       if (!targetUrl) return;
@@ -844,6 +819,9 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
 
   uploadBtn.onclick = async () => {
     if (!pending.length) return;
+
+    isUploading = true;
+    syncYtDownloadUI();
     
     uploadBtn.disabled = true;
     uploadBtn.textContent = 'Проверка...';
@@ -920,8 +898,6 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       
       // STEP 2: Загружаем только уникальные файлы ПО ОЧЕРЕДИ (последовательно)
       if (filesToUpload.length > 0) {
-        isUploading = true; // Устанавливаем флаг активной загрузки
-        syncYtDownloadUI();
         uploadBtn.textContent = `Загрузка (0/${filesToUpload.length})...`;
         
         let uploadedCount = 0;
