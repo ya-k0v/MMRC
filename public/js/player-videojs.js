@@ -1228,11 +1228,29 @@ if (!device_id || !device_id.trim()) {
       const urlObj = new URL(url, window.location.origin);
       // Добавляем timestamp для предотвращения кэширования
       urlObj.searchParams.set('_t', Date.now().toString());
-      return urlObj.toString();
+      const isAbsoluteUrl = /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(url);
+      return isAbsoluteUrl
+        ? urlObj.toString()
+        : `${urlObj.pathname}${urlObj.search}${urlObj.hash}`;
     } catch (e) {
-      // Если URL относительный или невалидный, добавляем параметр вручную
-      const separator = url.includes('?') ? '&' : '?';
-      return `${url}${separator}_t=${Date.now()}`;
+      // Fallback для невалидных URL: обновляем _t, а не накапливаем повторяющиеся параметры
+      const [baseWithPath, hashPart = ''] = String(url).split('#');
+      const [pathPart, queryPart = ''] = baseWithPath.split('?');
+      const filteredParams = queryPart
+        .split('&')
+        .filter(Boolean)
+        .filter((param) => {
+          const key = param.split('=')[0];
+          try {
+            return decodeURIComponent(key) !== '_t';
+          } catch {
+            return key !== '_t';
+          }
+        });
+      filteredParams.push(`_t=${Date.now()}`);
+      const query = filteredParams.length ? `?${filteredParams.join('&')}` : '';
+      const hash = hashPart ? `#${hashPart}` : '';
+      return `${pathPart}${query}${hash}`;
     }
   }
 
@@ -1429,8 +1447,7 @@ if (!device_id || !device_id.trim()) {
             xhrSetup: (xhr, url) => {
               // Добавляем cache-busting к каждому запросу манифеста
               if (url.includes('.m3u8')) {
-                const separator = url.includes('?') ? '&' : '?';
-                const bustedUrl = `${url}${separator}_t=${Date.now()}`;
+                const bustedUrl = addCacheBustParam(url);
                 console.log('[Player] 🔄 HLS манифест запрос с cache-busting', { original: url, busted: bustedUrl });
                 xhr.open('GET', bustedUrl, true);
                 return;
@@ -3132,6 +3149,8 @@ if (!device_id || !device_id.trim()) {
   let heartbeatInterval = null;
   let pingTimeout = null;
   let registrationTimeout = null;
+  let missedPongCount = 0;
+  const MAX_MISSED_PONGS = 2;
   
   function registerPlayer() {
     if (preview || !device_id) return;
@@ -3180,20 +3199,36 @@ if (!device_id || !device_id.trim()) {
     }
     
     heartbeatInterval = setInterval(() => {
-      if (!socket.connected || !isRegistered || preview) {
+      if (!socket.connected || preview) {
         clearInterval(heartbeatInterval);
         if (pingTimeout) clearTimeout(pingTimeout);
         heartbeatInterval = null;
         return;
       }
+
+      if (!isRegistered) {
+        if (!registerInFlight) {
+          registerPlayer();
+        }
+        return;
+      }
       
+      if (pingTimeout) {
+        clearTimeout(pingTimeout);
+        pingTimeout = null;
+      }
+
       socket.emit('player/ping');
       
       pingTimeout = setTimeout(() => {
-        console.warn('⚠️ Heartbeat timeout');
-        isRegistered = false;
-        clearInterval(heartbeatInterval);
-        heartbeatInterval = null;
+        missedPongCount += 1;
+        console.warn(`[Player] ⚠️ Heartbeat timeout (${missedPongCount}/${MAX_MISSED_PONGS})`);
+
+        if (missedPongCount >= MAX_MISSED_PONGS) {
+          isRegistered = false;
+          registerInFlight = false;
+          registerPlayer();
+        }
       }, 5000);
     }, 15000);
   }
@@ -3203,12 +3238,14 @@ if (!device_id || !device_id.trim()) {
       clearTimeout(pingTimeout);
       pingTimeout = null;
     }
+    missedPongCount = 0;
   });
   
   socket.on('player/reject', ({ reason }) => {
     console.error('[Player] ❌ Регистрация отклонена:', reason);
     isRegistered = false;
     registerInFlight = false;
+    missedPongCount = 0;
   });
 
   // Обработчик команд управления звуком
@@ -3223,6 +3260,7 @@ if (!device_id || !device_id.trim()) {
     registerInFlight = false;
     const registeredId = payload?.device_id || payload?.deviceId || device_id;
     isRegistered = true;
+    missedPongCount = 0;
     emitVolumeState('register');
     startHeartbeat();
   });
@@ -3235,6 +3273,7 @@ if (!device_id || !device_id.trim()) {
   socket.on('connect', () => {
     isRegistered = false; // Сбрасываем при каждом connect
     registerInFlight = false;
+    missedPongCount = 0;
     refreshAudioLogo(true);
     registerPlayer();
   });
@@ -3243,6 +3282,7 @@ if (!device_id || !device_id.trim()) {
     console.warn('⚠️ Disconnected, reason:', reason);
     isRegistered = false;
     registerInFlight = false;
+    missedPongCount = 0;
     if (heartbeatInterval) {
       clearInterval(heartbeatInterval);
       heartbeatInterval = null;
@@ -3294,6 +3334,7 @@ if (!device_id || !device_id.trim()) {
     console.log('🔄 Reconnected');
     isRegistered = false;
     registerInFlight = false;
+    missedPongCount = 0;
     registerPlayer();
   });
   

@@ -42,8 +42,6 @@ const STREAM_PROTOCOLS = new Set(['auto', 'hls', 'dash', 'mpegts']);
 const VIDEO_PROCESSING_EXTENSIONS = new Set(['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi', '.m4v']);
 const YTDLP_FINAL_PATH_MARKER = '__VC_FINAL_PATH__';
 const YTDLP_TITLE_MARKER = '__VC_TITLE__';
-const STREAM_DIRECT_HLS_ENABLED = process.env.STREAM_DIRECT_HLS_ENABLED === '1';
-const STREAM_DIRECT_DASH_ENABLED = process.env.STREAM_DIRECT_DASH_ENABLED === '1';
 
 function detectStreamProtocolFromUrl(url = '') {
   const lower = (url || '').toLowerCase();
@@ -85,8 +83,20 @@ function normalizeStreamProtocol(protocol, url, mimeType) {
 }
 
 function isDirectPlaybackAvailable(protocol) {
-  return (protocol === 'hls' && STREAM_DIRECT_HLS_ENABLED) ||
-         (protocol === 'dash' && STREAM_DIRECT_DASH_ENABLED);
+  return protocol === 'hls' || protocol === 'dash';
+}
+
+function resolveStreamPlaybackUrl(deviceId, safeName, metadata = null) {
+  const streamUrl = metadata?.stream_url || metadata?.streamUrl || null;
+  const streamProtocol = metadata?.stream_protocol || metadata?.streamProtocol || null;
+  const mimeType = metadata?.mime_type || metadata?.mimeType || null;
+  const protocol = normalizeStreamProtocol(streamProtocol, streamUrl, mimeType);
+
+  if (streamUrl && isDirectPlaybackAvailable(protocol)) {
+    return streamUrl;
+  }
+
+  return metadata?.streamProxyUrl || getStreamPlaybackUrl(deviceId, safeName);
 }
 
 function stripWrappingQuotes(value = '') {
@@ -556,6 +566,7 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
     const safeFile = sanitizePathFragment(safeName);
     // КРИТИЧНО: Убрали deviceId из пути - стримы теперь идентифицируются только по safeName
     const proxyUrl = `/streams/${encodeURIComponent(safeFile)}/index.m3u8`;
+    const streamPlaybackUrl = isDirectPlaybackAvailable(protocol) ? f.stream_url : proxyUrl;
     const restreamStatus = getStreamRestreamStatus(deviceId, safeName);
     metadataList.push({
       safeName,
@@ -563,14 +574,14 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
       folderImageCount: null,
       contentType: 'streaming',
       streamUrl: f.stream_url,
-      streamProxyUrl: proxyUrl,
+      streamProxyUrl: streamPlaybackUrl,
       restreamStatus,
       streamProtocol: protocol
     });
     streams[safeName] = {
       name: displayName,
       url: f.stream_url,  // КРИТИЧНО: Используем stream_url из БД
-      proxyUrl,  // КРИТИЧНО: Всегда устанавливаем proxyUrl, даже если FFmpeg еще не создал файлы
+      proxyUrl: isDirectPlaybackAvailable(protocol) ? null : proxyUrl,
       status: restreamStatus?.status || null,
       protocol
     };
@@ -1940,9 +1951,9 @@ export function createFilesRouter(deps) {
 
     const protocol = normalizeStreamProtocol(metadata.stream_protocol, metadata.stream_url, metadata.mime_type);
     const directPlaybackAvailable = isDirectPlaybackAvailable(protocol);
-    const preferDirectPlayback = directPlaybackAvailable && (
-      req.query.direct === '1' || req.query.preferDirect === '1'
-    );
+    const forceProxyPlayback = req.query.proxy === '1' || req.query.forceProxy === '1';
+    const explicitDirectPlayback = req.query.direct === '1' || req.query.preferDirect === '1';
+    const preferDirectPlayback = directPlaybackAvailable && (explicitDirectPlayback || !forceProxyPlayback);
 
     // КРИТИЧНО: Lazy loading - запускаем FFmpeg только когда стрим запрашивается для воспроизведения
     // Это экономит ресурсы, так как не все стримы используются одновременно
@@ -4572,7 +4583,7 @@ export function createFilesRouter(deps) {
         originalName: fileNames[index] || safeName,
         contentType: meta?.contentType || null,
         streamUrl: meta?.streamUrl || null,
-        streamProxyUrl: meta?.streamProxyUrl || getStreamPlaybackUrl(id, safeName)
+        streamProxyUrl: resolveStreamPlaybackUrl(id, safeName, meta)
       };
     });
     
@@ -4684,7 +4695,7 @@ export function createFilesRouter(deps) {
           contentType = 'streaming';
           streamUrl = metadata.stream_url || null;
           streamProtocol = normalizeStreamProtocol(metadata.stream_protocol, metadata.stream_url, metadata.mime_type);
-          const streamProxyUrl = metadata.streamProxyUrl || getStreamPlaybackUrl(id, safeName);
+          const streamProxyUrl = resolveStreamPlaybackUrl(id, safeName, metadata);
           const restreamStatus = metadata.restreamStatus || getStreamRestreamStatus(id, safeName);
           filesData.push({
             safeName,
@@ -4924,7 +4935,7 @@ export function createFilesRouter(deps) {
       }
       
       const streamProxyUrl = contentType === 'streaming'
-        ? (metadata?.streamProxyUrl || getStreamPlaybackUrl(id, safeName))
+        ? resolveStreamPlaybackUrl(id, safeName, metadata)
         : null;
       const restreamStatus = contentType === 'streaming'
         ? (metadata?.restreamStatus || getStreamRestreamStatus(id, safeName))

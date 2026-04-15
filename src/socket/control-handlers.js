@@ -19,6 +19,31 @@ function sanitizeStreamProtocol(value, fallback = null) {
   return fallback;
 }
 
+function detectStreamProtocolFromUrl(url = '') {
+  const lower = (url || '').toString().trim().toLowerCase();
+  if (!lower) return null;
+  if (lower.includes('.m3u8') || lower.includes('format=m3u8')) {
+    return 'hls';
+  }
+  if (lower.includes('.mpd') || lower.includes('format=mpd') || lower.includes('dash-live') || lower.includes('dash/')) {
+    return 'dash';
+  }
+  if (lower.includes('.ts') || lower.includes('mpegts') || lower.startsWith('udp://') || lower.startsWith('rtp://')) {
+    return 'mpegts';
+  }
+  return null;
+}
+
+function resolveStreamProtocol(primaryProtocol, fallbackProtocol, url = '') {
+  return sanitizeStreamProtocol(primaryProtocol,
+    sanitizeStreamProtocol(fallbackProtocol,
+      detectStreamProtocolFromUrl(url) || 'mpegts'));
+}
+
+function shouldProxyStreamProtocol(protocol) {
+  return protocol === 'mpegts';
+}
+
 const DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS = 10;
 const serverPlaylistLoops = new Map();
 
@@ -237,15 +262,16 @@ export function setupControlHandlers(socket, deps) {
           }
           
           const requestedStreamProtocol = sanitizeStreamProtocol(streamProtocol);
-          let localPlaybackStreamUrl = streamEntry ? (streamEntry.proxyUrl || streamEntry.url) : null;
+          const resolvedStreamProtocol = resolveStreamProtocol(streamEntry?.protocol, requestedStreamProtocol, streamEntry?.url);
+          let localPlaybackStreamUrl = streamEntry
+            ? (shouldProxyStreamProtocol(resolvedStreamProtocol)
+              ? (streamEntry.proxyUrl || streamEntry.url)
+              : (streamEntry.url || streamEntry.proxyUrl))
+            : null;
           let localEffectiveStreamProtocol = null;
           
           // Если это стрим - проверяем протокол и запускаем FFmpeg только если нужно
-          if (streamEntry) {
-            const streamProtocol = streamEntry.protocol || requestedStreamProtocol || 'mpegts';
-            
-            // КРИТИЧНО: Все внешние стримы (DASH, HLS, MPEG-TS) могут иметь проблемы с CORS
-            // Поэтому для всех стримов используем FFmpeg рестрим в HLS формат
+          if (streamEntry && shouldProxyStreamProtocol(resolvedStreamProtocol)) {
             const { getStreamManager } = await import('../streams/stream-manager.js');
             const streamManager = getStreamManager();
             if (streamManager) {
@@ -266,13 +292,20 @@ export function setupControlHandlers(socket, deps) {
                 localPlaybackStreamUrl = existingUrl;
               }
             }
-            localEffectiveStreamProtocol = streamEntry?.proxyUrl ? 'hls' : (streamEntry?.protocol || requestedStreamProtocol || 'mpegts');
+          } else if (streamEntry) {
+            // HLS/DASH отдаем напрямую без FFmpeg proxy
+            localPlaybackStreamUrl = streamEntry.url || streamEntry.proxyUrl;
+          }
+
+          if (streamEntry) {
+            localEffectiveStreamProtocol = detectStreamProtocolFromUrl(localPlaybackStreamUrl) || resolvedStreamProtocol;
             logger.info('[Control] 🔍 localEffectiveStreamProtocol determined (setTimeout)', {
               deviceId: device_id,
               file,
               streamEntryProxyUrl: streamEntry?.proxyUrl,
               streamEntryProtocol: streamEntry?.protocol,
               requestedStreamProtocol,
+              resolvedStreamProtocol,
               localEffectiveStreamProtocol
             });
           }
@@ -364,6 +397,7 @@ export function setupControlHandlers(socket, deps) {
       }
       
       const requestedStreamProtocol = sanitizeStreamProtocol(streamProtocol);
+      const resolvedStreamProtocol = resolveStreamProtocol(streamEntry?.protocol, requestedStreamProtocol, streamEntry?.url);
       
       logger.info('[Control] 🔍 Stream entry lookup', {
         deviceId: device_id,
@@ -377,104 +411,116 @@ export function setupControlHandlers(socket, deps) {
       });
       
       // КРИТИЧНО: Lazy loading - запускаем FFmpeg только когда стрим действительно воспроизводится
-      let playbackStreamUrl = streamEntry ? (streamEntry.proxyUrl || streamEntry.url) : null;
+      let playbackStreamUrl = streamEntry
+        ? (shouldProxyStreamProtocol(resolvedStreamProtocol)
+          ? (streamEntry.proxyUrl || streamEntry.url)
+          : (streamEntry.url || streamEntry.proxyUrl))
+        : null;
       
       // Если стрим найден - проверяем протокол и запускаем FFmpeg только если нужно
       if (streamEntry) {
-        const streamProtocol = streamEntry.protocol || requestedStreamProtocol || 'mpegts';
-        
-        // Для HLS, MPEG-TS и DASH используем FFmpeg рестрим в HLS формат
-        const { getStreamManager } = await import('../streams/stream-manager.js');
-        const streamManager = getStreamManager();
-        if (streamManager) {
-          // Проверяем, есть ли уже запущенный процесс или существующие файлы
-          const existingUrl = streamManager.getPlaybackUrl(device_id, file);
-          logger.info('[Control] 🔍 Checking stream status', {
-            deviceId: device_id,
-            file,
-            protocol: streamProtocol,
-            hasExistingUrl: !!existingUrl,
-            existingUrl,
-            streamEntryProxyUrl: streamEntry.proxyUrl
-          });
-          
-          if (!existingUrl) {
-            // FFmpeg не запущен - запускаем его (lazy loading)
-            // КРИТИЧНО: Если стрим найден в устройстве-источнике, берем метаданные оттуда
-            const metadataDeviceId = (originDeviceId && originDeviceId !== device_id && streamEntry && !d.streams?.[file]) ? originDeviceId : device_id;
-            const metadata = getFileMetadata(metadataDeviceId, file);
-            logger.info('[Control] 🔍 Checking metadata for stream', {
+        const streamProtocol = resolvedStreamProtocol;
+
+        if (shouldProxyStreamProtocol(streamProtocol)) {
+          const { getStreamManager } = await import('../streams/stream-manager.js');
+          const streamManager = getStreamManager();
+          if (streamManager) {
+            // Проверяем, есть ли уже запущенный процесс или существующие файлы
+            const existingUrl = streamManager.getPlaybackUrl(device_id, file);
+            logger.info('[Control] 🔍 Checking stream status', {
               deviceId: device_id,
-              metadataDeviceId,
-              originDeviceId,
               file,
-              hasMetadata: !!metadata,
-              contentType: metadata?.content_type,
-              streamUrl: metadata?.stream_url,
-              streamProtocol: metadata?.stream_protocol
+              protocol: streamProtocol,
+              hasExistingUrl: !!existingUrl,
+              existingUrl,
+              streamEntryProxyUrl: streamEntry.proxyUrl
             });
             
-            if (metadata && metadata.content_type === 'streaming') {
-              try {
-                logger.info('[Control] 🚀 Calling ensureStreamRunning', {
-                  deviceId: device_id,
-                  file,
-                  streamUrl: metadata.stream_url,
-                  streamProtocol: metadata.stream_protocol
-                });
-                playbackStreamUrl = await streamManager.ensureStreamRunning(device_id, file, metadata);
-                
-                // КРИТИЧНО: Если ensureStreamRunning вернул null, используем fallback
-                if (!playbackStreamUrl) {
-                  logger.warn('[Control] ⚠️ ensureStreamRunning returned null, using fallback', {
+            if (!existingUrl) {
+              // FFmpeg не запущен - запускаем его (lazy loading)
+              // КРИТИЧНО: Если стрим найден в устройстве-источнике, берем метаданные оттуда
+              const metadataDeviceId = (originDeviceId && originDeviceId !== device_id && !d.streams?.[file]) ? originDeviceId : device_id;
+              const metadata = getFileMetadata(metadataDeviceId, file);
+              logger.info('[Control] 🔍 Checking metadata for stream', {
+                deviceId: device_id,
+                metadataDeviceId,
+                originDeviceId,
+                file,
+                hasMetadata: !!metadata,
+                contentType: metadata?.content_type,
+                streamUrl: metadata?.stream_url,
+                streamProtocol: metadata?.stream_protocol
+              });
+              
+              if (metadata && metadata.content_type === 'streaming') {
+                try {
+                  logger.info('[Control] 🚀 Calling ensureStreamRunning', {
                     deviceId: device_id,
                     file,
-                    streamEntryProxyUrl: streamEntry.proxyUrl,
-                    streamEntryUrl: streamEntry.url
+                    streamUrl: metadata.stream_url,
+                    streamProtocol: metadata.stream_protocol
                   });
-                  playbackStreamUrl = streamEntry.proxyUrl || streamEntry.url;
-                } else {
-                  logger.info('[Control] ✅ Lazy started stream for playback', { 
-                    deviceId: device_id, 
-                    file,
-                    protocol: streamProtocol,
-                    playbackUrl: playbackStreamUrl 
-                  });
+                  playbackStreamUrl = await streamManager.ensureStreamRunning(device_id, file, metadata);
                   
-                  // КРИТИЧНО: Обновляем streamEntry.proxyUrl после запуска FFmpeg
-                  if (streamEntry) {
+                  // КРИТИЧНО: Если ensureStreamRunning вернул null, используем fallback
+                  if (!playbackStreamUrl) {
+                    logger.warn('[Control] ⚠️ ensureStreamRunning returned null, using fallback', {
+                      deviceId: device_id,
+                      file,
+                      streamEntryProxyUrl: streamEntry.proxyUrl,
+                      streamEntryUrl: streamEntry.url
+                    });
+                    playbackStreamUrl = streamEntry.proxyUrl || streamEntry.url;
+                  } else {
+                    logger.info('[Control] ✅ Lazy started stream for playback', { 
+                      deviceId: device_id, 
+                      file,
+                      protocol: streamProtocol,
+                      playbackUrl: playbackStreamUrl 
+                    });
+                    
+                    // КРИТИЧНО: Обновляем streamEntry.proxyUrl после запуска FFmpeg
                     streamEntry.proxyUrl = playbackStreamUrl;
                   }
+                } catch (err) {
+                  logger.error('[Control] ❌ Failed to start stream', { 
+                    deviceId: device_id, 
+                    file,
+                    error: err.message,
+                    stack: err.stack
+                  });
+                  // Fallback: используем предварительно сформированный URL
+                  playbackStreamUrl = streamEntry.proxyUrl || streamEntry.url;
                 }
-              } catch (err) {
-                logger.error('[Control] ❌ Failed to start stream', { 
-                  deviceId: device_id, 
+              } else {
+                logger.warn('[Control] ⚠️ Stream metadata not found or wrong type', {
+                  deviceId: device_id,
                   file,
-                  error: err.message,
-                  stack: err.stack
+                  hasMetadata: !!metadata,
+                  contentType: metadata?.content_type
                 });
-                // Fallback: используем предварительно сформированный URL
+                // Используем предварительно сформированный URL
                 playbackStreamUrl = streamEntry.proxyUrl || streamEntry.url;
               }
             } else {
-              logger.warn('[Control] ⚠️ Stream metadata not found or wrong type', {
-                deviceId: device_id,
-                file,
-                hasMetadata: !!metadata,
-                contentType: metadata?.content_type
-              });
-              // Используем предварительно сформированный URL
-              playbackStreamUrl = streamEntry.proxyUrl || streamEntry.url;
+              // FFmpeg уже запущен - используем существующий URL
+              playbackStreamUrl = existingUrl;
+              logger.debug('[Control] Stream already running', { deviceId: device_id, file, playbackUrl: existingUrl });
             }
           } else {
-            // FFmpeg уже запущен - используем существующий URL
-            playbackStreamUrl = existingUrl;
-            logger.debug('[Control] Stream already running', { deviceId: device_id, file, playbackUrl: existingUrl });
+            logger.warn('[Control] ⚠️ StreamManager not available', { deviceId: device_id, file });
+            // Fallback: используем предварительно сформированный URL
+            playbackStreamUrl = streamEntry.proxyUrl || streamEntry.url;
           }
         } else {
-          logger.warn('[Control] ⚠️ StreamManager not available', { deviceId: device_id, file });
-          // Fallback: используем предварительно сформированный URL
-          playbackStreamUrl = streamEntry.proxyUrl || streamEntry.url;
+          // HLS/DASH отдаем напрямую без FFmpeg proxy
+          playbackStreamUrl = streamEntry.url || streamEntry.proxyUrl;
+          logger.info('[Control] ✅ Using direct stream URL (no proxy)', {
+            deviceId: device_id,
+            file,
+            protocol: streamProtocol,
+            playbackUrl: playbackStreamUrl
+          });
         }
       }
       
@@ -561,69 +607,75 @@ export function setupControlHandlers(socket, deps) {
         });
         
         if (metadata && metadata.content_type === 'streaming') {
-          logger.info('[Control] ✅ Stream found in DB, will start FFmpeg', { 
+          const metadataProtocol = resolveStreamProtocol(metadata.stream_protocol, requestedStreamProtocol, metadata.stream_url);
+
+          logger.info('[Control] ✅ Stream found in DB, preparing playback strategy', { 
             deviceId: device_id, 
             file,
             streamUrl: metadata.stream_url,
-            streamProtocol: metadata.stream_protocol
+            streamProtocol: metadata.stream_protocol,
+            resolvedProtocol: metadataProtocol
           });
           // Создаем временный streamEntry из метаданных БД
           const tempStreamEntry = {
             name: metadata.original_name || file,
             url: metadata.stream_url,
             proxyUrl: null, // Будет установлен после запуска FFmpeg
-            protocol: (() => {
-              // Простая нормализация протокола (копия логики из files.js)
-              const protocol = metadata.stream_protocol?.toLowerCase() || '';
-              const url = metadata.stream_url?.toLowerCase() || '';
-              if (protocol === 'hls' || url.includes('.m3u8')) return 'hls';
-              if (protocol === 'dash' || url.includes('.mpd')) return 'dash';
-              if (protocol === 'mpegts' || protocol === 'mpeg-ts' || url.includes('.ts') || url.startsWith('udp://')) return 'mpegts';
-              return protocol || 'mpegts';
-            })()
+            protocol: metadataProtocol
           };
           
-          // КРИТИЧНО: Все внешние стримы (DASH, HLS, MPEG-TS) могут иметь проблемы с CORS
-          // Поэтому для всех стримов используем FFmpeg рестрим в HLS формат
-          const { getStreamManager } = await import('../streams/stream-manager.js');
-          const streamManager = getStreamManager();
-          if (streamManager) {
-            try {
-              playbackStreamUrl = await streamManager.ensureStreamRunning(device_id, file, metadata);
-              
-              // КРИТИЧНО: Если ensureStreamRunning вернул null, используем fallback
-              if (!playbackStreamUrl) {
-                logger.warn('[Control] ⚠️ ensureStreamRunning returned null from DB, using fallback', {
-                  deviceId: device_id,
-                  file,
-                  streamUrl: metadata.stream_url
-                });
-                playbackStreamUrl = metadata.stream_url;
-                tempStreamEntry.proxyUrl = null;
-              } else {
-                tempStreamEntry.proxyUrl = playbackStreamUrl;
-                logger.info('[Control] ✅ FFmpeg started from DB metadata', { 
+          if (shouldProxyStreamProtocol(metadataProtocol)) {
+            const { getStreamManager } = await import('../streams/stream-manager.js');
+            const streamManager = getStreamManager();
+            if (streamManager) {
+              try {
+                playbackStreamUrl = await streamManager.ensureStreamRunning(device_id, file, metadata);
+                
+                // КРИТИЧНО: Если ensureStreamRunning вернул null, используем fallback
+                if (!playbackStreamUrl) {
+                  logger.warn('[Control] ⚠️ ensureStreamRunning returned null from DB, using fallback', {
+                    deviceId: device_id,
+                    file,
+                    streamUrl: metadata.stream_url
+                  });
+                  playbackStreamUrl = metadata.stream_url;
+                  tempStreamEntry.proxyUrl = null;
+                } else {
+                  tempStreamEntry.proxyUrl = playbackStreamUrl;
+                  logger.info('[Control] ✅ FFmpeg started from DB metadata', { 
+                    deviceId: device_id, 
+                    file,
+                    protocol: tempStreamEntry.protocol,
+                    playbackUrl: playbackStreamUrl 
+                  });
+                }
+              } catch (err) {
+                logger.error('[Control] ❌ Failed to start stream from DB', { 
                   deviceId: device_id, 
                   file,
-                  protocol: tempStreamEntry.protocol,
-                  playbackUrl: playbackStreamUrl 
+                  error: err.message 
                 });
+                // Fallback: используем оригинальный URL
+                playbackStreamUrl = metadata.stream_url;
+                tempStreamEntry.proxyUrl = null;
               }
-            } catch (err) {
-              logger.error('[Control] ❌ Failed to start stream from DB', { 
-                deviceId: device_id, 
-                file,
-                error: err.message 
-              });
+            } else {
+              logger.error('[Control] ❌ StreamManager not available', { deviceId: device_id, file });
               // Fallback: используем оригинальный URL
               playbackStreamUrl = metadata.stream_url;
               tempStreamEntry.proxyUrl = null;
             }
           } else {
-            logger.error('[Control] ❌ StreamManager not available', { deviceId: device_id, file });
+            // HLS/DASH из БД отдаем напрямую
             // Fallback: используем оригинальный URL
             playbackStreamUrl = metadata.stream_url;
             tempStreamEntry.proxyUrl = null;
+            logger.info('[Control] ✅ Using direct stream URL from DB (no proxy)', {
+              deviceId: device_id,
+              file,
+              protocol: tempStreamEntry.protocol,
+              playbackUrl: playbackStreamUrl
+            });
           }
           
           // Используем временный streamEntry
@@ -638,19 +690,10 @@ export function setupControlHandlers(socket, deps) {
       // КРИТИЧНО: Определяем эффективный протокол для воспроизведения
       // Если используется proxyUrl (HLS рестрим через FFmpeg), протокол всегда 'hls'
       // Если proxyUrl НЕТ, определяем по protocol / requestedStreamProtocol / URL
-      let baseProtocol = streamEntry?.protocol || requestedStreamProtocol || 'mpegts';
-      
-      if (!streamEntry?.proxyUrl && typeof playbackStreamUrl === 'string') {
-        const lowerUrl = playbackStreamUrl.toLowerCase();
-        if (lowerUrl.includes('.mpd')) {
-          baseProtocol = 'dash';
-        } else if (lowerUrl.includes('.m3u8')) {
-          baseProtocol = 'hls';
-        }
-      }
-      
+      const baseProtocol = resolveStreamProtocol(streamEntry?.protocol, requestedStreamProtocol, streamEntry?.url || playbackStreamUrl);
+      const playbackProtocol = detectStreamProtocolFromUrl(playbackStreamUrl);
       const effectiveStreamProtocol = type === 'streaming'
-        ? (streamEntry?.proxyUrl ? 'hls' : baseProtocol)
+        ? (playbackProtocol || baseProtocol)
         : null;
       
       // Логируем для отладки DASH стримов
