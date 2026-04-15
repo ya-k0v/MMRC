@@ -92,9 +92,12 @@ echo ""
 echo "Installing system dependencies..."
 if [ "$OS" = "ubuntu" ] || [ "$OS" = "debian" ]; then
     sudo apt-get update
-    sudo apt-get install -y ffmpeg libreoffice imagemagick graphicsmagick unzip sqlite3
+    sudo apt-get install -y ffmpeg libreoffice imagemagick graphicsmagick unzip sqlite3 adb netcat-openbsd
 elif [ "$OS" = "centos" ] || [ "$OS" = "rhel" ]; then
-    sudo yum install -y ffmpeg libreoffice ImageMagick GraphicsMagick unzip sqlite
+    sudo yum install -y ffmpeg libreoffice ImageMagick GraphicsMagick unzip sqlite nmap-ncat || sudo yum install -y ffmpeg libreoffice ImageMagick GraphicsMagick unzip sqlite
+    if ! command -v adb &> /dev/null; then
+        sudo yum install -y android-tools || echo "⚠️  adb package not found in current repos; install it manually"
+    fi
 fi
 
 # Install npm packages

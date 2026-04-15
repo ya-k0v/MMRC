@@ -33,6 +33,9 @@ LimitNOFILE=65535
 
 # Environment
 Environment=NODE_ENV=production
+Environment=HOME=/home/vcuser
+Environment=ANDROID_USER_HOME=/home/vcuser/.android
+Environment=ANDROID_SDK_HOME=/home/vcuser
 # Загружаем переменные из .env файла
 EnvironmentFile=-/var/lib/mmrc/.env
 

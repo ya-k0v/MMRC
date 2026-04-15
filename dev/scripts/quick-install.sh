@@ -184,7 +184,7 @@ echo -e "${BLUE}[1/7] Installing system dependencies...${NC}"
 apt-get update -qq
 
 # Устанавливаем базовые инструменты
-apt-get install -y curl wget git build-essential sqlite3
+apt-get install -y curl wget git build-essential sqlite3 adb netcat-openbsd
 
 # Node.js (если еще не установлен)
 if ! command -v node &> /dev/null; then
@@ -256,7 +256,7 @@ cd "$INSTALL_DIR"
 
 # Клонируем из GitHub
 echo "  Cloning from GitHub..."
-git clone https://github.com/ya-k0v/VideoControl.git .
+git clone https://github.com/ya-k0v/MMRC.git .
 
 echo -e "${GREEN}✅ Project downloaded${NC}"
 
@@ -607,8 +607,11 @@ else
 fi
 
 # Создаем домашнюю директорию для vcuser
-mkdir -p /home/$SERVICE_USER/.cache /home/$SERVICE_USER/.config
-chown -R $SERVICE_USER:$SERVICE_GROUP /home/$SERVICE_USER/.cache /home/$SERVICE_USER/.config
+mkdir -p /home/$SERVICE_USER/.cache /home/$SERVICE_USER/.config /home/$SERVICE_USER/.android
+touch /home/$SERVICE_USER/.android/adb_usb.ini
+chown -R $SERVICE_USER:$SERVICE_GROUP /home/$SERVICE_USER/.cache /home/$SERVICE_USER/.config /home/$SERVICE_USER/.android
+chmod 700 /home/$SERVICE_USER/.android
+chmod 600 /home/$SERVICE_USER/.android/adb_usb.ini
 chmod 755 /home/$SERVICE_USER/.cache /home/$SERVICE_USER/.config
 echo -e "  ${GREEN}✅ LibreOffice cache directories created for $SERVICE_USER${NC}"
 
@@ -679,6 +682,9 @@ ProtectSystem=full
 
 # Environment
 Environment=NODE_ENV=production
+Environment=HOME=/home/$SERVICE_USER
+Environment=ANDROID_USER_HOME=/home/$SERVICE_USER/.android
+Environment=ANDROID_SDK_HOME=/home/$SERVICE_USER
 Environment=JWT_SECRET=$JWT_SECRET_VALUE
 EnvironmentFile=$INSTALL_DIR/.env
 

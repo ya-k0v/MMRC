@@ -86,6 +86,7 @@ bin/yt-dlp.tmp-*
 
 # Android project build output
 clients/android-mediaplayer/app/build/
+clients/android-mediaplayer/app-release.apk
 clients/android-mediaplayer/.gradle/
 clients/android-mediaplayer/local.properties
 clients/android-mediaplayer/.cxx/
