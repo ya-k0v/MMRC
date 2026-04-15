@@ -433,7 +433,7 @@ const MANUAL_RESTART_DELAY_MS = Math.max(500, Number(process.env.MANUAL_RESTART_
 const SERVICE_LOGS_MAX_LINES = Math.max(50, Number(process.env.SERVICE_LOGS_MAX_LINES || 2000));
 const SERVICE_LOGS_DEFAULT_LINES = Math.max(20, Number(process.env.SERVICE_LOGS_DEFAULT_LINES || 200));
 const SERVICE_LOGS_MAX_CHUNK_BYTES = Math.max(64 * 1024, Number(process.env.SERVICE_LOGS_MAX_CHUNK_BYTES || 512 * 1024));
-const ADMIN_SERVICE_LOGS_DIR = path.join(ROOT, '.tmp', 'logs');
+const ADMIN_SERVICE_LOGS_FALLBACK_DIR = path.join(ROOT, '.tmp', 'logs');
 const ADMIN_DB_IMPORT_DIR = path.join(ROOT, '.tmp', 'db-import');
 let isServiceRestartScheduled = false;
 
@@ -474,16 +474,43 @@ function clampInt(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function resolveLatestServiceLogFilePath() {
-  const candidateDirs = [path.resolve(ADMIN_SERVICE_LOGS_DIR)];
-
+function getServiceLogsCandidateDirs() {
   const seenDirs = new Set();
-  for (const dirPath of candidateDirs) {
-    if (!dirPath || seenDirs.has(dirPath)) continue;
-    seenDirs.add(dirPath);
+  const candidates = [getLogsDir(), ADMIN_SERVICE_LOGS_FALLBACK_DIR];
 
+  return candidates
+    .map((dirPath) => path.resolve(String(dirPath || '')))
+    .filter((dirPath) => {
+      if (!dirPath || seenDirs.has(dirPath)) {
+        return false;
+      }
+      seenDirs.add(dirPath);
+      return true;
+    });
+}
+
+function validateServiceLogFilePath(filePath) {
+  const resolvedFilePath = path.resolve(String(filePath || ''));
+
+  for (const baseDir of getServiceLogsCandidateDirs()) {
     try {
-        const safeDirPath = validatePath(path.resolve(dirPath), ADMIN_SERVICE_LOGS_DIR);
+      const safeFilePath = validatePath(resolvedFilePath, baseDir);
+      const isAllowedLogFileName = /^combined-\d{4}-\d{2}-\d{2}\.log$/.test(path.basename(safeFilePath));
+      if (isAllowedLogFileName) {
+        return safeFilePath;
+      }
+    } catch {
+      // Try next candidate dir.
+    }
+  }
+
+  throw new Error('Invalid service log path');
+}
+
+function resolveLatestServiceLogFilePath() {
+  for (const dirPath of getServiceLogsCandidateDirs()) {
+    try {
+      const safeDirPath = validatePath(dirPath, dirPath);
       if (!fs.existsSync(safeDirPath)) continue;
 
       const files = fs.readdirSync(safeDirPath)
@@ -505,11 +532,7 @@ function resolveLatestServiceLogFilePath() {
 
 function readLastLinesFromFile(filePath, lineLimit) {
   const safeLimit = clampInt(parsePositiveInt(lineLimit, SERVICE_LOGS_DEFAULT_LINES), 1, SERVICE_LOGS_MAX_LINES);
-  const safeFilePath = validatePath(path.resolve(String(filePath || '')), ADMIN_SERVICE_LOGS_DIR);
-  const isAllowedLogFileName = /^combined-\d{4}-\d{2}-\d{2}\.log$/.test(path.basename(safeFilePath));
-  if (!isAllowedLogFileName) {
-    throw new Error('Invalid service log path');
-  }
+  const safeFilePath = validateServiceLogFilePath(filePath);
   const fd = fs.openSync(safeFilePath, 'r');
 
   try {
@@ -550,11 +573,7 @@ function readLastLinesFromFile(filePath, lineLimit) {
 
 function readLinesFromOffset(filePath, offset) {
   const safeOffset = Math.max(0, parsePositiveInt(offset, 0));
-  const safeFilePath = validatePath(path.resolve(String(filePath || '')), ADMIN_SERVICE_LOGS_DIR);
-  const isAllowedLogFileName = /^combined-\d{4}-\d{2}-\d{2}\.log$/.test(path.basename(safeFilePath));
-  if (!isAllowedLogFileName) {
-    throw new Error('Invalid service log path');
-  }
+  const safeFilePath = validateServiceLogFilePath(filePath);
   const fd = fs.openSync(safeFilePath, 'r');
 
   try {

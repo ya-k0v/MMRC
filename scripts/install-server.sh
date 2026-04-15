@@ -23,7 +23,7 @@ escape_sed_replacement() {
 
 install_dependencies() {
   apt-get update -qq
-  apt-get install -y curl wget git build-essential ffmpeg libreoffice imagemagick graphicsmagick unzip sqlite3 nginx rsync
+  apt-get install -y curl wget git build-essential ffmpeg libreoffice imagemagick graphicsmagick unzip sqlite3 nginx rsync adb netcat-openbsd
 
   local need_node=1
   if command -v node >/dev/null 2>&1; then
@@ -50,8 +50,20 @@ ensure_service_account() {
   fi
 
   if ! id "$SERVICE_USER" >/dev/null 2>&1; then
-    useradd -r -g "$SERVICE_GROUP" -d /home/$SERVICE_USER -s /usr/sbin/nologin "$SERVICE_USER"
+    useradd -r -m -g "$SERVICE_GROUP" -d /home/$SERVICE_USER -s /usr/sbin/nologin "$SERVICE_USER"
   fi
+
+  local service_home
+  service_home="$(getent passwd "$SERVICE_USER" | cut -d: -f6)"
+  if [[ -z "$service_home" ]] || [[ "$service_home" == "/" ]]; then
+    service_home="/home/$SERVICE_USER"
+  fi
+
+  mkdir -p "$service_home/.android"
+  touch "$service_home/.android/adb_usb.ini"
+  chown -R "$SERVICE_USER:$SERVICE_GROUP" "$service_home"
+  chmod 700 "$service_home" "$service_home/.android"
+  chmod 600 "$service_home/.android/adb_usb.ini"
 }
 
 sync_project() {

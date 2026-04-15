@@ -5,36 +5,120 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { requireAdmin } from '../middleware/auth.js';
 import logger from '../utils/logger.js';
+import { installAndSetupApk } from '../utils/apk-installer.js';
+import { getSettings } from '../config/settings-manager.js';
+import { validatePath } from '../utils/path-validator.js';
 
-// Получить admin accessToken через /api/auth/login
-async function getAdminAccessToken(serverUrl) {
+// Для поддержки __dirname в ES-модулях
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const PROJECT_ROOT = path.resolve(__dirname, '../..');
+const APK_UPLOAD_DIR = path.resolve(process.env.MMRC_APK_UPLOAD_DIR || '/tmp/mmrc-apk-upload');
+
+if (!fs.existsSync(APK_UPLOAD_DIR)) {
+  fs.mkdirSync(APK_UPLOAD_DIR, { recursive: true, mode: 0o700 });
+}
+
+const router = express.Router();
+
+// Хранилище для временного сохранения APK
+const upload = multer({ dest: APK_UPLOAD_DIR, limits: { fileSize: 200 * 1024 * 1024 } });
+
+function resolveUploadedApkPath(file) {
+  if (!file || typeof file.filename !== 'string') {
+    return null;
+  }
+
+  const safeFileName = file.filename.trim();
+  if (!/^[A-Za-z0-9._-]+$/.test(safeFileName)) {
+    throw new Error('Некорректное имя загруженного APK файла');
+  }
+
+  return validatePath(path.join(APK_UPLOAD_DIR, safeFileName), APK_UPLOAD_DIR);
+}
+
+function getInternalApiBaseUrl() {
+  const configured = String(process.env.ADMIN_INTERNAL_API_URL || '').trim();
+  if (configured) {
+    return configured.replace(/\/$/, '');
+  }
+
+  const port = String(process.env.PORT || '3000').trim() || '3000';
+  return `http://127.0.0.1:${port}`;
+}
+
+// Fallback для случаев, когда route вызван без Bearer токена.
+async function getAdminAccessToken(apiBaseUrl) {
   const fetch = (await import('node-fetch')).default;
-  // Можно вынести в env/config
   const username = process.env.ADMIN_USERNAME || 'admin';
   const password = process.env.ADMIN_PASSWORD || 'admin123';
-  const loginUrl = `${serverUrl.replace(/\/$/, '')}/api/auth/login`;
+  const loginUrl = `${apiBaseUrl.replace(/\/$/, '')}/api/auth/login`;
+
   const resp = await fetch(loginUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password })
   });
+
   if (!resp.ok) {
     throw new Error('Не удалось получить admin accessToken: ' + (await resp.text()));
   }
+
   const data = await resp.json();
   return data.accessToken;
 }
-import { installAndSetupApk } from '../utils/apk-installer.js';
-import { getSettings } from '../config/settings-manager.js';
 
-// Для поддержки __dirname в ES-модулях
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+function getApkCandidates() {
+  const dirsToScan = [
+    PROJECT_ROOT,
+    path.join(PROJECT_ROOT, 'clients/android-mediaplayer'),
+    path.join(PROJECT_ROOT, 'clients/android-mediaplayer/app/build/outputs/apk/release'),
+    path.join(PROJECT_ROOT, 'clients/android-mediaplayer/app/build/outputs/apk/debug')
+  ];
 
-const router = express.Router();
+  const explicitFiles = [
+    path.join(PROJECT_ROOT, 'clients/android-mediaplayer/app-release.apk'),
+    path.join(PROJECT_ROOT, 'clients/android-mediaplayer/app/build/outputs/apk/release/app-release.apk'),
+    path.join(PROJECT_ROOT, 'clients/android-mediaplayer/app/build/outputs/apk/debug/app-debug.apk')
+  ];
 
-// Хранилище для временного сохранения APK
-const upload = multer({ dest: '/tmp', limits: { fileSize: 200 * 1024 * 1024 } });
+  const collected = [...explicitFiles.filter((filePath) => fs.existsSync(filePath))];
+
+  for (const dirPath of dirsToScan) {
+    try {
+      if (!fs.existsSync(dirPath)) continue;
+      const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        if (!entry.name.toLowerCase().endsWith('.apk')) continue;
+        collected.push(path.join(dirPath, entry.name));
+      }
+    } catch (error) {
+      logger.debug('[Admin] Failed to scan APK directory', { dirPath, error: error.message });
+    }
+  }
+
+  return Array.from(new Set(collected.map((value) => path.resolve(value))));
+}
+
+function resolveDefaultApkPath() {
+  const candidates = getApkCandidates()
+    .map((filePath) => {
+      try {
+        const stats = fs.statSync(filePath);
+        return {
+          filePath,
+          mtimeMs: Number(stats.mtimeMs) || 0
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  return candidates.length ? candidates[0].filePath : null;
+}
 
 // POST /api/admin/install-apk
 router.post('/install-apk', requireAdmin, upload.single('apk'), async (req, res) => {
@@ -47,40 +131,77 @@ router.post('/install-apk', requireAdmin, upload.single('apk'), async (req, res)
   // Можно хранить serverUrl в app-settings.json или .env, либо задать явно здесь:
   // Например, если сервер работает на 80 порту и доступен по IP сервера:
   const serverUrl = settings.serverUrl || process.env.SERVER_URL || `http://${req.headers.host || '127.0.0.1:3000'}`;
-  // Если файл был загружен через multipart — используем его, иначе — фиксированный путь
-  let apkPath = req.file?.path;
-  const FIXED_APK_PATH = path.resolve(__dirname, '../../clients/android-mediaplayer/app-release.apk');
-  if (!apkPath) {
-    apkPath = FIXED_APK_PATH;
+
+  let uploadedApkPath = null;
+  if (req.file) {
+    try {
+      uploadedApkPath = resolveUploadedApkPath(req.file);
+    } catch (error) {
+      logger.warn('Некорректный путь загруженного APK', { error: error.message });
+      return res.status(400).json({ ok: false, error: 'Некорректный путь загруженного APK файла' });
+    }
   }
-  // IP — адрес устройства, deviceId — ID устройства, deviceName — имя устройства
-  if (!ip || !deviceId || !deviceName || !apkPath || !fs.existsSync(apkPath)) {
-    return res.status(400).json({ ok: false, error: 'IP, ID, имя и файл APK обязательны' });
+
+  // Если файл не загружен через multipart, ищем APK в стандартных путях и build output.
+  let apkPath = uploadedApkPath || resolveDefaultApkPath();
+
+  if (!ip || !deviceId || !deviceName) {
+    return res.status(400).json({ ok: false, error: 'IP, ID и имя устройства обязательны' });
   }
+
+  if (!apkPath || !fs.existsSync(apkPath)) {
+    return res.status(400).json({
+      ok: false,
+      error: 'APK файл не найден. Загрузите APK вручную или соберите Android клиент (app-release.apk).'
+    });
+  }
+
   try {
     // Вся логика установки и настройки APK вынесена в отдельную функцию
     await installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl });
 
     // После успешной настройки — создать устройство через основной API
     let deviceAdded = false;
+    let deviceAlreadyExists = false;
     try {
       const fetch = (await import('node-fetch')).default;
-      const apiUrl = `${serverUrl.replace(/\/$/, '')}/api/devices`;
-      // Получаем admin accessToken
-      const accessToken = await getAdminAccessToken(serverUrl);
-      const resp = await fetch(apiUrl, {
+      const apiBaseUrl = getInternalApiBaseUrl();
+      const apiUrl = `${apiBaseUrl}/api/devices`;
+      const requestBody = JSON.stringify({ device_id: deviceId, name: deviceName });
+      const requestHeaders = {
+        'Content-Type': 'application/json'
+      };
+
+      const incomingAuthHeader = req.get('authorization');
+      if (incomingAuthHeader) {
+        requestHeaders.Authorization = incomingAuthHeader;
+      }
+
+      let resp = await fetch(apiUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`
-        },
-        body: JSON.stringify({ device_id: deviceId, name: deviceName })
+        headers: requestHeaders,
+        body: requestBody
       });
+
+      if ((resp.status === 401 || resp.status === 403) && !incomingAuthHeader) {
+        const accessToken = await getAdminAccessToken(apiBaseUrl);
+        resp = await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`
+          },
+          body: requestBody
+        });
+      }
+
       if (resp.ok) {
         deviceAdded = true;
+      } else if (resp.status === 409) {
+        deviceAlreadyExists = true;
       } else {
         const errText = await resp.text();
-        logger.warn('Ошибка при добавлении устройства через API', { error: errText });
+        logger.warn('Ошибка при добавлении устройства через API', { apiUrl, status: resp.status, error: errText });
       }
     } catch (e) {
       logger.warn('Не удалось создать устройство через API', { error: e.message });
@@ -93,14 +214,18 @@ router.post('/install-apk', requireAdmin, upload.single('apk'), async (req, res)
     if (io && io.emit) {
       io.emit('devices/updated');
     }
-    return res.json({ ok: true, deviceAdded });
+    return res.json({ ok: true, deviceAdded, deviceAlreadyExists });
   } catch (e) {
     logger.error('Ошибка при установке APK', { error: e?.message, stack: e?.stack });
-    return res.status(500).json({ ok: false, error: 'Ошибка при установке APK на устройство' });
+    return res.status(500).json({ ok: false, error: e?.message || 'Ошибка при установке APK на устройство' });
   } finally {
     // Удаляем временный файл, если он был загружен
-    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
+    if (uploadedApkPath && fs.existsSync(uploadedApkPath)) {
+      try {
+        fs.unlinkSync(uploadedApkPath);
+      } catch {
+        // Ignore cleanup errors for temporary uploads.
+      }
     }
   }
 });
