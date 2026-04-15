@@ -48,11 +48,6 @@ function applySquareActionButtonStyle(button) {
   button.style.cssText = 'min-width:30px; width:30px; height:30px; padding:0; display:flex; align-items:center; justify-content:center; line-height:1; border-radius:var(--radius-sm);';
 }
 
-function applyWideActionButtonStyle(button) {
-  if (!button) return;
-  button.style.cssText = 'height:30px; padding:0 10px; display:inline-flex; align-items:center; justify-content:center; line-height:1; border-radius:var(--radius-sm); font-size:12px;';
-}
-
 let optimizeMenuDocumentCloseBound = false;
 
 function ensureOptimizeMenuCloseHandler() {
