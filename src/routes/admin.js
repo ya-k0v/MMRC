@@ -47,6 +47,78 @@ function getInternalApiBaseUrl() {
   return `http://127.0.0.1:${port}`;
 }
 
+function parseApiErrorMessage(rawBody, fallback = 'Неизвестная ошибка API') {
+  if (!rawBody) {
+    return fallback;
+  }
+
+  try {
+    const parsed = JSON.parse(rawBody);
+    if (parsed && typeof parsed.error === 'string' && parsed.error.trim()) {
+      return parsed.error.trim();
+    }
+  } catch {
+    // Body may be plain text.
+  }
+
+  return String(rawBody).trim() || fallback;
+}
+
+async function createDeviceViaApi({ deviceId, deviceName, incomingAuthHeader }) {
+  const fetch = (await import('node-fetch')).default;
+  const apiBaseUrl = getInternalApiBaseUrl();
+  const apiUrl = `${apiBaseUrl}/api/devices`;
+  const requestBody = JSON.stringify({ device_id: deviceId, name: deviceName });
+  const requestHeaders = {
+    'Content-Type': 'application/json'
+  };
+
+  if (incomingAuthHeader) {
+    requestHeaders.Authorization = incomingAuthHeader;
+  }
+
+  let resp = await fetch(apiUrl, {
+    method: 'POST',
+    headers: requestHeaders,
+    body: requestBody
+  });
+
+  if ((resp.status === 401 || resp.status === 403) && !incomingAuthHeader) {
+    const accessToken = await getAdminAccessToken(apiBaseUrl);
+    resp = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`
+      },
+      body: requestBody
+    });
+  }
+
+  if (resp.ok) {
+    return { deviceAdded: true, deviceAlreadyExists: false };
+  }
+
+  const responseText = await resp.text();
+  const apiError = parseApiErrorMessage(responseText, `Ошибка API (${resp.status})`);
+
+  if (resp.status === 409) {
+    const normalized = apiError.toLowerCase();
+    const alreadyExistsById =
+      normalized.includes('устройство уже существует') ||
+      normalized.includes('device already exists');
+
+    if (alreadyExistsById) {
+      return { deviceAdded: false, deviceAlreadyExists: true };
+    }
+  }
+
+  const error = new Error(apiError);
+  error.status = resp.status;
+  error.apiUrl = apiUrl;
+  throw error;
+}
+
 // Fallback для случаев, когда route вызван без Bearer токена.
 async function getAdminAccessToken(apiBaseUrl) {
   const fetch = (await import('node-fetch')).default;
@@ -149,63 +221,26 @@ router.post('/install-apk', requireAdmin, upload.single('apk'), async (req, res)
     return res.status(400).json({ ok: false, error: 'IP, ID и имя устройства обязательны' });
   }
 
-  if (!apkPath || !fs.existsSync(apkPath)) {
+  if (!apkPath) {
     return res.status(400).json({
       ok: false,
       error: 'APK файл не найден. Загрузите APK вручную или соберите Android клиент (app-release.apk).'
     });
   }
 
+  let installCompleted = false;
   try {
     // Вся логика установки и настройки APK вынесена в отдельную функцию
     await installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl });
+    installCompleted = true;
 
-    // После успешной настройки — создать устройство через основной API
-    let deviceAdded = false;
-    let deviceAlreadyExists = false;
-    try {
-      const fetch = (await import('node-fetch')).default;
-      const apiBaseUrl = getInternalApiBaseUrl();
-      const apiUrl = `${apiBaseUrl}/api/devices`;
-      const requestBody = JSON.stringify({ device_id: deviceId, name: deviceName });
-      const requestHeaders = {
-        'Content-Type': 'application/json'
-      };
-
-      const incomingAuthHeader = req.get('authorization');
-      if (incomingAuthHeader) {
-        requestHeaders.Authorization = incomingAuthHeader;
-      }
-
-      let resp = await fetch(apiUrl, {
-        method: 'POST',
-        headers: requestHeaders,
-        body: requestBody
-      });
-
-      if ((resp.status === 401 || resp.status === 403) && !incomingAuthHeader) {
-        const accessToken = await getAdminAccessToken(apiBaseUrl);
-        resp = await fetch(apiUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`
-          },
-          body: requestBody
-        });
-      }
-
-      if (resp.ok) {
-        deviceAdded = true;
-      } else if (resp.status === 409) {
-        deviceAlreadyExists = true;
-      } else {
-        const errText = await resp.text();
-        logger.warn('Ошибка при добавлении устройства через API', { apiUrl, status: resp.status, error: errText });
-      }
-    } catch (e) {
-      logger.warn('Не удалось создать устройство через API', { error: e.message });
-    }
+    // После успешной настройки устройство должно быть создано так же, как при ручном добавлении через Devices.
+    const incomingAuthHeader = req.get('authorization');
+    const { deviceAdded, deviceAlreadyExists } = await createDeviceViaApi({
+      deviceId,
+      deviceName,
+      incomingAuthHeader
+    });
 
     // 6. Возвращаем успешный ответ
     // Обновляем панели
@@ -217,6 +252,14 @@ router.post('/install-apk', requireAdmin, upload.single('apk'), async (req, res)
     return res.json({ ok: true, deviceAdded, deviceAlreadyExists });
   } catch (e) {
     logger.error('Ошибка при установке APK', { error: e?.message, stack: e?.stack });
+    if (installCompleted) {
+      const statusCode = e?.status === 409 ? 409 : 500;
+      return res.status(statusCode).json({
+        ok: false,
+        error: `APK установлен, но устройство создать не удалось: ${e?.message || 'неизвестная ошибка'}`
+      });
+    }
+
     return res.status(500).json({ ok: false, error: e?.message || 'Ошибка при установке APK на устройство' });
   } finally {
     // Удаляем временный файл, если он был загружен
