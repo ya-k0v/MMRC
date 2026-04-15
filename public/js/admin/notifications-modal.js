@@ -8,6 +8,174 @@ import { adminFetch } from './auth.js';
 
 let socket = null;
 let currentNotifications = [];
+let subscribedSocket = null;
+let socketListenersBound = false;
+let socketNotificationHandler = null;
+let socketAcknowledgedHandler = null;
+let socketRemovedHandler = null;
+
+const NOTIFICATIONS_MODAL_LIST_ID = 'notificationsModalList';
+const NOTIFICATIONS_MODAL_FOOTER_ID = 'notificationsModalFooter';
+
+function getNotificationSortTime(notification) {
+  return new Date(notification.updatedAt || notification.timestamp || 0).getTime();
+}
+
+function sortNotifications(items = []) {
+  return [...items].sort((a, b) => getNotificationSortTime(b) - getNotificationSortTime(a));
+}
+
+function removeNotificationFromState(id) {
+  const targetId = String(id || '');
+  if (!targetId) return;
+  currentNotifications = currentNotifications.filter((item) => item.id !== targetId);
+}
+
+function upsertNotificationInState(notification) {
+  if (!notification || !notification.id) return;
+
+  if (notification.acknowledged) {
+    removeNotificationFromState(notification.id);
+    return;
+  }
+
+  const index = currentNotifications.findIndex((item) => item.id === notification.id);
+  if (index >= 0) {
+    currentNotifications[index] = {
+      ...currentNotifications[index],
+      ...notification
+    };
+  } else {
+    currentNotifications.push(notification);
+  }
+
+  currentNotifications = sortNotifications(currentNotifications);
+}
+
+function isNotificationsModalOpen() {
+  const overlay = document.getElementById('modalOverlay');
+  const list = document.getElementById(NOTIFICATIONS_MODAL_LIST_ID);
+  return Boolean(overlay && overlay.style.display === 'flex' && list);
+}
+
+function setElementHtml(target, html) {
+  if (!target) return;
+
+  while (target.firstChild) {
+    target.removeChild(target.firstChild);
+  }
+
+  const tempContainer = document.createElement('div');
+  tempContainer.insertAdjacentHTML('beforeend', html);
+  while (tempContainer.firstChild) {
+    target.appendChild(tempContainer.firstChild);
+  }
+}
+
+function buildNotificationsListHtml() {
+  if (!currentNotifications.length) {
+    return '<div style="text-align:center; padding:40px; color:var(--text-secondary);">Нет активных уведомлений</div>';
+  }
+
+  return currentNotifications.map(renderNotification).join('');
+}
+
+function buildNotificationsModalContent() {
+  const notificationsHtml = buildNotificationsListHtml();
+  const footerDisplay = currentNotifications.length > 0 ? 'flex' : 'none';
+
+  return `
+    <div id="${NOTIFICATIONS_MODAL_LIST_ID}" style="display:flex; flex-direction:column; gap:var(--space-md); max-height:70vh; overflow-y:auto;">
+      ${notificationsHtml}
+    </div>
+    <div id="${NOTIFICATIONS_MODAL_FOOTER_ID}" style="margin-top:var(--space-md); padding-top:var(--space-md); border-top:1px solid var(--border); display:${footerDisplay}; gap:var(--space-sm); justify-content:flex-end;">
+      <button id="notificationsClearAll" class="secondary" style="min-width:auto;">Очистить все</button>
+    </div>
+  `;
+}
+
+function renderNotificationsModalContent() {
+  const listEl = document.getElementById(NOTIFICATIONS_MODAL_LIST_ID);
+  if (!listEl) return;
+
+  setElementHtml(listEl, buildNotificationsListHtml());
+
+  const footerEl = document.getElementById(NOTIFICATIONS_MODAL_FOOTER_ID);
+  if (footerEl) {
+    footerEl.style.display = currentNotifications.length > 0 ? 'flex' : 'none';
+  }
+
+  setupNotificationHandlers();
+}
+
+function detachRealtimeSocketListeners() {
+  if (!subscribedSocket || !socketListenersBound) {
+    return;
+  }
+
+  if (socketNotificationHandler) {
+    subscribedSocket.off('notification', socketNotificationHandler);
+  }
+  if (socketAcknowledgedHandler) {
+    subscribedSocket.off('notification:acknowledged', socketAcknowledgedHandler);
+  }
+  if (socketRemovedHandler) {
+    subscribedSocket.off('notification:removed', socketRemovedHandler);
+  }
+
+  socketListenersBound = false;
+}
+
+function attachRealtimeSocketListeners() {
+  if (!socket || typeof socket.on !== 'function' || typeof socket.off !== 'function') {
+    return;
+  }
+
+  if (subscribedSocket && subscribedSocket !== socket) {
+    detachRealtimeSocketListeners();
+  }
+
+  if (socketListenersBound && subscribedSocket === socket) {
+    return;
+  }
+
+  socketNotificationHandler = ({ notification, action } = {}) => {
+    if (!notification) return;
+
+    if (action === 'removed' || action === 'acknowledged') {
+      removeNotificationFromState(notification.id);
+    } else {
+      upsertNotificationInState(notification);
+    }
+
+    if (isNotificationsModalOpen()) {
+      renderNotificationsModalContent();
+    }
+  };
+
+  socketAcknowledgedHandler = ({ id } = {}) => {
+    if (!id) return;
+    removeNotificationFromState(id);
+    if (isNotificationsModalOpen()) {
+      renderNotificationsModalContent();
+    }
+  };
+
+  socketRemovedHandler = ({ id } = {}) => {
+    if (!id) return;
+    removeNotificationFromState(id);
+    if (isNotificationsModalOpen()) {
+      renderNotificationsModalContent();
+    }
+  };
+
+  socket.on('notification', socketNotificationHandler);
+  socket.on('notification:acknowledged', socketAcknowledgedHandler);
+  socket.on('notification:removed', socketRemovedHandler);
+
+  subscribedSocket = socket;
+  socketListenersBound = true;
+}
 
 function getActionButtonStyle(variant = 'secondary') {
   if (variant === 'danger') {
@@ -51,27 +219,13 @@ export async function showNotificationsModal(socketIO = null) {
   } else if (window.socket) {
     socket = window.socket;
   }
+
+  attachRealtimeSocketListeners();
   
   // Загружаем уведомления
   await loadNotifications();
-  
-  // Формируем HTML
-  const notificationsHtml = currentNotifications.length > 0
-    ? currentNotifications.map(renderNotification).join('')
-    : '<div style="text-align:center; padding:40px; color:var(--text-secondary);">Нет активных уведомлений</div>';
-  
-  const content = `
-    <div style="display:flex; flex-direction:column; gap:var(--space-md); max-height:70vh; overflow-y:auto;">
-      ${notificationsHtml}
-    </div>
-    ${currentNotifications.length > 0 ? `
-      <div style="margin-top:var(--space-md); padding-top:var(--space-md); border-top:1px solid var(--border); display:flex; gap:var(--space-sm); justify-content:flex-end;">
-        <button id="notificationsClearAll" class="secondary" style="min-width:auto;">Очистить все</button>
-      </div>
-    ` : ''}
-  `;
-  
-  showModal('🔔 Уведомления', content);
+
+  showModal('🔔 Уведомления', buildNotificationsModalContent());
   
   // Обработчики
   setTimeout(() => {
@@ -89,7 +243,7 @@ async function loadNotifications() {
       throw new Error(`HTTP ${response.status}`);
     }
     const data = await response.json();
-    currentNotifications = data.notifications || [];
+    currentNotifications = sortNotifications(data.notifications || []);
   } catch (error) {
     console.error('[Notifications Modal] Error loading notifications:', error);
     currentNotifications = [];
@@ -299,20 +453,8 @@ async function acknowledgeNotification(id) {
       throw new Error(`HTTP ${response.status}`);
     }
     
-    // Удаляем элемент из UI
-    const item = document.querySelector(`[data-notification-id="${id}"]`);
-    if (item) {
-      item.style.opacity = '0.5';
-      item.style.pointerEvents = 'none';
-      setTimeout(() => {
-        item.remove();
-        // Если уведомлений не осталось, перезагружаем
-        const remaining = document.querySelectorAll('.notification-item');
-        if (remaining.length === 0) {
-          showNotificationsModal();
-        }
-      }, 300);
-    }
+    removeNotificationFromState(id);
+    renderNotificationsModalContent();
     
     // Отправляем через Socket.IO (если доступен)
     if (socket) {
@@ -338,19 +480,8 @@ async function removeNotification(id) {
       throw new Error(`HTTP ${response.status}`);
     }
     
-    // Удаляем элемент из UI
-    const item = document.querySelector(`[data-notification-id="${id}"]`);
-    if (item) {
-      item.style.animation = 'fadeOut 0.3s ease-out';
-      setTimeout(() => {
-        item.remove();
-        // Если уведомлений не осталось, перезагружаем
-        const remaining = document.querySelectorAll('.notification-item');
-        if (remaining.length === 0) {
-          showNotificationsModal();
-        }
-      }, 300);
-    }
+    removeNotificationFromState(id);
+    renderNotificationsModalContent();
     
     // Отправляем через Socket.IO (если доступен)
     if (socket) {
@@ -454,8 +585,8 @@ async function clearAllNotifications() {
       });
     }
     
-    // Перезагружаем модальное окно
-    showNotificationsModal();
+    currentNotifications = [];
+    renderNotificationsModalContent();
   } catch (error) {
     console.error('[Notifications Modal] Error clearing all notifications:', error);
     await reportModalError('Ошибка очистки уведомлений', error);
