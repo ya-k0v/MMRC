@@ -300,14 +300,31 @@ export function createVideoInfoRouter(deps) {
       return { ok: false, status: 404, error: 'Устройство не найдено' };
     }
 
-    const ext = path.extname(fileName).toLowerCase();
+    const normalizedFileName = String(fileName || '');
+    if (!normalizedFileName || normalizedFileName.includes('\0') || path.basename(normalizedFileName) !== normalizedFileName) {
+      return { ok: false, status: 400, error: 'Некорректное имя файла' };
+    }
+
+    const ext = path.extname(normalizedFileName).toLowerCase();
     if (!VIDEO_EXTENSIONS.has(ext)) {
       return { ok: false, status: 400, error: 'Обработка поддерживается только для видеофайлов' };
     }
 
     const devicesPath = getDevicesPath();
-    const filePath = path.join(devicesPath, d.folder, fileName);
-    const inList = Array.isArray(d.files) ? d.files.includes(fileName) : false;
+    const devicesRoot = path.resolve(devicesPath);
+    const deviceRoot = path.resolve(devicesRoot, String(d.folder || ''));
+    const isInsideDevicesRoot = deviceRoot === devicesRoot || deviceRoot.startsWith(`${devicesRoot}${path.sep}`);
+    if (!isInsideDevicesRoot) {
+      return { ok: false, status: 400, error: 'Некорректный путь устройства' };
+    }
+
+    const filePath = path.resolve(deviceRoot, normalizedFileName);
+    const isInsideDeviceRoot = filePath.startsWith(`${deviceRoot}${path.sep}`);
+    if (!isInsideDeviceRoot) {
+      return { ok: false, status: 400, error: 'Некорректный путь к файлу' };
+    }
+
+    const inList = Array.isArray(d.files) ? d.files.includes(normalizedFileName) : false;
     const existsOnDisk = fs.existsSync(filePath);
 
     if (!inList && !existsOnDisk) {
