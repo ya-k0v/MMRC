@@ -1828,11 +1828,71 @@ body.admin-page #filesPanel {
 
 body.admin-page #filesPane .file-item-actions {
   justify-content: flex-end;
-  width: 100%;
+  width: auto;
   gap: 6px;
   flex-wrap: nowrap;
   align-items: center;
   overflow: visible;
+  margin-left: auto;
+}
+
+body.admin-page #filesPane .file-item-labels {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 var(--space-sm) 2px var(--space-sm);
+}
+
+body.admin-page #filesPane .file-item-labels .device-meta-chip {
+  font-size: 0.74rem;
+  padding: 2px 9px;
+}
+
+body.admin-page #filesPane .file-item-labels .file-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+body.admin-page #filesPane .file-item-labels .file-status-chip svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+body.admin-page #filesPane .cancelProcessingBtn {
+  width: 18px;
+  min-width: 18px;
+  max-width: 18px;
+  min-height: 18px;
+  height: 18px;
+  max-height: 18px;
+  padding: 0;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+body.admin-page #filesPane .cancelProcessingBtn svg {
+  width: 10px;
+  height: 10px;
+  display: block;
+}
+
+body.admin-page #filesPane .cancelProcessingBtn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+body.light.admin-page #filesPane .cancelProcessingBtn:hover:not(:disabled) {
+  background: rgba(15, 23, 42, 0.08);
 }
 
 body.admin-page #filesPane .file-item-actions button {
@@ -1873,8 +1933,10 @@ body.admin-page #filesPane .file-item-actions .optimizeMenuTrigger svg {
 body.admin-page #filesPane .file-item-actions .optimizeActionsMenu {
   display: none;
   position: absolute;
-  right: 0;
-  top: calc(100% + 6px);
+  right: calc(100% + 8px);
+  top: 0;
+  transform: 0;
+  transform-origin: right center;
   min-width: 176px;
   padding: 6px;
   border-radius: var(--radius-sm);
@@ -1883,7 +1945,7 @@ body.admin-page #filesPane .file-item-actions .optimizeActionsMenu {
   box-shadow: var(--shadow-md);
   flex-direction: column;
   gap: 4px;
-  z-index: calc(var(--z-sticky) + 6);
+  z-index: calc(var(--z-sticky) + 10);
 }
 
 body.admin-page #filesPane .file-item-actions .optimize-actions-wrap.is-open .optimizeActionsMenu {
@@ -1899,6 +1961,24 @@ body.admin-page #filesPane .file-item-actions .optimizeActionsMenu button {
   padding: 4px 10px;
   font-size: 0.8rem;
   justify-content: flex-start;
+}
+
+body.admin-page #filesPane .file-item-actions .optimizeActionsMenu .optimizeMenuOptionRound {
+  align-self: flex-end;
+  width: 32px;
+  min-width: 32px;
+  max-width: 32px;
+  min-height: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  justify-content: center;
+}
+
+body.admin-page #filesPane .file-item-actions .optimizeActionsMenu .optimizeMenuOptionRound svg {
+  width: 13px;
+  height: 13px;
+  display: block;
 }
 
 body.admin-page #filesPane #filePagerAdmin button {

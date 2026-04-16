@@ -9,6 +9,7 @@ import path from 'path';
 import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import logger from '../utils/logger.js';
+import { notificationsManager } from '../utils/notifications.js';
 import { setFileStatus, deleteFileStatus } from '../video/file-status.js';
 import { cancelOptimizationJob, hasActiveOptimizationJob } from '../video/optimizer.js';
 
@@ -44,7 +45,9 @@ export function createVideoInfoRouter(deps) {
   } = deps;
 
   const NIGHT_OPT_STATUS = 'scheduled_night';
+  const NIGHT_QUEUE_NOTIFICATION_KEY = 'night_optimize_queue';
   const nightQueue = new Map();
+  const nightQueueResults = [];
   const nightStartHour = parseHour(process.env.NIGHT_OPT_START_HOUR, 1);
   const nightEndHour = parseHour(process.env.NIGHT_OPT_END_HOUR, 6);
   const schedulerIntervalMs = Math.max(
@@ -52,8 +55,123 @@ export function createVideoInfoRouter(deps) {
     Number.parseInt(process.env.NIGHT_OPT_SCHEDULER_INTERVAL_MS || '60000', 10) || 60000
   );
   let isNightQueueRunning = false;
+  let currentNightQueueJob = null;
 
   const makeNightQueueKey = (deviceId, fileName) => `${deviceId}::${fileName}`;
+
+  const getDeviceLabel = (deviceId) => {
+    const name = devices[deviceId]?.name;
+    return name ? `${name} (${deviceId})` : String(deviceId || 'unknown-device');
+  };
+
+  const formatQueueJobLabel = (job) => `${getDeviceLabel(job.deviceId)}: ${job.fileName}`;
+
+  const pushNightQueueResult = (job, status, message = '') => {
+    if (!job?.deviceId || !job?.fileName) {
+      return;
+    }
+
+    nightQueueResults.push({
+      deviceId: job.deviceId,
+      fileName: job.fileName,
+      status: String(status || 'done'),
+      message: String(message || '').slice(0, 240),
+      timestamp: new Date().toISOString()
+    });
+
+    if (nightQueueResults.length > 40) {
+      nightQueueResults.splice(0, nightQueueResults.length - 40);
+    }
+  };
+
+  const buildNightQueueNotificationPayload = () => {
+    const queueItems = Array.from(nightQueue.values())
+      .sort((a, b) => Number(a.queuedAt || 0) - Number(b.queuedAt || 0));
+    const recentResults = nightQueueResults.slice(-8).reverse();
+
+    const queuePreview = queueItems.slice(0, 8).map(formatQueueJobLabel);
+    const queueOverflowCount = Math.max(0, queueItems.length - queuePreview.length);
+
+    const resultPreview = recentResults.map((entry) => {
+      const statusMap = {
+        done: 'готово',
+        skipped: 'уже оптимизирован',
+        cancelled: 'отменено',
+        failed: 'ошибка'
+      };
+      const label = formatQueueJobLabel(entry);
+      const statusLabel = statusMap[entry.status] || entry.status;
+      const extra = entry.message ? ` (${entry.message})` : '';
+      return `${label} — ${statusLabel}${extra}`;
+    });
+
+    const hasFailures = recentResults.some((entry) => entry.status === 'failed');
+    const severity = hasFailures ? 'warning' : 'info';
+
+    let title = '🌙 Ночная обработка';
+    if (currentNightQueueJob) {
+      title = '🌙 Ночная обработка: выполняется';
+    } else if (queueItems.length > 0) {
+      title = `🌙 Ночная обработка: в очереди ${queueItems.length}`;
+    } else if (recentResults.length > 0) {
+      title = '🌙 Ночная обработка: результаты';
+    }
+
+    const messageParts = [];
+    if (currentNightQueueJob) {
+      messageParts.push(`Сейчас: ${formatQueueJobLabel(currentNightQueueJob)}`);
+    }
+    if (queuePreview.length > 0) {
+      const queuePart = queueOverflowCount > 0
+        ? `${queuePreview.join(', ')} (+${queueOverflowCount})`
+        : queuePreview.join(', ');
+      messageParts.push(`Очередь: ${queuePart}`);
+    }
+    if (resultPreview.length > 0) {
+      messageParts.push(`Результаты: ${resultPreview.join(', ')}`);
+    }
+    if (messageParts.length === 0) {
+      messageParts.push('Очередь ночной обработки пуста.');
+    }
+
+    return {
+      type: 'night_optimize_queue',
+      severity,
+      title,
+      message: messageParts.join(' | ').slice(0, 980),
+      key: NIGHT_QUEUE_NOTIFICATION_KEY,
+      source: 'video-info',
+      details: {
+        window: `${String(nightStartHour).padStart(2, '0')}:00-${String(nightEndHour).padStart(2, '0')}:00`,
+        queueCount: queueItems.length,
+        queue: queueItems.slice(0, 20).map((job) => ({
+          deviceId: job.deviceId,
+          deviceName: devices[job.deviceId]?.name || null,
+          fileName: job.fileName,
+          queuedAt: job.queuedAt || null
+        })),
+        current: currentNightQueueJob
+          ? {
+              deviceId: currentNightQueueJob.deviceId,
+              fileName: currentNightQueueJob.fileName,
+              startedAt: currentNightQueueJob.startedAt || null
+            }
+          : null,
+        recentResults: recentResults.map((entry) => ({
+          deviceId: entry.deviceId,
+          deviceName: devices[entry.deviceId]?.name || null,
+          fileName: entry.fileName,
+          status: entry.status,
+          message: entry.message,
+          timestamp: entry.timestamp
+        }))
+      }
+    };
+  };
+
+  const syncNightQueueNotification = () => {
+    notificationsManager.upsert(buildNightQueueNotificationPayload());
+  };
 
   const emitDevicesUpdated = () => {
     if (io && typeof io.emit === 'function') {
@@ -79,6 +197,9 @@ export function createVideoInfoRouter(deps) {
     if (normalizeStatus(status?.status) === NIGHT_OPT_STATUS) {
       deleteFileStatus(deviceId, fileName);
     }
+    if (removed) {
+      syncNightQueueNotification();
+    }
     return removed;
   };
 
@@ -102,6 +223,8 @@ export function createVideoInfoRouter(deps) {
         if (!device) {
           nightQueue.delete(key);
           deleteFileStatus(job.deviceId, job.fileName);
+          pushNightQueueResult(job, 'failed', 'Устройство не найдено');
+          syncNightQueueNotification();
           continue;
         }
 
@@ -116,12 +239,29 @@ export function createVideoInfoRouter(deps) {
           deleteFileStatus(job.deviceId, job.fileName);
         }
 
+        currentNightQueueJob = {
+          deviceId: job.deviceId,
+          fileName: job.fileName,
+          startedAt: new Date().toISOString()
+        };
+        syncNightQueueNotification();
+
         try {
           logger.info('[video-info] 🌙 Запуск ночной обработки', {
             deviceId: job.deviceId,
             fileName: job.fileName
           });
-          await autoOptimizeVideoWrapper(job.deviceId, job.fileName);
+
+          const result = await autoOptimizeVideoWrapper(job.deviceId, job.fileName);
+          if (result?.cancelled) {
+            pushNightQueueResult(job, 'cancelled', result?.message || 'Отменено пользователем');
+          } else if (result?.success === false) {
+            pushNightQueueResult(job, 'failed', result?.message || 'Ошибка обработки');
+          } else if (result?.optimized === false) {
+            pushNightQueueResult(job, 'skipped', result?.message || 'Уже оптимизировано');
+          } else {
+            pushNightQueueResult(job, 'done', result?.message || 'Успешно обработано');
+          }
         } catch (error) {
           logger.error('[video-info] ❌ Ночная обработка завершилась ошибкой', {
             deviceId: job.deviceId,
@@ -129,9 +269,14 @@ export function createVideoInfoRouter(deps) {
             error: error.message,
             stack: error.stack
           });
+          pushNightQueueResult(job, 'failed', error?.message || 'Ошибка обработки');
+        } finally {
+          currentNightQueueJob = null;
+          syncNightQueueNotification();
         }
       }
     } finally {
+      currentNightQueueJob = null;
       isNightQueueRunning = false;
     }
   };
@@ -304,6 +449,11 @@ export function createVideoInfoRouter(deps) {
     }
 
     const scheduledRemoved = removeNightSchedule(id, fileName);
+    if (scheduledRemoved) {
+      pushNightQueueResult({ deviceId: id, fileName }, 'cancelled', 'Планирование отменено пользователем');
+      syncNightQueueNotification();
+    }
+
     const status = getFileStatus(id, fileName);
     const state = normalizeStatus(status?.status);
     const isActive = state === 'processing' || state === 'checking' || hasActiveOptimizationJob(id, fileName);
@@ -313,10 +463,16 @@ export function createVideoInfoRouter(deps) {
     }
 
     if (isActive) {
-      cancelOptimizationJob(id, fileName, 'Обработка отменена пользователем');
+      const cancelResult = cancelOptimizationJob(id, fileName, 'Обработка отменена пользователем');
+
+      if (!cancelResult.active) {
+        setFileStatus(id, fileName, { status: 'ready', progress: 100, canPlay: true });
+        emitDevicesUpdated();
+      }
+
       return res.json({
         ok: true,
-        status: 'cancelling',
+        status: cancelResult.active ? 'cancelling' : 'cancelled',
         cancelledSchedule: scheduledRemoved
       });
     }
@@ -358,6 +514,7 @@ export function createVideoInfoRouter(deps) {
       queuedAt: Date.now(),
       queuedBy: req.user?.username || null
     });
+    syncNightQueueNotification();
 
     setFileStatus(id, fileName, {
       status: NIGHT_OPT_STATUS,

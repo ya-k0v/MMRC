@@ -43,9 +43,105 @@ function toIconOnlySvg(svg = '') {
   return String(svg).replace(/margin-right:\s*\d+px;?/g, '');
 }
 
+function getRoundCrossIcon(size = 12, color = 'currentColor', strokeWidth = 2.1) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" style="display:block;"><line x1="7" y1="7" x2="17" y2="17"></line><line x1="17" y1="7" x2="7" y2="17"></line></svg>`;
+}
+
 function applySquareActionButtonStyle(button) {
   if (!button) return;
   button.style.cssText = 'min-width:30px; width:30px; height:30px; padding:0; display:flex; align-items:center; justify-content:center; line-height:1; border-radius:var(--radius-sm);';
+}
+
+function createProcessingCancelButton(safeName, originalName) {
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'cancelProcessingBtn';
+  cancelBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+  cancelBtn.setAttribute('data-original', encodeURIComponent(originalName));
+  cancelBtn.type = 'button';
+  cancelBtn.title = 'Отменить обработку';
+  cancelBtn.setAttribute('aria-label', 'Отменить обработку');
+  cancelBtn.innerHTML = getRoundCrossIcon(10);
+  return cancelBtn;
+}
+
+function appendOptimizeMenuOptions(optimizeMenu, { safeName, originalName, isProcessing, isNightScheduled }) {
+  const optimizeBtn = document.createElement('button');
+  optimizeBtn.className = 'secondary meta-lg optimizeNowBtn optimizeMenuOption';
+  optimizeBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+  optimizeBtn.setAttribute('data-original', encodeURIComponent(originalName));
+  optimizeBtn.title = 'Запустить обработку сейчас';
+  optimizeBtn.textContent = 'Обработать';
+  optimizeBtn.disabled = isProcessing;
+  optimizeMenu.appendChild(optimizeBtn);
+
+  if (isNightScheduled) {
+    const cancelNightBtn = document.createElement('button');
+    cancelNightBtn.className = 'danger meta-lg optimizeNightCancelBtn optimizeMenuOption optimizeMenuOptionRound';
+    cancelNightBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+    cancelNightBtn.setAttribute('data-original', encodeURIComponent(originalName));
+    cancelNightBtn.title = 'Отменить ночную обработку';
+    cancelNightBtn.setAttribute('aria-label', 'Отменить ночную обработку');
+    cancelNightBtn.innerHTML = getRoundCrossIcon(12);
+    cancelNightBtn.disabled = isProcessing;
+    optimizeMenu.appendChild(cancelNightBtn);
+    return;
+  }
+
+  const optimizeNightBtn = document.createElement('button');
+  optimizeNightBtn.className = 'secondary meta-lg optimizeNightBtn optimizeMenuOption';
+  optimizeNightBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+  optimizeNightBtn.setAttribute('data-original', encodeURIComponent(originalName));
+  optimizeNightBtn.title = 'Запланировать обработку на ночь';
+  optimizeNightBtn.textContent = 'Обработать ночью';
+  optimizeNightBtn.disabled = isProcessing;
+  optimizeMenu.appendChild(optimizeNightBtn);
+}
+
+function createFileLabelsRow({
+  safeName,
+  originalName,
+  statusText,
+  statusColor,
+  statusIcon,
+  isProcessing,
+  typeBadge,
+  resolutionLabel
+}) {
+  const labelsRow = document.createElement('div');
+  labelsRow.className = 'file-item-labels';
+
+  if (statusText) {
+    const statusChip = document.createElement('span');
+    statusChip.className = 'device-meta-chip file-meta-chip file-status-chip';
+    if (statusColor) {
+      statusChip.style.color = statusColor;
+    }
+
+    if (isProcessing) {
+      statusChip.appendChild(createProcessingCancelButton(safeName, originalName));
+    }
+
+    const statusTextSpan = document.createElement('span');
+    statusTextSpan.innerHTML = `${toIconOnlySvg(statusIcon)} ${escapeHtml(statusText)}`;
+    statusChip.appendChild(statusTextSpan);
+    labelsRow.appendChild(statusChip);
+  }
+
+  if (typeBadge) {
+    const typeChip = document.createElement('span');
+    typeChip.className = 'device-meta-chip file-meta-chip file-type-chip';
+    typeChip.textContent = typeBadge;
+    labelsRow.appendChild(typeChip);
+  }
+
+  if (resolutionLabel) {
+    const resolutionChip = document.createElement('span');
+    resolutionChip.className = 'device-meta-chip file-meta-chip file-resolution-chip';
+    resolutionChip.textContent = resolutionLabel;
+    labelsRow.appendChild(resolutionChip);
+  }
+
+  return labelsRow;
 }
 
 let optimizeMenuDocumentCloseBound = false;
@@ -290,7 +386,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
   const allFiles = filesData.map(item => {
     if (typeof item === 'string') {
       // Старый формат (для обратной совместимости)
-      return { safeName: item, originalName: item, status: 'ready', progress: 100, canPlay: true, resolution: null, isPlaceholder: false, durationSeconds: null, folderImageCount: null, contentType: null, streamUrl: null, streamProxyUrl: null };
+      return { safeName: item, originalName: item, status: 'ready', progress: 100, canPlay: true, resolution: null, isPlaceholder: false, durationSeconds: null, folderImageCount: null, contentType: null, needsOptimization: null, streamUrl: null, streamProxyUrl: null };
     }
     return { 
       safeName: item.safeName || item.name || '',
@@ -304,6 +400,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       durationSeconds: typeof item.durationSeconds === 'number' ? item.durationSeconds : null,
       folderImageCount: typeof item.folderImageCount === 'number' ? item.folderImageCount : null,
       contentType: item.contentType || null,
+      needsOptimization: typeof item.needsOptimization === 'boolean' ? item.needsOptimization : null,
       streamUrl: item.streamUrl || null,
       streamProxyUrl: item.streamProxyUrl || null,
       streamProtocol: item.streamProtocol || null,
@@ -449,7 +546,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
     fileList.className = 'list';
     fileList.style.cssText = 'display:grid; gap:var(--space-sm)';
 
-    files.forEach(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, streamUrl, streamProtocol, hasTrailer, trailerUrl }) => {
+    files.forEach(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, needsOptimization, streamUrl, streamProtocol, hasTrailer, trailerUrl }) => {
       const safeExt = getFileExtension(safeName);
       const originalExt = getFileExtension(originalName);
       const displayName = originalName.replace(/\.[^.]+$/, '');
@@ -547,29 +644,16 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       const savePolyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline'); savePolyline.setAttribute('points', '20 6 9 17 4 12'); saveSvg.appendChild(savePolyline); saveBtn.appendChild(saveSvg);
       headerLeft.appendChild(nameSpan); headerLeft.appendChild(saveBtn);
       const headerRight = document.createElement('div'); headerRight.style.cssText = 'display:flex; align-items:center; gap:var(--space-sm);';
-      if (statusText) {
-        const statusSpan = document.createElement('span');
-        statusSpan.style.cssText = `font-size:var(--font-size-sm); color:${statusColor}; white-space:nowrap; display:flex; align-items:center; gap:var(--space-xs);`;
-        if (isProcessing) {
-          const cancelBtn = document.createElement('button');
-          cancelBtn.className = 'cancelProcessingBtn';
-          cancelBtn.setAttribute('data-safe', encodeURIComponent(safeName));
-          cancelBtn.setAttribute('data-original', encodeURIComponent(originalName));
-          cancelBtn.type = 'button';
-          cancelBtn.title = 'Отменить обработку';
-          cancelBtn.textContent = '×';
-          cancelBtn.style.cssText = 'width:16px; height:16px; min-width:16px; min-height:16px; max-width:16px; max-height:16px; padding:0; border:1px solid currentColor; border-radius:50%; background:transparent; color:inherit; display:inline-flex; align-items:center; justify-content:center; font-size:12px; line-height:1; cursor:pointer;';
-          statusSpan.appendChild(cancelBtn);
-        }
-        const statusTextSpan = document.createElement('span');
-        statusTextSpan.innerHTML = `${statusIcon} ${escapeHtml(statusText)}`;
-        statusSpan.appendChild(statusTextSpan);
-        headerRight.appendChild(statusSpan);
-      }
-      const metaDiv = document.createElement('div'); metaDiv.style.cssText = 'display:flex; align-items:center; gap:4px; flex-wrap:wrap;';
-      if (resolutionLabel) { const resSpan = document.createElement('span'); resSpan.style.cssText = 'font-size:10px; opacity:0.7;'; resSpan.textContent = resolutionLabel; metaDiv.appendChild(resSpan); }
-      const typeSpan = document.createElement('span'); typeSpan.className = 'file-item-type'; typeSpan.textContent = typeBadge; metaDiv.appendChild(typeSpan);
-      headerRight.appendChild(metaDiv);
+      const labelsRow = createFileLabelsRow({
+        safeName,
+        originalName,
+        statusText,
+        statusColor,
+        statusIcon,
+        isProcessing,
+        typeBadge,
+        resolutionLabel
+      });
       header.appendChild(headerLeft); header.appendChild(headerRight);
 
       const actions = document.createElement('div'); actions.className = 'file-item-actions';
@@ -588,7 +672,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         applySquareActionButtonStyle(downloadBtn);
         actions.appendChild(downloadBtn);
       }
-      const canManualProcess = isVideo && !isStreaming;
+      const canManualProcess = isVideo && !isStreaming && (isNightScheduled || needsOptimization !== false);
       if (canManualProcess) {
         const optimizeWrap = document.createElement('div');
         optimizeWrap.className = 'optimize-actions-wrap';
@@ -603,24 +687,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
 
         const optimizeMenu = document.createElement('div');
         optimizeMenu.className = 'optimizeActionsMenu';
-
-        const optimizeBtn = document.createElement('button');
-        optimizeBtn.className = 'secondary meta-lg optimizeNowBtn optimizeMenuOption';
-        optimizeBtn.setAttribute('data-safe', encodeURIComponent(safeName));
-        optimizeBtn.setAttribute('data-original', encodeURIComponent(originalName));
-        optimizeBtn.title = 'Запустить обработку сейчас';
-        optimizeBtn.textContent = 'Обработать';
-        optimizeBtn.disabled = isProcessing;
-        optimizeMenu.appendChild(optimizeBtn);
-
-        const optimizeNightBtn = document.createElement('button');
-        optimizeNightBtn.className = 'secondary meta-lg optimizeNightBtn optimizeMenuOption';
-        optimizeNightBtn.setAttribute('data-safe', encodeURIComponent(safeName));
-        optimizeNightBtn.setAttribute('data-original', encodeURIComponent(originalName));
-        optimizeNightBtn.title = 'Запланировать обработку на ночь';
-        optimizeNightBtn.textContent = isNightScheduled ? 'Запланировано' : 'Обработать ночью';
-        optimizeNightBtn.disabled = isProcessing || isNightScheduled;
-        optimizeMenu.appendChild(optimizeNightBtn);
+        appendOptimizeMenuOptions(optimizeMenu, { safeName, originalName, isProcessing, isNightScheduled });
 
         optimizeWrap.appendChild(optimizeMenu);
         actions.appendChild(optimizeWrap);
@@ -628,7 +695,10 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       if (isEligible) { const makeDefaultBtn = document.createElement('button'); makeDefaultBtn.className = 'meta-lg makeDefaultBtn'; makeDefaultBtn.setAttribute('data-safe', encodeURIComponent(safeName)); makeDefaultBtn.setAttribute('data-original', encodeURIComponent(originalName)); makeDefaultBtn.title = 'Сделать заглушкой'; makeDefaultBtn.disabled = !canPlay; makeDefaultBtn.textContent = '📌'; applySquareActionButtonStyle(makeDefaultBtn); actions.appendChild(makeDefaultBtn); }
       const delBtn = document.createElement('button'); delBtn.className = 'danger meta-lg delFileBtn'; delBtn.setAttribute('data-safe', encodeURIComponent(safeName)); delBtn.setAttribute('data-original', encodeURIComponent(originalName)); delBtn.title = 'Удалить'; delBtn.innerHTML = toIconOnlySvg(getTrashIcon(14)); applySquareActionButtonStyle(delBtn); actions.appendChild(delBtn);
 
-      li.appendChild(header); li.appendChild(actions); fileList.appendChild(li);
+      headerRight.appendChild(actions);
+      li.appendChild(header);
+      li.appendChild(labelsRow);
+      fileList.appendChild(li);
     });
 
     return fileList;
@@ -650,7 +720,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
     fileList.className = 'list';
     fileList.style.cssText = 'display:grid; gap:var(--space-sm)';
 
-    files.forEach(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, streamUrl, streamProtocol, hasTrailer, trailerUrl }) => {
+    files.forEach(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, needsOptimization, streamUrl, streamProtocol, hasTrailer, trailerUrl }) => {
         // placeholders allowed only for image/video (no pdf/pptx/folders)
         const isStreaming = contentType === 'streaming';
         const isEligible = !isStreaming && /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp)$/i.test(safeName);
@@ -805,44 +875,16 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         
         const headerRight = document.createElement('div');
         headerRight.style.cssText = 'display:flex; align-items:center; gap:var(--space-sm);';
-        
-        if (statusText) {
-          const statusSpan = document.createElement('span');
-          statusSpan.style.cssText = `font-size:var(--font-size-sm); color:${statusColor}; white-space:nowrap; display:flex; align-items:center; gap:var(--space-xs);`;
-          if (isProcessing) {
-            const cancelBtn = document.createElement('button');
-            cancelBtn.className = 'cancelProcessingBtn';
-            cancelBtn.setAttribute('data-safe', encodeURIComponent(safeName));
-            cancelBtn.setAttribute('data-original', encodeURIComponent(originalName));
-            cancelBtn.type = 'button';
-            cancelBtn.title = 'Отменить обработку';
-            cancelBtn.textContent = '×';
-            cancelBtn.style.cssText = 'width:16px; height:16px; min-width:16px; min-height:16px; max-width:16px; max-height:16px; padding:0; border:1px solid currentColor; border-radius:50%; background:transparent; color:inherit; display:inline-flex; align-items:center; justify-content:center; font-size:12px; line-height:1; cursor:pointer;';
-            statusSpan.appendChild(cancelBtn);
-          }
-
-          const statusTextSpan = document.createElement('span');
-          statusTextSpan.innerHTML = `${statusIcon} ${escapeHtml(statusText)}`;
-          statusSpan.appendChild(statusTextSpan);
-          headerRight.appendChild(statusSpan);
-        }
-        
-        const metaDiv = document.createElement('div');
-        metaDiv.style.cssText = 'display:flex; align-items:center; gap:4px; flex-wrap:wrap;';
-        
-        if (resolutionLabel) {
-          const resSpan = document.createElement('span');
-          resSpan.style.cssText = 'font-size:10px; opacity:0.7;';
-          resSpan.textContent = resolutionLabel;
-          metaDiv.appendChild(resSpan);
-        }
-        
-        const typeSpan = document.createElement('span');
-        typeSpan.className = 'file-item-type';
-        typeSpan.textContent = typeBadge; // Используем textContent для безопасности
-        metaDiv.appendChild(typeSpan);
-        
-        headerRight.appendChild(metaDiv);
+        const labelsRow = createFileLabelsRow({
+          safeName,
+          originalName,
+          statusText,
+          statusColor,
+          statusIcon,
+          isProcessing,
+          typeBadge,
+          resolutionLabel
+        });
         header.appendChild(headerLeft);
         header.appendChild(headerRight);
 
@@ -887,7 +929,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           actions.appendChild(downloadBtn);
         }
 
-        const canManualProcess = isVideo && !isStreaming;
+        const canManualProcess = isVideo && !isStreaming && (isNightScheduled || needsOptimization !== false);
         if (canManualProcess) {
           const optimizeWrap = document.createElement('div');
           optimizeWrap.className = 'optimize-actions-wrap';
@@ -902,24 +944,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
 
           const optimizeMenu = document.createElement('div');
           optimizeMenu.className = 'optimizeActionsMenu';
-
-          const optimizeBtn = document.createElement('button');
-          optimizeBtn.className = 'secondary meta-lg optimizeNowBtn optimizeMenuOption';
-          optimizeBtn.setAttribute('data-safe', encodeURIComponent(safeName));
-          optimizeBtn.setAttribute('data-original', encodeURIComponent(originalName));
-          optimizeBtn.title = 'Запустить обработку сейчас';
-          optimizeBtn.textContent = 'Обработать';
-          optimizeBtn.disabled = isProcessing;
-          optimizeMenu.appendChild(optimizeBtn);
-
-          const optimizeNightBtn = document.createElement('button');
-          optimizeNightBtn.className = 'secondary meta-lg optimizeNightBtn optimizeMenuOption';
-          optimizeNightBtn.setAttribute('data-safe', encodeURIComponent(safeName));
-          optimizeNightBtn.setAttribute('data-original', encodeURIComponent(originalName));
-          optimizeNightBtn.title = 'Запланировать обработку на ночь';
-          optimizeNightBtn.textContent = isNightScheduled ? 'Запланировано' : 'Обработать ночью';
-          optimizeNightBtn.disabled = isProcessing || isNightScheduled;
-          optimizeMenu.appendChild(optimizeNightBtn);
+          appendOptimizeMenuOptions(optimizeMenu, { safeName, originalName, isProcessing, isNightScheduled });
 
           optimizeWrap.appendChild(optimizeMenu);
           actions.appendChild(optimizeWrap);
@@ -946,9 +971,10 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         applySquareActionButtonStyle(delBtn);
         actions.appendChild(delBtn);
         
-        // place actions under the filename and align them to the right
+        // place actions near filename and render labels as a dedicated row
+        headerRight.appendChild(actions);
         li.appendChild(header);
-        li.appendChild(actions);
+        li.appendChild(labelsRow);
         fileList.appendChild(li);
     });
 
@@ -1359,10 +1385,10 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
 
       const safeName = decodeURIComponent(btn.getAttribute('data-safe') || '');
       const originalName = decodeURIComponent(btn.getAttribute('data-original') || safeName);
-      const originalButtonText = btn.textContent;
+      const originalButtonHtml = btn.innerHTML;
 
       btn.disabled = true;
-      btn.textContent = '…';
+      btn.style.opacity = '0.65';
 
       try {
         const response = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(safeName)}/cancel-optimize`, {
@@ -1385,7 +1411,8 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         });
       } finally {
         btn.disabled = false;
-        btn.textContent = originalButtonText;
+        btn.style.opacity = '';
+        btn.innerHTML = originalButtonHtml;
       }
     };
   });
@@ -1496,6 +1523,43 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       } finally {
         btn.disabled = false;
         btn.textContent = originalText;
+      }
+    };
+  });
+
+  panelEl.querySelectorAll('.optimizeNightCancelBtn').forEach(btn => {
+    btn.onclick = async () => {
+      const wrap = btn.closest('.optimize-actions-wrap');
+      if (wrap) {
+        closeOptimizeMenuWrap(wrap);
+      }
+
+      const safeName = decodeURIComponent(btn.getAttribute('data-safe') || '');
+      const originalName = decodeURIComponent(btn.getAttribute('data-original') || safeName);
+
+      btn.disabled = true;
+
+      try {
+        const response = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(safeName)}/cancel-optimize`, {
+          method: 'POST'
+        });
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok || payload.ok === false) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+
+        await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
+        socket.emit('devices/updated');
+      } catch (error) {
+        await reportFilesManagerNotification({
+          type: 'file_optimize_night_cancel_error',
+          title: 'Не удалось отменить ночную обработку',
+          message: error.message || 'Ошибка отмены ночной обработки',
+          details: { deviceId, safeName, originalName }
+        });
+      } finally {
+        btn.disabled = false;
       }
     };
   });

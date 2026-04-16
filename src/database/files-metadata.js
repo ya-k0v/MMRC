@@ -5,6 +5,7 @@
 
 import crypto from 'crypto';
 import fs from 'fs';
+import path from 'path';
 import { getDatabase } from './database.js';
 import logger, { logFile } from '../utils/logger.js';
 import { withRetrySync, isRetryableDatabaseError } from '../utils/retry.js';
@@ -594,6 +595,155 @@ export function migrateFilePaths(oldRoot, newRoot) {
       error: error.message,
       oldRoot,
       newRoot,
+      stack: error.stack
+    });
+    throw error;
+  }
+}
+
+function extractRelativePathFromContent(filePath) {
+  const normalized = String(filePath || '').replace(/\\/g, '/');
+  const marker = '/content/';
+  const markerIndex = normalized.lastIndexOf(marker);
+  if (markerIndex < 0) {
+    return null;
+  }
+
+  const relative = normalized.slice(markerIndex + marker.length).replace(/^\/+/, '');
+  return relative || null;
+}
+
+/**
+ * Попытаться восстановить file_path после импорта БД с другого окружения.
+ * Ищет файл в текущем contentRoot и обновляет путь в БД при совпадении.
+ *
+ * @param {Object} options
+ * @param {string} options.devicesPath - Текущий путь к contentRoot/content
+ * @returns {{checked:number,repaired:number,unresolved:number,skipped:number,errors:number,samples:Array}}
+ */
+export function repairImportedFilePaths({ devicesPath }) {
+  const result = {
+    checked: 0,
+    repaired: 0,
+    unresolved: 0,
+    skipped: 0,
+    errors: 0,
+    samples: []
+  };
+
+  try {
+    const resolvedDevicesPath = path.resolve(String(devicesPath || ''));
+    if (!resolvedDevicesPath || !fs.existsSync(resolvedDevicesPath)) {
+      logger.warn('[RepairPaths] devicesPath not found, skipping repair', {
+        devicesPath: resolvedDevicesPath || null
+      });
+      return result;
+    }
+
+    const db = getDatabase();
+    const records = db.prepare(`
+      SELECT device_id, safe_name, file_path, content_type
+      FROM files_metadata
+      WHERE content_type != 'streaming'
+        AND file_path IS NOT NULL
+        AND file_path != ''
+    `).all();
+
+    const updateStmt = db.prepare(`
+      UPDATE files_metadata
+      SET file_path = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE device_id = ? AND safe_name = ?
+    `);
+
+    const seenSample = new Set();
+
+    for (const record of records) {
+      result.checked += 1;
+
+      try {
+        const originalPathRaw = String(record.file_path || '').trim();
+        if (!originalPathRaw) {
+          result.skipped += 1;
+          continue;
+        }
+
+        if (/^https?:\/\//i.test(originalPathRaw)) {
+          result.skipped += 1;
+          continue;
+        }
+
+        const originalPath = path.resolve(originalPathRaw);
+        if (fs.existsSync(originalPath)) {
+          result.skipped += 1;
+          continue;
+        }
+
+        const candidateSet = new Set();
+
+        const relativeFromContent = extractRelativePathFromContent(originalPathRaw);
+        if (relativeFromContent) {
+          candidateSet.add(path.resolve(path.join(resolvedDevicesPath, relativeFromContent)));
+        }
+
+        if (record.device_id && record.safe_name) {
+          candidateSet.add(path.resolve(path.join(resolvedDevicesPath, record.device_id, record.safe_name)));
+        }
+
+        if (record.safe_name) {
+          candidateSet.add(path.resolve(path.join(resolvedDevicesPath, record.safe_name)));
+          candidateSet.add(path.resolve(path.join(resolvedDevicesPath, path.basename(record.safe_name))));
+        }
+
+        const fixedPath = Array.from(candidateSet).find((candidatePath) => fs.existsSync(candidatePath));
+        if (!fixedPath) {
+          result.unresolved += 1;
+          continue;
+        }
+
+        if (fixedPath !== originalPath) {
+          updateStmt.run(fixedPath, record.device_id, record.safe_name);
+          result.repaired += 1;
+
+          if (result.samples.length < 20) {
+            const sampleKey = `${record.device_id}::${record.safe_name}`;
+            if (!seenSample.has(sampleKey)) {
+              seenSample.add(sampleKey);
+              result.samples.push({
+                deviceId: record.device_id,
+                safeName: record.safe_name,
+                from: originalPath,
+                to: fixedPath
+              });
+            }
+          }
+        } else {
+          result.skipped += 1;
+        }
+      } catch (recordError) {
+        result.errors += 1;
+        logger.warn('[RepairPaths] Failed to process metadata record', {
+          deviceId: record.device_id,
+          safeName: record.safe_name,
+          error: recordError.message
+        });
+      }
+    }
+
+    logger.info('[RepairPaths] Imported file paths repair finished', {
+      devicesPath: resolvedDevicesPath,
+      checked: result.checked,
+      repaired: result.repaired,
+      unresolved: result.unresolved,
+      skipped: result.skipped,
+      errors: result.errors
+    });
+
+    return result;
+  } catch (error) {
+    logger.error('[RepairPaths] Failed to repair imported file paths', {
+      devicesPath,
+      error: error.message,
       stack: error.stack
     });
     throw error;

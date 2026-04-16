@@ -5,6 +5,7 @@ import express from 'express';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import { randomBytes } from 'node:crypto';
 
 // Импорты из модулей
 import { 
@@ -27,7 +28,7 @@ import {
   loadFileNamesFromDB, 
   saveFileNamesToDB
 } from './src/storage/devices-storage-sqlite.js';
-import { cleanupMissingFiles } from './src/database/files-metadata.js';
+import { cleanupMissingFiles, repairImportedFilePaths } from './src/database/files-metadata.js';
 import { getFileStatus } from './src/video/file-status.js';
 import { checkVideoParameters } from './src/video/ffmpeg-wrapper.js';
 import { autoOptimizeVideo } from './src/video/optimizer.js';
@@ -740,8 +741,8 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
     if (!fs.existsSync(tempUploadDir)) fs.mkdirSync(tempUploadDir, { recursive: true });
 
     const storage = multer.diskStorage({
-      destination: (r, f, cb) => cb(null, tempUploadDir),
-        filename: (r, f, cb) => cb(null, `import_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.dbupload`)
+      destination: (_req, _file, cb) => cb(null, tempUploadDir),
+      filename: (_req, _file, cb) => cb(null, `import_${Date.now()}_${randomBytes(4).toString('hex')}.dbupload`)
     });
 
     const uploadSingle = multer({ storage, limits: { fileSize: MAX_FILE_SIZE } }).single('file');
@@ -849,9 +850,24 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
         // Применяем миграции на новой базе
         runMigrations(DB_PATH);
 
+        // КРИТИЧНО: После импорта БД из другого окружения пути к файлам
+        // могут указывать на старый contentRoot. Пробуем восстановить их автоматически.
+        const repairResult = repairImportedFilePaths({ devicesPath: getDevicesPath() });
+        logger.info('[Admin] Imported DB paths repair completed', {
+          checked: repairResult.checked,
+          repaired: repairResult.repaired,
+          unresolved: repairResult.unresolved,
+          skipped: repairResult.skipped,
+          errors: repairResult.errors
+        });
+
         // Перезагрузим in-memory данные (devices, fileNamesMap)
         devices = loadDevicesFromDB();
         fileNamesMap = loadFileNamesFromDB();
+        Object.keys(devices).forEach((deviceId) => {
+          updateDeviceFilesFromDB(deviceId, devices, fileNamesMap);
+        });
+        saveDevicesToDB(devices);
         io.emit('devices/updated');
 
         const restartScheduled = scheduleRestartAfterDbImport();
@@ -1194,6 +1210,23 @@ setupNotificationsHandler(io);
 initSystemMonitor(streamManager, devices);
 
 function hydrateDevicesFromDatabase() {
+  try {
+    const repairResult = repairImportedFilePaths({ devicesPath: getDevicesPath() });
+    if (repairResult.repaired > 0 || repairResult.unresolved > 0) {
+      logger.info('[Server] Startup metadata path repair result', {
+        checked: repairResult.checked,
+        repaired: repairResult.repaired,
+        unresolved: repairResult.unresolved,
+        skipped: repairResult.skipped,
+        errors: repairResult.errors
+      });
+    }
+  } catch (error) {
+    logger.warn('[Server] Startup metadata path repair failed', {
+      error: error.message
+    });
+  }
+
   // КРИТИЧНО: Используем updateDeviceFilesFromDB для правильной загрузки файлов и стримов
   // Эта функция правильно обрабатывает стримы из БД и создает device.streams
   for (const deviceId in devices) {
