@@ -197,6 +197,22 @@ async function importHeroesFromFile(file) {
 }
 
 async function importDatabaseFile(file) {
+  const dbExtOk = /\.db$/i.test(file?.name || '');
+  if (!dbExtOk) {
+    throw new Error('Поддерживаются только файлы .db');
+  }
+
+  const maxDbSize = 200 * 1024 * 1024;
+  if ((file?.size || 0) > maxDbSize) {
+    throw new Error('Файл базы слишком большой (максимум 200MB)');
+  }
+
+  const confirmed = window.confirm('Импорт заменит текущую базу героев. Продолжить?');
+  if (!confirmed) {
+    showStatus('Импорт базы отменен');
+    return;
+  }
+
   const formData = new FormData();
   formData.append('file', file);
 
@@ -214,7 +230,7 @@ async function importDatabaseFile(file) {
     }
 
     const result = await response.json();
-    showStatus(result.message || 'База данных импортирована. Перезапустите сервер при необходимости.');
+    showStatus(result.message || 'База данных импортирована и применена');
     await loadHeroes();
   } catch (error) {
     throw error;
@@ -866,6 +882,13 @@ function showNextMedia() {
 }
 
 function attachInlineEditors(hero) {
+  const resolveEditableHero = () => {
+    if (state.active && hero && state.active.id === hero.id) {
+      return state.active;
+    }
+    return hero || state.active;
+  };
+
   // Удаляем старые обработчики перед добавлением новых для предотвращения утечек памяти
   state.detailEl.querySelectorAll('[data-edit]').forEach((node) => {
     // Сохраняем данные атрибута перед удалением обработчиков
@@ -878,6 +901,11 @@ function attachInlineEditors(hero) {
     
     // Создаем новый обработчик
     const handler = (e) => {
+      const editableHero = resolveEditableHero();
+      if (!editableHero) {
+        return;
+      }
+
       // Если уже редактируется другое поле, сначала сохраняем его
       if (state.activeEditor && state.activeEditor.field !== editField) {
         const activeNode = state.detailEl.querySelector(`[data-edit="${state.activeEditor.field}"]`);
@@ -896,12 +924,15 @@ function attachInlineEditors(hero) {
           e.stopPropagation();
           // Небольшая задержка перед открытием нового редактора
           setTimeout(() => {
-            startInlineEdit(node, hero);
+            const delayedEditableHero = resolveEditableHero();
+            if (delayedEditableHero) {
+              startInlineEdit(node, delayedEditableHero);
+            }
           }, 100);
           return;
         }
       }
-      startInlineEdit(node, hero);
+      startInlineEdit(node, editableHero);
     };
     
     // Сохраняем ссылку на обработчик для последующего удаления
@@ -911,20 +942,27 @@ function attachInlineEditors(hero) {
 }
 
 function startInlineEdit(node, hero) {
+  if (!hero) return;
+
   if (node.dataset.editing === 'true') return;
   node.dataset.editing = 'true';
+
+  const activeHero = state.active && state.active.id === hero.id ? state.active : hero;
   
   // Сохраняем информацию об активном редакторе
   state.activeEditor = {
     field: node.dataset.edit,
     node: node,
-    heroId: hero.id
+    heroId: activeHero.id
   };
 
   const field = node.dataset.edit;
   const type = node.dataset.type || 'text';
   const placeholder = node.dataset.placeholder || '';
-  const currentValue = hero[field] ?? '';
+  const currentValueRaw = activeHero[field];
+  const currentValue = currentValueRaw === null || currentValueRaw === undefined
+    ? ''
+    : String(currentValueRaw);
 
   const editor = document.createElement(type === 'multiline' ? 'textarea' : 'input');
   editor.className = 'hero-inline-input';
@@ -940,13 +978,13 @@ function startInlineEdit(node, hero) {
     editor.classList.add('hero-inline-input--biography');
   }
   
-  editor.value = currentValue || '';
+  editor.value = currentValue;
   editor.placeholder = placeholder;
 
   // Для inline полей устанавливаем size атрибут для автоматической ширины
   if (type !== 'multiline') {
     // Используем только реальное значение, не placeholder
-    let textLength = (currentValue || '').length;
+    let textLength = currentValue.length;
     // Если значения нет, используем минимальную длину
     if (textLength === 0) {
       // Для полей дат - минимум 4 символа, для остальных - по placeholder или 4
@@ -1057,7 +1095,7 @@ function startInlineEdit(node, hero) {
     // Сохраняем всегда при commit (при blur или Enter)
     if (commit) {
       try {
-        await saveField(field, savedValue, hero, shouldRestore);
+        await saveField(field, savedValue, activeHero, shouldRestore);
       } catch (err) {
         // Если ошибка при сохранении, логируем
         console.error('[HeroAdmin] saveField failed in finish', err, { field, savedValue });
@@ -1220,6 +1258,8 @@ async function saveField(field, rawValue, hero, restoreEditor = false) {
       state.active = { ...state.active, ...payload };
       updateHeroListItem(currentHero.id, payload);
       
+      let fieldNode = null;
+
       // Специальная обработка для photo_base64 - обновляем изображение
       if (field === 'photo_base64') {
         const avatarContainer = state.detailEl?.querySelector('[data-avatar]');
@@ -1302,7 +1342,7 @@ async function saveField(field, rawValue, hero, restoreEditor = false) {
         }
       } else {
         // Обновляем только измененное поле в DOM без полной перерисовки
-        const fieldNode = state.detailEl?.querySelector(`[data-edit="${field}"]`);
+        fieldNode = state.detailEl?.querySelector(`[data-edit="${field}"]`);
         if (fieldNode) {
           // Обновляем текст поля, если оно не редактируется
           if (fieldNode.dataset.editing !== 'true') {
@@ -1904,7 +1944,11 @@ async function uploadMedia(heroId, payload) {
 async function deleteMedia(mediaId) {
   try {
     showStatus('Удаляем материал…');
-    await adminFetch(`/api/hero/media/${mediaId}`, { method: 'DELETE' });
+    const response = await adminFetch(`/api/hero/media/${mediaId}`, { method: 'DELETE' });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: response.statusText || 'HTTP error' }));
+      throw new Error(error.error || `HTTP ${response.status}`);
+    }
     await refreshActiveHero(state.active.id);
     showStatus('Материал удалён');
   } catch (err) {

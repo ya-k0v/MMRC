@@ -1,11 +1,14 @@
 import { Router } from 'express';
+import Database from 'better-sqlite3';
 import multer from 'multer';
 import { heroQueries } from '../database/queries.js';
-import { HERO_DB_PATH, LEGACY_HERO_DB_PATH } from '../database/hero-db.js';
+import { HERO_DB_PATH, LEGACY_HERO_DB_PATH, reloadHeroDb } from '../database/hero-db.js';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import logger from '../../utils/logger.js';
 import { createLimiter, deleteLimiter } from '../../middleware/rate-limit.js';
+import { validatePath } from '../../utils/path-validator.js';
 
 const HERO_DB_UPLOAD_DIR = path.resolve('/tmp');
 
@@ -13,6 +16,43 @@ const heroDbImportUpload = multer({
   dest: HERO_DB_UPLOAD_DIR,
   limits: { fileSize: 200 * 1024 * 1024 }
 });
+
+const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+
+function validateImportedHeroDbSchema(probeDb) {
+  const tables = new Set(
+    probeDb
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('heroes', 'hero_media')")
+      .all()
+      .map((row) => String(row.name || ''))
+  );
+
+  if (!tables.has('heroes') || !tables.has('hero_media')) {
+    throw new Error('В импортируемой базе отсутствуют обязательные таблицы heroes/hero_media');
+  }
+
+  const heroesColumns = new Set(
+    probeDb.prepare('PRAGMA table_info(heroes)').all().map((row) => String(row.name || ''))
+  );
+  const requiredHeroesColumns = ['id', 'full_name', 'birth_year', 'death_year', 'rank', 'photo_base64', 'biography'];
+  const missingHeroesColumns = requiredHeroesColumns.filter((col) => !heroesColumns.has(col));
+  if (missingHeroesColumns.length > 0) {
+    throw new Error(`В таблице heroes отсутствуют обязательные колонки: ${missingHeroesColumns.join(', ')}`);
+  }
+
+  const mediaColumns = new Set(
+    probeDb.prepare('PRAGMA table_info(hero_media)').all().map((row) => String(row.name || ''))
+  );
+  if (!mediaColumns.has('hero_id')) {
+    throw new Error('В таблице hero_media отсутствует обязательная колонка hero_id');
+  }
+
+  const hasModernMediaSchema = ['type', 'media_base64', 'caption', 'order_index'].every((col) => mediaColumns.has(col));
+  const hasLegacyMediaSchema = ['media_type', 'url'].every((col) => mediaColumns.has(col));
+  if (!hasModernMediaSchema && !hasLegacyMediaSchema) {
+    throw new Error('Таблица hero_media имеет неподдерживаемую структуру');
+  }
+}
 
 function validateMediaSize(base64String, limitBytes = 10 * 1024 * 1024) {
   if (!base64String || typeof base64String !== 'string') return;
@@ -60,7 +100,7 @@ function validateHeroData(data, isUpdate = false) {
   }
   
   // Валидация full_name (обязательное поле)
-  if (!isUpdate || data.hasOwnProperty('full_name')) {
+  if (!isUpdate || hasOwn(data, 'full_name')) {
     if (!data.full_name || typeof data.full_name !== 'string') {
       throw new Error('full_name is required and must be a string');
     }
@@ -74,7 +114,7 @@ function validateHeroData(data, isUpdate = false) {
   }
   
   // Валидация rank
-  if (data.hasOwnProperty('rank') && data.rank !== null) {
+  if (hasOwn(data, 'rank') && data.rank !== null) {
     if (typeof data.rank !== 'string') {
       throw new Error('rank must be a string or null');
     }
@@ -84,7 +124,7 @@ function validateHeroData(data, isUpdate = false) {
   }
   
   // Валидация birth_year и death_year
-  if (data.hasOwnProperty('birth_year') && data.birth_year !== null) {
+  if (hasOwn(data, 'birth_year') && data.birth_year !== null) {
     if (typeof data.birth_year !== 'string' && typeof data.birth_year !== 'number') {
       throw new Error('birth_year must be a string, number, or null');
     }
@@ -93,7 +133,7 @@ function validateHeroData(data, isUpdate = false) {
     }
   }
   
-  if (data.hasOwnProperty('death_year') && data.death_year !== null) {
+  if (hasOwn(data, 'death_year') && data.death_year !== null) {
     if (typeof data.death_year !== 'string' && typeof data.death_year !== 'number') {
       throw new Error('death_year must be a string, number, or null');
     }
@@ -103,7 +143,7 @@ function validateHeroData(data, isUpdate = false) {
   }
   
   // Валидация biography
-  if (data.hasOwnProperty('biography') && data.biography !== null) {
+  if (hasOwn(data, 'biography') && data.biography !== null) {
     if (typeof data.biography !== 'string') {
       throw new Error('biography must be a string or null');
     }
@@ -114,7 +154,7 @@ function validateHeroData(data, isUpdate = false) {
   }
   
   // Валидация media массива
-  if (data.hasOwnProperty('media') && data.media !== undefined) {
+  if (hasOwn(data, 'media') && data.media !== undefined) {
     if (!Array.isArray(data.media)) {
       throw new Error('media must be an array');
     }
@@ -224,13 +264,16 @@ export function createHeroRouter({ requireHeroAdmin }) {
         error: error.message,
         stack: error.stack
       });
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: 'Ошибка экспорта базы героев' });
     }
   });
 
-  // Импорт базы героев: файл подменяется атомарно, применение после перезапуска сервиса.
+  // Импорт базы героев: файл подменяется атомарно и применяется сразу (без перезапуска сервиса).
   router.post('/import-database', requireHeroAdmin, heroDbImportUpload.single('file'), (req, res) => {
     let uploadedPath = null;
+    let stagedPath = null;
+    let backupPath = null;
+    let targetPath = null;
 
     try {
       if (!req.file) {
@@ -252,33 +295,75 @@ export function createHeroRouter({ requireHeroAdmin }) {
         return res.status(400).json({ error: 'Поддерживаются только файлы .db' });
       }
 
-      const fd = fs.openSync(uploadedPath, 'r');
-      const headerBuffer = Buffer.alloc(16);
+      // Открываем файл сразу и валидируем через fstat на том же дескрипторе,
+      // чтобы избежать гонки между проверкой и использованием файла (TOCTOU).
+      const noFollowFlag = Number(fs.constants?.O_NOFOLLOW) || 0;
+      const openFlags = fs.constants.O_RDONLY | noFollowFlag;
+
+      let fd;
       try {
-        fs.readSync(fd, headerBuffer, 0, 16, 0);
+        fd = fs.openSync(uploadedPath, openFlags);
+      } catch {
+        return res.status(400).json({ error: 'Загруженный файл не найден' });
+      }
+
+      const headerBuffer = Buffer.alloc(16);
+      let bytesRead = 0;
+      try {
+        const uploadedStats = fs.fstatSync(fd);
+        if (!uploadedStats.isFile()) {
+          return res.status(400).json({ error: 'Некорректный тип загруженного файла' });
+        }
+
+        if (uploadedStats.size < 16) {
+          return res.status(400).json({ error: 'Файл SQLite слишком мал или поврежден' });
+        }
+
+        bytesRead = fs.readSync(fd, headerBuffer, 0, 16, 0);
       } finally {
         fs.closeSync(fd);
+      }
+
+      if (bytesRead !== 16) {
+        return res.status(400).json({ error: 'Не удалось прочитать заголовок SQLite' });
       }
 
       if (headerBuffer.toString('utf8') !== 'SQLite format 3\u0000') {
         return res.status(400).json({ error: 'Некорректный файл SQLite' });
       }
 
-      const targetPath = HERO_DB_PATH;
-      const targetDir = path.dirname(targetPath);
+      // Проверяем целостность и базовую структуру импортируемой БД
+      const probeDb = new Database(uploadedPath, { readonly: true, fileMustExist: true });
+      try {
+        const quickCheckRows = probeDb.prepare('PRAGMA quick_check').all();
+        const quickCheckValue = quickCheckRows?.[0] ? Object.values(quickCheckRows[0])[0] : null;
+        if (quickCheckValue !== 'ok') {
+          return res.status(400).json({ error: 'Файл SQLite поврежден (quick_check failed)' });
+        }
+
+        validateImportedHeroDbSchema(probeDb);
+      } finally {
+        probeDb.close();
+      }
+
+      const targetDir = path.dirname(HERO_DB_PATH);
       if (!fs.existsSync(targetDir)) {
         fs.mkdirSync(targetDir, { recursive: true });
       }
+      targetPath = validatePath(path.resolve(HERO_DB_PATH), targetDir);
 
       if (fs.existsSync(targetPath)) {
-        const backupPath = `${targetPath}.bak.${Date.now()}`;
+        const backupName = `heroes_backup_${Date.now()}_${crypto.randomBytes(6).toString('hex')}.db`;
+        backupPath = validatePath(path.join(targetDir, backupName), targetDir);
         fs.copyFileSync(targetPath, backupPath);
         logger.info('[Hero Router] Hero DB backup created before import', { backupPath });
       }
 
-      const stagedPath = path.join(targetDir, `heroes_import_${Date.now()}.db`);
+      const stagedName = `heroes_import_${Date.now()}_${crypto.randomBytes(6).toString('hex')}.db`;
+      stagedPath = validatePath(path.join(targetDir, stagedName), targetDir);
       fs.copyFileSync(uploadedPath, stagedPath);
       fs.renameSync(stagedPath, targetPath);
+      stagedPath = null;
 
       [`${targetPath}-wal`, `${targetPath}-shm`].forEach((extraPath) => {
         try {
@@ -291,23 +376,79 @@ export function createHeroRouter({ requireHeroAdmin }) {
         }
       });
 
+      reloadHeroDb();
+      const totalHeroes = heroQueries.getAll().length;
+
       return res.json({
         ok: true,
-        message: 'База героев импортирована. Перезапустите сервис для применения изменений.'
+        message: `База героев импортирована и применена. Записей: ${totalHeroes}`,
+        totalHeroes
       });
     } catch (error) {
       logger.error('[Hero Router] Error in POST /import-database', {
         error: error.message,
         stack: error.stack
       });
-      return res.status(500).json({ error: error.message || 'Ошибка импорта базы героев' });
+
+      // Восстановление из бэкапа, если импорт не завершился
+      try {
+        if (backupPath && fs.existsSync(backupPath)) {
+          const restorePath = targetPath || HERO_DB_PATH;
+          fs.copyFileSync(backupPath, restorePath);
+          [`${restorePath}-wal`, `${restorePath}-shm`].forEach((extraPath) => {
+            try {
+              if (fs.existsSync(extraPath)) fs.unlinkSync(extraPath);
+            } catch {
+              // noop
+            }
+          });
+          reloadHeroDb();
+          logger.info('[Hero Router] Hero DB restored from backup after import error', { backupPath });
+        }
+      } catch (restoreErr) {
+        logger.error('[Hero Router] Failed to restore hero DB from backup', {
+          backupPath,
+          error: restoreErr.message
+        });
+      }
+
+      return res.status(500).json({ error: 'Ошибка импорта базы героев' });
     } finally {
+      // Очистка временно загруженного файла
       if (uploadedPath && fs.existsSync(uploadedPath)) {
         try {
           fs.unlinkSync(uploadedPath);
         } catch (cleanupErr) {
           logger.warn('[Hero Router] Failed to remove uploaded temp file', {
             file: uploadedPath,
+            error: cleanupErr.message
+          });
+        }
+      }
+
+      // Фолбек очистки, если uploadedPath не успели вычислить
+      const reqFilePath = req?.file?.path;
+      if (!uploadedPath && reqFilePath) {
+        try {
+          const safeReqFilePath = validatePath(reqFilePath, HERO_DB_UPLOAD_DIR);
+          if (fs.existsSync(safeReqFilePath)) {
+            fs.unlinkSync(safeReqFilePath);
+          }
+        } catch (cleanupErr) {
+          logger.warn('[Hero Router] Failed to remove request temp file', {
+            file: reqFilePath,
+            error: cleanupErr.message
+          });
+        }
+      }
+
+      // Очистка временного staged файла (если остался после ошибки)
+      if (stagedPath && fs.existsSync(stagedPath)) {
+        try {
+          fs.unlinkSync(stagedPath);
+        } catch (cleanupErr) {
+          logger.warn('[Hero Router] Failed to remove staged import file', {
+            file: stagedPath,
             error: cleanupErr.message
           });
         }
@@ -421,7 +562,10 @@ export function createHeroRouter({ requireHeroAdmin }) {
   router.delete('/:id', requireHeroAdmin, deleteLimiter, (req, res) => {
     try {
       const id = validateId(req.params.id, 'hero id');
-      heroQueries.delete(id);
+      const result = heroQueries.delete(id);
+      if (!result || result.changes === 0) {
+        return res.status(404).json({ error: 'Герой не найден' });
+      }
       res.json({ success: true });
     } catch (error) {
       if (error.message.includes('Invalid')) {
@@ -473,7 +617,10 @@ export function createHeroRouter({ requireHeroAdmin }) {
   router.delete('/media/:mediaId', requireHeroAdmin, deleteLimiter, (req, res) => {
     try {
       const mediaId = validateId(req.params.mediaId, 'media id');
-      heroQueries.deleteMedia(mediaId);
+      const result = heroQueries.deleteMedia(mediaId);
+      if (!result || result.changes === 0) {
+        return res.status(404).json({ error: 'Материал не найден' });
+      }
       res.json({ success: true });
     } catch (error) {
       if (error.message.includes('Invalid')) {
