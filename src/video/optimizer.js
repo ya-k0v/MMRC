@@ -572,49 +572,78 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
   const currentStatus = getFileStatus(deviceId, fileName);
   const currentState = String(currentStatus?.status || '').toLowerCase();
 
-  if (hasActiveOptimizationJob(deviceId, fileName) || currentState === 'checking' || currentState === 'processing') {
+  if (hasActiveOptimizationJob(deviceId, fileName)) {
     return { success: false, message: 'Optimization already in progress', alreadyRunning: true };
   }
 
-  clearOptimizationCancelRequest(optimizationKey);
-
-  if (!videoOptConfig.enabled) {
-    return { success: false, message: 'Video optimization disabled' };
+  if (currentState === 'checking' || currentState === 'processing') {
+    logger.warn('[VideoOpt] Stale in-progress status detected, continuing optimization', {
+      deviceId,
+      fileName,
+      currentState,
+      progress: Number(currentStatus?.progress) || 0
+    });
   }
 
-  // ИСПРАВЛЕНО: Получаем путь из БД для новой архитектуры storage
-  const { getFileMetadata } = await import('../database/files-metadata.js');
-  const metadata = getFileMetadata(deviceId, fileName);
+  const initLockToken = Symbol('video-opt-init-lock');
+  activeOptimizationJobs.set(optimizationKey, {
+    deviceId,
+    fileName,
+    process: null,
+    cancelRequested: false,
+    cancelReason: null,
+    startedAt: Date.now(),
+    stage: 'initializing',
+    lockToken: initLockToken
+  });
 
-  let filePath;
-  if (metadata && metadata.file_path) {
-    // Медиафайл из БД (в /content/)
-    filePath = metadata.file_path;
-  } else {
-    // Fallback для PDF/PPTX/folders (в /content/{device}/)
-    // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
-    const devicesPath = getDevicesPath();
-    const deviceFolder = path.join(devicesPath, d.folder);
-    filePath = path.join(deviceFolder, fileName);
-  }
+  const releaseInitLock = () => {
+    const activeJob = activeOptimizationJobs.get(optimizationKey);
+    if (activeJob?.lockToken === initLockToken) {
+      activeOptimizationJobs.delete(optimizationKey);
+    }
+  };
 
-  if (!fs.existsSync(filePath)) {
-    return { success: false, message: 'File not found' };
-  }
+  try {
+    clearOptimizationCancelRequest(optimizationKey);
 
-  const ext = path.extname(fileName).toLowerCase();
-  if (!VIDEO_EXTENSIONS.has(ext)) {
-    return { success: false, message: 'Not a video file' };
-  }
+    if (!videoOptConfig.enabled) {
+      return { success: false, message: 'Video optimization disabled' };
+    }
 
-  logger.info(`[VideoOpt] 🔍 Проверка: ${fileName}`, { deviceId, fileName });
+    // ИСПРАВЛЕНО: Получаем путь из БД для новой архитектуры storage
+    const { getFileMetadata } = await import('../database/files-metadata.js');
+    const metadata = getFileMetadata(deviceId, fileName);
 
-  // Устанавливаем статус "проверка"
-  setFileStatus(deviceId, fileName, { status: 'checking', progress: 0, canPlay: false });
-  throwIfOptimizationCancelled(optimizationKey);
+    let filePath;
+    if (metadata && metadata.file_path) {
+      // Медиафайл из БД (в /content/)
+      filePath = metadata.file_path;
+    } else {
+      // Fallback для PDF/PPTX/folders (в /content/{device}/)
+      // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
+      const devicesPath = getDevicesPath();
+      const deviceFolder = path.join(devicesPath, d.folder);
+      filePath = path.join(deviceFolder, fileName);
+    }
 
-  // 1) Быстрый старт: берем из БД что есть
-  let params = metadata
+    if (!fs.existsSync(filePath)) {
+      return { success: false, message: 'File not found' };
+    }
+
+    const ext = path.extname(fileName).toLowerCase();
+    if (!VIDEO_EXTENSIONS.has(ext)) {
+      return { success: false, message: 'Not a video file' };
+    }
+
+    logger.info(`[VideoOpt] 🔍 Проверка: ${fileName}`, { deviceId, fileName });
+
+    // Устанавливаем статус "проверка"
+    setFileStatus(deviceId, fileName, { status: 'checking', progress: 0, canPlay: false });
+    throwIfOptimizationCancelled(optimizationKey);
+
+    // 1) Быстрый старт: берем из БД что есть
+    let params = metadata
     ? {
       codec: metadata.video_codec,
       width: metadata.video_width || 0,
@@ -629,10 +658,10 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       audioBitrate: metadata.audio_bitrate || 0,
       audioChannels: metadata.audio_channels || 0
     }
-    : null;
+      : null;
 
-  // 2) Дозаполняем через ffprobe только если нужно
-  const shouldProbe =
+    // 2) Дозаполняем через ffprobe только если нужно
+    const shouldProbe =
     !params ||
     !params.codec ||
     !params.width ||
@@ -641,21 +670,21 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     !params.pixFmt ||
     !params.audioCodec;
 
-  if (shouldProbe) {
-    const probed = await runCancellableVideoProbe(filePath, optimizationKey);
-    if (probed) {
-      params = { ...(params || {}), ...probed };
+    if (shouldProbe) {
+      const probed = await runCancellableVideoProbe(filePath, optimizationKey);
+      if (probed) {
+        params = { ...(params || {}), ...probed };
+      }
     }
-  }
 
-  throwIfOptimizationCancelled(optimizationKey);
+    throwIfOptimizationCancelled(optimizationKey);
 
-  if (!params || !params.codec) {
-    deleteFileStatus(deviceId, fileName);
-    return { success: false, message: 'Cannot read video parameters' };
-  }
+    if (!params || !params.codec) {
+      deleteFileStatus(deviceId, fileName);
+      return { success: false, message: 'Cannot read video parameters' };
+    }
 
-  logger.info('[VideoOpt] 📊 Итоговые параметры файла', {
+    logger.info('[VideoOpt] 📊 Итоговые параметры файла', {
     deviceId,
     fileName,
     width: params.width,
@@ -668,49 +697,49 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     audioCodec: params.audioCodec
   });
 
-  const isMp4Like = MP4_LIKE_EXTENSIONS.has(ext);
-  const videoNeedsTranscode = needsOptimization(params);
-  const audioNeedsTranscode = !isAudioCodecCompatible(params.audioCodec);
-  const containerNeedsRewrite = !isMp4Like;
+    const isMp4Like = MP4_LIKE_EXTENSIONS.has(ext);
+    const videoNeedsTranscode = needsOptimization(params);
+    const audioNeedsTranscode = !isAudioCodecCompatible(params.audioCodec);
+    const containerNeedsRewrite = !isMp4Like;
 
-  let seekRisk = false;
-  if (isMp4Like) {
-    try {
-      seekRisk = await needsFaststart(filePath);
-    } catch (error) {
-      logger.warn('[VideoOpt] ⚠️ Не удалось проверить seek-структуру, включаем безопасный режим', {
-        deviceId,
-        fileName,
-        error: error.message
-      });
-      seekRisk = true;
+    let seekRisk = false;
+    if (isMp4Like) {
+      try {
+        seekRisk = await needsFaststart(filePath);
+      } catch (error) {
+        logger.warn('[VideoOpt] ⚠️ Не удалось проверить seek-структуру, включаем безопасный режим', {
+          deviceId,
+          fileName,
+          error: error.message
+        });
+        seekRisk = true;
+      }
     }
-  }
 
-  const requiresWork =
+    const requiresWork =
     videoNeedsTranscode ||
     audioNeedsTranscode ||
     containerNeedsRewrite ||
     seekRisk;
 
-  if (!requiresWork) {
-    logger.info(`[VideoOpt] ✅ Видео оптимально: ${fileName}`, { deviceId, fileName });
-    setFileStatus(deviceId, fileName, { status: 'ready', progress: 100, canPlay: true });
+    if (!requiresWork) {
+      logger.info(`[VideoOpt] ✅ Видео оптимально: ${fileName}`, { deviceId, fileName });
+      setFileStatus(deviceId, fileName, { status: 'ready', progress: 100, canPlay: true });
 
-    // КРИТИЧНО: Отправляем событие клиентам даже если оптимизация не требуется
-    io.emit('devices/updated');
-    io.emit('file/ready', { device_id: deviceId, file: fileName });
+      // КРИТИЧНО: Отправляем событие клиентам даже если оптимизация не требуется
+      io.emit('devices/updated');
+      io.emit('file/ready', { device_id: deviceId, file: fileName });
 
-    return { success: true, message: 'Already optimized', optimized: false };
-  }
+      return { success: true, message: 'Already optimized', optimized: false };
+    }
 
-  logger.info(`[VideoOpt] ⚠️ Требуется оптимизация: ${fileName}`, { deviceId, fileName });
+    logger.info(`[VideoOpt] ⚠️ Требуется оптимизация: ${fileName}`, { deviceId, fileName });
 
-  // Устанавливаем статус "обработка"
-  setFileStatus(deviceId, fileName, { status: 'processing', progress: 5, canPlay: false });
-  io.emit('file/processing', { device_id: deviceId, file: fileName });
-  io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 5 });
-  logger.info(`[VideoOpt] 📊 Начало обработки: ${fileName} (5%)`, {
+    // Устанавливаем статус "обработка"
+    setFileStatus(deviceId, fileName, { status: 'processing', progress: 5, canPlay: false });
+    io.emit('file/processing', { device_id: deviceId, file: fileName });
+    io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 5 });
+    logger.info(`[VideoOpt] 📊 Начало обработки: ${fileName} (5%)`, {
     deviceId,
     fileName,
     videoNeedsTranscode,
@@ -719,25 +748,25 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     seekRisk
   });
 
-  const { key: targetProfileKey, profile: targetProfile } = resolveTargetProfile(params);
-  const optConfig = videoOptConfig.optimization || {};
+    const { key: targetProfileKey, profile: targetProfile } = resolveTargetProfile(params);
+    const optConfig = videoOptConfig.optimization || {};
 
   // КРИТИЧНО: Всегда конвертируем в MP4 (даже если оригинал WebM/MKV/AVI)
-  const outputExt = '.mp4';
+    const outputExt = '.mp4';
 
   // ИСПРАВЛЕНО: Временный файл сохраняем в той же папке что и оригинал
-  const fileDir = path.dirname(filePath);
-  let tempPath = path.join(fileDir, `.optimizing_${Date.now()}${outputExt}`);
+    const fileDir = path.dirname(filePath);
+    let tempPath = path.join(fileDir, `.optimizing_${Date.now()}${outputExt}`);
 
   // Определяем финальное имя файла
-  const baseFileName = path.basename(fileName, ext);
-  const finalFileName = ext === '.mp4' ? fileName : `${baseFileName}.mp4`;
-  const finalPath = path.join(fileDir, finalFileName);
+    const baseFileName = path.basename(fileName, ext);
+    const finalFileName = ext === '.mp4' ? fileName : `${baseFileName}.mp4`;
+    const finalPath = path.join(fileDir, finalFileName);
 
-  let ffmpegArgs = [];
-  let processingMode = 'transcode';
+    let ffmpegArgs = [];
+    let processingMode;
 
-  if (!videoNeedsTranscode) {
+    if (!videoNeedsTranscode) {
     if (seekRisk && isMp4Like && !audioNeedsTranscode) {
       processingMode = 'faststart';
     } else {
@@ -787,7 +816,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     ];
   }
 
-  logger.info('[VideoOpt] 🎬 Выбран режим обработки', {
+    logger.info('[VideoOpt] 🎬 Выбран режим обработки', {
     deviceId,
     fileName,
     processingMode,
@@ -795,8 +824,8 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     outputFile: finalFileName
   });
 
-  try {
-    await runFfmpegWithProgress({ deviceId, fileName, ffmpegArgs, io, jobKey: optimizationKey });
+    try {
+      await runFfmpegWithProgress({ deviceId, fileName, ffmpegArgs, io, jobKey: optimizationKey });
 
     setFileStatus(deviceId, fileName, { status: 'processing', progress: 90, canPlay: false });
     io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 90 });
@@ -934,9 +963,9 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       }
     };
 
-  } catch (error) {
-    const cancelled = isOptimizationCancelError(error) || hasOptimizationCancelRequest(optimizationKey);
-    if (cancelled) {
+    } catch (error) {
+      const cancelled = isOptimizationCancelError(error) || hasOptimizationCancelRequest(optimizationKey);
+      if (cancelled) {
       logger.info('[VideoOpt] ⏹️ Обработка отменена пользователем', {
         deviceId,
         fileName,
@@ -963,35 +992,39 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       return { success: false, cancelled: true, message: error.message || 'Обработка отменена пользователем' };
     }
 
-    logger.error(`[VideoOpt] ❌ Ошибка конвертации`, { error: error.message, stack: error.stack, deviceId, fileName });
+      logger.error(`[VideoOpt] ❌ Ошибка конвертации`, { error: error.message, stack: error.stack, deviceId, fileName });
 
-    // Очищаем временный файл
-    if (tempPath && fs.existsSync(tempPath)) {
-      fs.unlinkSync(tempPath);
+      // Очищаем временный файл
+      if (tempPath && fs.existsSync(tempPath)) {
+        fs.unlinkSync(tempPath);
+      }
+
+      // Определяем причину ошибки для понятного сообщения
+      let errorMessage = error.message;
+      const codecLower = String(params.codec || '').toLowerCase();
+
+      if (codecLower === 'av1') {
+        errorMessage = `Кодек AV1 не поддерживается вашей версией FFmpeg. Файл воспроизводится как WebM, но может тормозить на Android. Рекомендация: конвертируйте файл в H.264 вручную или обновите FFmpeg.`;
+        logger.warn(`[VideoOpt] ⚠️ AV1 кодек не поддерживается`, { deviceId, fileName });
+      } else if (codecLower === 'vp9') {
+        errorMessage = `Кодек VP9 может не поддерживаться. Файл воспроизводится как WebM, но может тормозить на Android.`;
+      }
+
+      // Устанавливаем статус "ошибка" но файл можно воспроизвести (оригинал)
+      setFileStatus(deviceId, fileName, { 
+        status: 'error', 
+        progress: 0, 
+        canPlay: true,  // Оригинал можно воспроизвести
+        error: errorMessage 
+      });
+      io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 0 });
+      io.emit('file/error', { device_id: deviceId, file: fileName, error: errorMessage });
+      clearOptimizationCancelRequest(optimizationKey);
+
+      return { success: false, message: errorMessage };
     }
-
-    // Определяем причину ошибки для понятного сообщения
-    let errorMessage = error.message;
-
-    if (params && params.codec && params.codec.toLowerCase() === 'av1') {
-      errorMessage = `Кодек AV1 не поддерживается вашей версией FFmpeg. Файл воспроизводится как WebM, но может тормозить на Android. Рекомендация: конвертируйте файл в H.264 вручную или обновите FFmpeg.`;
-      logger.warn(`[VideoOpt] ⚠️ AV1 кодек не поддерживается`, { deviceId, fileName });
-    } else if (params && params.codec && params.codec.toLowerCase() === 'vp9') {
-      errorMessage = `Кодек VP9 может не поддерживаться. Файл воспроизводится как WebM, но может тормозить на Android.`;
-    }
-
-    // Устанавливаем статус "ошибка" но файл можно воспроизвести (оригинал)
-    setFileStatus(deviceId, fileName, { 
-      status: 'error', 
-      progress: 0, 
-      canPlay: true,  // Оригинал можно воспроизвести
-      error: errorMessage 
-    });
-    io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 0 });
-    io.emit('file/error', { device_id: deviceId, file: fileName, error: errorMessage });
-    clearOptimizationCancelRequest(optimizationKey);
-
-    return { success: false, message: errorMessage };
+  } finally {
+    releaseInitLock();
   }
 }
 

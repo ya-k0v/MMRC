@@ -17,8 +17,50 @@ import { removeStreamJob } from '../streams/stream-manager.js';
 import { requireAuth } from '../middleware/auth.js';
 import { getUserDevices, hasDeviceAccess } from '../middleware/device-access.js';
 import { launchAndroidApp } from '../utils/adb-launcher.js';
+import { validatePath } from '../utils/path-validator.js';
 
 const router = express.Router();
+const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+
+function isReservedObjectKey(value) {
+  return RESERVED_OBJECT_KEYS.has(String(value || ''));
+}
+
+function getTrimmedDeviceId(rawId) {
+  if (typeof rawId !== 'string') {
+    return '';
+  }
+  return rawId.trim();
+}
+
+function normalizeRequestedDeviceId(rawId) {
+  const trimmed = getTrimmedDeviceId(rawId);
+  if (!trimmed) {
+    return null;
+  }
+
+  const sanitized = sanitizeDeviceId(trimmed);
+  if (!sanitized || isReservedObjectKey(sanitized)) {
+    return null;
+  }
+
+  return sanitized;
+}
+
+function resolveDeviceEntry(rawId, devicesMap) {
+  const trimmed = getTrimmedDeviceId(rawId);
+  if (!trimmed || isReservedObjectKey(trimmed)) {
+    return null;
+  }
+
+  for (const [deviceId, device] of Object.entries(devicesMap || {})) {
+    if (deviceId === trimmed && !isReservedObjectKey(deviceId)) {
+      return { deviceId, device };
+    }
+  }
+
+  return null;
+}
 
 /**
  * Настройка роутера для устройств
@@ -84,17 +126,25 @@ export function createDevicesRouter(deps) {
   // POST /api/devices - Создать новое устройство (только admin)
   router.post('/', requireAdmin, createLimiter, async (req, res) => {
     const { device_id, name } = req.body;
+    const rawDeviceId = getTrimmedDeviceId(device_id);
+    const normalizedDeviceId = normalizeRequestedDeviceId(device_id);
     
-    if (!device_id) {
+    if (!rawDeviceId) {
       return res.status(400).json({ error: 'Требуется device_id' });
     }
+
+    if (!normalizedDeviceId || rawDeviceId !== normalizedDeviceId) {
+      return res.status(400).json({
+        error: 'Некорректный device_id. Разрешены только буквы, цифры, _ и - (без пробелов).'
+      });
+    }
     
-    if (devices[device_id]) {
+    if (Object.prototype.hasOwnProperty.call(devices, normalizedDeviceId)) {
       return res.status(409).json({ error: 'Устройство уже существует' });
     }
     
     // Проверяем уникальность имени устройства
-    const deviceName = name || device_id;
+    const deviceName = typeof name === 'string' && name.trim() ? name.trim() : normalizedDeviceId;
     const existingDeviceWithSameName = Object.values(devices).find(d => d.name === deviceName);
     if (existingDeviceWithSameName) {
       return res.status(409).json({ error: 'Устройство с таким именем уже существует' });
@@ -102,30 +152,30 @@ export function createDevicesRouter(deps) {
     
     // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
     const devicesPath = getDevicesPath();
-    const devicePath = path.join(devicesPath, device_id);
+    const devicePath = validatePath(path.resolve(devicesPath, normalizedDeviceId), devicesPath);
     fs.mkdirSync(devicePath, { recursive: true });
     
     // КРИТИЧНО: Устанавливаем права 755 на папку устройства
     // Чтобы Nginx (www-data) мог читать файлы
     try {
       fs.chmodSync(devicePath, 0o755);
-      logDevice('info', `Device folder created with permissions 755`, { deviceId: device_id, path: devicePath });
+      logDevice('info', `Device folder created with permissions 755`, { deviceId: normalizedDeviceId, path: devicePath });
     } catch (e) {
-      logDevice('warn', `Failed to set permissions on device folder`, { deviceId: device_id, path: devicePath, error: e.message });
+      logDevice('warn', `Failed to set permissions on device folder`, { deviceId: normalizedDeviceId, path: devicePath, error: e.message });
     }
     
-    devices[device_id] = { 
-      name: name || device_id, 
-      folder: device_id, 
+    devices[normalizedDeviceId] = { 
+      name: deviceName,
+      folder: normalizedDeviceId,
       files: [], 
       current: { type: 'idle', file: null, state: 'idle' } 
     };
     
     if (typeof onDeviceCreated === 'function') {
       try {
-        onDeviceCreated(device_id);
+        onDeviceCreated(normalizedDeviceId);
       } catch (err) {
-        logger.warn('[Devices] onDeviceCreated hook failed', { deviceId: device_id, error: err.message });
+        logger.warn('[Devices] onDeviceCreated hook failed', { deviceId: normalizedDeviceId, error: err.message });
       }
     }
     
@@ -136,28 +186,31 @@ export function createDevicesRouter(deps) {
     await auditLog({
       userId: req.user.id,
       action: AuditAction.DEVICE_CREATE,
-      resource: `device:${device_id}`,
-      details: { deviceId: device_id, name: name || device_id, createdBy: req.user.username },
+      resource: `device:${normalizedDeviceId}`,
+      details: { deviceId: normalizedDeviceId, name: deviceName, createdBy: req.user.username },
       ipAddress: req.ip,
       userAgent: req.get('user-agent'),
       status: 'success'
     });
-    logDevice('info', 'Device created', { deviceId: device_id, name: name || device_id, createdBy: req.user.username });
+    logDevice('info', 'Device created', { deviceId: normalizedDeviceId, name: deviceName, createdBy: req.user.username });
     
     res.json({ ok: true });
   });
   
   // POST /api/devices/:id/rename - Переименовать устройство (только admin)
   router.post('/:id/rename', requireAdmin, (req, res) => {
-    const id = sanitizeDeviceId(req.params.id);
+    const rawId = getTrimmedDeviceId(req.params.id);
+    const entry = resolveDeviceEntry(req.params.id, devices);
     
-    if (!id) {
+    if (!rawId || isReservedObjectKey(rawId)) {
       return res.status(400).json({ error: 'Неверный ID устройства' });
     }
-    
-    if (!devices[id]) {
+
+    if (!entry) {
       return res.status(404).json({ error: 'Не найдено' });
     }
+
+    const { deviceId: id, device: targetDevice } = entry;
     
     const newName = req.body.name || id;
     
@@ -169,7 +222,7 @@ export function createDevicesRouter(deps) {
       return res.status(409).json({ error: 'Устройство с таким именем уже существует' });
     }
     
-    devices[id].name = newName;
+    targetDevice.name = newName;
     io.emit('devices/updated');
     saveDevicesJson(devices);
     res.json({ ok: true });
@@ -177,16 +230,18 @@ export function createDevicesRouter(deps) {
   
   // DELETE /api/devices/:id - Удалить устройство (только admin)
   router.delete('/:id', requireAdmin, deleteLimiter, async (req, res) => {
-    const id = sanitizeDeviceId(req.params.id);
+    const rawId = getTrimmedDeviceId(req.params.id);
+    const entry = resolveDeviceEntry(req.params.id, devices);
     
-    if (!id) {
+    if (!rawId || isReservedObjectKey(rawId)) {
       return res.status(400).json({ error: 'Неверный ID устройства' });
     }
-    
-    const d = devices[id];
-    if (!d) {
+
+    if (!entry) {
       return res.status(404).json({ error: 'Не найдено' });
     }
+
+    const { deviceId: id, device: d } = entry;
     
     logDevice('info', `Deleting device`, { deviceId: id, folder: d.folder });
     
@@ -211,22 +266,43 @@ export function createDevicesRouter(deps) {
     // 2. Удаляем папку устройства
     // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
     const devicesPath = getDevicesPath();
-    const devicePath = path.join(devicesPath, d.folder);
-    logDevice('info', `Deleting device folder`, { deviceId: id, path: devicePath });
+    const folderName = typeof d.folder === 'string' && d.folder.trim() ? d.folder : id;
+    let safeDevicePath = null;
+
     try {
-      if (fs.existsSync(devicePath)) {
-        fs.rmSync(devicePath, { recursive: true, force: true });
-        logDevice('info', `Device folder deleted`, { deviceId: id, path: devicePath });
-      } else {
-        logDevice('warn', `Device folder does not exist, skipping`, { deviceId: id, path: devicePath });
-      }
+      safeDevicePath = validatePath(path.resolve(devicesPath, folderName), devicesPath);
     } catch (err) {
-      logDevice('error', `Failed to delete device folder`, { deviceId: id, path: devicePath, error: err.message });
-      // Продолжаем удаление, даже если папка не удалилась
+      logDevice('warn', `Skipping unsafe device folder path during delete`, {
+        deviceId: id,
+        folder: folderName,
+        error: err.message
+      });
+    }
+
+    if (safeDevicePath) {
+      logDevice('info', `Deleting device folder`, { deviceId: id, path: safeDevicePath });
+      try {
+        if (fs.existsSync(safeDevicePath)) {
+          fs.rmSync(safeDevicePath, { recursive: true, force: true });
+          logDevice('info', `Device folder deleted`, { deviceId: id, path: safeDevicePath });
+        } else {
+          logDevice('warn', `Device folder does not exist, skipping`, { deviceId: id, path: safeDevicePath });
+        }
+      } catch (err) {
+        logDevice('error', `Failed to delete device folder`, { deviceId: id, path: safeDevicePath, error: err.message });
+        // Продолжаем удаление, даже если папка не удалилась
+      }
+    } else {
+      logDevice('warn', `Device folder path unresolved, skipping`, { deviceId: id, folder: folderName });
     }
     
     // 3. Удаляем из devices (память)
-    delete devices[id];
+    for (const key of Object.keys(devices)) {
+      if (key === id) {
+        delete devices[key];
+        break;
+      }
+    }
     logDevice('info', `Device removed from memory`, { deviceId: id });
     if (typeof onDeviceDeleted === 'function') {
       try {
@@ -237,10 +313,17 @@ export function createDevicesRouter(deps) {
     }
     
     // 4. Удаляем из fileNamesMap
-    if (fileNamesMap[id]) {
-      const fileCount = Object.keys(fileNamesMap[id]).length;
-      logDevice('info', `Deleting file names from map`, { deviceId: id, fileCount });
-      delete fileNamesMap[id];
+    let removedFileNames = false;
+    for (const key of Object.keys(fileNamesMap)) {
+      if (key === id) {
+        const fileCount = Object.keys(fileNamesMap[key] || {}).length;
+        logDevice('info', `Deleting file names from map`, { deviceId: id, fileCount });
+        delete fileNamesMap[key];
+        removedFileNames = true;
+        break;
+      }
+    }
+    if (removedFileNames) {
       saveFileNamesMap(fileNamesMap);
     }
     
@@ -269,17 +352,18 @@ export function createDevicesRouter(deps) {
   
   // POST /api/devices/:id/launch-app - Запустить Android-приложение на устройстве
   router.post('/:id/launch-app', requireSpeaker, async (req, res) => {
-    const id = sanitizeDeviceId(req.params.id);
-    if (!id || !devices[id]) {
+    const entry = resolveDeviceEntry(req.params.id, devices);
+    if (!entry) {
       return res.status(404).json({ ok: false, error: 'Устройство не найдено' });
     }
+
+    const { deviceId: id, device } = entry;
 
     // Speaker может запускать только на назначенных ему устройствах.
     if (!hasDeviceAccess(req.user.userId, id, req.user.role)) {
       return res.status(403).json({ ok: false, error: 'Доступ к устройству запрещен' });
     }
 
-    const device = devices[id];
     if (!device.ipAddress) {
       return res.status(400).json({ ok: false, error: 'IP адрес устройства не задан' });
     }

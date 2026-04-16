@@ -605,11 +605,14 @@ window.goBackModal = goBackModal;
 window.showUsersModal = showUsersModal;
 
 export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevice, renderFilesPane) {
+  const DEVICE_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
   const content = `
     <div style="display:flex; flex-direction:column; gap:var(--space-md);">
       <div>
         <label style="display:block; margin-bottom:4px; font-weight:500;">ID устройства</label>
         <input id="modalDeviceId" class="input" placeholder="TV001" required />
+        <div class="meta" style="margin-top:6px; color:var(--text-secondary); font-size:0.8rem;">Только буквы, цифры, _ и - (без пробелов)</div>
       </div>
       
       <div>
@@ -640,6 +643,12 @@ export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevi
       
       if (!device_id) {
         errorEl.textContent = 'Введите ID устройства';
+        errorEl.style.display = 'block';
+        return;
+      }
+
+      if (!DEVICE_ID_PATTERN.test(device_id)) {
+        errorEl.textContent = 'ID устройства может содержать только буквы, цифры, _ и - (без пробелов)';
         errorEl.style.display = 'block';
         return;
       }
