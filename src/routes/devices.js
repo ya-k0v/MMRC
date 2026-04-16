@@ -20,37 +20,46 @@ import { launchAndroidApp } from '../utils/adb-launcher.js';
 import { validatePath } from '../utils/path-validator.js';
 
 const router = express.Router();
+const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
-function normalizeRequestedDeviceId(rawId) {
-  if (typeof rawId !== 'string') {
-    return null;
-  }
-
-  const trimmed = rawId.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  return sanitizeDeviceId(trimmed);
+function isReservedObjectKey(value) {
+  return RESERVED_OBJECT_KEYS.has(String(value || ''));
 }
 
-function resolveDeviceIdParam(rawId, devicesMap) {
+function getTrimmedDeviceId(rawId) {
   if (typeof rawId !== 'string') {
-    return null;
+    return '';
   }
+  return rawId.trim();
+}
 
-  const trimmed = rawId.trim();
+function normalizeRequestedDeviceId(rawId) {
+  const trimmed = getTrimmedDeviceId(rawId);
   if (!trimmed) {
     return null;
   }
 
   const sanitized = sanitizeDeviceId(trimmed);
-  if (sanitized) {
-    return sanitized;
+  if (!sanitized || isReservedObjectKey(sanitized)) {
+    return null;
   }
 
-  // Поддержка legacy-ID (например с пробелами), чтобы можно было удалить старые проблемные записи.
-  return Object.prototype.hasOwnProperty.call(devicesMap, trimmed) ? trimmed : null;
+  return sanitized;
+}
+
+function resolveDeviceEntry(rawId, devicesMap) {
+  const trimmed = getTrimmedDeviceId(rawId);
+  if (!trimmed || isReservedObjectKey(trimmed)) {
+    return null;
+  }
+
+  for (const [deviceId, device] of Object.entries(devicesMap || {})) {
+    if (deviceId === trimmed && !isReservedObjectKey(deviceId)) {
+      return { deviceId, device };
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -117,19 +126,20 @@ export function createDevicesRouter(deps) {
   // POST /api/devices - Создать новое устройство (только admin)
   router.post('/', requireAdmin, createLimiter, async (req, res) => {
     const { device_id, name } = req.body;
+    const rawDeviceId = getTrimmedDeviceId(device_id);
     const normalizedDeviceId = normalizeRequestedDeviceId(device_id);
     
-    if (!normalizedDeviceId) {
+    if (!rawDeviceId) {
       return res.status(400).json({ error: 'Требуется device_id' });
     }
 
-    if (typeof device_id !== 'string' || String(device_id).trim() !== normalizedDeviceId) {
+    if (!normalizedDeviceId || rawDeviceId !== normalizedDeviceId) {
       return res.status(400).json({
         error: 'Некорректный device_id. Разрешены только буквы, цифры, _ и - (без пробелов).'
       });
     }
     
-    if (devices[normalizedDeviceId]) {
+    if (Object.prototype.hasOwnProperty.call(devices, normalizedDeviceId)) {
       return res.status(409).json({ error: 'Устройство уже существует' });
     }
     
@@ -189,15 +199,18 @@ export function createDevicesRouter(deps) {
   
   // POST /api/devices/:id/rename - Переименовать устройство (только admin)
   router.post('/:id/rename', requireAdmin, (req, res) => {
-    const id = resolveDeviceIdParam(req.params.id, devices);
+    const rawId = getTrimmedDeviceId(req.params.id);
+    const entry = resolveDeviceEntry(req.params.id, devices);
     
-    if (!id) {
+    if (!rawId || isReservedObjectKey(rawId)) {
       return res.status(400).json({ error: 'Неверный ID устройства' });
     }
-    
-    if (!devices[id]) {
+
+    if (!entry) {
       return res.status(404).json({ error: 'Не найдено' });
     }
+
+    const { deviceId: id, device: targetDevice } = entry;
     
     const newName = req.body.name || id;
     
@@ -209,7 +222,7 @@ export function createDevicesRouter(deps) {
       return res.status(409).json({ error: 'Устройство с таким именем уже существует' });
     }
     
-    devices[id].name = newName;
+    targetDevice.name = newName;
     io.emit('devices/updated');
     saveDevicesJson(devices);
     res.json({ ok: true });
@@ -217,16 +230,18 @@ export function createDevicesRouter(deps) {
   
   // DELETE /api/devices/:id - Удалить устройство (только admin)
   router.delete('/:id', requireAdmin, deleteLimiter, async (req, res) => {
-    const id = resolveDeviceIdParam(req.params.id, devices);
+    const rawId = getTrimmedDeviceId(req.params.id);
+    const entry = resolveDeviceEntry(req.params.id, devices);
     
-    if (!id) {
+    if (!rawId || isReservedObjectKey(rawId)) {
       return res.status(400).json({ error: 'Неверный ID устройства' });
     }
-    
-    const d = devices[id];
-    if (!d) {
+
+    if (!entry) {
       return res.status(404).json({ error: 'Не найдено' });
     }
+
+    const { deviceId: id, device: d } = entry;
     
     logDevice('info', `Deleting device`, { deviceId: id, folder: d.folder });
     
@@ -282,7 +297,12 @@ export function createDevicesRouter(deps) {
     }
     
     // 3. Удаляем из devices (память)
-    delete devices[id];
+    for (const key of Object.keys(devices)) {
+      if (key === id) {
+        delete devices[key];
+        break;
+      }
+    }
     logDevice('info', `Device removed from memory`, { deviceId: id });
     if (typeof onDeviceDeleted === 'function') {
       try {
@@ -293,10 +313,17 @@ export function createDevicesRouter(deps) {
     }
     
     // 4. Удаляем из fileNamesMap
-    if (fileNamesMap[id]) {
-      const fileCount = Object.keys(fileNamesMap[id]).length;
-      logDevice('info', `Deleting file names from map`, { deviceId: id, fileCount });
-      delete fileNamesMap[id];
+    let removedFileNames = false;
+    for (const key of Object.keys(fileNamesMap)) {
+      if (key === id) {
+        const fileCount = Object.keys(fileNamesMap[key] || {}).length;
+        logDevice('info', `Deleting file names from map`, { deviceId: id, fileCount });
+        delete fileNamesMap[key];
+        removedFileNames = true;
+        break;
+      }
+    }
+    if (removedFileNames) {
       saveFileNamesMap(fileNamesMap);
     }
     
@@ -325,17 +352,18 @@ export function createDevicesRouter(deps) {
   
   // POST /api/devices/:id/launch-app - Запустить Android-приложение на устройстве
   router.post('/:id/launch-app', requireSpeaker, async (req, res) => {
-    const id = resolveDeviceIdParam(req.params.id, devices);
-    if (!id || !devices[id]) {
+    const entry = resolveDeviceEntry(req.params.id, devices);
+    if (!entry) {
       return res.status(404).json({ ok: false, error: 'Устройство не найдено' });
     }
+
+    const { deviceId: id, device } = entry;
 
     // Speaker может запускать только на назначенных ему устройствах.
     if (!hasDeviceAccess(req.user.userId, id, req.user.role)) {
       return res.status(403).json({ ok: false, error: 'Доступ к устройству запрещен' });
     }
 
-    const device = devices[id];
     if (!device.ipAddress) {
       return res.status(400).json({ ok: false, error: 'IP адрес устройства не задан' });
     }

@@ -764,7 +764,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     const finalPath = path.join(fileDir, finalFileName);
 
     let ffmpegArgs = [];
-    let processingMode = 'transcode';
+    let processingMode;
 
     if (!videoNeedsTranscode) {
     if (seekRisk && isMp4Like && !audioNeedsTranscode) {
@@ -1001,11 +1001,12 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
 
       // Определяем причину ошибки для понятного сообщения
       let errorMessage = error.message;
+      const codecLower = String(params.codec || '').toLowerCase();
 
-      if (params && params.codec && params.codec.toLowerCase() === 'av1') {
+      if (codecLower === 'av1') {
         errorMessage = `Кодек AV1 не поддерживается вашей версией FFmpeg. Файл воспроизводится как WebM, но может тормозить на Android. Рекомендация: конвертируйте файл в H.264 вручную или обновите FFmpeg.`;
         logger.warn(`[VideoOpt] ⚠️ AV1 кодек не поддерживается`, { deviceId, fileName });
-      } else if (params && params.codec && params.codec.toLowerCase() === 'vp9') {
+      } else if (codecLower === 'vp9') {
         errorMessage = `Кодек VP9 может не поддерживаться. Файл воспроизводится как WebM, но может тормозить на Android.`;
       }
 
