@@ -150,57 +150,59 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   
   // Meta секция с информацией об устройстве
   const metaDiv = document.createElement('div');
-  metaDiv.className = 'meta';
-  metaDiv.style.cssText = 'margin-top:var(--space-sm); margin-bottom:var(--space-sm); display:flex; align-items:center; flex-wrap:wrap; gap:4px';
-  
-  // Добавляем иконку устройства (безопасно, так как это константа из DEVICE_ICONS)
-  const deviceIcon = document.createElement('span');
-  // DEVICE_ICONS содержит только безопасные SVG строки из константы
-  // Используем insertAdjacentHTML для вставки константы (безопасно, так как не пользовательский ввод)
-  const iconHtml = DEVICE_ICONS[d.deviceType] || DEVICE_ICONS['browser'];
-  deviceIcon.insertAdjacentHTML('beforeend', iconHtml);
-  metaDiv.appendChild(deviceIcon);
-  
-  const deviceTypeStrong = document.createElement('strong');
-  deviceTypeStrong.textContent = DEVICE_TYPE_NAMES[d.deviceType] || d.deviceType || 'Browser';
-  metaDiv.appendChild(deviceTypeStrong);
-  
+  metaDiv.className = 'meta device-service-meta';
+
+  const createMetaChip = ({ text, tone = '', iconSvg = '' }) => {
+    const chip = document.createElement('span');
+    chip.className = tone ? `device-meta-chip ${tone}` : 'device-meta-chip';
+
+    if (iconSvg) {
+      const iconWrap = document.createElement('span');
+      iconWrap.className = 'device-meta-chip-icon';
+      iconWrap.insertAdjacentHTML('beforeend', iconSvg);
+      chip.appendChild(iconWrap);
+    }
+
+    const textWrap = document.createElement('span');
+    textWrap.textContent = text;
+    chip.appendChild(textWrap);
+    return chip;
+  };
+
+  const iconHtml = DEVICE_ICONS[d.deviceType] || DEVICE_ICONS.browser;
+  metaDiv.appendChild(createMetaChip({
+    text: DEVICE_TYPE_NAMES[d.deviceType] || d.deviceType || 'Browser',
+    tone: 'is-device',
+    iconSvg: iconHtml
+  }));
+
   if (d.platform && d.platform !== 'Unknown') {
-    const platformSpan = document.createElement('span');
-    platformSpan.textContent = `• ${d.platform}`;
-    metaDiv.appendChild(platformSpan);
+    metaDiv.appendChild(createMetaChip({ text: d.platform }));
   }
-  
+
   if (d.ipAddress) {
-    const ipSpan = document.createElement('span');
-    ipSpan.textContent = `• IP: ${d.ipAddress}`;
-    metaDiv.appendChild(ipSpan);
+    metaDiv.appendChild(createMetaChip({ text: `IP: ${d.ipAddress}` }));
   }
-  
-  const idSpan = document.createElement('span');
-  idSpan.textContent = `• ID: ${d.device_id}`;
-  metaDiv.appendChild(idSpan);
-  
-  const filesSpan = document.createElement('span');
-  filesSpan.textContent = `• Файлов: ${d.files?.length || 0}`;
-  metaDiv.appendChild(filesSpan);
-  
-  const readySpan = document.createElement('span');
-  readySpan.style.cssText = 'display:inline-flex; align-items:center;';
-  const readyIcon = readyDevices.has(d.device_id) ? getCheckIcon(14, 'var(--success)') : getCrossIcon(14, 'var(--danger)');
-  readySpan.innerHTML = `• ${readyIcon} ${readyDevices.has(d.device_id) ? 'Готов' : 'Не готов'}`;
-  metaDiv.appendChild(readySpan);
-  
-  const playerLinkSpan = document.createElement('span');
+
+  metaDiv.appendChild(createMetaChip({ text: `ID: ${d.device_id}`, tone: 'is-id' }));
+  metaDiv.appendChild(createMetaChip({ text: `Файлов: ${d.files?.length || 0}` }));
+
+  const isReadyDevice = readyDevices.has(d.device_id);
+  const readyIcon = isReadyDevice
+    ? getCheckIcon(14, 'var(--success)')
+    : getCrossIcon(14, 'var(--danger)');
+  metaDiv.appendChild(createMetaChip({
+    text: isReadyDevice ? 'Готов' : 'Не готов',
+    tone: isReadyDevice ? 'is-success' : 'is-danger',
+    iconSvg: readyIcon
+  }));
+
   const playerLink = document.createElement('a');
   playerLink.href = '#';
-  playerLink.className = 'playerLink';
+  playerLink.className = 'device-meta-chip is-link playerLink';
   playerLink.setAttribute('data-url', playerUrl);
-  playerLink.style.cssText = 'color:var(--primary); text-decoration:underline; cursor:pointer;';
   playerLink.textContent = 'Плеер';
-  playerLinkSpan.appendChild(document.createTextNode('• '));
-  playerLinkSpan.appendChild(playerLink);
-  metaDiv.appendChild(playerLinkSpan);
+  metaDiv.appendChild(playerLink);
   
   card.appendChild(metaDiv);
   

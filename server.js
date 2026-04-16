@@ -5,6 +5,7 @@ import express from 'express';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import { randomBytes } from 'node:crypto';
 
 // Импорты из модулей
 import { 
@@ -27,7 +28,7 @@ import {
   loadFileNamesFromDB, 
   saveFileNamesToDB
 } from './src/storage/devices-storage-sqlite.js';
-import { cleanupMissingFiles } from './src/database/files-metadata.js';
+import { cleanupMissingFiles, repairImportedFilePaths } from './src/database/files-metadata.js';
 import { getFileStatus } from './src/video/file-status.js';
 import { checkVideoParameters } from './src/video/ffmpeg-wrapper.js';
 import { autoOptimizeVideo } from './src/video/optimizer.js';
@@ -64,6 +65,7 @@ import { getSettings, updateContentRootPath, getDataRoot, getDevicesPath, getStr
 import { validatePath } from './src/utils/path-validator.js';
 import { getMetrics } from './src/utils/metrics.js';
 import { timerRegistry } from './src/utils/timer-registry.js';
+import { createUpdateManager } from './src/utils/update-manager.js';
 import adminRouter from './src/routes/admin.js';
 
 const app = express();
@@ -355,7 +357,9 @@ const videoInfoRouter = createVideoInfoRouter({
   devices,
   getFileStatus,
   checkVideoParameters,
-  autoOptimizeVideoWrapper
+  autoOptimizeVideoWrapper,
+  io,
+  requireAdmin
 });
 
 const conversionRouter = createConversionRouter({
@@ -435,6 +439,15 @@ const SERVICE_LOGS_DEFAULT_LINES = Math.max(20, Number(process.env.SERVICE_LOGS_
 const SERVICE_LOGS_MAX_CHUNK_BYTES = Math.max(64 * 1024, Number(process.env.SERVICE_LOGS_MAX_CHUNK_BYTES || 512 * 1024));
 const ADMIN_SERVICE_LOGS_FALLBACK_DIR = path.join(ROOT, '.tmp', 'logs');
 const ADMIN_DB_IMPORT_DIR = path.join(ROOT, '.tmp', 'db-import');
+const UPDATE_CHECK_ENABLED = process.env.UPDATE_CHECK_ENABLED !== '0';
+const UPDATE_CHECK_INTERVAL_MS = Math.max(60 * 1000, Number.parseInt(process.env.UPDATE_CHECK_INTERVAL_MS || '900000', 10) || 900000);
+const UPDATE_CHECK_INITIAL_DELAY_MS = Math.max(5000, Number.parseInt(process.env.UPDATE_CHECK_INITIAL_DELAY_MS || '20000', 10) || 20000);
+
+const updateManager = createUpdateManager({
+  repoRoot: ROOT,
+  syncScriptPath: path.join(ROOT, 'scripts', 'post-pull-sync.sh')
+});
+
 let isServiceRestartScheduled = false;
 
 function scheduleServiceRestart(reason = 'admin_restart', delayMs = DB_IMPORT_RESTART_DELAY_MS) {
@@ -462,6 +475,10 @@ function scheduleRestartAfterDbImport() {
   }
 
   return scheduleServiceRestart('db_import_restart', DB_IMPORT_RESTART_DELAY_MS);
+}
+
+function scheduleRestartAfterUpdateApply() {
+  return scheduleServiceRestart('admin_update_apply', MANUAL_RESTART_DELAY_MS);
 }
 
 function parsePositiveInt(value, fallback) {
@@ -630,6 +647,128 @@ app.post('/api/admin/restart-service', requireAuth, requireAdmin, (req, res) => 
   });
 });
 
+app.get('/api/admin/update/status', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const fetchRemoteRaw = String(req.query.fetchRemote || req.query.fetch || '').toLowerCase();
+    const fetchRemote = fetchRemoteRaw === '1' || fetchRemoteRaw === 'true' || fetchRemoteRaw === 'yes';
+
+    const status = await updateManager.getStatus({ fetchRemote });
+    const runtimeState = updateManager.getRuntimeState();
+
+    return res.json({
+      ok: true,
+      status,
+      runtime: {
+        updating: Boolean(runtimeState.updating),
+        lastCheckedAt: runtimeState.lastCheckedAt || null,
+        lastUpdateStartedAt: runtimeState.lastUpdateStartedAt || null,
+        lastUpdateFinishedAt: runtimeState.lastUpdateFinishedAt || null,
+        lastUpdateError: runtimeState.lastUpdateError || null,
+        dismissedRemoteSha: runtimeState.dismissedRemoteSha || null
+      }
+    });
+  } catch (error) {
+    logger.error('[Admin] Failed to get update status', {
+      error: error?.message || String(error)
+    });
+    return res.status(500).json({
+      ok: false,
+      error: error?.message || 'Не удалось получить статус обновлений'
+    });
+  }
+});
+
+app.post('/api/admin/update/check', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const result = await updateManager.checkAndNotify({
+      force: true,
+      fetchRemote: true,
+      source: 'admin_manual'
+    });
+
+    return res.json({
+      ok: true,
+      ...result
+    });
+  } catch (error) {
+    logger.error('[Admin] Failed to check updates manually', {
+      user: req.user?.username || 'unknown',
+      error: error?.message || String(error)
+    });
+    return res.status(500).json({
+      ok: false,
+      error: error?.message || 'Проверка обновлений завершилась ошибкой'
+    });
+  }
+});
+
+app.post('/api/admin/update/dismiss', requireAuth, requireAdmin, (req, res) => {
+  try {
+    const remoteSha = typeof req.body?.remoteSha === 'string' ? req.body.remoteSha : '';
+    const dismissResult = updateManager.dismiss(remoteSha);
+
+    logger.info('[Admin] Update notification dismissed', {
+      user: req.user?.username || 'unknown',
+      remoteSha: dismissResult.dismissedRemoteSha || null
+    });
+
+    return res.json({
+      ok: true,
+      ...dismissResult
+    });
+  } catch (error) {
+    logger.error('[Admin] Failed to dismiss update notification', {
+      error: error?.message || String(error)
+    });
+    return res.status(500).json({
+      ok: false,
+      error: error?.message || 'Не удалось отложить уведомление об обновлении'
+    });
+  }
+});
+
+app.post('/api/admin/update/apply', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const requestedBy = req.user?.username || 'unknown';
+
+    const applyResult = await updateManager.startApplyUpdate({
+      requestedBy,
+      scheduleRestart: () => {
+        const restartScheduled = scheduleRestartAfterUpdateApply();
+        logger.warn('[Admin] Restart scheduled after update apply', {
+          requestedBy,
+          restartScheduled
+        });
+        return restartScheduled;
+      }
+    });
+
+    if (!applyResult.ok) {
+      const statusCode = applyResult.status === 'in_progress' ? 409 : 500;
+      return res.status(statusCode).json({
+        ok: false,
+        status: applyResult.status,
+        error: applyResult.error || 'Не удалось запустить обновление'
+      });
+    }
+
+    return res.status(202).json({
+      ok: true,
+      status: applyResult.status,
+      message: applyResult.message
+    });
+  } catch (error) {
+    logger.error('[Admin] Failed to schedule update apply', {
+      user: req.user?.username || 'unknown',
+      error: error?.message || String(error)
+    });
+    return res.status(500).json({
+      ok: false,
+      error: error?.message || 'Не удалось запустить обновление'
+    });
+  }
+});
+
 app.get('/api/admin/service-logs', requireAuth, requireAdmin, (req, res) => {
   try {
     const requestedLines = clampInt(
@@ -738,8 +877,8 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
     if (!fs.existsSync(tempUploadDir)) fs.mkdirSync(tempUploadDir, { recursive: true });
 
     const storage = multer.diskStorage({
-      destination: (r, f, cb) => cb(null, tempUploadDir),
-        filename: (r, f, cb) => cb(null, `import_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.dbupload`)
+      destination: (_req, _file, cb) => cb(null, tempUploadDir),
+      filename: (_req, _file, cb) => cb(null, `import_${Date.now()}_${randomBytes(4).toString('hex')}.dbupload`)
     });
 
     const uploadSingle = multer({ storage, limits: { fileSize: MAX_FILE_SIZE } }).single('file');
@@ -847,9 +986,24 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
         // Применяем миграции на новой базе
         runMigrations(DB_PATH);
 
+        // КРИТИЧНО: После импорта БД из другого окружения пути к файлам
+        // могут указывать на старый contentRoot. Пробуем восстановить их автоматически.
+        const repairResult = repairImportedFilePaths({ devicesPath: getDevicesPath() });
+        logger.info('[Admin] Imported DB paths repair completed', {
+          checked: repairResult.checked,
+          repaired: repairResult.repaired,
+          unresolved: repairResult.unresolved,
+          skipped: repairResult.skipped,
+          errors: repairResult.errors
+        });
+
         // Перезагрузим in-memory данные (devices, fileNamesMap)
         devices = loadDevicesFromDB();
         fileNamesMap = loadFileNamesFromDB();
+        Object.keys(devices).forEach((deviceId) => {
+          updateDeviceFilesFromDB(deviceId, devices, fileNamesMap);
+        });
+        saveDevicesToDB(devices);
         io.emit('devices/updated');
 
         const restartScheduled = scheduleRestartAfterDbImport();
@@ -1192,6 +1346,23 @@ setupNotificationsHandler(io);
 initSystemMonitor(streamManager, devices);
 
 function hydrateDevicesFromDatabase() {
+  try {
+    const repairResult = repairImportedFilePaths({ devicesPath: getDevicesPath() });
+    if (repairResult.repaired > 0 || repairResult.unresolved > 0) {
+      logger.info('[Server] Startup metadata path repair result', {
+        checked: repairResult.checked,
+        repaired: repairResult.repaired,
+        unresolved: repairResult.unresolved,
+        skipped: repairResult.skipped,
+        errors: repairResult.errors
+      });
+    }
+  } catch (error) {
+    logger.warn('[Server] Startup metadata path repair failed', {
+      error: error.message
+    });
+  }
+
   // КРИТИЧНО: Используем updateDeviceFilesFromDB для правильной загрузки файлов и стримов
   // Эта функция правильно обрабатывает стримы из БД и создает device.streams
   for (const deviceId in devices) {
@@ -1312,6 +1483,40 @@ const cleanupInterval = timerRegistry.setInterval(() => {
     });
   }
 }, 30 * 60 * 1000, 'Resolution cache cleanup'); // 30 минут
+
+if (UPDATE_CHECK_ENABLED) {
+  timerRegistry.setTimeout(() => {
+    updateManager.checkAndNotify({
+      force: false,
+      fetchRemote: true,
+      source: 'startup'
+    }).catch((error) => {
+      logger.warn('[UpdateManager] Initial update check failed', {
+        error: error?.message || String(error)
+      });
+    });
+  }, UPDATE_CHECK_INITIAL_DELAY_MS, 'Update checker initial run');
+
+  timerRegistry.setInterval(() => {
+    updateManager.checkAndNotify({
+      force: false,
+      fetchRemote: true,
+      source: 'periodic'
+    }).catch((error) => {
+      logger.warn('[UpdateManager] Periodic update check failed', {
+        error: error?.message || String(error)
+      });
+    });
+  }, UPDATE_CHECK_INTERVAL_MS, 'Update checker periodic run');
+
+  logger.info('[UpdateManager] Periodic update checks enabled', {
+    intervalMs: UPDATE_CHECK_INTERVAL_MS,
+    initialDelayMs: UPDATE_CHECK_INITIAL_DELAY_MS,
+    branch: updateManager.getRuntimeState().branch
+  });
+} else {
+  logger.info('[UpdateManager] Periodic update checks disabled by UPDATE_CHECK_ENABLED=0');
+}
 
 // ========================================
 // GRACEFUL SHUTDOWN

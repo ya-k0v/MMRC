@@ -127,6 +127,25 @@ class NotificationsManager {
   }
 
   /**
+   * Получить уведомление по ключу
+   * @param {string} key
+   * @returns {Object|null}
+   */
+  getByKey(key) {
+    const normalizedKey = String(key || '').trim();
+    if (!normalizedKey) {
+      return null;
+    }
+
+    const notificationId = this.notificationKeys.get(normalizedKey);
+    if (!notificationId) {
+      return null;
+    }
+
+    return this.getById(notificationId);
+  }
+
+  /**
    * Обновить существующее уведомление
    * @param {string} id
    * @param {Object} patch
@@ -240,6 +259,26 @@ class NotificationsManager {
       this.notificationKeys.delete(existing.key);
     }
     return this.notifications.delete(id);
+  }
+
+  /**
+   * Удалить уведомление по ключу
+   * @param {string} key
+   * @returns {boolean} Успешно ли удалено
+   */
+  removeByKey(key) {
+    const normalizedKey = String(key || '').trim();
+    if (!normalizedKey) {
+      return false;
+    }
+
+    const notificationId = this.notificationKeys.get(normalizedKey);
+    if (!notificationId) {
+      return false;
+    }
+
+    this.notificationKeys.delete(normalizedKey);
+    return this.notifications.delete(notificationId);
   }
 
   /**

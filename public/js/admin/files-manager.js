@@ -43,9 +43,156 @@ function toIconOnlySvg(svg = '') {
   return String(svg).replace(/margin-right:\s*\d+px;?/g, '');
 }
 
+function getRoundCrossIcon(size = 12, color = 'currentColor', strokeWidth = 2.1) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" style="display:block;"><line x1="7" y1="7" x2="17" y2="17"></line><line x1="17" y1="7" x2="7" y2="17"></line></svg>`;
+}
+
 function applySquareActionButtonStyle(button) {
   if (!button) return;
   button.style.cssText = 'min-width:30px; width:30px; height:30px; padding:0; display:flex; align-items:center; justify-content:center; line-height:1; border-radius:var(--radius-sm);';
+}
+
+function createProcessingCancelButton(safeName, originalName) {
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'cancelProcessingBtn';
+  cancelBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+  cancelBtn.setAttribute('data-original', encodeURIComponent(originalName));
+  cancelBtn.type = 'button';
+  cancelBtn.title = 'Отменить обработку';
+  cancelBtn.setAttribute('aria-label', 'Отменить обработку');
+  cancelBtn.innerHTML = getRoundCrossIcon(10);
+  return cancelBtn;
+}
+
+function appendOptimizeMenuOptions(optimizeMenu, { safeName, originalName, isProcessing, isNightScheduled }) {
+  const optimizeBtn = document.createElement('button');
+  optimizeBtn.className = 'secondary meta-lg optimizeNowBtn optimizeMenuOption';
+  optimizeBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+  optimizeBtn.setAttribute('data-original', encodeURIComponent(originalName));
+  optimizeBtn.title = 'Запустить обработку сейчас';
+  optimizeBtn.textContent = 'Обработать';
+  optimizeBtn.disabled = isProcessing;
+  optimizeMenu.appendChild(optimizeBtn);
+
+  if (isNightScheduled) {
+    const cancelNightBtn = document.createElement('button');
+    cancelNightBtn.className = 'danger meta-lg optimizeNightCancelBtn optimizeMenuOption optimizeMenuOptionRound';
+    cancelNightBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+    cancelNightBtn.setAttribute('data-original', encodeURIComponent(originalName));
+    cancelNightBtn.title = 'Отменить ночную обработку';
+    cancelNightBtn.setAttribute('aria-label', 'Отменить ночную обработку');
+    cancelNightBtn.innerHTML = getRoundCrossIcon(12);
+    cancelNightBtn.disabled = isProcessing;
+    optimizeMenu.appendChild(cancelNightBtn);
+    return;
+  }
+
+  const optimizeNightBtn = document.createElement('button');
+  optimizeNightBtn.className = 'secondary meta-lg optimizeNightBtn optimizeMenuOption';
+  optimizeNightBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+  optimizeNightBtn.setAttribute('data-original', encodeURIComponent(originalName));
+  optimizeNightBtn.title = 'Запланировать обработку на ночь';
+  optimizeNightBtn.textContent = 'Обработать ночью';
+  optimizeNightBtn.disabled = isProcessing;
+  optimizeMenu.appendChild(optimizeNightBtn);
+}
+
+function createFileLabelsRow({
+  safeName,
+  originalName,
+  statusText,
+  statusColor,
+  statusIcon,
+  isProcessing,
+  typeBadge,
+  resolutionLabel
+}) {
+  const labelsRow = document.createElement('div');
+  labelsRow.className = 'file-item-labels';
+
+  if (statusText) {
+    const statusChip = document.createElement('span');
+    statusChip.className = 'device-meta-chip file-meta-chip file-status-chip';
+    if (statusColor) {
+      statusChip.style.color = statusColor;
+    }
+
+    if (isProcessing) {
+      statusChip.appendChild(createProcessingCancelButton(safeName, originalName));
+    }
+
+    const statusTextSpan = document.createElement('span');
+    statusTextSpan.innerHTML = `${toIconOnlySvg(statusIcon)} ${escapeHtml(statusText)}`;
+    statusChip.appendChild(statusTextSpan);
+    labelsRow.appendChild(statusChip);
+  }
+
+  if (typeBadge) {
+    const typeChip = document.createElement('span');
+    typeChip.className = 'device-meta-chip file-meta-chip file-type-chip';
+    typeChip.textContent = typeBadge;
+    labelsRow.appendChild(typeChip);
+  }
+
+  if (resolutionLabel) {
+    const resolutionChip = document.createElement('span');
+    resolutionChip.className = 'device-meta-chip file-meta-chip file-resolution-chip';
+    resolutionChip.textContent = resolutionLabel;
+    labelsRow.appendChild(resolutionChip);
+  }
+
+  return labelsRow;
+}
+
+let optimizeMenuDocumentCloseBound = false;
+
+function closeOptimizeMenuWrap(wrap) {
+  if (!wrap) return;
+  wrap.classList.remove('is-open');
+  const fileItem = wrap.closest('.file-item');
+  if (fileItem) {
+    fileItem.classList.remove('is-optimize-menu-open');
+  }
+}
+
+function openOptimizeMenuWrap(wrap) {
+  if (!wrap) return;
+
+  document.querySelectorAll('.optimize-actions-wrap.is-open').forEach((opened) => {
+    if (opened !== wrap) {
+      closeOptimizeMenuWrap(opened);
+    }
+  });
+
+  wrap.classList.add('is-open');
+  const fileItem = wrap.closest('.file-item');
+  if (fileItem) {
+    fileItem.classList.add('is-optimize-menu-open');
+  }
+}
+
+function ensureOptimizeMenuCloseHandler() {
+  if (optimizeMenuDocumentCloseBound || typeof document === 'undefined') {
+    return;
+  }
+
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    document.querySelectorAll('.optimize-actions-wrap.is-open').forEach((wrap) => {
+      if (!wrap.contains(target)) {
+        closeOptimizeMenuWrap(wrap);
+      }
+    });
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    document.querySelectorAll('.optimize-actions-wrap.is-open').forEach((wrap) => {
+      closeOptimizeMenuWrap(wrap);
+    });
+  });
+
+  optimizeMenuDocumentCloseBound = true;
 }
 
 /**
@@ -239,13 +386,13 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
   const allFiles = filesData.map(item => {
     if (typeof item === 'string') {
       // Старый формат (для обратной совместимости)
-      return { safeName: item, originalName: item, status: 'ready', progress: 100, canPlay: true, resolution: null, isPlaceholder: false, durationSeconds: null, folderImageCount: null, contentType: null, streamUrl: null, streamProxyUrl: null };
+      return { safeName: item, originalName: item, status: 'ready', progress: 100, canPlay: true, resolution: null, isPlaceholder: false, durationSeconds: null, folderImageCount: null, contentType: null, needsOptimization: null, streamUrl: null, streamProxyUrl: null };
     }
     return { 
       safeName: item.safeName || item.name || '',
       originalName: item.originalName || item.safeName || item.name || 'unknown',
       status: item.status || 'ready',
-      progress: item.progress || 100,
+      progress: typeof item.progress === 'number' ? item.progress : 100,
       canPlay: item.canPlay !== false,
       error: item.error || null,
       resolution: item.resolution || null,
@@ -253,6 +400,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       durationSeconds: typeof item.durationSeconds === 'number' ? item.durationSeconds : null,
       folderImageCount: typeof item.folderImageCount === 'number' ? item.folderImageCount : null,
       contentType: item.contentType || null,
+      needsOptimization: typeof item.needsOptimization === 'boolean' ? item.needsOptimization : null,
       streamUrl: item.streamUrl || null,
       streamProxyUrl: item.streamProxyUrl || null,
       streamProtocol: item.streamProtocol || null,
@@ -398,8 +546,9 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
     fileList.className = 'list';
     fileList.style.cssText = 'display:grid; gap:var(--space-sm)';
 
-    files.forEach(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, streamUrl, streamProtocol, hasTrailer, trailerUrl }) => {
+    files.forEach(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, needsOptimization, streamUrl, streamProtocol, hasTrailer, trailerUrl }) => {
       const safeExt = getFileExtension(safeName);
+      const originalExt = getFileExtension(originalName);
       const displayName = originalName.replace(/\.[^.]+$/, '');
       let typeLabel = 'VID';
       const normalizedType = resolveContentType({ contentType, fileName: safeName, originalName, fallbackToFolder: true });
@@ -411,11 +560,16 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
 
       const isStreaming = contentType === 'streaming';
       const isEligible = !isStreaming && /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp)$/i.test(safeName);
-      const isVideo = !isStreaming && (normalizedType === 'video' || VIDEO_EXTENSIONS.includes(safeExt));
+      const isVideo = !isStreaming && (
+        normalizedType === 'video' ||
+        VIDEO_EXTENSIONS.includes(safeExt) ||
+        VIDEO_EXTENSIONS.includes(originalExt)
+      );
       const fileStatus = status || 'ready';
       const isProcessing = fileStatus === 'processing' || fileStatus === 'checking';
+      const isNightScheduled = fileStatus === 'scheduled_night';
       const hasError = fileStatus === 'error';
-      const fileProgress = progress || 100;
+      const fileProgress = typeof progress === 'number' ? progress : 100;
 
       let resolutionLabel = '';
       if (isVideo && resolution) {
@@ -436,6 +590,10 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           statusColor = 'var(--warning)';
           statusIcon = getClockIcon(14, statusColor);
           statusText = `Обработка... ${fileProgress}%`;
+        } else if (isNightScheduled) {
+          statusColor = 'var(--text-secondary)';
+          statusIcon = getClockIcon(14, statusColor);
+          statusText = 'Запланировано на ночь';
         } else if (hasError) {
           statusColor = 'var(--danger)';
           statusIcon = getCrossIcon(14, statusColor);
@@ -486,11 +644,16 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       const savePolyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline'); savePolyline.setAttribute('points', '20 6 9 17 4 12'); saveSvg.appendChild(savePolyline); saveBtn.appendChild(saveSvg);
       headerLeft.appendChild(nameSpan); headerLeft.appendChild(saveBtn);
       const headerRight = document.createElement('div'); headerRight.style.cssText = 'display:flex; align-items:center; gap:var(--space-sm);';
-      if (statusText) { const statusSpan = document.createElement('span'); statusSpan.style.cssText = `font-size:var(--font-size-sm); color:${statusColor}; white-space:nowrap; display:flex; align-items:center; gap:var(--space-xs);`; statusSpan.innerHTML = `${statusIcon} ${escapeHtml(statusText)}`; headerRight.appendChild(statusSpan); }
-      const metaDiv = document.createElement('div'); metaDiv.style.cssText = 'display:flex; align-items:center; gap:4px; flex-wrap:wrap;';
-      if (resolutionLabel) { const resSpan = document.createElement('span'); resSpan.style.cssText = 'font-size:10px; opacity:0.7;'; resSpan.textContent = resolutionLabel; metaDiv.appendChild(resSpan); }
-      const typeSpan = document.createElement('span'); typeSpan.className = 'file-item-type'; typeSpan.textContent = typeBadge; metaDiv.appendChild(typeSpan);
-      headerRight.appendChild(metaDiv);
+      const labelsRow = createFileLabelsRow({
+        safeName,
+        originalName,
+        statusText,
+        statusColor,
+        statusIcon,
+        isProcessing,
+        typeBadge,
+        resolutionLabel
+      });
       header.appendChild(headerLeft); header.appendChild(headerRight);
 
       const actions = document.createElement('div'); actions.className = 'file-item-actions';
@@ -509,10 +672,33 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         applySquareActionButtonStyle(downloadBtn);
         actions.appendChild(downloadBtn);
       }
+      const canManualProcess = isVideo && !isStreaming && (isNightScheduled || needsOptimization !== false);
+      if (canManualProcess) {
+        const optimizeWrap = document.createElement('div');
+        optimizeWrap.className = 'optimize-actions-wrap';
+
+        const optimizeMenuBtn = document.createElement('button');
+        optimizeMenuBtn.className = 'secondary meta-lg optimizeMenuTrigger';
+        optimizeMenuBtn.type = 'button';
+        optimizeMenuBtn.title = 'Действия обработки';
+        optimizeMenuBtn.innerHTML = toIconOnlySvg(getSettingsIcon(14));
+        applySquareActionButtonStyle(optimizeMenuBtn);
+        optimizeWrap.appendChild(optimizeMenuBtn);
+
+        const optimizeMenu = document.createElement('div');
+        optimizeMenu.className = 'optimizeActionsMenu';
+        appendOptimizeMenuOptions(optimizeMenu, { safeName, originalName, isProcessing, isNightScheduled });
+
+        optimizeWrap.appendChild(optimizeMenu);
+        actions.appendChild(optimizeWrap);
+      }
       if (isEligible) { const makeDefaultBtn = document.createElement('button'); makeDefaultBtn.className = 'meta-lg makeDefaultBtn'; makeDefaultBtn.setAttribute('data-safe', encodeURIComponent(safeName)); makeDefaultBtn.setAttribute('data-original', encodeURIComponent(originalName)); makeDefaultBtn.title = 'Сделать заглушкой'; makeDefaultBtn.disabled = !canPlay; makeDefaultBtn.textContent = '📌'; applySquareActionButtonStyle(makeDefaultBtn); actions.appendChild(makeDefaultBtn); }
       const delBtn = document.createElement('button'); delBtn.className = 'danger meta-lg delFileBtn'; delBtn.setAttribute('data-safe', encodeURIComponent(safeName)); delBtn.setAttribute('data-original', encodeURIComponent(originalName)); delBtn.title = 'Удалить'; delBtn.innerHTML = toIconOnlySvg(getTrashIcon(14)); applySquareActionButtonStyle(delBtn); actions.appendChild(delBtn);
 
-      li.appendChild(header); li.appendChild(actions); fileList.appendChild(li);
+      headerRight.appendChild(actions);
+      li.appendChild(header);
+      li.appendChild(labelsRow);
+      fileList.appendChild(li);
     });
 
     return fileList;
@@ -534,13 +720,14 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
     fileList.className = 'list';
     fileList.style.cssText = 'display:grid; gap:var(--space-sm)';
 
-    files.forEach(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, streamUrl, streamProtocol, hasTrailer, trailerUrl }) => {
+    files.forEach(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, needsOptimization, streamUrl, streamProtocol, hasTrailer, trailerUrl }) => {
         // placeholders allowed only for image/video (no pdf/pptx/folders)
         const isStreaming = contentType === 'streaming';
         const isEligible = !isStreaming && /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp)$/i.test(safeName);
         
         // safeExt из safeName - для проверок типа файла на диске
         const safeExt = getFileExtension(safeName);
+        const originalExt = getFileExtension(originalName);
         
         // НОВОЕ: Убираем расширение из отображаемого имени (как на спикере)
         const displayName = originalName.replace(/\.[^.]+$/, '');
@@ -561,11 +748,16 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         }
         
         // НОВОЕ: Определяем статус для видео из safeExt (фактический файл)
-        const isVideo = !isStreaming && (normalizedType === 'video' || VIDEO_EXTENSIONS.includes(safeExt));
+        const isVideo = !isStreaming && (
+          normalizedType === 'video' ||
+          VIDEO_EXTENSIONS.includes(safeExt) ||
+          VIDEO_EXTENSIONS.includes(originalExt)
+        );
         const fileStatus = status || 'ready';
         const isProcessing = fileStatus === 'processing' || fileStatus === 'checking';
+        const isNightScheduled = fileStatus === 'scheduled_night';
         const hasError = fileStatus === 'error';
-        const fileProgress = progress || 100;
+        const fileProgress = typeof progress === 'number' ? progress : 100;
         
         // Определяем разрешение для видео
         let resolutionLabel = '';
@@ -596,6 +788,10 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
             statusColor = 'var(--warning)';
             statusIcon = getClockIcon(14, statusColor);
             statusText = `Обработка... ${fileProgress}%`;
+          } else if (isNightScheduled) {
+            statusColor = 'var(--text-secondary)';
+            statusIcon = getClockIcon(14, statusColor);
+            statusText = 'Запланировано на ночь';
           } else if (hasError) {
             statusColor = 'var(--danger)';
             statusIcon = getCrossIcon(14, statusColor);
@@ -679,30 +875,16 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         
         const headerRight = document.createElement('div');
         headerRight.style.cssText = 'display:flex; align-items:center; gap:var(--space-sm);';
-        
-        if (statusText) {
-          const statusSpan = document.createElement('span');
-          statusSpan.style.cssText = `font-size:var(--font-size-sm); color:${statusColor}; white-space:nowrap; display:flex; align-items:center; gap:var(--space-xs);`;
-          statusSpan.innerHTML = `${statusIcon} ${escapeHtml(statusText)}`;
-          headerRight.appendChild(statusSpan);
-        }
-        
-        const metaDiv = document.createElement('div');
-        metaDiv.style.cssText = 'display:flex; align-items:center; gap:4px; flex-wrap:wrap;';
-        
-        if (resolutionLabel) {
-          const resSpan = document.createElement('span');
-          resSpan.style.cssText = 'font-size:10px; opacity:0.7;';
-          resSpan.textContent = resolutionLabel;
-          metaDiv.appendChild(resSpan);
-        }
-        
-        const typeSpan = document.createElement('span');
-        typeSpan.className = 'file-item-type';
-        typeSpan.textContent = typeBadge; // Используем textContent для безопасности
-        metaDiv.appendChild(typeSpan);
-        
-        headerRight.appendChild(metaDiv);
+        const labelsRow = createFileLabelsRow({
+          safeName,
+          originalName,
+          statusText,
+          statusColor,
+          statusIcon,
+          isProcessing,
+          typeBadge,
+          resolutionLabel
+        });
         header.appendChild(headerLeft);
         header.appendChild(headerRight);
 
@@ -747,6 +929,27 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           actions.appendChild(downloadBtn);
         }
 
+        const canManualProcess = isVideo && !isStreaming && (isNightScheduled || needsOptimization !== false);
+        if (canManualProcess) {
+          const optimizeWrap = document.createElement('div');
+          optimizeWrap.className = 'optimize-actions-wrap';
+
+          const optimizeMenuBtn = document.createElement('button');
+          optimizeMenuBtn.className = 'secondary meta-lg optimizeMenuTrigger';
+          optimizeMenuBtn.type = 'button';
+          optimizeMenuBtn.title = 'Действия обработки';
+          optimizeMenuBtn.innerHTML = toIconOnlySvg(getSettingsIcon(14));
+          applySquareActionButtonStyle(optimizeMenuBtn);
+          optimizeWrap.appendChild(optimizeMenuBtn);
+
+          const optimizeMenu = document.createElement('div');
+          optimizeMenu.className = 'optimizeActionsMenu';
+          appendOptimizeMenuOptions(optimizeMenu, { safeName, originalName, isProcessing, isNightScheduled });
+
+          optimizeWrap.appendChild(optimizeMenu);
+          actions.appendChild(optimizeWrap);
+        }
+
         if (isEligible) {
           const makeDefaultBtn = document.createElement('button');
           makeDefaultBtn.className = 'meta-lg makeDefaultBtn';
@@ -768,9 +971,10 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         applySquareActionButtonStyle(delBtn);
         actions.appendChild(delBtn);
         
-        // place actions under the filename and align them to the right
+        // place actions near filename and render labels as a dedicated row
+        headerRight.appendChild(actions);
         li.appendChild(header);
-        li.appendChild(actions);
+        li.appendChild(labelsRow);
         fileList.appendChild(li);
     });
 
@@ -1170,6 +1374,192 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       } finally {
         btn.disabled = false;
         btn.innerHTML = originalButtonHtml;
+      }
+    };
+  });
+
+  panelEl.querySelectorAll('.cancelProcessingBtn').forEach(btn => {
+    btn.onclick = async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const safeName = decodeURIComponent(btn.getAttribute('data-safe') || '');
+      const originalName = decodeURIComponent(btn.getAttribute('data-original') || safeName);
+      const originalButtonHtml = btn.innerHTML;
+
+      btn.disabled = true;
+      btn.style.opacity = '0.65';
+
+      try {
+        const response = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(safeName)}/cancel-optimize`, {
+          method: 'POST'
+        });
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok || payload.ok === false) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+
+        await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
+        socket.emit('devices/updated');
+      } catch (error) {
+        await reportFilesManagerNotification({
+          type: 'file_cancel_processing_error',
+          title: 'Не удалось отменить обработку',
+          message: error.message || 'Ошибка отмены обработки',
+          details: { deviceId, safeName, originalName }
+        });
+      } finally {
+        btn.disabled = false;
+        btn.style.opacity = '';
+        btn.innerHTML = originalButtonHtml;
+      }
+    };
+  });
+
+  ensureOptimizeMenuCloseHandler();
+
+  panelEl.querySelectorAll('.optimizeMenuTrigger').forEach(btn => {
+    btn.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const wrap = btn.closest('.optimize-actions-wrap');
+      if (!wrap) return;
+
+      const shouldOpen = !wrap.classList.contains('is-open');
+      panelEl.querySelectorAll('.optimize-actions-wrap.is-open').forEach((opened) => {
+        closeOptimizeMenuWrap(opened);
+      });
+
+      if (shouldOpen) {
+        openOptimizeMenuWrap(wrap);
+      }
+    };
+  });
+
+  panelEl.querySelectorAll('.optimizeMenuOption').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const wrap = btn.closest('.optimize-actions-wrap');
+      if (wrap) {
+        closeOptimizeMenuWrap(wrap);
+      }
+    });
+  });
+
+  panelEl.querySelectorAll('.optimizeNowBtn').forEach(btn => {
+    btn.onclick = async () => {
+      const wrap = btn.closest('.optimize-actions-wrap');
+      if (wrap) {
+        closeOptimizeMenuWrap(wrap);
+      }
+
+      const safeName = decodeURIComponent(btn.getAttribute('data-safe') || '');
+      const originalName = decodeURIComponent(btn.getAttribute('data-original') || safeName);
+      const originalText = btn.textContent;
+
+      btn.disabled = true;
+      btn.textContent = 'Запуск...';
+
+      try {
+        const response = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(safeName)}/optimize`, {
+          method: 'POST'
+        });
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok || payload.success === false) {
+          throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
+        }
+
+        await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
+        socket.emit('devices/updated');
+      } catch (error) {
+        await reportFilesManagerNotification({
+          type: 'file_optimize_start_error',
+          title: 'Не удалось запустить обработку',
+          message: error.message || 'Ошибка запуска обработки',
+          details: { deviceId, safeName, originalName }
+        });
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    };
+  });
+
+  panelEl.querySelectorAll('.optimizeNightBtn').forEach(btn => {
+    btn.onclick = async () => {
+      const wrap = btn.closest('.optimize-actions-wrap');
+      if (wrap) {
+        closeOptimizeMenuWrap(wrap);
+      }
+
+      const safeName = decodeURIComponent(btn.getAttribute('data-safe') || '');
+      const originalName = decodeURIComponent(btn.getAttribute('data-original') || safeName);
+      const originalText = btn.textContent;
+
+      btn.disabled = true;
+      btn.textContent = 'Планирование...';
+
+      try {
+        const response = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(safeName)}/schedule-optimize-night`, {
+          method: 'POST'
+        });
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok || payload.ok === false) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+
+        await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
+        socket.emit('devices/updated');
+      } catch (error) {
+        await reportFilesManagerNotification({
+          type: 'file_optimize_night_error',
+          title: 'Не удалось запланировать обработку',
+          message: error.message || 'Ошибка планирования ночной обработки',
+          details: { deviceId, safeName, originalName }
+        });
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    };
+  });
+
+  panelEl.querySelectorAll('.optimizeNightCancelBtn').forEach(btn => {
+    btn.onclick = async () => {
+      const wrap = btn.closest('.optimize-actions-wrap');
+      if (wrap) {
+        closeOptimizeMenuWrap(wrap);
+      }
+
+      const safeName = decodeURIComponent(btn.getAttribute('data-safe') || '');
+      const originalName = decodeURIComponent(btn.getAttribute('data-original') || safeName);
+
+      btn.disabled = true;
+
+      try {
+        const response = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(safeName)}/cancel-optimize`, {
+          method: 'POST'
+        });
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok || payload.ok === false) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+
+        await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
+        socket.emit('devices/updated');
+      } catch (error) {
+        await reportFilesManagerNotification({
+          type: 'file_optimize_night_cancel_error',
+          title: 'Не удалось отменить ночную обработку',
+          message: error.message || 'Ошибка отмены ночной обработки',
+          details: { deviceId, safeName, originalName }
+        });
+      } finally {
+        btn.disabled = false;
       }
     };
   });

@@ -278,7 +278,7 @@ export function setupControlHandlers(socket, deps) {
               const existingUrl = streamManager.getPlaybackUrl(device_id, file);
               if (!existingUrl) {
                 // КРИТИЧНО: Если стрим найден в устройстве-источнике, берем метаданные оттуда
-                const metadataDeviceId = (originDeviceId && originDeviceId !== device_id && streamEntry && !deviceStillExists.streams?.[file]) ? originDeviceId : device_id;
+                const metadataDeviceId = (originDeviceId && originDeviceId !== device_id && !deviceStillExists.streams?.[file]) ? originDeviceId : device_id;
                 const metadata = getFileMetadata(metadataDeviceId, file);
                 if (metadata && metadata.content_type === 'streaming') {
                   try {

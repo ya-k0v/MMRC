@@ -40,8 +40,59 @@ import { jobResourceManager } from '../utils/job-resource-manager.js';
 
 const STREAM_PROTOCOLS = new Set(['auto', 'hls', 'dash', 'mpegts']);
 const VIDEO_PROCESSING_EXTENSIONS = new Set(['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi', '.m4v']);
+const MP4_COMPATIBLE_EXTENSIONS = new Set(['.mp4', '.m4v']);
+const AUDIO_COMPATIBLE_CODECS = new Set(['aac', 'mp3']);
 const YTDLP_FINAL_PATH_MARKER = '__VC_FINAL_PATH__';
 const YTDLP_TITLE_MARKER = '__VC_TITLE__';
+
+function normalizeCodecName(codec = '') {
+  return String(codec || '').trim().toLowerCase();
+}
+
+function inferNeedsOptimizationFromMetadata(safeName, metadata) {
+  const ext = path.extname(String(safeName || '')).toLowerCase();
+  if (!VIDEO_PROCESSING_EXTENSIONS.has(ext) || !metadata) {
+    return null;
+  }
+
+  const codec = normalizeCodecName(metadata.video_codec);
+  const audioCodec = normalizeCodecName(metadata.audio_codec);
+  const videoParams = {
+    codec,
+    width: Number(metadata.video_width) || 0,
+    height: Number(metadata.video_height) || 0,
+    fps: Number(metadata.video_fps) || 0,
+    bitrate: Number(metadata.video_bitrate) || 0,
+    profile: String(metadata.video_profile || ''),
+    pixFmt: String(metadata.video_pix_fmt || ''),
+    audioCodec
+  };
+
+  const hasEnoughVideoData = Boolean(
+    videoParams.codec ||
+      videoParams.width ||
+      videoParams.height ||
+      videoParams.bitrate ||
+      videoParams.profile ||
+      videoParams.pixFmt
+  );
+
+  let shouldOptimize = false;
+  if (!MP4_COMPATIBLE_EXTENSIONS.has(ext)) {
+    shouldOptimize = true;
+  }
+
+  if (audioCodec && !AUDIO_COMPATIBLE_CODECS.has(audioCodec)) {
+    shouldOptimize = true;
+  }
+
+  if (hasEnoughVideoData) {
+    shouldOptimize = shouldOptimize || needsOptimization(videoParams);
+    return shouldOptimize;
+  }
+
+  return null;
+}
 
 function detectStreamProtocolFromUrl(url = '') {
   const lower = (url || '').toLowerCase();
@@ -4675,7 +4726,8 @@ export function createFilesRouter(deps) {
       
       // Получаем метаданные из БД (разрешение + флаг заглушки + originalName)
       const ext = path.extname(safeName).toLowerCase();
-      const metadata = getFileMetadata(id, safeName);
+      let metadata = getFileMetadata(id, safeName);
+      let needsOptimizationHint = inferNeedsOptimizationFromMetadata(safeName, metadata);
       
       // КРИТИЧНО: originalName берем с правильным приоритетом: metadata.original_name → fileNamesMap → fileNames → safeName
       const nameMap = fileNamesMap[id] || {};
@@ -4709,6 +4761,7 @@ export function createFilesRouter(deps) {
             durationSeconds: null,
             folderImageCount: null,
             contentType: 'streaming',
+            needsOptimization: null,
             streamUrl,
             streamProxyUrl,
             restreamStatus,
@@ -4840,6 +4893,7 @@ export function createFilesRouter(deps) {
                 // Обновляем safeName для дальнейшей обработки
                 safeName = folderName;
                 metadata = getFileMetadata(id, folderName);
+                needsOptimizationHint = inferNeedsOptimizationFromMetadata(safeName, metadata);
                 if (metadata) {
                   contentType = metadata.content_type || 'folder';
                 }
@@ -4953,6 +5007,7 @@ export function createFilesRouter(deps) {
         durationSeconds,
         folderImageCount,
         contentType,
+        needsOptimization: needsOptimizationHint,
         streamUrl,
         streamProxyUrl,
         restreamStatus,

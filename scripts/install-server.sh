@@ -97,7 +97,12 @@ prepare_runtime_files() {
     sed -i "s|^JWT_SECRET=.*$|JWT_SECRET=$secret|" .env
   fi
 
-  mkdir -p config config/hero data/content data/streams data/converted data/logs data/temp .tmp
+  mkdir -p config config/hero data/content data/streams data/converted data/logs data/temp .tmp .tmp/db-import
+
+  # Импорт БД пишет временные файлы в .tmp/db-import, поэтому директория
+  # должна быть гарантированно доступна сервисному пользователю.
+  chown -R "$SERVICE_USER:$SERVICE_GROUP" .tmp
+  chmod 770 .tmp .tmp/db-import
 
   if [[ ! -f config/app-settings.json ]]; then
     cat > config/app-settings.json <<'EOF'
