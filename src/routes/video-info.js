@@ -230,8 +230,17 @@ export function createVideoInfoRouter(deps) {
 
         const status = getFileStatus(job.deviceId, job.fileName);
         const state = normalizeStatus(status?.status);
-        if (state === 'processing' || state === 'checking') {
+        const hasActiveJob = hasActiveOptimizationJob(job.deviceId, job.fileName);
+        if ((state === 'processing' || state === 'checking') && hasActiveJob) {
           continue;
+        }
+
+        if ((state === 'processing' || state === 'checking') && !hasActiveJob) {
+          logger.warn('[video-info] Stale processing status in night queue, retrying job', {
+            deviceId: job.deviceId,
+            fileName: job.fileName,
+            state
+          });
         }
 
         nightQueue.delete(key);
@@ -421,10 +430,20 @@ export function createVideoInfoRouter(deps) {
 
     const currentStatus = getFileStatus(id, fileName);
     const currentState = normalizeStatus(currentStatus?.status);
-    if (currentState === 'processing' || currentState === 'checking' || hasActiveOptimizationJob(id, fileName)) {
+    const hasActiveJob = hasActiveOptimizationJob(id, fileName);
+    if (hasActiveJob) {
       return res.status(409).json({
         success: false,
         message: 'Файл уже обрабатывается'
+      });
+    }
+
+    if (currentState === 'processing' || currentState === 'checking') {
+      logger.warn('[video-info] Stale in-progress status detected, starting optimization anyway', {
+        deviceId: id,
+        fileName,
+        state: currentState,
+        progress: Number(currentStatus?.progress) || 0
       });
     }
 
@@ -519,8 +538,18 @@ export function createVideoInfoRouter(deps) {
 
     const currentStatus = getFileStatus(id, fileName);
     const currentState = normalizeStatus(currentStatus?.status);
-    if (currentState === 'processing' || currentState === 'checking' || hasActiveOptimizationJob(id, fileName)) {
+    const hasActiveJob = hasActiveOptimizationJob(id, fileName);
+    if (hasActiveJob) {
       return res.status(409).json({ ok: false, error: 'Файл уже обрабатывается' });
+    }
+
+    if (currentState === 'processing' || currentState === 'checking') {
+      logger.warn('[video-info] Stale in-progress status detected, allowing night scheduling', {
+        deviceId: id,
+        fileName,
+        state: currentState,
+        progress: Number(currentStatus?.progress) || 0
+      });
     }
 
     const queueKey = makeNightQueueKey(id, fileName);
