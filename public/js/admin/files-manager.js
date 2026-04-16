@@ -7,7 +7,8 @@ import {
   getDownloadIcon,
   getFilmIcon,
   getTrashIcon,
-  getSettingsIcon
+  getSettingsIcon,
+  getCloseIcon
 } from '../shared/svg-icons.js';
 import { formatTime } from '../shared/formatters.js';
 import { escapeHtml } from '../shared/utils.js';
@@ -45,6 +46,11 @@ function toIconOnlySvg(svg = '') {
 
 function getRoundCrossIcon(size = 12, color = 'currentColor', strokeWidth = 2.1) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" style="display:block;"><line x1="7" y1="7" x2="17" y2="17"></line><line x1="17" y1="7" x2="7" y2="17"></line></svg>`;
+}
+
+function getChevronIcon(direction = 'left', size = 20, color = 'currentColor') {
+  const points = direction === 'left' ? '15 4 7 12 15 20' : '9 4 17 12 9 20';
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="display:block;"><polyline points="${points}"></polyline></svg>`;
 }
 
 function applySquareActionButtonStyle(button) {
@@ -145,6 +151,7 @@ function createFileLabelsRow({
 }
 
 let optimizeMenuDocumentCloseBound = false;
+let activeImageViewer = null;
 
 function closeOptimizeMenuWrap(wrap) {
   if (!wrap) return;
@@ -193,6 +200,241 @@ function ensureOptimizeMenuCloseHandler() {
   });
 
   optimizeMenuDocumentCloseBound = true;
+}
+
+function closeImageViewer() {
+  if (!activeImageViewer || typeof document === 'undefined') {
+    activeImageViewer = null;
+    return;
+  }
+
+  const { overlay, onKeyDown, previousOverflow } = activeImageViewer;
+
+  if (onKeyDown) {
+    document.removeEventListener('keydown', onKeyDown);
+  }
+
+  if (overlay && overlay.parentNode) {
+    overlay.parentNode.removeChild(overlay);
+  }
+
+  if (typeof previousOverflow === 'string' && document.body && document.body.style) {
+    document.body.style.overflow = previousOverflow;
+  }
+
+  activeImageViewer = null;
+}
+
+function openImageViewer(images = [], startIndex = 0) {
+  if (typeof document === 'undefined' || !document.body) {
+    return;
+  }
+
+  const safeImages = Array.isArray(images)
+    ? images.filter((item) => typeof item === 'string' && item.trim().length > 0)
+    : [];
+
+  if (!safeImages.length) {
+    return;
+  }
+
+  closeImageViewer();
+
+  let currentIndex = Math.min(Math.max(Number(startIndex) || 0, 0), safeImages.length - 1);
+  const canNavigate = safeImages.length > 1;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'admin-image-viewer-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+
+  const frame = document.createElement('div');
+  frame.className = 'admin-image-viewer-frame';
+
+  const media = document.createElement('div');
+  media.className = 'admin-image-viewer-media';
+
+  const image = document.createElement('img');
+  image.className = 'admin-image-viewer-image';
+  image.alt = 'Просмотр изображения';
+  image.loading = 'eager';
+  image.decoding = 'async';
+  image.draggable = false;
+
+  const status = document.createElement('div');
+  status.className = 'admin-image-viewer-status';
+  status.hidden = true;
+
+  const counter = document.createElement('div');
+  counter.className = 'admin-image-viewer-counter';
+
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'admin-image-viewer-close';
+  closeBtn.setAttribute('aria-label', 'Закрыть просмотр');
+  closeBtn.innerHTML = toIconOnlySvg(getCloseIcon(18, 'currentColor'));
+
+  const prevBtn = document.createElement('button');
+  prevBtn.type = 'button';
+  prevBtn.className = 'admin-image-viewer-nav admin-image-viewer-nav-prev';
+  prevBtn.setAttribute('aria-label', 'Предыдущее изображение');
+  prevBtn.innerHTML = getChevronIcon('left', 22, 'currentColor');
+  prevBtn.disabled = !canNavigate;
+
+  const nextBtn = document.createElement('button');
+  nextBtn.type = 'button';
+  nextBtn.className = 'admin-image-viewer-nav admin-image-viewer-nav-next';
+  nextBtn.setAttribute('aria-label', 'Следующее изображение');
+  nextBtn.innerHTML = getChevronIcon('right', 22, 'currentColor');
+  nextBtn.disabled = !canNavigate;
+
+  const renderImage = (index) => {
+    if (!safeImages.length) {
+      return;
+    }
+
+    const maxIndex = safeImages.length - 1;
+    if (index < 0) {
+      currentIndex = maxIndex;
+    } else if (index > maxIndex) {
+      currentIndex = 0;
+    } else {
+      currentIndex = index;
+    }
+
+    status.hidden = true;
+    status.textContent = '';
+    counter.textContent = `${currentIndex + 1} / ${safeImages.length}`;
+    image.src = safeImages[currentIndex];
+    image.alt = `Изображение ${currentIndex + 1} из ${safeImages.length}`;
+  };
+
+  const showPrev = () => {
+    if (!canNavigate) return;
+    renderImage(currentIndex - 1);
+  };
+
+  const showNext = () => {
+    if (!canNavigate) return;
+    renderImage(currentIndex + 1);
+  };
+
+  image.addEventListener('error', () => {
+    status.hidden = false;
+    status.textContent = 'Ошибка загрузки изображения';
+  });
+
+  prevBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    showPrev();
+  });
+
+  nextBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    showNext();
+  });
+
+  let touchStartX = null;
+  let touchStartY = null;
+
+  frame.addEventListener('touchstart', (event) => {
+    if (!event.touches || event.touches.length === 0) {
+      return;
+    }
+    touchStartX = event.touches[0].clientX;
+    touchStartY = event.touches[0].clientY;
+  }, { passive: true });
+
+  frame.addEventListener('touchend', (event) => {
+    if (touchStartX === null || touchStartY === null || !event.changedTouches || event.changedTouches.length === 0) {
+      touchStartX = null;
+      touchStartY = null;
+      return;
+    }
+
+    const endX = event.changedTouches[0].clientX;
+    const endY = event.changedTouches[0].clientY;
+    const deltaX = endX - touchStartX;
+    const deltaY = endY - touchStartY;
+
+    touchStartX = null;
+    touchStartY = null;
+
+    if (!canNavigate) {
+      return;
+    }
+
+    if (Math.abs(deltaX) < 45 || Math.abs(deltaX) < Math.abs(deltaY) * 1.2) {
+      return;
+    }
+
+    if (deltaX > 0) {
+      showPrev();
+    } else {
+      showNext();
+    }
+  }, { passive: true });
+
+  const close = () => {
+    closeImageViewer();
+  };
+
+  closeBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    close();
+  });
+
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) {
+      close();
+    }
+  });
+
+  frame.addEventListener('click', (event) => {
+    event.stopPropagation();
+  });
+
+  const onKeyDown = (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      close();
+      return;
+    }
+
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      showPrev();
+      return;
+    }
+
+    if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      showNext();
+    }
+  };
+
+  media.appendChild(image);
+  frame.appendChild(media);
+  frame.appendChild(counter);
+  frame.appendChild(closeBtn);
+  frame.appendChild(prevBtn);
+  frame.appendChild(nextBtn);
+  frame.appendChild(status);
+  overlay.appendChild(frame);
+
+  const previousOverflow = document.body.style.overflow;
+  document.body.style.overflow = 'hidden';
+  document.body.appendChild(overlay);
+
+  activeImageViewer = {
+    overlay,
+    onKeyDown,
+    previousOverflow
+  };
+
+  document.addEventListener('keydown', onKeyDown);
+  renderImage(currentIndex);
+  closeBtn.focus();
 }
 
 /**
@@ -1154,6 +1396,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       const trailerUrl = btn.getAttribute('data-trailer-url') || '';
       const previewContainer = document.querySelector('#detailPane .previewHolder');
       if (!previewContainer) return;
+      closeImageViewer();
       const contentType = btn.closest('.file-item')?.getAttribute('data-content-type') || null;
 
       // Определяем тип файла
@@ -1229,7 +1472,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           }
         }
         
-        // Показываем сетку миниатюр (только для просмотра, без кликов)
+        // Показываем сетку миниатюр с возможностью открыть изображение в полноэкранном viewer
         if (images.length > 0) {
           // Используем DOM методы вместо innerHTML для безопасности
           const outerDiv = document.createElement('div');
@@ -1240,7 +1483,28 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           
           images.forEach((url, idx) => {
             const itemDiv = document.createElement('div');
+            itemDiv.className = 'admin-static-preview-thumb';
             itemDiv.style.cssText = 'aspect-ratio:16/9; background:var(--panel-2); border-radius:var(--radius-sm); overflow:hidden; position:relative';
+            itemDiv.setAttribute('role', 'button');
+            itemDiv.setAttribute('tabindex', '0');
+            itemDiv.setAttribute('aria-label', `Открыть изображение ${idx + 1}`);
+            itemDiv.title = `Открыть изображение ${idx + 1}`;
+
+            const openAtIndex = () => {
+              openImageViewer(images, idx);
+            };
+
+            itemDiv.addEventListener('click', (event) => {
+              event.preventDefault();
+              openAtIndex();
+            });
+
+            itemDiv.addEventListener('keydown', (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                openAtIndex();
+              }
+            });
             
             const img = document.createElement('img');
             img.src = url; // URL безопасен, так как создается на сервере

@@ -11,7 +11,7 @@ export async function createDevice(deviceId, name) {
 }
 
 export async function renameDevice(deviceId, newName) {
-  const res = await adminFetch(`/api/devices/${deviceId}/rename`, {
+  const res = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/rename`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: newName })
@@ -20,7 +20,7 @@ export async function renameDevice(deviceId, newName) {
 }
 
 export async function deleteDevice(deviceId) {
-  const res = await adminFetch(`/api/devices/${deviceId}`, {
+  const res = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}`, {
     method: 'DELETE'
   });
   return await res.json();
