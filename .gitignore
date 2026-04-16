@@ -25,11 +25,8 @@ config/heroes.db-shm
 config/heroes.db.backup
 config/heroes.db.backup.*
 config/heroes_backup_*.db
-config/hero/heroes.db
-config/hero/heroes.db-wal
-config/hero/heroes.db-shm
-config/hero/heroes.db.backup
-config/hero/heroes.db.backup.*
+config/heroes.db.*
+config/hero/*
 config/biographies.db
 config/biographies.db-shm
 config/biographies.db-wal

@@ -48,11 +48,11 @@ const ensureHeroesDb = () => {
     fs.mkdirSync(configDir, { recursive: true });
   }
 
-const initSQL = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-const initDb = new Database(DB_PATH);
-initDb.exec('PRAGMA foreign_keys = ON;');
-initDb.exec(initSQL);
-initDb.close();
+  const initSQL = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
+  const initDb = new Database(DB_PATH);
+  initDb.exec('PRAGMA foreign_keys = ON;');
+  initDb.exec(initSQL);
+  initDb.close();
 };
 
 migrateLegacyDb();
@@ -65,9 +65,46 @@ if (!fs.existsSync(DB_PATH)) {
   ensureHeroesDb();
 }
 
-export const heroDb = new Database(DB_PATH);
-heroDb.pragma('journal_mode = WAL');
-heroDb.pragma('foreign_keys = ON');
+const applyHeroDbPragmas = (db) => {
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+};
+
+const openHeroDbConnection = () => {
+  const db = new Database(DB_PATH);
+  applyHeroDbPragmas(db);
+  return db;
+};
+
+export let heroDb = null;
+
+export function closeHeroDb() {
+  if (!heroDb) return;
+
+  try {
+    heroDb.pragma('wal_checkpoint(TRUNCATE)');
+  } catch (error) {
+    logger.warn('[Hero DB] WAL checkpoint before close failed', { error: error.message });
+  }
+
+  try {
+    heroDb.close();
+  } catch (error) {
+    logger.warn('[Hero DB] Failed to close hero DB connection', { error: error.message });
+  } finally {
+    heroDb = null;
+  }
+}
+
+export function reloadHeroDb() {
+  closeHeroDb();
+  ensureHeroesDb();
+  heroDb = openHeroDbConnection();
+  logger.info('[Hero DB] Connection reloaded', { dbPath: DB_PATH });
+  return heroDb;
+}
+
+reloadHeroDb();
 
 export const HERO_DB_PATH = DB_PATH;
 export const LEGACY_HERO_DB_PATH = LEGACY_DB_PATH;

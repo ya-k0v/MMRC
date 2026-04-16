@@ -1,5 +1,7 @@
 import { heroDb } from './hero-db.js';
 
+const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+
 export const heroQueries = {
   getAll() {
     const heroes = heroDb.prepare('SELECT * FROM heroes ORDER BY full_name').all();
@@ -215,7 +217,7 @@ export const heroQueries = {
     
     // Валидация и нормализация full_name
     let full_name = current.full_name;
-    if (data.hasOwnProperty('full_name')) {
+    if (hasOwn(data, 'full_name')) {
       if (data.full_name === null || data.full_name === undefined) {
         throw new Error('full_name cannot be null (required field)');
       }
@@ -234,7 +236,7 @@ export const heroQueries = {
     
     // Валидация и нормализация остальных полей
     let birth_year = current.birth_year;
-    if (data.hasOwnProperty('birth_year')) {
+    if (hasOwn(data, 'birth_year')) {
       if (data.birth_year !== null && data.birth_year !== undefined) {
         if (typeof data.birth_year !== 'string' && typeof data.birth_year !== 'number') {
           throw new Error('birth_year must be a string, number, or null');
@@ -247,7 +249,7 @@ export const heroQueries = {
     }
     
     let death_year = current.death_year;
-    if (data.hasOwnProperty('death_year')) {
+    if (hasOwn(data, 'death_year')) {
       if (data.death_year !== null && data.death_year !== undefined) {
         if (typeof data.death_year !== 'string' && typeof data.death_year !== 'number') {
           throw new Error('death_year must be a string, number, or null');
@@ -260,7 +262,7 @@ export const heroQueries = {
     }
     
     let rank = current.rank;
-    if (data.hasOwnProperty('rank')) {
+    if (hasOwn(data, 'rank')) {
       if (data.rank !== null && data.rank !== undefined) {
         if (typeof data.rank !== 'string') {
           throw new Error('rank must be a string or null');
@@ -273,10 +275,10 @@ export const heroQueries = {
     }
     
     // Для photo_base64: если явно передан (включая null для удаления), используем его, иначе оставляем текущее
-    const photo_base64 = data.hasOwnProperty('photo_base64') ? (data.photo_base64 || null) : current.photo_base64;
+    const photo_base64 = hasOwn(data, 'photo_base64') ? (data.photo_base64 || null) : current.photo_base64;
     
     let biography = current.biography;
-    if (data.hasOwnProperty('biography')) {
+    if (hasOwn(data, 'biography')) {
       if (data.biography !== null && data.biography !== undefined) {
         if (typeof data.biography !== 'string') {
           throw new Error('biography must be a string or null');
