@@ -290,30 +290,35 @@ export function createHeroRouter({ requireHeroAdmin }) {
         return res.status(400).json({ error: 'Некорректный путь загруженного файла' });
       }
 
-      let uploadedStats;
-      try {
-        uploadedStats = fs.lstatSync(uploadedPath);
-      } catch {
-        return res.status(400).json({ error: 'Загруженный файл не найден' });
-      }
-
-      if (!uploadedStats.isFile() || uploadedStats.isSymbolicLink()) {
-        return res.status(400).json({ error: 'Некорректный тип загруженного файла' });
-      }
-
-      if (uploadedStats.size < 16) {
-        return res.status(400).json({ error: 'Файл SQLite слишком мал или поврежден' });
-      }
-
       const ext = path.extname(req.file.originalname || '').toLowerCase();
       if (ext !== '.db') {
         return res.status(400).json({ error: 'Поддерживаются только файлы .db' });
       }
 
-      const fd = fs.openSync(uploadedPath, 'r');
+      // Открываем файл сразу и валидируем через fstat на том же дескрипторе,
+      // чтобы избежать гонки между проверкой и использованием файла (TOCTOU).
+      const noFollowFlag = Number(fs.constants?.O_NOFOLLOW) || 0;
+      const openFlags = fs.constants.O_RDONLY | noFollowFlag;
+
+      let fd;
+      try {
+        fd = fs.openSync(uploadedPath, openFlags);
+      } catch {
+        return res.status(400).json({ error: 'Загруженный файл не найден' });
+      }
+
       const headerBuffer = Buffer.alloc(16);
       let bytesRead = 0;
       try {
+        const uploadedStats = fs.fstatSync(fd);
+        if (!uploadedStats.isFile()) {
+          return res.status(400).json({ error: 'Некорректный тип загруженного файла' });
+        }
+
+        if (uploadedStats.size < 16) {
+          return res.status(400).json({ error: 'Файл SQLite слишком мал или поврежден' });
+        }
+
         bytesRead = fs.readSync(fd, headerBuffer, 0, 16, 0);
       } finally {
         fs.closeSync(fd);
