@@ -60,6 +60,8 @@ dependencies {
     implementation 'com.google.android.exoplayer:exoplayer:2.19.1'
     // ExoPlayer HLS для поддержки стримов
     implementation 'com.google.android.exoplayer:exoplayer-hls:2.19.1'
+    // ExoPlayer DASH для прямого DASH воспроизведения
+    implementation 'com.google.android.exoplayer:exoplayer-dash:2.19.1'
 
     // Coroutines
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'

@@ -23,6 +23,7 @@ import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.Player
 import com.google.android.exoplayer2.ui.StyledPlayerView
 import com.google.android.exoplayer2.source.ProgressiveMediaSource
+import com.google.android.exoplayer2.source.dash.DashMediaSource
 import com.google.android.exoplayer2.source.hls.HlsMediaSource
 import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
 import com.google.android.exoplayer2.upstream.DefaultDataSource
@@ -1375,7 +1376,13 @@ class MainActivity : AppCompatActivity() {
             val fileName = data.optString("file").takeIf { it.isNotBlank() }
             val page = data.optInt("page", 1)
             val streamUrl = data.optString("stream_url").takeIf { it.isNotBlank() }
-            val streamProtocol = data.optString("stream_protocol", "hls").ifBlank { "hls" }
+            val streamProtocolRaw = data.optString("stream_protocol", "").trim().lowercase()
+            val streamProtocol = when {
+                streamProtocolRaw.isNotBlank() -> streamProtocolRaw
+                streamUrl?.contains(".mpd", ignoreCase = true) == true -> "dash"
+                streamUrl?.contains(".m3u8", ignoreCase = true) == true -> "hls"
+                else -> "hls"
+            }
             val originalName = data.optString("originalName").takeIf { it.isNotBlank() }
                 ?: data.optString("original_name").takeIf { it.isNotBlank() }
             // НОВОЕ: Запоминаем устройство, с которого нужно брать контент (для статических файлов из "Все файлы")
@@ -2148,15 +2155,30 @@ class MainActivity : AppCompatActivity() {
             val dataSourceFactory = DefaultDataSource.Factory(this, httpDataSourceFactory)
             
             val mediaItem = MediaItem.fromUri(fullStreamUrl)
-            val mediaSource = when (streamProtocol.lowercase()) {
+            val effectiveProtocol = when {
+                streamProtocol.equals("dash", ignoreCase = true) || fullStreamUrl.contains(".mpd", ignoreCase = true) -> "dash"
+                streamProtocol.equals("hls", ignoreCase = true) || fullStreamUrl.contains(".m3u8", ignoreCase = true) -> "hls"
+                else -> streamProtocol.lowercase()
+            }
+
+            Log.i(
+                TAG,
+                "Loading stream: protocol=$streamProtocol effectiveProtocol=$effectiveProtocol url=$fullStreamUrl"
+            )
+
+            val mediaSource = when (effectiveProtocol) {
                 "hls" -> {
                     HlsMediaSource.Factory(dataSourceFactory)
                         .setAllowChunklessPreparation(true)
                         .createMediaSource(mediaItem)
                 }
+                "dash" -> {
+                    DashMediaSource.Factory(dataSourceFactory)
+                        .createMediaSource(mediaItem)
+                }
                 else -> {
-                    // Для других протоколов (mpegts, dash) также используем HLS если сервер конвертирует
-                    // Сервер всегда конвертирует стримы в HLS через FFmpeg
+                    // Для MPEG-TS и прочих нестандартных режимов используем HLS URL,
+                    // так как серверный proxy выдает m3u8.
                     
                     HlsMediaSource.Factory(dataSourceFactory)
                         .setAllowChunklessPreparation(true)

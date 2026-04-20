@@ -44,6 +44,13 @@ function shouldProxyStreamProtocol(protocol) {
   return protocol === 'mpegts';
 }
 
+function buildDashManifestRelayUrl(deviceId, safeName) {
+  if (!deviceId || !safeName) {
+    return null;
+  }
+  return `/api/devices/${encodeURIComponent(deviceId)}/streams/${encodeURIComponent(safeName)}/dash-manifest.mpd`;
+}
+
 const DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS = 10;
 const serverPlaylistLoops = new Map();
 
@@ -260,6 +267,10 @@ export function setupControlHandlers(socket, deps) {
               streamEntry = sourceDevice.streams[file];
             }
           }
+
+          const streamSourceDeviceId = (originDeviceId && originDeviceId !== device_id && !deviceStillExists.streams?.[file])
+            ? originDeviceId
+            : device_id;
           
           const requestedStreamProtocol = sanitizeStreamProtocol(streamProtocol);
           const resolvedStreamProtocol = resolveStreamProtocol(streamEntry?.protocol, requestedStreamProtocol, streamEntry?.url);
@@ -278,7 +289,7 @@ export function setupControlHandlers(socket, deps) {
               const existingUrl = streamManager.getPlaybackUrl(device_id, file);
               if (!existingUrl) {
                 // КРИТИЧНО: Если стрим найден в устройстве-источнике, берем метаданные оттуда
-                const metadataDeviceId = (originDeviceId && originDeviceId !== device_id && !deviceStillExists.streams?.[file]) ? originDeviceId : device_id;
+                const metadataDeviceId = streamSourceDeviceId;
                 const metadata = getFileMetadata(metadataDeviceId, file);
                 if (metadata && metadata.content_type === 'streaming') {
                   try {
@@ -294,7 +305,9 @@ export function setupControlHandlers(socket, deps) {
             }
           } else if (streamEntry) {
             // HLS/DASH отдаем напрямую без FFmpeg proxy
-            localPlaybackStreamUrl = streamEntry.url || streamEntry.proxyUrl;
+            localPlaybackStreamUrl = resolvedStreamProtocol === 'dash'
+              ? (buildDashManifestRelayUrl(streamSourceDeviceId, file) || streamEntry.url || streamEntry.proxyUrl)
+              : (streamEntry.url || streamEntry.proxyUrl);
           }
 
           if (streamEntry) {
@@ -395,6 +408,10 @@ export function setupControlHandlers(socket, deps) {
           });
         }
       }
+
+      const streamSourceDeviceId = (originDeviceId && originDeviceId !== device_id && !d.streams?.[file])
+        ? originDeviceId
+        : device_id;
       
       const requestedStreamProtocol = sanitizeStreamProtocol(streamProtocol);
       const resolvedStreamProtocol = resolveStreamProtocol(streamEntry?.protocol, requestedStreamProtocol, streamEntry?.url);
@@ -439,7 +456,7 @@ export function setupControlHandlers(socket, deps) {
             if (!existingUrl) {
               // FFmpeg не запущен - запускаем его (lazy loading)
               // КРИТИЧНО: Если стрим найден в устройстве-источнике, берем метаданные оттуда
-              const metadataDeviceId = (originDeviceId && originDeviceId !== device_id && !d.streams?.[file]) ? originDeviceId : device_id;
+              const metadataDeviceId = streamSourceDeviceId;
               const metadata = getFileMetadata(metadataDeviceId, file);
               logger.info('[Control] 🔍 Checking metadata for stream', {
                 deviceId: device_id,
@@ -514,7 +531,9 @@ export function setupControlHandlers(socket, deps) {
           }
         } else {
           // HLS/DASH отдаем напрямую без FFmpeg proxy
-          playbackStreamUrl = streamEntry.url || streamEntry.proxyUrl;
+          playbackStreamUrl = streamProtocol === 'dash'
+            ? (buildDashManifestRelayUrl(streamSourceDeviceId, file) || streamEntry.url || streamEntry.proxyUrl)
+            : (streamEntry.url || streamEntry.proxyUrl);
           logger.info('[Control] ✅ Using direct stream URL (no proxy)', {
             deviceId: device_id,
             file,
@@ -668,7 +687,9 @@ export function setupControlHandlers(socket, deps) {
           } else {
             // HLS/DASH из БД отдаем напрямую
             // Fallback: используем оригинальный URL
-            playbackStreamUrl = metadata.stream_url;
+            playbackStreamUrl = metadataProtocol === 'dash'
+              ? (buildDashManifestRelayUrl(device_id, file) || metadata.stream_url)
+              : metadata.stream_url;
             tempStreamEntry.proxyUrl = null;
             logger.info('[Control] ✅ Using direct stream URL from DB (no proxy)', {
               deviceId: device_id,
