@@ -137,6 +137,118 @@ function isDirectPlaybackAvailable(protocol) {
   return protocol === 'hls' || protocol === 'dash';
 }
 
+function shouldProxyStreamProtocol(protocol) {
+  return !isDirectPlaybackAvailable(protocol);
+}
+
+function buildDashManifestRelayUrl(deviceId, safeName) {
+  if (!deviceId || !safeName) {
+    return null;
+  }
+  return `/api/devices/${encodeURIComponent(deviceId)}/streams/${encodeURIComponent(safeName)}/dash-manifest.mpd`;
+}
+
+function buildDashUtcSyncUrl(deviceId, safeName) {
+  if (!deviceId || !safeName) {
+    return null;
+  }
+  return `/api/devices/${encodeURIComponent(deviceId)}/streams/${encodeURIComponent(safeName)}/dash-utc-time.xml`;
+}
+
+function resolveDirectStreamPlaybackUrl(deviceId, safeName, streamUrl, protocol) {
+  if (protocol === 'dash') {
+    return buildDashManifestRelayUrl(deviceId, safeName) || streamUrl;
+  }
+  return streamUrl;
+}
+
+function rewriteDashManifestUris(manifestText, manifestUrl, options = {}) {
+  if (!manifestText || !manifestUrl) {
+    return manifestText;
+  }
+
+  const { utcTimingUrl = null } = options;
+
+  let manifestUrlObject = null;
+  try {
+    manifestUrlObject = new URL(manifestUrl);
+  } catch {
+    return manifestText;
+  }
+
+  const ATTRIBUTE_URI_PATTERN = /(\s(?:media|initialization|sourceURL|href)\s*=\s*["'])([^"']+)(["'])/gi;
+  const BASE_URL_PATTERN = /(<BaseURL[^>]*>)([^<]*)(<\/BaseURL>)/gi;
+  const UTC_TIMING_VALUE_PATTERN = /(<UTCTiming\b[^>]*\bvalue\s*=\s*["'])([^"']+)(["'])/gi;
+
+  const mergeManifestQueryParams = (absoluteUrl, sourceWasRelative) => {
+    if (!sourceWasRelative || !manifestUrlObject.search) {
+      return absoluteUrl;
+    }
+
+    try {
+      const targetUrl = new URL(absoluteUrl);
+      for (const [key, value] of manifestUrlObject.searchParams.entries()) {
+        if (!targetUrl.searchParams.has(key)) {
+          targetUrl.searchParams.append(key, value);
+        }
+      }
+      return targetUrl.toString();
+    } catch {
+      return absoluteUrl;
+    }
+  };
+
+  const resolveUri = (uri) => {
+    const trimmed = String(uri || '').trim();
+    if (!trimmed) return trimmed;
+
+    const sourceWasRelative = !trimmed.startsWith('//') && !/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(trimmed);
+
+    try {
+      const resolvedUrl = new URL(trimmed, manifestUrlObject).toString();
+      return mergeManifestQueryParams(resolvedUrl, sourceWasRelative);
+    } catch {
+      return trimmed;
+    }
+  };
+
+  const withAbsoluteAttributes = manifestText.replace(ATTRIBUTE_URI_PATTERN, (match, prefix, uri, suffix) => {
+    const absoluteUri = resolveUri(uri);
+    return `${prefix}${absoluteUri}${suffix}`;
+  });
+
+  const withAbsoluteBaseUrls = withAbsoluteAttributes.replace(BASE_URL_PATTERN, (match, prefix, uri, suffix) => {
+    const absoluteUri = resolveUri(uri);
+    return `${prefix}${absoluteUri}${suffix}`;
+  });
+
+  if (!utcTimingUrl) {
+    return withAbsoluteBaseUrls;
+  }
+
+  return withAbsoluteBaseUrls.replace(UTC_TIMING_VALUE_PATTERN, (match, prefix, _value, suffix) => {
+    return `${prefix}${utcTimingUrl}${suffix}`;
+  });
+}
+
+async function fetchTextWithTimeout(url, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    return await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/dash+xml,application/xml,text/xml;q=0.9,*/*;q=0.8'
+      }
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function resolveStreamPlaybackUrl(deviceId, safeName, metadata = null) {
   const streamUrl = metadata?.stream_url || metadata?.streamUrl || null;
   const streamProtocol = metadata?.stream_protocol || metadata?.streamProtocol || null;
@@ -617,7 +729,8 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
     const safeFile = sanitizePathFragment(safeName);
     // КРИТИЧНО: Убрали deviceId из пути - стримы теперь идентифицируются только по safeName
     const proxyUrl = `/streams/${encodeURIComponent(safeFile)}/index.m3u8`;
-    const streamPlaybackUrl = isDirectPlaybackAvailable(protocol) ? f.stream_url : proxyUrl;
+    const directPlaybackUrl = resolveDirectStreamPlaybackUrl(deviceId, safeName, f.stream_url, protocol);
+    const streamPlaybackUrl = isDirectPlaybackAvailable(protocol) ? directPlaybackUrl : proxyUrl;
     const restreamStatus = getStreamRestreamStatus(deviceId, safeName);
     metadataList.push({
       safeName,
@@ -631,7 +744,7 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
     });
     streams[safeName] = {
       name: displayName,
-      url: f.stream_url,  // КРИТИЧНО: Используем stream_url из БД
+      url: directPlaybackUrl,
       proxyUrl: isDirectPlaybackAvailable(protocol) ? null : proxyUrl,
       status: restreamStatus?.status || null,
       protocol
@@ -1949,7 +2062,7 @@ export function createFilesRouter(deps) {
         protocol: normalizedProtocol
       });
       const newMetadata = getFileMetadata(id, safeName);
-      if (newMetadata) {
+      if (newMetadata && shouldProxyStreamProtocol(normalizedProtocol)) {
         upsertStreamJob(newMetadata);
       }
       if (!fileNamesMap[id]) fileNamesMap[id] = {};
@@ -1989,6 +2102,95 @@ export function createFilesRouter(deps) {
   });
 
   // GET /api/devices/:id/streams/:safeName - Получить данные стрима (для плееров)
+  router.get('/:id/streams/:safeName/dash-utc-time.xml', (req, res) => {
+    const id = sanitizeDeviceId(req.params.id);
+    if (!id) return res.status(400).send('invalid device id');
+
+    const safeName = req.params.safeName;
+    if (!safeName) return res.status(400).send('invalid stream name');
+
+    const metadata = getFileMetadata(id, safeName);
+    if (!metadata || metadata.content_type !== 'streaming') {
+      return res.status(404).send('stream not found');
+    }
+
+    const protocol = normalizeStreamProtocol(metadata.stream_protocol, metadata.stream_url, metadata.mime_type);
+    if (protocol !== 'dash') {
+      return res.status(400).send('dash only');
+    }
+
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.send(new Date().toISOString());
+  });
+
+  router.get('/:id/streams/:safeName/dash-manifest.mpd', async (req, res) => {
+    const id = sanitizeDeviceId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Неверный ID устройства' });
+
+    const safeName = req.params.safeName;
+    if (!safeName) return res.status(400).json({ error: 'Неверное название стрима' });
+
+    const metadata = getFileMetadata(id, safeName);
+    if (!metadata || metadata.content_type !== 'streaming') {
+      return res.status(404).json({ error: 'Стрим не найден' });
+    }
+
+    const protocol = normalizeStreamProtocol(metadata.stream_protocol, metadata.stream_url, metadata.mime_type);
+    if (protocol !== 'dash') {
+      return res.status(400).json({ error: 'Режим доступен только для DASH стримов' });
+    }
+
+    let upstreamUrl;
+    try {
+      upstreamUrl = new URL(metadata.stream_url).toString();
+      const parsed = new URL(upstreamUrl);
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        return res.status(400).json({ error: 'Поддерживаются только HTTP/HTTPS DASH источники' });
+      }
+    } catch {
+      return res.status(400).json({ error: 'Некорректный URL DASH источника' });
+    }
+
+    try {
+      const upstreamResponse = await fetchTextWithTimeout(upstreamUrl);
+      if (!upstreamResponse.ok) {
+        logger.warn('[streams] DASH manifest relay upstream error', {
+          deviceId: id,
+          safeName,
+          status: upstreamResponse.status,
+          statusText: upstreamResponse.statusText,
+          upstreamUrl
+        });
+        return res.status(upstreamResponse.status).json({ error: 'Не удалось получить DASH манифест' });
+      }
+
+      const upstreamManifest = await upstreamResponse.text();
+      if (!upstreamManifest || !upstreamManifest.includes('<MPD')) {
+        logger.warn('[streams] DASH manifest relay received invalid payload', {
+          deviceId: id,
+          safeName,
+          upstreamUrl
+        });
+        return res.status(502).json({ error: 'Источник вернул некорректный DASH манифест' });
+      }
+
+      const utcTimingUrl = buildDashUtcSyncUrl(id, safeName);
+      const rewrittenManifest = rewriteDashManifestUris(upstreamManifest, upstreamUrl, { utcTimingUrl });
+      res.setHeader('Content-Type', 'application/dash+xml; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      res.send(rewrittenManifest);
+    } catch (error) {
+      logger.error('[streams] DASH manifest relay failed', {
+        deviceId: id,
+        safeName,
+        upstreamUrl,
+        error: error.message
+      });
+      res.status(502).json({ error: 'Не удалось загрузить DASH манифест' });
+    }
+  });
+
   router.get('/:id/streams/:safeName', async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
     if (!id) return res.status(400).json({ error: 'Неверный ID устройства' });
@@ -2013,11 +2215,12 @@ export function createFilesRouter(deps) {
     let streamProxyUrl = null;
     let proxyFallbackUrl = null;
     let playbackStrategy = 'proxy';
+    const directPlaybackUrl = resolveDirectStreamPlaybackUrl(id, safeName, metadata.stream_url, protocol);
 
     if (preferDirectPlayback) {
-      streamProxyUrl = metadata.stream_url;
+      streamProxyUrl = directPlaybackUrl;
       proxyFallbackUrl = getStreamPlaybackUrl(id, safeName);
-      playbackStrategy = protocol === 'dash' ? 'direct_dash' : 'direct_hls';
+      playbackStrategy = protocol === 'dash' ? 'direct_dash_manifest_relay' : 'direct_hls';
     } else if (streamManager) {
       // Запускаем FFmpeg, если еще не запущен (lazy loading)
       streamProxyUrl = await streamManager.ensureStreamRunning(id, safeName, metadata);
@@ -2033,7 +2236,7 @@ export function createFilesRouter(deps) {
       originalName: metadata.original_name,
       streamUrl: metadata.stream_url,
       streamProxyUrl: streamProxyUrl,
-      directStreamUrl: preferDirectPlayback ? metadata.stream_url : null,
+      directStreamUrl: preferDirectPlayback ? directPlaybackUrl : null,
       proxyStreamUrl: proxyFallbackUrl,
       protocol,
       playbackStrategy,
@@ -2105,7 +2308,7 @@ export function createFilesRouter(deps) {
 
       // Получаем обновленные метаданные и создаем новый job
       const updatedMetadata = getFileMetadata(id, safeName);
-      if (updatedMetadata) {
+      if (updatedMetadata && shouldProxyStreamProtocol(normalizedProtocol)) {
         upsertStreamJob(updatedMetadata);
       }
 
@@ -3735,7 +3938,7 @@ export function createFilesRouter(deps) {
         fileNamesMap[targetId][targetSafeNameStreaming] = targetOriginalNameStreaming;
         saveFileNamesMap(fileNamesMap);
         const newMeta = getFileMetadata(targetId, targetSafeNameStreaming);
-        if (newMeta) {
+        if (newMeta && shouldProxyStreamProtocol(sourceProtocol)) {
           upsertStreamJob(newMeta);
         }
 

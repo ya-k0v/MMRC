@@ -509,10 +509,14 @@ if (!device_id || !device_id.trim()) {
           
           // Автовключение звука ПОСЛЕ готовности Video.js
           if (!preview && forceSound && !forceMuted) {
-            setTimeout(() => enableSound(), 500);
+            setTimeout(() => {
+              void enableSound({ auto: true });
+            }, 500);
             if (unmuteBtn) unmuteBtn.style.display = 'none';
           } else if (!preview && localStorage.getItem('vc_sound') === '1' && !forceMuted) {
-            setTimeout(() => enableSound(), 500);
+            setTimeout(() => {
+              void enableSound({ auto: true });
+            }, 500);
             if (unmuteBtn) unmuteBtn.style.display = 'none';
           } else if (unmuteBtn && !forceMuted && !preview) {
             // Показываем unmute кнопку если звук не включен автоматически
@@ -1272,6 +1276,96 @@ if (!device_id || !device_id.trim()) {
     return 'video/mp2t';
   }
 
+  function isAutoplayBlockedError(error) {
+    if (!error) return false;
+    const name = String(error.name || '').toLowerCase();
+    const message = String(error.message || '').toLowerCase();
+    return name === 'notallowederror' || message.includes("didn't interact with the document");
+  }
+
+  function buildStreamInfoUrl(file, { forceProxy = false } = {}) {
+    if (!device_id || !file) return null;
+    const params = new URLSearchParams();
+    if (forceProxy) {
+      params.set('proxy', '1');
+    }
+    const query = params.toString();
+    return `/api/devices/${encodeURIComponent(device_id)}/streams/${encodeURIComponent(file)}${query ? `?${query}` : ''}`;
+  }
+
+  async function fetchStreamInfo(file, { forceProxy = false } = {}) {
+    const streamInfoUrl = buildStreamInfoUrl(file, { forceProxy });
+    if (!streamInfoUrl) {
+      return null;
+    }
+
+    const response = await fetch(streamInfoUrl, {
+      cache: 'no-store',
+      credentials: 'same-origin'
+    });
+
+    if (!response.ok) {
+      throw new Error(`stream info request failed (${response.status})`);
+    }
+
+    return await response.json();
+  }
+
+  async function startDashProxyFallbackPlayback(file, reason = 'dash_error') {
+    if (!device_id || !file) {
+      console.warn('[Player] ⚠️ DASH proxy fallback skipped: missing device/file', {
+        deviceId: device_id,
+        file,
+        reason
+      });
+      return false;
+    }
+
+    try {
+      const streamInfo = await fetchStreamInfo(file, { forceProxy: true });
+      const fallbackUrl = streamInfo?.streamProxyUrl || streamInfo?.proxyStreamUrl || null;
+      const fallbackProtocol = normalizeStreamProtocol(streamInfo?.protocol, fallbackUrl);
+
+      if (!fallbackUrl) {
+        console.warn('[Player] ⚠️ DASH proxy fallback unavailable: no proxy URL', {
+          file,
+          reason,
+          streamInfo
+        });
+        return false;
+      }
+
+      if (fallbackProtocol === 'dash') {
+        console.warn('[Player] ⚠️ DASH proxy fallback returned direct DASH URL', {
+          file,
+          reason,
+          fallbackUrl
+        });
+        return false;
+      }
+
+      console.warn('[Player] ↩️ DASH fallback to proxied stream', {
+        file,
+        reason,
+        fallbackUrl,
+        fallbackProtocol
+      });
+
+      handleStreamingPlayback(fallbackUrl, file, fallbackProtocol, {
+        dashProxyFallbackAttempted: true,
+        dashFallbackReason: reason
+      });
+      return true;
+    } catch (error) {
+      console.error('[Player] ❌ DASH proxy fallback failed', {
+        file,
+        reason,
+        error: error.message
+      });
+      return false;
+    }
+  }
+
   function destroyMpegtsPlayer(reason = 'unknown') {
     if (mpegtsPlayer) {
       try {
@@ -1372,18 +1466,20 @@ if (!device_id || !device_id.trim()) {
     });
   }
 
-  function handleStreamingPlayback(streamUrl, file, streamProtocol = null) {
+  function handleStreamingPlayback(streamUrl, file, streamProtocol = null, options = {}) {
     if (!streamUrl || !vjsPlayer) {
       console.warn('[Player] ⚠️ Нет stream_url для воспроизведения стрима', { file });
       return;
     }
 
     const resolvedProtocol = normalizeStreamProtocol(streamProtocol, streamUrl);
+    const dashProxyFallbackAttempted = Boolean(options?.dashProxyFallbackAttempted);
     console.log('[Player] 🌐 Streaming playback', { 
       file, 
       streamUrl, 
       streamProtocol,  // Исходный протокол из сервера
       resolvedProtocol,  // Нормализованный протокол
+      dashProxyFallbackAttempted,
       hasHls: !!window.Hls,
       hlsSupported: window.Hls ? window.Hls.isSupported() : false
     });
@@ -1599,13 +1695,14 @@ if (!device_id || !device_id.trim()) {
           // Правильный API для dashjs 4.x
           dashPlayer = window.dashjs.MediaPlayer().create();
           if (dashPlayer) {
+            let dashErrorHandled = false;
             dashPlayer.initialize();
             dashPlayer.attachView(mediaTarget);
             dashPlayer.attachSource(streamUrl);
             
             // Обработка событий
             dashPlayer.on(window.dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
-              mediaTarget.play().then(() => {
+              const onDashStarted = () => {
                 show(videoContainer, true);
                 console.log('[Player] ▶️ DASH поток запущен через dashjs');
                 // КРИТИЧНО: Отправляем player/progress для обновления информации на панели спикера
@@ -1619,15 +1716,53 @@ if (!device_id || !device_id.trim()) {
                     duration: 0
                   });
                 }
-              }).catch(err => {
+              };
+
+              const startDashPlayback = async () => {
+                try {
+                  await mediaTarget.play();
+                  onDashStarted();
+                } catch (err) {
+                  if (!forceMuted && isAutoplayBlockedError(err)) {
+                    console.warn('[Player] ⚠️ DASH autoplay with sound blocked, retrying muted', {
+                      error: err.message
+                    });
+                    soundUnlocked = false;
+                    currentMuteState = true;
+                    applyVolumeToPlayer('dash_autoplay_retry_muted');
+                    if (unmuteBtn && !preview) {
+                      unmuteBtn.style.display = 'inline-block';
+                    }
+                    await mediaTarget.play();
+                    onDashStarted();
+                    return;
+                  }
+
+                  throw err;
+                }
+              };
+
+              void startDashPlayback().catch(err => {
                 console.error('[Player] ❌ Ошибка запуска DASH', err);
               });
             });
             
-            dashPlayer.on(window.dashjs.MediaPlayer.events.ERROR, (event) => {
+            dashPlayer.on(window.dashjs.MediaPlayer.events.ERROR, async (event) => {
+              if (dashErrorHandled) {
+                return;
+              }
+              dashErrorHandled = true;
               console.error('[Player] ❌ DASH error', event);
               destroyDashPlayer('dash_error');
-              // Fallback: пробуем через Video.js VHS
+
+              if (!dashProxyFallbackAttempted) {
+                const fallbackStarted = await startDashProxyFallbackPlayback(file, 'dash_error');
+                if (fallbackStarted) {
+                  return;
+                }
+              }
+
+              // Последний fallback: пробуем через Video.js
               playViaVideoJs(streamUrl, 'dash');
             });
             
@@ -1637,13 +1772,32 @@ if (!device_id || !device_id.trim()) {
       } catch (err) {
         console.error('[Player] ❌ Ошибка запуска DASH', err);
         destroyDashPlayer('exception');
-        // Fallback: пробуем через Video.js VHS
+
+        if (!dashProxyFallbackAttempted) {
+          void startDashProxyFallbackPlayback(file, 'dash_exception').then((fallbackStarted) => {
+            if (!fallbackStarted) {
+              playViaVideoJs(streamUrl, 'dash');
+            }
+          });
+          return;
+        }
+
+        // Fallback: пробуем через Video.js
         playViaVideoJs(streamUrl, 'dash');
         return;
       }
     } else if (resolvedProtocol === 'dash') {
-      // Fallback: если dashjs недоступен, пробуем через Video.js VHS
-      console.warn('[Player] ⚠️ dashjs недоступен, используем Video.js VHS fallback');
+      // Если dashjs недоступен, пробуем перейти на серверный proxy fallback
+      console.warn('[Player] ⚠️ dashjs недоступен, пробуем proxy fallback');
+      if (!dashProxyFallbackAttempted) {
+        void startDashProxyFallbackPlayback(file, 'dashjs_unavailable').then((fallbackStarted) => {
+          if (!fallbackStarted) {
+            playViaVideoJs(streamUrl, 'dash');
+          }
+        });
+        return;
+      }
+
       playViaVideoJs(streamUrl, 'dash');
       return;
     }
@@ -1661,37 +1815,75 @@ if (!device_id || !device_id.trim()) {
     return `/api/files/preview/${encodeURIComponent(device_id)}/${encodeURIComponent(file)}${query ? `?${query}` : ''}`;
   }
 
-  function enableSound(){
-    if (forceMuted) return;
+  async function enableSound(options = {}) {
+    const auto = options && options.auto === true;
+    if (forceMuted) return false;
     if (soundUnlocked) {
       applyVolumeToPlayer('unlock');
-      return;
+      return true;
     }
+
+    const previousMutedState = currentMuteState;
+    const previousVolumeLevel = currentVolumeLevel;
+    const previousVolumeSynced = volumeStateSynced;
+
     soundUnlocked = true;
-    try { localStorage.setItem('vc_sound', '1'); } catch {}
     if (!volumeStateSynced) {
       currentMuteState = false;
       currentVolumeLevel = 100;
       volumeStateSynced = true;
+    } else {
+      currentMuteState = false;
     }
-    applyVolumeToPlayer('unlock');
-    emitVolumeState('unlock');
+
+    applyVolumeToPlayer(auto ? 'unlock_auto' : 'unlock');
+
     if (vjsPlayer) {
       try {
-        vjsPlayer.play();
+        await vjsPlayer.play();
       } catch (err) {
+        if (isAutoplayBlockedError(err)) {
+          soundUnlocked = false;
+          currentMuteState = true;
+          if (!previousVolumeSynced) {
+            currentVolumeLevel = previousVolumeLevel;
+            volumeStateSynced = previousVolumeSynced;
+          }
+          applyVolumeToPlayer('unlock_blocked');
+          if (unmuteBtn && !forceMuted && !preview) {
+            unmuteBtn.style.display = 'inline-block';
+          }
+          return false;
+        }
+
+        soundUnlocked = false;
+        currentMuteState = previousMutedState;
+        currentVolumeLevel = previousVolumeLevel;
+        volumeStateSynced = previousVolumeSynced;
+        applyVolumeToPlayer('unlock_error_rollback');
+        return false;
       }
     }
+
+    try { localStorage.setItem('vc_sound', '1'); } catch {}
+    emitVolumeState(auto ? 'unlock_auto' : 'unlock');
     if (unmuteBtn) unmuteBtn.style.display = 'none';
+    return true;
   }
 
   // Обработчики unmute кнопки
   if (unmuteBtn && !forceMuted) {
-    unmuteBtn.addEventListener('click', enableSound);
+    unmuteBtn.addEventListener('click', () => {
+      void enableSound();
+    });
   }
   
   if (!forceMuted) {
-    document.addEventListener('click', () => { if (!soundUnlocked) enableSound(); }, { once:true });
+    document.addEventListener('click', () => {
+      if (!soundUnlocked) {
+        void enableSound();
+      }
+    }, { once:true });
   }
 
   // Поиск заглушки
