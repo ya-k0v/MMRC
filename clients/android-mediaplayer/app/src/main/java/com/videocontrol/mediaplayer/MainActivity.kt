@@ -2184,8 +2184,13 @@ class MainActivity : AppCompatActivity() {
                         .createMediaSource(mediaItem)
                 }
                 else -> {
+<<<<<<< HEAD
                     // Для неизвестных режимов используем HLS fallback,
                     // чтобы не ломать старые конфигурации стримов.
+=======
+                    // Для MPEG-TS и прочих нестандартных режимов используем HLS URL,
+                    // так как серверный proxy выдает m3u8.
+>>>>>>> 76d29d0af24a9d06f52ca3c5612c50a10cc64ed0
                     
                     HlsMediaSource.Factory(dataSourceFactory)
                         .setAllowChunklessPreparation(true)

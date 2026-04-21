@@ -1365,6 +1365,7 @@ if (!device_id || !device_id.trim()) {
     return name === 'notallowederror' || message.includes("didn't interact with the document");
   }
 
+<<<<<<< HEAD
   function isCrossOriginUrl(url) {
     if (!url) return false;
     try {
@@ -1372,6 +1373,102 @@ if (!device_id || !device_id.trim()) {
       return parsed.origin !== window.location.origin;
     } catch {
       return false;
+=======
+  function buildStreamInfoUrl(file, { forceProxy = false } = {}) {
+    if (!device_id || !file) return null;
+    const params = new URLSearchParams();
+    if (forceProxy) {
+      params.set('proxy', '1');
+    }
+    const query = params.toString();
+    return `/api/devices/${encodeURIComponent(device_id)}/streams/${encodeURIComponent(file)}${query ? `?${query}` : ''}`;
+  }
+
+  async function fetchStreamInfo(file, { forceProxy = false } = {}) {
+    const streamInfoUrl = buildStreamInfoUrl(file, { forceProxy });
+    if (!streamInfoUrl) {
+      return null;
+    }
+
+    const response = await fetch(streamInfoUrl, {
+      cache: 'no-store',
+      credentials: 'same-origin'
+    });
+
+    if (!response.ok) {
+      throw new Error(`stream info request failed (${response.status})`);
+    }
+
+    return await response.json();
+  }
+
+  async function startDashProxyFallbackPlayback(file, reason = 'dash_error') {
+    if (!device_id || !file) {
+      console.warn('[Player] ⚠️ DASH proxy fallback skipped: missing device/file', {
+        deviceId: device_id,
+        file,
+        reason
+      });
+      return false;
+    }
+
+    try {
+      const streamInfo = await fetchStreamInfo(file, { forceProxy: true });
+      const fallbackUrl = streamInfo?.streamProxyUrl || streamInfo?.proxyStreamUrl || null;
+      const fallbackProtocol = normalizeStreamProtocol(streamInfo?.protocol, fallbackUrl);
+
+      if (!fallbackUrl) {
+        console.warn('[Player] ⚠️ DASH proxy fallback unavailable: no proxy URL', {
+          file,
+          reason,
+          streamInfo
+        });
+        return false;
+      }
+
+      if (fallbackProtocol === 'dash') {
+        console.warn('[Player] ⚠️ DASH proxy fallback returned direct DASH URL', {
+          file,
+          reason,
+          fallbackUrl
+        });
+        return false;
+      }
+
+      console.warn('[Player] ↩️ DASH fallback to proxied stream', {
+        file,
+        reason,
+        fallbackUrl,
+        fallbackProtocol
+      });
+
+      handleStreamingPlayback(fallbackUrl, file, fallbackProtocol, {
+        dashProxyFallbackAttempted: true,
+        dashFallbackReason: reason
+      });
+      return true;
+    } catch (error) {
+      console.error('[Player] ❌ DASH proxy fallback failed', {
+        file,
+        reason,
+        error: error.message
+      });
+      return false;
+    }
+  }
+
+  function destroyMpegtsPlayer(reason = 'unknown') {
+    if (mpegtsPlayer) {
+      try {
+        console.log('[Player] 📴 Отключаем MPEG-TS поток', reason);
+        if (typeof mpegtsPlayer.destroy === 'function') {
+          mpegtsPlayer.destroy();
+        }
+      } catch (err) {
+        console.warn('[Player] ⚠️ Ошибка остановки MPEG-TS', err);
+      }
+      mpegtsPlayer = null;
+>>>>>>> 76d29d0af24a9d06f52ca3c5612c50a10cc64ed0
     }
   }
 
@@ -1468,18 +1565,20 @@ if (!device_id || !device_id.trim()) {
     });
   }
 
-  function handleStreamingPlayback(streamUrl, file, streamProtocol = null) {
+  function handleStreamingPlayback(streamUrl, file, streamProtocol = null, options = {}) {
     if (!streamUrl || !vjsPlayer) {
       console.warn('[Player] ⚠️ Нет stream_url для воспроизведения стрима', { file });
       return;
     }
 
     const resolvedProtocol = normalizeStreamProtocol(streamProtocol, streamUrl);
+    const dashProxyFallbackAttempted = Boolean(options?.dashProxyFallbackAttempted);
     console.log('[Player] 🌐 Streaming playback', { 
       file, 
       streamUrl, 
       streamProtocol,  // Исходный протокол из сервера
       resolvedProtocol,  // Нормализованный протокол
+      dashProxyFallbackAttempted,
       hasHls: !!window.Hls,
       hlsSupported: window.Hls ? window.Hls.isSupported() : false
     });
@@ -1711,6 +1810,16 @@ if (!device_id || !device_id.trim()) {
               console.error('[Player] ❌ DASH error', event);
               destroyDashPlayer('dash_error');
 
+<<<<<<< HEAD
+=======
+              if (!dashProxyFallbackAttempted) {
+                const fallbackStarted = await startDashProxyFallbackPlayback(file, 'dash_error');
+                if (fallbackStarted) {
+                  return;
+                }
+              }
+
+>>>>>>> 76d29d0af24a9d06f52ca3c5612c50a10cc64ed0
               // Последний fallback: пробуем через Video.js
               playViaVideoJs(streamUrl, 'dash');
             });
@@ -1722,12 +1831,38 @@ if (!device_id || !device_id.trim()) {
         console.error('[Player] ❌ Ошибка запуска DASH', err);
         destroyDashPlayer('exception');
 
+<<<<<<< HEAD
+=======
+        if (!dashProxyFallbackAttempted) {
+          void startDashProxyFallbackPlayback(file, 'dash_exception').then((fallbackStarted) => {
+            if (!fallbackStarted) {
+              playViaVideoJs(streamUrl, 'dash');
+            }
+          });
+          return;
+        }
+
+>>>>>>> 76d29d0af24a9d06f52ca3c5612c50a10cc64ed0
         // Fallback: пробуем через Video.js
         playViaVideoJs(streamUrl, 'dash');
         return;
       }
     } else if (resolvedProtocol === 'dash') {
+<<<<<<< HEAD
       console.warn('[Player] ⚠️ dashjs недоступен, используем Video.js fallback');
+=======
+      // Если dashjs недоступен, пробуем перейти на серверный proxy fallback
+      console.warn('[Player] ⚠️ dashjs недоступен, пробуем proxy fallback');
+      if (!dashProxyFallbackAttempted) {
+        void startDashProxyFallbackPlayback(file, 'dashjs_unavailable').then((fallbackStarted) => {
+          if (!fallbackStarted) {
+            playViaVideoJs(streamUrl, 'dash');
+          }
+        });
+        return;
+      }
+
+>>>>>>> 76d29d0af24a9d06f52ca3c5612c50a10cc64ed0
       playViaVideoJs(streamUrl, 'dash');
       return;
     }

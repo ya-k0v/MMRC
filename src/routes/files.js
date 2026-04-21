@@ -135,6 +135,13 @@ function isDirectPlaybackAvailable(protocol) {
   return protocol === 'hls' || protocol === 'dash';
 }
 
+<<<<<<< HEAD
+=======
+function shouldProxyStreamProtocol(protocol) {
+  return !isDirectPlaybackAvailable(protocol);
+}
+
+>>>>>>> 76d29d0af24a9d06f52ca3c5612c50a10cc64ed0
 function buildDashManifestRelayUrl(deviceId, safeName) {
   if (!deviceId || !safeName) {
     return null;
@@ -707,8 +714,28 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
       fileNames.push(displayName);
     }
     const protocol = normalizeStreamProtocol(f.stream_protocol, f.stream_url, f.mime_type);
+<<<<<<< HEAD
     const directPlaybackUrl = resolveDirectStreamPlaybackUrl(deviceId, safeName, f.stream_url, protocol);
     const streamPlaybackUrl = directPlaybackUrl;
+=======
+    // КРИТИЧНО: Lazy loading - НЕ запускаем FFmpeg здесь
+    // FFmpeg будет запущен только когда стрим действительно запрашивается для воспроизведения
+    // Это экономит ресурсы, так как не все стримы используются одновременно
+    // Формируем URL заранее, но FFmpeg запустится только при первом запросе на воспроизведение
+    // КРИТИЧНО: Используем ту же логику sanitization, что и в stream-manager.js
+    // для гарантии консистентности путей
+    function sanitizePathFragment(value = '') {
+      return String(value)
+        .replace(/[^a-zA-Z0-9\-_.]/g, '_')
+        .substring(0, 200);
+    }
+    const safeFile = sanitizePathFragment(safeName);
+    // КРИТИЧНО: Убрали deviceId из пути - стримы теперь идентифицируются только по safeName
+    const proxyUrl = `/streams/${encodeURIComponent(safeFile)}/index.m3u8`;
+    const directPlaybackUrl = resolveDirectStreamPlaybackUrl(deviceId, safeName, f.stream_url, protocol);
+    const streamPlaybackUrl = isDirectPlaybackAvailable(protocol) ? directPlaybackUrl : proxyUrl;
+    const restreamStatus = getStreamRestreamStatus(deviceId, safeName);
+>>>>>>> 76d29d0af24a9d06f52ca3c5612c50a10cc64ed0
     metadataList.push({
       safeName,
       originalName: displayName,
@@ -722,8 +749,13 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
     streams[safeName] = {
       name: displayName,
       url: directPlaybackUrl,
+<<<<<<< HEAD
       proxyUrl: null,
       status: null,
+=======
+      proxyUrl: isDirectPlaybackAvailable(protocol) ? null : proxyUrl,
+      status: restreamStatus?.status || null,
+>>>>>>> 76d29d0af24a9d06f52ca3c5612c50a10cc64ed0
       protocol
     };
     
@@ -2046,6 +2078,13 @@ export function createFilesRouter(deps) {
         streamUrl: parsedUrl.toString(),
         protocol: normalizedProtocol
       });
+<<<<<<< HEAD
+=======
+      const newMetadata = getFileMetadata(id, safeName);
+      if (newMetadata && shouldProxyStreamProtocol(normalizedProtocol)) {
+        upsertStreamJob(newMetadata);
+      }
+>>>>>>> 76d29d0af24a9d06f52ca3c5612c50a10cc64ed0
       if (!fileNamesMap[id]) fileNamesMap[id] = {};
       fileNamesMap[id][safeName] = name;
       saveFileNamesMap(fileNamesMap);
@@ -2184,16 +2223,52 @@ export function createFilesRouter(deps) {
     }
 
     const protocol = normalizeStreamProtocol(metadata.stream_protocol, metadata.stream_url, metadata.mime_type);
+<<<<<<< HEAD
     const directPlaybackUrl = resolveDirectStreamPlaybackUrl(id, safeName, metadata.stream_url, protocol);
     const playbackStrategy = protocol === 'dash' ? 'direct_dash_manifest_relay' : 'direct_hls';
+=======
+    const directPlaybackAvailable = isDirectPlaybackAvailable(protocol);
+    const forceProxyPlayback = req.query.proxy === '1' || req.query.forceProxy === '1';
+    const explicitDirectPlayback = req.query.direct === '1' || req.query.preferDirect === '1';
+    const preferDirectPlayback = directPlaybackAvailable && (explicitDirectPlayback || !forceProxyPlayback);
+
+    // КРИТИЧНО: Lazy loading - запускаем FFmpeg только когда стрим запрашивается для воспроизведения
+    // Это экономит ресурсы, так как не все стримы используются одновременно
+    const { getStreamManager } = await import('../streams/stream-manager.js');
+    const streamManager = getStreamManager();
+    let streamProxyUrl = null;
+    let proxyFallbackUrl = null;
+    let playbackStrategy = 'proxy';
+    const directPlaybackUrl = resolveDirectStreamPlaybackUrl(id, safeName, metadata.stream_url, protocol);
+
+    if (preferDirectPlayback) {
+      streamProxyUrl = directPlaybackUrl;
+      proxyFallbackUrl = getStreamPlaybackUrl(id, safeName);
+      playbackStrategy = protocol === 'dash' ? 'direct_dash_manifest_relay' : 'direct_hls';
+    } else if (streamManager) {
+      // Запускаем FFmpeg, если еще не запущен (lazy loading)
+      streamProxyUrl = await streamManager.ensureStreamRunning(id, safeName, metadata);
+      proxyFallbackUrl = streamProxyUrl;
+    } else {
+      // Fallback: используем старый метод
+      streamProxyUrl = getStreamPlaybackUrl(id, safeName);
+      proxyFallbackUrl = streamProxyUrl;
+    }
+>>>>>>> 76d29d0af24a9d06f52ca3c5612c50a10cc64ed0
 
     res.json({
       safeName: metadata.safe_name,
       originalName: metadata.original_name,
       streamUrl: metadata.stream_url,
+<<<<<<< HEAD
       streamProxyUrl: directPlaybackUrl,
       directStreamUrl: directPlaybackUrl,
       proxyStreamUrl: null,
+=======
+      streamProxyUrl: streamProxyUrl,
+      directStreamUrl: preferDirectPlayback ? directPlaybackUrl : null,
+      proxyStreamUrl: proxyFallbackUrl,
+>>>>>>> 76d29d0af24a9d06f52ca3c5612c50a10cc64ed0
       protocol,
       playbackStrategy,
       directPlaybackAvailable: true
@@ -2261,6 +2336,24 @@ export function createFilesRouter(deps) {
       fileNamesMap[id][safeName] = name;
       saveFileNamesMap(fileNamesMap);
 
+<<<<<<< HEAD
+=======
+      // КРИТИЧНО: Перезапускаем FFmpeg с новым URL, если стрим был запущен
+      // Сначала останавливаем старый job
+      try {
+        removeStreamJob(id, safeName, 'updated');
+      } catch (err) {
+        // Игнорируем ошибки остановки (может быть не запущен)
+        logger.debug('[streams] Stream job not running or already stopped', { deviceId: id, safeName });
+      }
+
+      // Получаем обновленные метаданные и создаем новый job
+      const updatedMetadata = getFileMetadata(id, safeName);
+      if (updatedMetadata && shouldProxyStreamProtocol(normalizedProtocol)) {
+        upsertStreamJob(updatedMetadata);
+      }
+
+>>>>>>> 76d29d0af24a9d06f52ca3c5612c50a10cc64ed0
       // Обновляем список файлов устройства
       updateDeviceFilesFromDB(id, devices, fileNamesMap);
       io.emit('devices/updated');
@@ -3865,6 +3958,14 @@ export function createFilesRouter(deps) {
         if (!fileNamesMap[targetId]) fileNamesMap[targetId] = {};
         fileNamesMap[targetId][targetSafeNameStreaming] = targetOriginalNameStreaming;
         saveFileNamesMap(fileNamesMap);
+<<<<<<< HEAD
+=======
+        const newMeta = getFileMetadata(targetId, targetSafeNameStreaming);
+        if (newMeta && shouldProxyStreamProtocol(sourceProtocol)) {
+          upsertStreamJob(newMeta);
+        }
+
+>>>>>>> 76d29d0af24a9d06f52ca3c5612c50a10cc64ed0
         if (move) {
           deleteFileMetadata(sourceId, fileName);
           removeStreamJob(sourceId, fileName, 'moved');

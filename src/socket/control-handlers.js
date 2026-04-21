@@ -48,6 +48,13 @@ function buildDashManifestRelayUrl(deviceId, safeName) {
   return `/api/devices/${encodeURIComponent(deviceId)}/streams/${encodeURIComponent(safeName)}/dash-manifest.mpd`;
 }
 
+function buildDashManifestRelayUrl(deviceId, safeName) {
+  if (!deviceId || !safeName) {
+    return null;
+  }
+  return `/api/devices/${encodeURIComponent(deviceId)}/streams/${encodeURIComponent(safeName)}/dash-manifest.mpd`;
+}
+
 const DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS = 10;
 const serverPlaylistLoops = new Map();
 
