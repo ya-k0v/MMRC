@@ -205,6 +205,89 @@ function resolveDefaultApkPath() {
   return candidates.length ? candidates[0].filePath : null;
 }
 
+function parseRequestedDeviceIds(rawValue) {
+  if (Array.isArray(rawValue)) {
+    return rawValue
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+  }
+
+  if (typeof rawValue !== 'string') {
+    return [];
+  }
+
+  const normalized = rawValue.trim();
+  if (!normalized) {
+    return [];
+  }
+
+  if (normalized.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(normalized);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((value) => String(value || '').trim())
+          .filter(Boolean);
+      }
+    } catch {
+      // Fallback to comma-separated parsing.
+    }
+  }
+
+  return normalized
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function isAndroidDeviceCandidate(device) {
+  const deviceType = String(device?.deviceType || device?.device_type || '').toLowerCase();
+  const platform = String(device?.platform || '').toLowerCase();
+
+  return (
+    deviceType.includes('android') ||
+    deviceType.includes('native_mediaplayer') ||
+    platform.includes('android')
+  );
+}
+
+async function listDevicesViaApi({ incomingAuthHeader }) {
+  const apiBaseUrl = getInternalApiBaseUrl();
+  const apiUrl = `${apiBaseUrl}/api/devices`;
+  const headers = {};
+
+  if (incomingAuthHeader) {
+    headers.Authorization = incomingAuthHeader;
+  }
+
+  let resp = await doFetch(apiUrl, {
+    method: 'GET',
+    headers
+  });
+
+  if ((resp.status === 401 || resp.status === 403) && !incomingAuthHeader) {
+    const accessToken = await getAdminAccessToken(apiBaseUrl);
+    resp = await doFetch(apiUrl, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    });
+  }
+
+  if (!resp.ok) {
+    const responseText = await resp.text();
+    const apiError = parseApiErrorMessage(responseText, `Ошибка API (${resp.status})`);
+    const error = new Error(apiError);
+    error.status = resp.status;
+    error.apiUrl = apiUrl;
+    throw error;
+  }
+
+  const payload = await resp.json();
+  return Array.isArray(payload) ? payload : [];
+}
+
 // POST /api/admin/install-apk
 router.post('/install-apk', requireAdmin, upload.single('apk'), async (req, res) => {
   const ip = req.body.ip;
@@ -276,6 +359,130 @@ router.post('/install-apk', requireAdmin, upload.single('apk'), async (req, res)
     return res.status(500).json({ ok: false, error: e?.message || 'Ошибка при установке APK на устройство' });
   } finally {
     // Удаляем временный файл, если он был загружен
+    if (uploadedApkPath && fs.existsSync(uploadedApkPath)) {
+      try {
+        fs.unlinkSync(uploadedApkPath);
+      } catch {
+        // Ignore cleanup errors for temporary uploads.
+      }
+    }
+  }
+});
+
+// POST /api/admin/install-apk-bound
+// Массовое обновление APK на Android-устройствах с привязанным IP.
+router.post('/install-apk-bound', requireAdmin, upload.single('apk'), async (req, res) => {
+  const settings = getSettings();
+  const serverUrl = settings.serverUrl || process.env.SERVER_URL || `http://${req.headers.host || '127.0.0.1:3000'}`;
+
+  let uploadedApkPath = null;
+  if (req.file) {
+    try {
+      uploadedApkPath = resolveUploadedApkPath(req.file);
+    } catch (error) {
+      logger.warn('Некорректный путь загруженного APK для массового обновления', { error: error.message });
+      return res.status(400).json({ ok: false, error: 'Некорректный путь загруженного APK файла' });
+    }
+  }
+
+  const apkPath = uploadedApkPath || resolveDefaultApkPath();
+  if (!apkPath) {
+    return res.status(400).json({
+      ok: false,
+      error: 'APK файл не найден. Загрузите APK вручную или соберите Android клиент (app-release.apk).'
+    });
+  }
+
+  const incomingAuthHeader = req.get('authorization');
+  const requestedDeviceIds = parseRequestedDeviceIds(req.body?.deviceIds);
+  const requestedDeviceIdsSet = new Set(requestedDeviceIds);
+
+  try {
+    const devices = await listDevicesViaApi({ incomingAuthHeader });
+    let targets = devices
+      .filter((device) => isAndroidDeviceCandidate(device))
+      .filter((device) => typeof device?.ipAddress === 'string' && device.ipAddress.trim());
+
+    if (requestedDeviceIdsSet.size > 0) {
+      targets = targets.filter((device) => requestedDeviceIdsSet.has(device.device_id));
+    }
+
+    if (!targets.length) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Не найдено Android-устройств с привязанным IP адресом для обновления.'
+      });
+    }
+
+    const results = [];
+    let updated = 0;
+
+    for (const target of targets) {
+      const deviceId = String(target.device_id || '').trim();
+      const deviceName = String(target.name || deviceId).trim() || deviceId;
+      const ip = String(target.ipAddress || '').trim();
+
+      if (!deviceId || !ip) {
+        results.push({
+          deviceId,
+          deviceName,
+          ip,
+          ok: false,
+          error: 'Некорректные данные устройства (deviceId/ip)'
+        });
+        continue;
+      }
+
+      try {
+        await installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl });
+        updated += 1;
+        results.push({ deviceId, deviceName, ip, ok: true });
+      } catch (error) {
+        logger.error('Ошибка массового обновления APK', {
+          deviceId,
+          ip,
+          error: error?.message,
+          stack: error?.stack
+        });
+        results.push({
+          deviceId,
+          deviceName,
+          ip,
+          ok: false,
+          error: error?.message || 'Ошибка установки APK'
+        });
+      }
+    }
+
+    const total = results.length;
+    const failed = total - updated;
+
+    if (updated > 0) {
+      const { default: getIO } = await import('../socket/index.js');
+      const io = getIO && typeof getIO === 'function' ? getIO() : (global.io || null);
+      if (io && io.emit) {
+        io.emit('devices/updated');
+      }
+    }
+
+    const statusCode = failed > 0 ? 207 : 200;
+    return res.status(statusCode).json({
+      ok: failed === 0,
+      total,
+      updated,
+      failed,
+      results
+    });
+  } catch (error) {
+    logger.error('Ошибка при подготовке массового обновления APK', {
+      error: error?.message,
+      stack: error?.stack
+    });
+    return res.status(500).json({
+      ok: false,
+      error: error?.message || 'Ошибка при массовом обновлении APK'
+    });
+  } finally {
     if (uploadedApkPath && fs.existsSync(uploadedApkPath)) {
       try {
         fs.unlinkSync(uploadedApkPath);

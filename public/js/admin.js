@@ -423,7 +423,7 @@ function guessStreamProtocolFromUrl(url = '') {
   const lower = url.toLowerCase();
   if (lower.includes('.m3u8') || lower.includes('format=m3u8')) return 'hls';
   if (lower.includes('.mpd') || lower.includes('format=mpd') || lower.includes('dash')) return 'dash';
-  return 'mpegts';
+  return 'hls';
 }
 
 // ------ Заполнение select ------
