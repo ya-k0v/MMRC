@@ -465,7 +465,7 @@ export async function showStreamModal({ deviceId, mode = 'add', safeName = null,
         <label style="display:block; margin-bottom:4px; font-weight:500;">URL стрима</label>
         <input id="streamModalUrl" class="input" value="${escapeHtml(streamUrl || '')}" placeholder="https://example.com/stream.m3u8" spellcheck="false" />
         <div class="meta" style="margin-top:4px; font-size:0.85rem; color:var(--text-secondary);">
-          Поддерживаются HTTP/HTTPS стримы (HLS, DASH, MPEG-TS)
+          Поддерживаются HTTP/HTTPS стримы (HLS, DASH)
         </div>
       </div>
       
@@ -475,7 +475,6 @@ export async function showStreamModal({ deviceId, mode = 'add', safeName = null,
           <option value="auto" ${streamProtocol === 'auto' || !streamProtocol ? 'selected' : ''}>Автоопределение</option>
           <option value="hls" ${streamProtocol === 'hls' ? 'selected' : ''}>HLS (.m3u8)</option>
           <option value="dash" ${streamProtocol === 'dash' ? 'selected' : ''}>DASH (.mpd)</option>
-          <option value="mpegts" ${streamProtocol === 'mpegts' ? 'selected' : ''}>MPEG-TS</option>
         </select>
         <div class="meta" style="margin-top:4px; font-size:0.85rem; color:var(--text-secondary);">
           Если не уверены, оставьте "Автоопределение"

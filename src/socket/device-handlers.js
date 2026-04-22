@@ -25,7 +25,7 @@ export function setupDeviceHandlers(socket, deps) {
   };
   
   // player/register - Регистрация устройства
-  socket.on('player/register', ({ device_id, device_type, capabilities, platform }) => {
+  socket.on('player/register', ({ device_id, device_type, capabilities, platform, app_version }) => {
     try {
       recordSocketEvent('message');
       
@@ -94,12 +94,17 @@ export function setupDeviceHandlers(socket, deps) {
       // Обновляем информацию об устройстве
       const deviceType = device_type || 'browser';
       const devicePlatform = platform || 'Unknown';
+      const appVersion = typeof app_version === 'string' ? app_version.trim() : '';
       const previousIP = devices[device_id].ipAddress;
       devices[device_id].deviceType = deviceType;
       devices[device_id].capabilities = capabilities || defaultCapabilities;
       devices[device_id].platform = devicePlatform;
+      if (appVersion) {
+        devices[device_id].appVersion = appVersion;
+      }
       devices[device_id].ipAddress = clientIP || null;
       devices[device_id].lastSeen = new Date().toISOString();
+      const deviceAppVersion = devices[device_id].appVersion || null;
 
       // Сохраняем ipAddress и platform в БД
       try {
@@ -117,6 +122,7 @@ export function setupDeviceHandlers(socket, deps) {
             device_id,
             deviceType,
             platform: devicePlatform,
+            appVersion: deviceAppVersion,
             ipAddress: devices[device_id].ipAddress,
             capabilities: devices[device_id].capabilities,
             lastSeen: devices[device_id].lastSeen
@@ -154,6 +160,7 @@ export function setupDeviceHandlers(socket, deps) {
                 device_id,
                 deviceType,
                 platform: devicePlatform,
+                appVersion: deviceAppVersion,
                 ipAddress: devices[device_id].ipAddress,
                 capabilities: devices[device_id].capabilities,
                 lastSeen: devices[device_id].lastSeen
@@ -299,7 +306,8 @@ export function setupDeviceHandlers(socket, deps) {
         socketId: socket.id, 
         transport: socket.conn.transport.name,
         deviceType: deviceType,
-        platform: devicePlatform 
+        platform: devicePlatform,
+        appVersion: deviceAppVersion
       });
       recordSocketEvent('connect');
     } catch (e) {

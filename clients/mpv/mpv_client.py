@@ -941,7 +941,7 @@ class MPVClient:
         self.skipPlaceholderOnVideoEnd = False
     
     def _handle_streaming(self, stream_url: str, file_name: str, stream_protocol: Optional[str] = None):
-        """Обработка streaming (HLS/DASH/MPEG-TS) - как Android и Video.js"""
+        """Обработка streaming (HLS/DASH) - как Android и Video.js"""
         print(f'[MPV] 🌐 Streaming playback: {file_name}, protocol={stream_protocol}, url={stream_url}')
         
         # КРИТИЧНО: Сбрасываем счетчик ошибок при начале нового контента (как Android)
@@ -954,7 +954,7 @@ class MPVClient:
             elif stream_url.lower().endswith('.mpd') or 'format=mpd' in stream_url.lower() or 'dash-live' in stream_url.lower():
                 stream_protocol = 'dash'
             else:
-                stream_protocol = 'mpegts'
+                stream_protocol = 'hls'
         
         # КРИТИЧНО: Останавливаем заглушку и предыдущий контент
         self.send_command('stop')
@@ -977,7 +977,7 @@ class MPVClient:
         # Определяем MIME type
         mime_type = 'application/x-mpegURL' if stream_protocol == 'hls' else \
                    'application/dash+xml' if stream_protocol == 'dash' else \
-                   'video/mp2t'
+                   'application/x-mpegURL'
         
         # Загружаем стрим
         print(f'[MPV] 📤 Загрузка стрима: {stream_url}')
