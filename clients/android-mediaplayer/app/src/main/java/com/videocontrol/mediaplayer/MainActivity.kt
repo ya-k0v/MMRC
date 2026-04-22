@@ -16,6 +16,7 @@ import android.util.Log
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageView
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.exoplayer2.ExoPlayer
@@ -138,6 +139,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var brandBg: ImageView
     private lateinit var versionOverlay: TextView
+    private lateinit var loadingIndicator: ProgressBar
 
     private var player: ExoPlayer? = null
     private var bufferPlayer: ExoPlayer? = null
@@ -700,10 +702,14 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.statusText)
         brandBg = findViewById(R.id.brandBg)
         versionOverlay = findViewById(R.id.versionOverlay)
+        loadingIndicator = findViewById(R.id.loadingIndicator)
         bufferPlayerView.alpha = 0f
         bufferPlayerView.visibility = View.GONE
+        loadingIndicator.visibility = View.GONE
+        loadingIndicator.alpha = 0f
 
         updateVersionOverlay()
+        loadingIndicator.bringToFront()
         versionOverlay.bringToFront()
 
         refreshAudioLogo(force = true)
@@ -1348,7 +1354,8 @@ class MainActivity : AppCompatActivity() {
             val data = JSONObject().apply {
                 put("device_id", DEVICE_ID)
                 put("device_type", "NATIVE_MEDIAPLAYER")
-                put("platform", "Android ${android.os.Build.VERSION.RELEASE}")
+                put("platform", "Android ${android.os.Build.VERSION.RELEASE} | MMRC ${BuildConfig.VERSION_NAME}")
+                put("app_version", BuildConfig.VERSION_NAME)
                 put("model", android.os.Build.MODEL)
                 put("manufacturer", android.os.Build.MANUFACTURER)
                 put("capabilities", JSONObject().apply {
@@ -2177,8 +2184,8 @@ class MainActivity : AppCompatActivity() {
                         .createMediaSource(mediaItem)
                 }
                 else -> {
-                    // Для MPEG-TS и прочих нестандартных режимов используем HLS URL,
-                    // так как серверный proxy выдает m3u8.
+                    // Для неизвестных режимов используем HLS fallback,
+                    // чтобы не ломать старые конфигурации стримов.
                     
                     HlsMediaSource.Factory(dataSourceFactory)
                         .setAllowChunklessPreparation(true)
@@ -2537,6 +2544,7 @@ class MainActivity : AppCompatActivity() {
             if (isDestroyed || isFinishing) {
                 return
             }
+
             
             // Glide для быстрой загрузки изображений
             

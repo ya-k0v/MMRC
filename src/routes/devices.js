@@ -109,6 +109,7 @@ export function createDevicesRouter(deps) {
         streaming: true 
       },
       platform: d.platform || 'Unknown',
+      appVersion: d.appVersion || null,
       lastSeen: d.lastSeen || null,
       ipAddress: d.ipAddress || null
     }));

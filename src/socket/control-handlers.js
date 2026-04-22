@@ -8,7 +8,7 @@ import logger from '../utils/logger.js';
 import { getFileMetadata } from '../database/files-metadata.js';
 import { removeStreamJob } from '../streams/stream-manager.js';
 
-const STREAM_PROTOCOLS = new Set(['hls', 'dash', 'mpegts']);
+const STREAM_PROTOCOLS = new Set(['hls', 'dash']);
 
 function sanitizeStreamProtocol(value, fallback = null) {
   if (!value) return fallback;
@@ -28,20 +28,17 @@ function detectStreamProtocolFromUrl(url = '') {
   if (lower.includes('.mpd') || lower.includes('format=mpd') || lower.includes('dash-live') || lower.includes('dash/')) {
     return 'dash';
   }
-  if (lower.includes('.ts') || lower.includes('mpegts') || lower.startsWith('udp://') || lower.startsWith('rtp://')) {
-    return 'mpegts';
-  }
   return null;
 }
 
 function resolveStreamProtocol(primaryProtocol, fallbackProtocol, url = '') {
   return sanitizeStreamProtocol(primaryProtocol,
     sanitizeStreamProtocol(fallbackProtocol,
-      detectStreamProtocolFromUrl(url) || 'mpegts'));
+      detectStreamProtocolFromUrl(url) || 'hls'));
 }
 
 function shouldProxyStreamProtocol(protocol) {
-  return protocol === 'mpegts';
+  return false;
 }
 
 function buildDashManifestRelayUrl(deviceId, safeName) {

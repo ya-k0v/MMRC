@@ -756,7 +756,7 @@ export function createStreamingEntry({ deviceId, safeName, originalName, streamU
   }
   const md5Hash = crypto.createHash('md5').update(`${deviceId}:${streamUrl}`).digest('hex');
   const normalizedProtocol = protocol || 'auto';
-  let mimeType = 'video/mp2t';
+  let mimeType = 'application/x-mpegURL';
   if (normalizedProtocol === 'dash') {
     mimeType = 'application/dash+xml';
   } else if (normalizedProtocol === 'hls') {
@@ -806,7 +806,7 @@ export function updateStreamMetadata(deviceId, safeName, newOriginalName, newStr
     const normalizedProtocol = newProtocol || 'auto';
     
     // Определяем MIME тип на основе протокола
-    let mimeType = 'video/mp2t';
+    let mimeType = 'application/x-mpegURL';
     if (normalizedProtocol === 'dash') {
       mimeType = 'application/dash+xml';
     } else if (normalizedProtocol === 'hls') {

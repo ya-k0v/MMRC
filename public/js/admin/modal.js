@@ -2121,22 +2121,62 @@ async function loadSettingsContent(adminFetch) {
   const apkInstallBtn = document.createElement('button');
   apkInstallBtn.type = 'submit';
   apkInstallBtn.className = 'primary';
-  apkInstallBtn.style.cssText = 'min-width:120px; margin-left:auto;';
+  apkInstallBtn.style.cssText = 'min-width:120px;';
   apkInstallBtn.textContent = 'Установить APK';
+  const apkActionsWrap = document.createElement('div');
+  apkActionsWrap.style.cssText = 'margin-left:auto; display:flex; align-items:center; gap:6px; position:relative;';
+  const apkMenuToggleBtn = document.createElement('button');
+  apkMenuToggleBtn.type = 'button';
+  apkMenuToggleBtn.className = 'secondary';
+  apkMenuToggleBtn.style.cssText = 'min-width:36px; width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center; border-radius:10px;';
+  apkMenuToggleBtn.title = 'Дополнительные действия APK';
+  apkMenuToggleBtn.setAttribute('aria-expanded', 'false');
+  apkMenuToggleBtn.textContent = '▾';
+  const apkMenu = document.createElement('div');
+  apkMenu.style.cssText = 'display:none; position:absolute; top:calc(100% + 6px); right:0; min-width:180px; background:var(--panel); border:1px solid var(--border); border-radius:12px; box-shadow:0 12px 24px rgba(0,0,0,0.35); padding:8px; z-index:30;';
+  const apkBatchUpdateBtn = document.createElement('button');
+  apkBatchUpdateBtn.type = 'button';
+  apkBatchUpdateBtn.className = 'secondary';
+  apkBatchUpdateBtn.style.cssText = 'width:100%; text-align:left; justify-content:flex-start; display:flex; align-items:center; gap:8px; border-radius:10px;';
+  apkBatchUpdateBtn.textContent = 'Обновить';
+  apkMenu.appendChild(apkBatchUpdateBtn);
   const apkStatus = document.createElement('div');
   apkStatus.className = 'meta';
   apkStatus.style.cssText = 'min-height:1.2em; font-size:0.85rem; color:var(--text-secondary); margin-top:2px;';
+  apkActionsWrap.appendChild(apkInstallBtn);
+  apkActionsWrap.appendChild(apkMenuToggleBtn);
+  apkActionsWrap.appendChild(apkMenu);
   apkForm.appendChild(apkIpInput);
   apkForm.appendChild(apkIdInput);
   apkForm.appendChild(apkNameInput);
-  apkForm.appendChild(apkInstallBtn);
+  apkForm.appendChild(apkActionsWrap);
   apkSection.appendChild(apkTitle);
   apkSection.appendChild(apkForm);
   apkSection.appendChild(apkStatus);
 
+  const closeApkMenu = () => {
+    apkMenu.style.display = 'none';
+    apkMenuToggleBtn.setAttribute('aria-expanded', 'false');
+  };
+
+  apkMenuToggleBtn.onclick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const isOpen = apkMenu.style.display === 'block';
+    apkMenu.style.display = isOpen ? 'none' : 'block';
+    apkMenuToggleBtn.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+  };
+
+  mainDiv.addEventListener('click', (event) => {
+    if (!apkActionsWrap.contains(event.target)) {
+      closeApkMenu();
+    }
+  });
+
   apkForm.onsubmit = async (e) => {
     e.preventDefault();
     apkInstallBtn.disabled = true;
+    apkMenuToggleBtn.disabled = true;
     apkStatus.textContent = 'Установка...';
     apkStatus.style.color = 'var(--text-secondary)';
     const ip = apkIpInput.value.trim();
@@ -2146,6 +2186,7 @@ async function loadSettingsContent(adminFetch) {
       apkStatus.textContent = 'Заполните все поля';
       apkStatus.style.color = 'var(--danger)';
       apkInstallBtn.disabled = false;
+      apkMenuToggleBtn.disabled = false;
       return;
     }
     try {
@@ -2167,6 +2208,47 @@ async function loadSettingsContent(adminFetch) {
       apkStatus.style.color = 'var(--danger)';
     }
     apkInstallBtn.disabled = false;
+    apkMenuToggleBtn.disabled = false;
+  };
+
+  apkBatchUpdateBtn.onclick = async () => {
+    closeApkMenu();
+    apkInstallBtn.disabled = true;
+    apkMenuToggleBtn.disabled = true;
+    apkBatchUpdateBtn.disabled = true;
+    apkStatus.textContent = 'Обновляем привязанные Android-плееры...';
+    apkStatus.style.color = 'var(--text-secondary)';
+
+    try {
+      const resp = await adminFetch('/api/admin/install-apk-bound', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+
+      const result = await resp.json().catch(() => ({}));
+      const updated = Number(result.updated) || 0;
+      const failed = Number(result.failed) || 0;
+      const total = Number(result.total) || 0;
+
+      if (resp.ok && failed === 0) {
+        apkStatus.textContent = `Обновление завершено: ${updated} из ${total}`;
+        apkStatus.style.color = 'var(--success, #4caf50)';
+      } else if (updated > 0 || failed > 0) {
+        apkStatus.textContent = `Частично завершено: успешно ${updated}, ошибок ${failed}`;
+        apkStatus.style.color = failed > 0 ? 'var(--warning, #f59e0b)' : 'var(--text-secondary)';
+      } else {
+        apkStatus.textContent = 'Ошибка: ' + (result.error || 'Не удалось обновить Android-плееры');
+        apkStatus.style.color = 'var(--danger)';
+      }
+    } catch (err) {
+      apkStatus.textContent = 'Ошибка соединения с сервером';
+      apkStatus.style.color = 'var(--danger)';
+    }
+
+    apkInstallBtn.disabled = false;
+    apkMenuToggleBtn.disabled = false;
+    apkBatchUpdateBtn.disabled = false;
   };
 
   mainDiv.appendChild(apkSection);
