@@ -408,6 +408,19 @@ function safeDownloadFileName(fileName = '', fallback = 'download') {
   return baseName || fallback;
 }
 
+function setSafeDownloadFileNameHeader(res, fileName = '') {
+  const normalized = String(fileName || '')
+    .replace(/[\r\n]/g, '')
+    .trim();
+
+  if (!normalized) {
+    return;
+  }
+
+  // Передаем имя в ASCII-safe виде, чтобы избежать ERR_INVALID_CHAR в заголовках.
+  res.setHeader('X-Download-Filename', encodeURIComponent(normalized));
+}
+
 const router = express.Router();
 
 /**
@@ -4279,28 +4292,56 @@ export function createFilesRouter(deps) {
     }
 
     const folderCandidateName = name.replace(/\.(pdf|pptx|zip)$/i, '');
-    const targetPath = allowedDownloadPaths.get(name) || allowedDownloadPaths.get(folderCandidateName);
+    let targetPath = allowedDownloadPaths.get(name) || allowedDownloadPaths.get(folderCandidateName);
+    let targetValidationRoot = deviceFolder;
+
+    // Фолбэк для дедуплицированных файлов: запись может указывать на общий data/content.
+    if (!targetPath && metadata?.file_path) {
+      try {
+        const metadataPath = validatePath(path.resolve(String(metadata.file_path)), safeDevicesPath);
+        const metadataRealPath = validatePath(fs.realpathSync(metadataPath), safeDevicesPath);
+        const metadataBaseName = sanitizeFilename(path.basename(metadataRealPath));
+
+        if (metadataBaseName && (metadataBaseName === name || metadataBaseName === folderCandidateName)) {
+          targetPath = metadataRealPath;
+          targetValidationRoot = safeDevicesPath;
+
+          logger.info('[download] Using metadata file_path fallback', {
+            deviceId: id,
+            name,
+            metadataPath: metadataRealPath
+          });
+        }
+      } catch (error) {
+        logger.warn('[download] Metadata file_path fallback failed', {
+          deviceId: id,
+          name,
+          metadataPath: metadata.file_path,
+          error: error.message
+        });
+      }
+    }
 
     if (!targetPath) {
       return res.status(404).json({ error: 'Файл или папка не найдены' });
     }
 
     let safeTargetPath;
-    let safeDeviceRoot;
+    let safeDownloadRoot;
     try {
-      safeDeviceRoot = validatePath(fs.realpathSync(deviceFolder), safeDevicesPath);
-      safeTargetPath = validatePath(fs.realpathSync(targetPath), safeDeviceRoot);
+      safeDownloadRoot = validatePath(fs.realpathSync(targetValidationRoot), safeDevicesPath);
+      safeTargetPath = validatePath(fs.realpathSync(targetPath), safeDownloadRoot);
     } catch (error) {
       return res.status(404).json({ error: 'Файл или папка не найдены' });
     }
 
-    if (!safeTargetPath.startsWith(safeDeviceRoot + path.sep) && safeTargetPath !== safeDeviceRoot) {
+    if (!safeTargetPath.startsWith(safeDownloadRoot + path.sep) && safeTargetPath !== safeDownloadRoot) {
       return res.status(400).json({ error: 'Неверный путь к файлу' });
     }
 
     let downloadTargetPath;
     try {
-      downloadTargetPath = validatePath(safeTargetPath, safeDeviceRoot);
+      downloadTargetPath = validatePath(safeTargetPath, safeDownloadRoot);
     } catch (error) {
       return res.status(400).json({ error: 'Неверный путь к файлу' });
     }
@@ -4339,7 +4380,7 @@ export function createFilesRouter(deps) {
 
           await createZipArchiveFromFolder(downloadTargetPath, zipPath);
 
-        res.setHeader('X-Download-Filename', zipName);
+        setSafeDownloadFileNameHeader(res, zipName);
         return res.download(zipPath, zipName, (error) => {
           cleanupTemp();
           if (!error) return;
@@ -4380,7 +4421,7 @@ export function createFilesRouter(deps) {
         path.basename(downloadTargetPath)
     );
 
-    res.setHeader('X-Download-Filename', fileNameForDownload);
+    setSafeDownloadFileNameHeader(res, fileNameForDownload);
     return res.download(downloadTargetPath, fileNameForDownload, (error) => {
       if (!error) return;
 
