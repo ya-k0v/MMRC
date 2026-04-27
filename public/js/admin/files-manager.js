@@ -1570,7 +1570,11 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
   const resolveDownloadFileName = (response, fallbackName) => {
     const explicitName = response.headers.get('x-download-filename');
     if (explicitName) {
-      return explicitName;
+      try {
+        return decodeURIComponent(explicitName);
+      } catch (_err) {
+        return explicitName;
+      }
     }
 
     const contentDisposition = response.headers.get('content-disposition') || '';
