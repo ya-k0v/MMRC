@@ -1,8 +1,8 @@
-# 📺 MMRC 3.2.0
+# 📺 MMRC 3.2.1
 
 **Система управления медиаконтентом для цифровых дисплеев**
 
-![Version](https://img.shields.io/badge/version-3.2.0-blue)
+![Version](https://img.shields.io/badge/version-3.2.1-blue)
 ![Node](https://img.shields.io/badge/node-20.x-green)
 ![License](https://img.shields.io/badge/license-Personal_Use_Only-red)
 
@@ -52,26 +52,77 @@ node server.js
 
 - [`dev/README.md`](dev/README.md) — полное описание проекта, архитектура и возможности
 - [`dev/INSTALL.md`](dev/INSTALL.md) — подробная инструкция по установке на новую ОС
-- [`dev/QUICK-START.md`](dev/QUICK-START.md) — быстрый старт и настройка
-- [`dev/DEPLOYMENT.md`](dev/DEPLOYMENT.md) — развертывание в продакшене
-- [`dev/GITHUB_ACTIONS_CICD.md`](dev/GITHUB_ACTIONS_CICD.md) — полный CI/CD для GitHub Actions (jobs, pipeline, deploy)
-- [`dev/MANUAL.md`](dev/MANUAL.md) — эксплуатация, мониторинг, бэкапы
-- [`dev/ANDROID_README.md`](dev/ANDROID_README.md) — Android клиент и ADB инструкции
-- И другие документы в папке `dev/`
+- [`dev/COMMANDS.md`](dev/COMMANDS.md) — шпаргалка по командам для управления и обслуживания
+- [`dev/CLIENTS.md`](dev/CLIENTS.md) — установка и настройка клиентов (Android, MPV, браузер)
+- [`dev/GITHUB_ACTIONS_CICD.md`](dev/GITHUB_ACTIONS_CICD.md) — полный CI/CD для GitHub Actions
+- [`dev/ADMIN_PANEL_README.md`](dev/ADMIN_PANEL_README.md) — описание работы админ-панели
+- [`dev/SPEAKER_PANEL_README.md`](dev/SPEAKER_PANEL_README.md) — описание работы спикер-панели
+- [`dev/HERO_README.md`](dev/HERO_README.md) — описание работы панели героев
 
 ---
 
 ## 🎯 Основные возможности
 
-- ✅ **SQLite** — быстрая БД с WAL mode
-- ✅ **JWT Auth** — безопасная аутентификация
-- ✅ **MD5 Deduplication** — экономия места на диске
-- ✅ **FFmpeg** — автооптимизация видео и HLS стриминг
-- ✅ **PDF/PPTX → изображения** — автоконвертация
-- ✅ **Graceful Shutdown** — корректное завершение
-- ✅ **Winston Logging** — структурированные логи
-- ✅ **Rate Limiting** — защита от brute-force
+### Управление контентом
+- ✅ **SQLite** — быстрая БД с WAL mode и автоматическими checkpoint
+- ✅ **MD5 Deduplication** — экономия места на диске (частичный MD5 для файлов >100MB)
+- ✅ **FFmpeg** — автооптимизация видео, ночной оптимизатор и HLS/DASH стриминг
+- ✅ **PDF/PPTX → изображения** — автоконвертация презентаций
+- ✅ **Трейлеры** — автогенерация ~10-сек превью для видеофайлов
+- ✅ **Drag & Drop загрузка** — поддержка файлов до 5GB
+- ✅ **MIME-валидация** — проверка типов файлов через `file-type`
+- ✅ **Кириллица** — транслитерация имён файлов при загрузке
+
+### Стриминг
+- ✅ **HLS live streaming** — стриминг через ffmpeg → .m3u8 + .ts сегменты
+- ✅ **DASH поддержка** — .mpd потоки
+- ✅ **Автотранскодинг** — для несовместимых кодеков
+- ✅ **Дедупликация стримов** — один стрим для нескольких устройств
+- ✅ **Circuit Breaker** — защита от падений источников
+- ✅ **Мониторинг стримов** — health check каждые 10s
+
+### Ночная оптимизация
+- ✅ **Автооптимизация видео** — транскодинг, ремукс, faststart
+- ✅ **Профили кодирования** — 720p/1080p/2160p с настраиваемыми параметрами
+- ✅ **Управление ресурсами** — CPU/memory бюджетирование
+- ✅ **Отменяемые задачи** — пользователь может отменить обработку
+
+### Аутентификация и безопасность
+- ✅ **JWT Auth** — безопасная аутентификация с refresh tokens
+- ✅ **LDAP/Active Directory** — корпоративная аутентификация
+- ✅ **Rate Limiting** — защита от brute-force (пропуск для локальных IP)
+- ✅ **CSRF защита**
+- ✅ **Audit Log** — полный журнал действий с retry-логикой
+- ✅ **Circuit Breaker** — защита БД, файловой системы и внешних API
+
+### Реальное время
+- ✅ **Socket.IO** — управление устройствами в реальном времени
+- ✅ **Server-side плейлисты** — автолупинг папок без участия клиента
+- ✅ **Система уведомлений** — критические/предупреждения/инфо
+- ✅ **Мониторинг системы** — диск, БД, память, ffmpeg процессы
+
+### Интерфейсы
+- ✅ **Админ-панель** — полное управление (устройства, файлы, пользователи, стримы)
+- ✅ **Спикер-панель** — управление воспроизведением в реальном времени
+- ✅ **Hero Module** — картотека героев с отдельной БД
+- ✅ **Тёмная/светлая тема** — переключение во всех панелях
+- ✅ **PWA** — прогрессивные веб-приложения для мобильных панелей
+- ✅ **Адаптивный дизайн** — поддержка планшетов
+
+### Клиенты
+- ✅ **Android TV** — ExoPlayer, автозапуск, watchdog, wake lock
+- ✅ **MPV Player (Linux)** — нативный плеер с аппаратным ускорением
+- ✅ **Browser** — веб-плеер через Video.js
+- ✅ **ADB автоустановка** — удалённая установка APK через WiFi
+
+### Прочее
+- ✅ **Graceful Shutdown** — корректное завершение с очисткой ресурсов
+- ✅ **Winston Logging** — структурированные логи с ротацией
 - ✅ **Health Check** — мониторинг состояния
+- ✅ **Metrics** — метрики запросов, БД, Socket.IO, перцентили
+- ✅ **yt-dlp** — автозагрузка бинарника для работы с видео
+- ✅ **Self-update** — обновление из git с проверкой fast-forward
+- ✅ **Error Pages** — кастомные 403, 404, maintenance страницы
 
 ---
 
@@ -81,6 +132,7 @@ node server.js
 - **FFmpeg** + **FFprobe**
 - **LibreOffice** (для PDF/PPTX)
 - **SQLite3**
+- **yt-dlp** (опционально, загружается автоматически)
 
 ---
 
@@ -89,16 +141,33 @@ node server.js
 После установки:
 1. **Измените пароль администратора** (по умолчанию: `admin / admin123`)
 2. **Настройте JWT_SECRET** в `.env` файле
-3. **Настройте файрвол** (используйте только Nginx)
-4. **Настройте SSL/TLS** (через Nginx)
+3. **Настройте LDAP** (опционально, для корпоративной аутентификации)
+4. **Настройте файрвол** (используйте только Nginx)
+5. **Настройте SSL/TLS** (через Nginx)
 
 ---
 
 ## 📱 Клиенты
 
-- **Android TV / Media Player** — APK в корне проекта
-- **MPV Player (Linux)** — нативный медиаплеер
+- **Android TV / Media Player** — APK в `clients/android-mediaplayer/`
+- **MPV Player (Linux)** — нативный медиаплеер (`clients/mpv/`)
 - **Browser** — веб-плеер через Video.js
+
+---
+
+## 🔄 Обновление
+
+```bash
+cd /var/lib/mmrc
+sudo systemctl stop videocontrol
+git pull origin main
+npm install
+npm run setup-hooks --silent || true
+npm run migrate-db --silent
+sudo systemctl start videocontrol
+```
+
+Или используйте встроенный self-update через админ-панель.
 
 ---
 
@@ -115,5 +184,5 @@ node server.js
 
 **ya-k0v** - [GitHub](https://github.com/ya-k0v/)
 
-**Версия:** 3.2.0
+**Версия:** 3.2.1
 

@@ -1,4 +1,4 @@
-# GitHub Actions CI/CD
+# GitHub Actions CI/CD — MMRC 3.2.1
 
 Полная production-схема CI, CD, security-checks и автообновления зависимостей для проекта MMRC.
 

@@ -1,4 +1,4 @@
-# 📦 Установка MMRC
+# 📦 Установка MMRC 3.2.1
 
 Полное руководство по установке MMRC на новую систему.
 
@@ -10,9 +10,10 @@
 - **npm**: 9.x или выше (обычно устанавливается вместе с Node.js)
 
 ### Внешние зависимости
-- **FFmpeg** + **FFprobe** (для обработки видео)
+- **FFmpeg** + **FFprobe** (для обработки видео и стриминга)
 - **LibreOffice** (опционально, для конвертации PDF/PPTX)
 - **SQLite3** (обычно предустановлен)
+- **yt-dlp** (опционально, загружается автоматически при необходимости)
 
 ---
 
@@ -22,7 +23,7 @@
 
 ```bash
 # На новом сервере (Ubuntu/Debian)
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/main/dev/scripts/quick-install.sh)" /var/lib/mmrc
+sudo bash dev/scripts/quick-install.sh
 ```
 
 Или если уже клонировали репозиторий:
@@ -30,7 +31,7 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/main/de
 ```bash
 git clone https://github.com/ya-k0v/MMRC.git /var/lib/mmrc
 cd /var/lib/mmrc
-sudo bash dev/scripts/quick-install.sh /var/lib/mmrc
+sudo bash dev/scripts/quick-install.sh
 ```
 
 **Скрипт автоматически:**
@@ -49,7 +50,7 @@ AUTO_CONFIRM=1 \
 STORAGE_MODE=external \
 CONTENT_DIR=/mnt/vc-content \
 CONTENT_SOURCE="UUID=xxxx-xxxx" \
-sudo bash dev/scripts/quick-install.sh /var/lib/mmrc
+sudo bash dev/scripts/quick-install.sh
 ```
 
 **Параметры:**
@@ -62,7 +63,7 @@ sudo bash dev/scripts/quick-install.sh /var/lib/mmrc
 ### Упрощённая серверная установка без Nginx
 
 ```bash
-AUTO_CONFIRM=1 sudo bash dev/scripts/install-server.sh
+AUTO_CONFIRM=1 sudo bash scripts/install-server.sh
 ```
 
 ---
@@ -113,8 +114,8 @@ cd /var/lib/mmrc
 # Устанавливаем зависимости
 npm install
 
-# Проверяем окружение
-bash dev/scripts/check-environment.sh
+# Включаем git-hooks
+npm run setup-hooks
 ```
 
 ### Шаг 5: Создание директорий данных
@@ -122,7 +123,7 @@ bash dev/scripts/check-environment.sh
 ```bash
 # Создаем необходимые директории
 mkdir -p config config/hero
-mkdir -p data/{content,streams,converted,logs,temp}
+mkdir -p data/{content,streams,cache,logs}
 
 # Устанавливаем права доступа
 chmod -R 755 data config
@@ -154,16 +155,34 @@ LOG_LEVEL=info
 SILENT_CONSOLE=false
 ```
 
+**Расширенная конфигурация:**
+```env
+# Ночная оптимизация
+NIGHT_OPT_START_HOUR=1
+NIGHT_OPT_END_HOUR=5
+
+# Ресурсы
+JOB_RESERVE_CPU_PERCENT=30
+JOB_RESERVE_MEMORY_MB=2048
+JOB_MAX_SINGLE_JOB_PERCENT=70
+
+# Стриминг
+STREAM_MAX_JOBS=100
+STREAM_IDLE_TIMEOUT_MS=180000
+
+# LDAP (опционально)
+LDAP_URL=ldap://your-ad-server:389
+LDAP_BIND_DN=CN=svc-mmrc,OU=Services,DC=example,DC=com
+LDAP_SEARCH_BASE=OU=Users,DC=example,DC=com
+```
+
 ### Шаг 7: Инициализация базы данных
 
-База данных создастся автоматически при первом запуске, но можно инициализировать вручную:
+База данных создастся автоматически при первом запуске. Миграции применяются автоматически.
 
 ```bash
-# Создаем основную БД
-sqlite3 config/main.db < src/database/init.sql
-
-# Создаем Hero БД (если используется Hero модуль)
-sqlite3 config/hero/heroes.db < src/hero/database/schema.sql
+# Или инициализировать вручную (если нужно)
+npm run migrate-db
 ```
 
 **По умолчанию:**
@@ -251,15 +270,15 @@ tar --exclude='node_modules' \
     --exclude='.env' \
     --exclude='logs' \
     --exclude='temp' \
-    -czf videocontrol-production.tar.gz .
+    -czf mmrc-production.tar.gz .
 
 # Перенесите на новый сервер
-scp videocontrol-production.tar.gz user@new-server:/tmp/
+scp mmrc-production.tar.gz user@new-server:/tmp/
 
 # На новом сервере
-cd /vid
-tar -xzf /tmp/videocontrol-production.tar.gz
-cd videocontrol
+mkdir -p /var/lib/mmrc
+cd /var/lib/mmrc
+tar -xzf /tmp/mmrc-production.tar.gz
 npm install
 cp .env.example .env
 nano .env
@@ -269,17 +288,17 @@ nano .env
 
 ```bash
 # На старом сервере - создайте бэкап
-tar -czf videocontrol-data-backup.tar.gz \
+tar -czf mmrc-data-backup.tar.gz \
     config/main.db \
     config/hero/heroes.db \
     data/content/
 
 # Перенесите на новый сервер
-scp videocontrol-data-backup.tar.gz user@new-server:/tmp/
+scp mmrc-data-backup.tar.gz user@new-server:/tmp/
 
 # На новом сервере - восстановите
 cd /var/lib/mmrc
-tar -xzf /tmp/videocontrol-data-backup.tar.gz
+tar -xzf /tmp/mmrc-data-backup.tar.gz
 
 # Установите правильные права
 sudo chown -R $USER:$USER config/ data/
@@ -296,9 +315,11 @@ sudo systemctl stop videocontrol
 # Бэкап
 cp config/main.db config/main.db.backup
 
-# Pull + deps
+# Pull + deps + миграции
 git pull origin main
 npm install
+npm run setup-hooks --silent || true
+npm run migrate-db --silent
 
 # Проверяем, что .env файл существует и содержит все необходимые переменные
 if [ ! -f .env ]; then
@@ -310,31 +331,14 @@ if [ ! -f .env ]; then
     fi
 fi
 
-# Применить схему (идемпотентно)
-sqlite3 config/main.db < src/database/init.sql
-sqlite3 config/hero/heroes.db < src/hero/database/schema.sql
-
 sudo systemctl start videocontrol
 ```
+
+**Или используйте встроенный self-update** через админ-панель (кнопка обновления в настройках).
 
 ---
 
 ## ✅ Проверка установки
-
-### Автоматическая проверка
-
-```bash
-# Запускаем скрипт проверки окружения
-bash dev/scripts/check-environment.sh
-```
-
-Скрипт проверит:
-- ✅ Версию Node.js и npm
-- ✅ Наличие FFmpeg и FFprobe
-- ✅ Установленные npm пакеты
-- ✅ Структуру директорий
-- ✅ Права доступа
-- ✅ Доступность портов
 
 ### Ручная проверка
 
@@ -357,6 +361,19 @@ curl http://localhost:3000/health
 }
 ```
 
+### Проверка доступных эндпоинтов
+
+```bash
+# Health check
+curl http://localhost:3000/health
+
+# Метрики (требует авторизации)
+curl -H "Authorization: Bearer TOKEN" http://localhost:3000/api/metrics
+
+# Socket.IO sanity-check
+curl -s "http://localhost:3000/socket.io/?EIO=4&transport=polling"
+```
+
 ---
 
 ## 🔐 Безопасность
@@ -365,9 +382,10 @@ curl http://localhost:3000/health
 
 1. **Измените пароль администратора** (по умолчанию: `admin / admin123`)
 2. **Настройте JWT_SECRET** в `.env` файле (генерируется автоматически при установке)
-3. **Настройте файрвол** (используйте только Nginx)
-4. **Настройте SSL/TLS** (через Nginx)
-5. **Проверьте права доступа** на `.env` файл (должен быть `600`)
+3. **Настройте LDAP** (опционально, для корпоративной аутентификации)
+4. **Настройте файрвол** (используйте только Nginx)
+5. **Настройте SSL/TLS** (через Nginx)
+6. **Проверьте права доступа** на `.env` файл (должен быть `600`)
 
 ---
 
@@ -413,8 +431,6 @@ npm install
 
 ```bash
 # Проверяем, что использует порт
-sudo netstat -tuln | grep 3000
-# или
 sudo ss -tuln | grep 3000
 
 # Меняем порт через переменную окружения
@@ -427,7 +443,7 @@ npm start
 ```bash
 sudo journalctl -u videocontrol -n 100
 node --version  # должно быть 20.x
-sudo netstat -tuln | grep 3000
+sudo ss -tuln | grep 3000
 ls -la /var/lib/mmrc/config/main.db
 ```
 
@@ -435,8 +451,18 @@ ls -la /var/lib/mmrc/config/main.db
 
 ```bash
 sudo nginx -t
-sudo netstat -tuln | grep :80
+sudo ss -tuln | grep :80
 sudo tail -50 /var/log/nginx/videocontrol_error.log
+```
+
+### Проблема: Ошибка миграции БД
+
+```bash
+# Проверить целостность БД
+sqlite3 config/main.db "PRAGMA integrity_check;"
+
+# Применить миграции вручную
+npm run migrate-db
 ```
 
 ---
@@ -449,7 +475,8 @@ sudo tail -50 /var/log/nginx/videocontrol_error.log
 - [`dev/ADMIN_PANEL_README.md`](ADMIN_PANEL_README.md) — документация админ-панели
 - [`dev/SPEAKER_PANEL_README.md`](SPEAKER_PANEL_README.md) — документация спикер-панели
 - [`dev/HERO_README.md`](HERO_README.md) — документация Hero-модуля
+- [`dev/GITHUB_ACTIONS_CICD.md`](GITHUB_ACTIONS_CICD.md) — CI/CD pipeline
 
 ---
 
-**Версия:** 3.2.0
+**Версия:** 3.2.1
