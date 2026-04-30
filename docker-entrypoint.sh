@@ -38,14 +38,14 @@ case "$ROLE" in
         ;;
 esac
 
-# Create directories if they don't exist
-mkdir -p "${CONTENT_ROOT:-/data}/content"
-mkdir -p "${CONTENT_ROOT:-/data}/streams"
-mkdir -p "${CONTENT_ROOT:-/data}/cache/trailers"
-mkdir -p "${CONTENT_ROOT:-/data}/cache/converted"
-mkdir -p "${CONTENT_ROOT:-/data}/logs"
-mkdir -p /app/config/hero
-mkdir -p /app/.tmp
+# Create directories if they don't exist (ignore errors from read-only mounts)
+mkdir -p "${CONTENT_ROOT:-/data}/content" 2>/dev/null || true
+mkdir -p "${CONTENT_ROOT:-/data}/streams" 2>/dev/null || true
+mkdir -p "${CONTENT_ROOT:-/data}/cache/trailers" 2>/dev/null || true
+mkdir -p "${CONTENT_ROOT:-/data}/cache/converted" 2>/dev/null || true
+mkdir -p "${CONTENT_ROOT:-/data}/logs" 2>/dev/null || true
+mkdir -p /app/config/hero 2>/dev/null || true
+mkdir -p /app/.tmp 2>/dev/null || true
 
 echo "📁 Content Root: ${CONTENT_ROOT:-/data}"
 echo "📡 Port: ${PORT}"

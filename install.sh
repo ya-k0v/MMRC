@@ -210,7 +210,8 @@ ENVEOF
     done
 
     sed -i "s|^CONTENT_DIR=.*|CONTENT_DIR=${content_dir}|" "$ENV_FILE"
-    mkdir -p "$content_dir"
+    mkdir -p "$content_dir"/{content,streams,cache/trailers,cache/converted,logs}
+    chown -R 1001:1001 "$content_dir" 2>/dev/null || true
     success "Content directory: $content_dir"
 
     # Pull images with progress
