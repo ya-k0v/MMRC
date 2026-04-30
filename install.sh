@@ -60,47 +60,43 @@ check_docker() {
         colorized_echo yellow "  Docker not found. Installing..."
         echo ""
 
-        # Create temp script and install with progress
-        TMP_SCRIPT=$(mktemp /tmp/get-docker.XXXXXX.sh)
-        curl -sL https://get.docker.com -o "$TMP_SCRIPT"
+        # Try to download installer
+        colorized_echo blue "  Downloading Docker installer..."
+        local TMP_SCRIPT=$(mktemp /tmp/get-docker.XXXXXX.sh)
+        if ! curl -fsSL --connect-timeout 10 --max-time 120 https://get.docker.com -o "$TMP_SCRIPT" 2>&1; then
+            error "Failed to download Docker installer. Check your internet connection."
+            rm -f "$TMP_SCRIPT"
+            exit 1
+        fi
+        success "Installer downloaded"
 
-        # Run with progress tracking
-        local total_steps=6
-        local current_step=0
-
+        # Run installation
+        echo ""
         echo "  [🐳 Docker Installation]"
         echo "  ─────────────────────────"
 
-        sh "$TMP_SCRIPT" 2>&1 | while IFS= read -r line; do
-            # Track progress by common install milestones
-            if echo "$line" | grep -qi "updating apt"; then
-                current_step=1
-            elif echo "$line" | grep -qi "installing"; then
-                current_step=2
-            elif echo "$line" | grep -qi "download"; then
-                current_step=3
-            elif echo "$line" | grep -qi "installing docker"; then
-                current_step=4
-            elif echo "$line" | grep -qi "enabling"; then
-                current_step=5
-            elif echo "$line" | grep -qi "complete\|success"; then
-                current_step=6
-            fi
-
-            if [ $current_step -gt 0 ]; then
-                local pct=$(( (current_step * 100) / total_steps ))
-                local filled=$(( (current_step * 30) / total_steps ))
-                local empty=$(( 30 - filled ))
-                local bar=$(printf '%0.s█' $(seq 1 $filled) 2>/dev/null)
-                local spaces=$(printf '%0.s░' $(seq 1 $empty) 2>/dev/null)
-                printf "\r  [${bar}${spaces}] %3d%%" "$pct"
-            fi
-        done
-
+        local install_output
+        if ! install_output=$(sh "$TMP_SCRIPT" 2>&1); then
+            error "Docker installation failed!"
+            echo "$install_output"
+            rm -f "$TMP_SCRIPT"
+            exit 1
+        fi
         rm -f "$TMP_SCRIPT"
-        echo ""
-        echo ""
-        success "Docker installed"
+
+        # Verify Docker was installed
+        if ! command -v docker >/dev/null 2>&1; then
+            error "Docker command not found after installation. Try installing manually: https://docs.docker.com/engine/install/"
+            exit 1
+        fi
+        success "Docker installed: $(docker --version)"
+
+        # Start Docker service
+        if ! docker info >/dev/null 2>&1; then
+            info "Starting Docker service..."
+            systemctl start docker 2>/dev/null || service docker start 2>/dev/null || true
+            sleep 2
+        fi
     else
         success "Docker found: $(docker --version)"
     fi
