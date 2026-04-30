@@ -8,7 +8,7 @@ set -e
 # Configuration
 # ========================
 MMRC_REPO="https://github.com/ya-k0v/MMRC"
-MMRC_RAW="https://raw.githubusercontent.com/ya-k0v/MMRC/main"
+MMRC_RAW="https://raw.githubusercontent.com/ya-k0v/MMRC/docker"
 INSTALL_DIR="/opt/mmrc"
 DATA_DIR="/var/lib/mmrc"
 BIN_DIR="/usr/local/bin"
