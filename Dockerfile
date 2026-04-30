@@ -33,7 +33,7 @@ LABEL maintainer="ya-k0v"
 LABEL description="MMRC - Media Management and Remote Control System"
 LABEL version="3.2.1"
 
-# Install runtime dependencies (essential only)
+# Install runtime dependencies (essential)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     sqlite3 \
@@ -47,12 +47,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
     && mkdir -p /var/log/nginx /run/nginx /etc/nginx/ssl /etc/nginx/ssl-certs
 
-# Install LibreOffice (optional: remove to reduce image by ~500MB)
-# RUN apt-get update && apt-get install -y --no-install-recommends \
-#     libreoffice-impress libreoffice-core libreoffice-calc libreoffice-common \
-#     && rm -rf /var/lib/apt/lists/* /usr/share/man/* /usr/share/doc/*
+# Install LibreOffice (only impress for PPTX conversion, minimal)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    libreoffice-impress \
+    && apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /usr/share/man/* /usr/share/doc/* /usr/share/icons/* \
+    /usr/share/help/* /usr/share/bug/* /usr/share/lintian/*
 
-# Download yt-dlp (or let app auto-download on first use)
+# Install yt-dlp (critical for video URL downloads)
 RUN wget -q -O /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
     && chmod +x /usr/local/bin/yt-dlp
 
