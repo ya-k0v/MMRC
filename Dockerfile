@@ -24,7 +24,7 @@ RUN npm ci --omit=dev
 # ========================
 # Production stage
 # ========================
-FROM node:20-bookworm-slim
+FROM node:20-bookworm
 
 ARG MMRC_ROLE=server
 ENV ROLE=${MMRC_ROLE}
@@ -33,14 +33,23 @@ LABEL maintainer="ya-k0v"
 LABEL description="MMRC - Media Management and Remote Control System"
 LABEL version="3.2.1"
 
-# Install runtime dependencies (split into steps for reliability)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Add contrib repositories for LibreOffice
+RUN echo "deb http://deb.debian.org/debian bookworm main contrib" > /etc/apt/sources.list.d/bookworm.list && \
+    apt-get update
+
+# Install runtime dependencies and LibreOffice in one step
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ffmpeg \
     sqlite3 \
     curl \
     fontconfig \
     fonts-liberation \
-    && rm -rf /var/lib/apt/lists/*
+    libreoffice-common \
+    libreoffice-core \
+    libreoffice-impress \
+    libreoffice-calc \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
     && chmod +x /usr/local/bin/yt-dlp
