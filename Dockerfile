@@ -33,14 +33,16 @@ LABEL maintainer="ya-k0v"
 LABEL description="MMRC - Media Management and Remote Control System"
 LABEL version="3.2.1"
 
-# Install runtime dependencies
+# Install runtime dependencies (split into steps for reliability)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
-    libreoffice-core \
     sqlite3 \
     curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
+    fontconfig \
+    fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
     && chmod +x /usr/local/bin/yt-dlp
 
 # Create non-root user
