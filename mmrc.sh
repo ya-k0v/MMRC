@@ -534,6 +534,30 @@ cmd_uninstall() {
     warn "To remove data as well: rm -rf $DATA_DIR"
 }
 
+cmd_edit_env() {
+    require_installed
+
+    # Detect editor
+    EDITOR="${EDITOR:-}"
+    if [ -z "$EDITOR" ]; then
+        if command -v nano >/dev/null 2>&1; then
+            EDITOR=nano
+        elif command -v vi >/dev/null 2>&1; then
+            EDITOR=vi
+        else
+            error "No text editor found. Install nano or vi, or set \$EDITOR."
+            exit 1
+        fi
+    fi
+
+    info "Opening $ENV_FILE with $EDITOR..."
+    $EDITOR "$ENV_FILE"
+
+    if [ $? -eq 0 ]; then
+        success "Configuration saved. Run 'mmrc restart' to apply changes."
+    fi
+}
+
 cmd_help() {
     colorized_echo cyan "
 ╔══════════════════════════════════════════════════════╗
@@ -549,11 +573,12 @@ Commands:
   stop             Stop MMRC services
   restart          Restart MMRC services
   status           Check services status
-  logs [service]   View logs (server|optimizer|streamer|nginx)
+  logs [service]   View logs (server|optimizer|streamer)
   update           Update to latest version
   backup           Create database backup
   ssl              Setup SSL certificate
   shell [service]  Open shell in container
+  edit-env         Edit .env configuration file
   uninstall        Remove MMRC
 
 Examples:
@@ -563,6 +588,7 @@ Examples:
   mmrc update                   # Update to latest version
   mmrc backup                   # Create backup
   mmrc ssl                      # Setup SSL
+  mmrc edit-env                 # Edit configuration
 "
 }
 
@@ -581,6 +607,7 @@ case "${1:-help}" in
     backup) cmd_backup ;;
     ssl) cmd_ssl ;;
     shell) cmd_shell "${@:2}" ;;
+    edit-env) cmd_edit_env ;;
     uninstall) cmd_uninstall ;;
     help|--help|-h) cmd_help ;;
     *)
