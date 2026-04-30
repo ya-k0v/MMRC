@@ -228,15 +228,16 @@ ENVEOF
 
     # Wait for health with progress
     info "Waiting for server to be ready..."
-    for i in $(seq 1 10); do
+    local check_port=80
+    for i in $(seq 1 15); do
         printf "\r  Waiting... %ds" "$i"
         sleep 1
-        if curl -fsS http://localhost:${SERVER_PORT:-3000}/health >/dev/null 2>&1; then
+        if curl -fsS http://localhost:${check_port}/health >/dev/null 2>&1; then
             echo ""
             success "Server is ready"
             break
         fi
-        if [ $i -eq 10 ]; then
+        if [ $i -eq 15 ]; then
             echo ""
             warn "Server may still be starting. Check logs: mmrc logs"
         fi
@@ -258,10 +259,12 @@ ENVEOF
     colorized_echo cyan "║           🎉 MMRC Installed Successfully!        ║"
     colorized_echo cyan "╠══════════════════════════════════════════════════╣"
     colorized_echo cyan "║                                                  ║"
-    colorized_echo cyan "║  📺 Admin Panel: http://${SERVER_IP}:3000/admin.html      ║"
-    colorized_echo cyan "║  🎤 Speaker Panel: http://${SERVER_IP}:3000/speaker.html  ║"
-    colorized_echo cyan "║  🎖️  Hero Module:   http://${SERVER_IP}:3000/hero/         ║"
-    colorized_echo cyan "║  ❤️  Health Check:  http://${SERVER_IP}:3000/health        ║"
+    colorized_echo cyan "║  📺 Admin Panel:    http://localhost:80/admin.html       ║"
+    colorized_echo cyan "║  🎤 Speaker Panel:  http://localhost:80/speaker.html   ║"
+    colorized_echo cyan "║  🎖️  Hero Module:    http://localhost:80/hero/          ║"
+    colorized_echo cyan "║  ❤️  Health Check:   http://localhost:80/health         ║"
+    colorized_echo cyan "║                                                  ║"
+    colorized_echo cyan "║  🌐 From network:  http://${SERVER_IP}:80/                ║"
     colorized_echo cyan "║                                                  ║"
     colorized_echo cyan "║  👤 Default login: admin / admin123              ║"
     colorized_echo cyan "║  ⚠️  CHANGE PASSWORD after first login!          ║"
