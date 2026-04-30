@@ -3,7 +3,7 @@ services:
   # Основной сервер MMRC
   # ========================
   mmrc-server:
-    image: ${DOCKER_IMAGE:-ya-k0v/mmrc}:latest
+    image: ${DOCKER_IMAGE:-pingwin1900/mmrc}:latest
     container_name: mmrc-server
     restart: unless-stopped
     environment:
@@ -52,7 +52,7 @@ services:
   # Воркер ночной оптимизации
   # ========================
   mmrc-optimizer:
-    image: ${DOCKER_IMAGE:-ya-k0v/mmrc}:latest
+    image: ${DOCKER_IMAGE:-pingwin1900/mmrc}:latest
     container_name: mmrc-optimizer
     restart: unless-stopped
     environment:
@@ -83,7 +83,7 @@ services:
   # Стрим-воркер (HLS/DASH)
   # ========================
   mmrc-streamer:
-    image: ${DOCKER_IMAGE:-ya-k0v/mmrc}:latest
+    image: ${DOCKER_IMAGE:-pingwin1900/mmrc}:latest
     container_name: mmrc-streamer
     restart: unless-stopped
     environment:

@@ -15,7 +15,7 @@ COMPOSE_FILE="$APP_DIR/docker-compose.yml"
 ENV_FILE="$APP_DIR/.env"
 MMRC_REPO="https://github.com/ya-k0v/MMRC"
 MMRC_SCRIPTS_REPO="https://github.com/ya-k0v/MMRC"
-DOCKER_ORG="ya-k0v"
+DOCKER_ORG="pingwin1900"
 DOCKER_IMAGE="${DOCKER_ORG}/mmrc"
 
 # ========================
