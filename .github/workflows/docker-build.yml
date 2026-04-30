@@ -2,7 +2,7 @@ name: 🐳 Docker Build & Publish
 
 on:
   push:
-    branches: [main]
+    branches: [main, docker]
     paths-ignore:
       - '**.md'
       - 'dev/**'
@@ -25,7 +25,7 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' || 
-        (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/docker'))
 
     steps:
       - name: 📥 Checkout
