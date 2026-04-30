@@ -76,7 +76,8 @@ jobs:
 
     steps:
       - name: 📢 Notify via Discord
-        if: ${{ secrets.DISCORD_WEBHOOK != '' }}
+        if: ${{ github.event_name == 'push' }}
+        continue-on-error: true
         uses: Ilshidur/action-discord@master
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
