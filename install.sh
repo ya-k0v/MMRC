@@ -149,9 +149,12 @@ LOG_LEVEL=info
 SILENT_CONSOLE=false
 
 # JWT Authentication
-JWT_SECRET=${JWT_SECRET}
+# JWT_SECRET is written separately below to ensure it works with curl|bash
 JWT_ACCESS_EXPIRES_IN=12h
 JWT_REFRESH_EXPIRES_IN=30d
+ENVEOF
+    # Write JWT_SECRET separately to ensure it's set (fix for curl|bash pipe)
+    echo "JWT_SECRET=$JWT_SECRET" >> "$ENV_FILE"
 
 # Server
 SERVER_PORT=3000

@@ -61,6 +61,7 @@ services:
     environment:
       - NODE_ENV=${NODE_ENV:-production}
       - WORKER_MODE=optimizer
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - CONTENT_ROOT=/data
       - STREAMS_OUTPUT_DIR=/data/streams
@@ -94,6 +95,7 @@ services:
     environment:
       - NODE_ENV=${NODE_ENV:-production}
       - WORKER_MODE=streamer
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - CONTENT_ROOT=/data
       - STREAMS_OUTPUT_DIR=/data/streams

@@ -60,6 +60,7 @@ services:
     environment:
       - ROLE=optimizer
       - NODE_ENV=${NODE_ENV:-production}
+      - JWT_SECRET=${JWT_SECRET}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - CONTENT_ROOT=/data
       - STREAMS_OUTPUT_DIR=/data/streams
@@ -91,6 +92,7 @@ services:
     environment:
       - ROLE=streamer
       - NODE_ENV=${NODE_ENV:-production}
+      - JWT_SECRET=${JWT_SECRET}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - CONTENT_ROOT=/data
       - STREAMS_OUTPUT_DIR=/data/streams
