@@ -19,9 +19,13 @@ if [ "$ROLE" = "server" ]; then
         SKIP_SERVICE_RESTART=1 SKIP_MIGRATION=0 bash /app/scripts/post-pull-sync.sh 2>/dev/null || true
     fi
 
-    # Start Nginx as reverse proxy
+    # Start Nginx as reverse proxy (use project config)
     echo "🌐 Starting Nginx reverse proxy..."
-    nginx -g 'daemon off;' &
+    if [ -f "/etc/nginx/nginx.conf" ]; then
+        nginx -c /etc/nginx/nginx.conf
+    else
+        nginx
+    fi
     sleep 1
     echo "✅ Nginx started"
 fi
