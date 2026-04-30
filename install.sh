@@ -57,8 +57,49 @@ check_root() {
 
 check_docker() {
     if ! command -v docker >/dev/null 2>&1; then
-        info "Docker not found. Installing..."
-        curl -fsSL https://get.docker.com | sh
+        colorized_echo yellow "  Docker not found. Installing..."
+        echo ""
+
+        # Create temp script and install with progress
+        TMP_SCRIPT=$(mktemp /tmp/get-docker.XXXXXX.sh)
+        curl -sL https://get.docker.com -o "$TMP_SCRIPT"
+
+        # Run with progress tracking
+        local total_steps=6
+        local current_step=0
+
+        echo "  [🐳 Docker Installation]"
+        echo "  ─────────────────────────"
+
+        sh "$TMP_SCRIPT" 2>&1 | while IFS= read -r line; do
+            # Track progress by common install milestones
+            if echo "$line" | grep -qi "updating apt"; then
+                current_step=1
+            elif echo "$line" | grep -qi "installing"; then
+                current_step=2
+            elif echo "$line" | grep -qi "download"; then
+                current_step=3
+            elif echo "$line" | grep -qi "installing docker"; then
+                current_step=4
+            elif echo "$line" | grep -qi "enabling"; then
+                current_step=5
+            elif echo "$line" | grep -qi "complete\|success"; then
+                current_step=6
+            fi
+
+            if [ $current_step -gt 0 ]; then
+                local pct=$(( (current_step * 100) / total_steps ))
+                local filled=$(( (current_step * 30) / total_steps ))
+                local empty=$(( 30 - filled ))
+                local bar=$(printf '%0.s█' $(seq 1 $filled) 2>/dev/null)
+                local spaces=$(printf '%0.s░' $(seq 1 $empty) 2>/dev/null)
+                printf "\r  [${bar}${spaces}] %3d%%" "$pct"
+            fi
+        done
+
+        rm -f "$TMP_SCRIPT"
+        echo ""
+        echo ""
         success "Docker installed"
     else
         success "Docker found: $(docker --version)"
@@ -95,9 +136,9 @@ install_mmrc() {
     mkdir -p "$INSTALL_DIR" "$DATA_DIR"
     success "Directories created"
 
-    # Download docker-compose.yml
+    # Download docker-compose.yml with progress
     info "Downloading docker-compose.yml..."
-    curl -fsSL -o "$COMPOSE_FILE" "$MMRC_RAW/docker-compose.deploy.yml"
+    curl -# -L -o "$COMPOSE_FILE" "$MMRC_RAW/docker-compose.deploy.yml"
     success "docker-compose.yml downloaded"
 
     # Generate .env
@@ -163,28 +204,42 @@ ENVEOF
     mkdir -p "$content_dir"
     success "Content directory created: $content_dir"
 
-    # Pull images
+    # Pull images with progress
     echo ""
     info "Pulling Docker images..."
     cd "$INSTALL_DIR"
-    $COMPOSE pull
+    $COMPOSE pull --quiet 2>/dev/null || $COMPOSE pull
     success "Images pulled"
 
-    # Start services
+    # Start services with progress
     info "Starting MMRC services..."
     $COMPOSE up -d
     success "Services started"
 
-    # Wait for health
+    # Wait for health with progress
     info "Waiting for server to be ready..."
-    sleep 10
+    for i in $(seq 1 10); do
+        printf "\r  Waiting... %ds" "$i"
+        sleep 1
+        if curl -fsS http://localhost:${SERVER_PORT:-3000}/health >/dev/null 2>&1; then
+            echo ""
+            success "Server is ready"
+            break
+        fi
+        if [ $i -eq 10 ]; then
+            echo ""
+            warn "Server may still be starting. Check logs: mmrc logs"
+        fi
+    done
 
     # Get server IP
+    info "Detecting server IP..."
     SERVER_IP=$(curl -4 -fsS --max-time 5 https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+    success "Server IP: ${SERVER_IP}"
 
-    # Install CLI
+    # Install CLI with progress
     info "Installing MMRC CLI..."
-    curl -fsSL -o "$BIN_DIR/mmrc" "$MMRC_RAW/mmrc.sh"
+    curl -# -L -o "$BIN_DIR/mmrc" "$MMRC_RAW/mmrc.sh"
     chmod +x "$BIN_DIR/mmrc"
     success "CLI installed: mmrc"
 
