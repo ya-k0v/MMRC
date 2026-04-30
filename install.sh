@@ -156,6 +156,8 @@ ENVEOF
     # Write JWT_SECRET separately to ensure it's set (fix for curl|bash pipe)
     echo "JWT_SECRET=$JWT_SECRET" >> "$ENV_FILE"
 
+    # Continue writing the rest of .env
+    cat >> "$ENV_FILE" << 'ENVEOF2'
 # Server
 SERVER_PORT=3000
 
@@ -188,7 +190,7 @@ CONTENT_DIR=/mnt/mmrc-content
 LDAP_URL=
 LDAP_BIND_DN=
 LDAP_SEARCH_BASE=
-ENVEOF
+ENVEOF2
     success "Configuration generated"
 
     # Ask for content directory (reads from terminal, not stdin pipe)
