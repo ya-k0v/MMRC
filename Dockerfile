@@ -46,12 +46,14 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates \
     fontconfig \
     fonts-liberation \
+    nginx \
     libreoffice-common \
     libreoffice-core \
     libreoffice-impress \
     libreoffice-calc \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
+    && mkdir -p /etc/nginx/ssl /etc/nginx/ssl-certs
 
 RUN wget -q -O /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
     && chmod +x /usr/local/bin/yt-dlp
@@ -79,11 +81,13 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # Create required directories
 RUN mkdir -p /app/data/{content,streams,cache,logs} \
     /app/config/hero \
-    /app/.tmp && \
+    /app/.tmp \
+    /var/log/nginx \
+    /run/nginx && \
     chown -R mmrc:mmrc /app
 
-# Switch to non-root user
-USER mmrc
+# Run as root (needed for nginx on port 80)
+# Container is isolated, non-root not required
 
 # Default environment variables
 ENV NODE_ENV=production \
@@ -96,10 +100,10 @@ ENV NODE_ENV=production \
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:${PORT:-3000}/health || exit 1
+    CMD curl -f http://localhost:80/health || exit 1
 
-# Expose port
-EXPOSE 3000
+# Expose ports (80 for Nginx, 3000 for Node.js)
+EXPOSE 80 443 3000
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "server.js"]

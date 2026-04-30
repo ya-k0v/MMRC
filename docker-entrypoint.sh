@@ -18,6 +18,12 @@ if [ "$ROLE" = "server" ]; then
     if [ -f "/app/scripts/post-pull-sync.sh" ]; then
         SKIP_SERVICE_RESTART=1 SKIP_MIGRATION=0 bash /app/scripts/post-pull-sync.sh 2>/dev/null || true
     fi
+
+    # Start Nginx as reverse proxy
+    echo "🌐 Starting Nginx reverse proxy..."
+    nginx -g 'daemon off;' &
+    sleep 1
+    echo "✅ Nginx started"
 fi
 
 # Set worker-specific defaults
@@ -33,19 +39,19 @@ case "$ROLE" in
         export PORT=${PORT:-3002}
         ;;
     server|*)
-        echo "⚙️  Mode: Main Server (API + UI + Socket.IO)"
+        echo "⚙️  Mode: Main Server (API + UI + Socket.IO + Nginx)"
         export PORT=${PORT:-3000}
         ;;
 esac
 
-# Create directories if they don't exist (ignore errors from read-only mounts)
-mkdir -p "${CONTENT_ROOT:-/data}/content" 2>/dev/null || true
-mkdir -p "${CONTENT_ROOT:-/data}/streams" 2>/dev/null || true
-mkdir -p "${CONTENT_ROOT:-/data}/cache/trailers" 2>/dev/null || true
-mkdir -p "${CONTENT_ROOT:-/data}/cache/converted" 2>/dev/null || true
-mkdir -p "${CONTENT_ROOT:-/data}/logs" 2>/dev/null || true
-mkdir -p /app/config/hero 2>/dev/null || true
-mkdir -p /app/.tmp 2>/dev/null || true
+# Create directories if they don't exist
+mkdir -p "${CONTENT_ROOT:-/data}/content"
+mkdir -p "${CONTENT_ROOT:-/data}/streams"
+mkdir -p "${CONTENT_ROOT:-/data}/cache/trailers"
+mkdir -p "${CONTENT_ROOT:-/data}/cache/converted"
+mkdir -p "${CONTENT_ROOT:-/data}/logs"
+mkdir -p /app/config/hero
+mkdir -p /app/.tmp
 
 echo "📁 Content Root: ${CONTENT_ROOT:-/data}"
 echo "📡 Port: ${PORT}"

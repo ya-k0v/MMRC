@@ -1,25 +1,5 @@
 services:
   # ========================
-  # Nginx Reverse Proxy (входная точка)
-  # ========================
-  mmrc-nginx:
-    image: nginx:alpine
-    container_name: mmrc-nginx
-    restart: unless-stopped
-    ports:
-      - "${NGINX_HTTP_PORT:-80}:80"
-      - "${NGINX_HTTPS_PORT:-443}:443"
-    volumes:
-      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - mmrc-data:/data:ro
-      - mmrc-certs:/etc/nginx/ssl:ro
-    networks:
-      - mmrc-network
-    depends_on:
-      mmrc-server:
-        condition: service_healthy
-
-  # ========================
   # Основной сервер MMRC
   # ========================
   mmrc-server:
@@ -50,13 +30,16 @@ services:
       - LDAP_URL=${LDAP_URL:-ldap://disabled}
       - LDAP_BIND_DN=${LDAP_BIND_DN:-cn=admin,dc=disabled}
       - LDAP_SEARCH_BASE=${LDAP_SEARCH_BASE:-dc=disabled}
-    expose:
-      - "3000"
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
     volumes:
       - ${CONTENT_DIR:-/mnt/mmrc-content}:/data
       - mmrc-config:/app/config
       - mmrc-temp:/app/.tmp
-      - mmrc-data:/data
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/ssl:/etc/nginx/ssl:ro
+      - mmrc-certs:/etc/nginx/ssl-certs:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s
@@ -92,7 +75,6 @@ services:
       - ${CONTENT_DIR:-/mnt/mmrc-content}:/data
       - mmrc-config:/app/config
       - mmrc-temp:/app/.tmp
-      - mmrc-data:/data
     networks:
       - mmrc-network
     deploy:
@@ -124,7 +106,6 @@ services:
       - ${CONTENT_DIR:-/mnt/mmrc-content}:/data
       - mmrc-config:/app/config
       - mmrc-temp:/app/.tmp
-      - mmrc-data:/data
     networks:
       - mmrc-network
     deploy:
@@ -137,8 +118,6 @@ volumes:
   mmrc-config:
     driver: local
   mmrc-temp:
-    driver: local
-  mmrc-data:
     driver: local
   mmrc-certs:
     driver: local
