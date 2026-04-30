@@ -212,7 +212,7 @@ ENVEOF
     echo ""
     info "Pulling Docker images..."
     cd "$INSTALL_DIR"
-    $COMPOSE pull --quiet 2>/dev/null || $COMPOSE pull
+    $COMPOSE pull
     success "Images pulled"
 
     # Start services with progress
