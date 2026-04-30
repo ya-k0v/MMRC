@@ -24,7 +24,7 @@ RUN npm ci --omit=dev
 # ========================
 # Production stage
 # ========================
-FROM node:20-bookworm
+FROM node:20-bookworm-slim
 
 ARG MMRC_ROLE=server
 ENV ROLE=${MMRC_ROLE}
@@ -33,12 +33,8 @@ LABEL maintainer="ya-k0v"
 LABEL description="MMRC - Media Management and Remote Control System"
 LABEL version="3.2.1"
 
-# Add contrib repositories for LibreOffice
-RUN echo "deb http://deb.debian.org/debian bookworm main contrib" > /etc/apt/sources.list.d/bookworm.list && \
-    apt-get update
-
-# Install runtime dependencies and LibreOffice in one step
-RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+# Install runtime dependencies (essential only)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     sqlite3 \
     curl \
@@ -47,20 +43,18 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     fontconfig \
     fonts-liberation \
     nginx \
-    libreoffice-common \
-    libreoffice-core \
-    libreoffice-impress \
-    libreoffice-calc \
-    && apt-get clean \
+    graphicsmagick \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
-    && mkdir -p /etc/nginx/ssl /etc/nginx/ssl-certs
+    && mkdir -p /var/log/nginx /run/nginx /etc/nginx/ssl /etc/nginx/ssl-certs
 
+# Install LibreOffice (optional: remove to reduce image by ~500MB)
+# RUN apt-get update && apt-get install -y --no-install-recommends \
+#     libreoffice-impress libreoffice-core libreoffice-calc libreoffice-common \
+#     && rm -rf /var/lib/apt/lists/* /usr/share/man/* /usr/share/doc/*
+
+# Download yt-dlp (or let app auto-download on first use)
 RUN wget -q -O /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
     && chmod +x /usr/local/bin/yt-dlp
-
-# Create non-root user
-RUN groupadd -g 1001 mmrc && \
-    useradd -u 1001 -g mmrc -s /bin/bash -m mmrc
 
 WORKDIR /app
 
@@ -74,20 +68,15 @@ COPY src ./src
 COPY public ./public
 COPY scripts ./scripts
 
-# Copy entrypoint
+# Copy entrypoint and nginx config
 COPY docker-entrypoint.sh /usr/local/bin/
+COPY docker/nginx/nginx.conf /etc/nginx/nginx.conf
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Create required directories
-RUN mkdir -p /app/data/{content,streams,cache,logs} \
+RUN mkdir -p /app/data/{content,streams,cache/converted,cache/trailers,logs} \
     /app/config/hero \
-    /app/.tmp \
-    /var/log/nginx \
-    /run/nginx && \
-    chown -R mmrc:mmrc /app
-
-# Run as root (needed for nginx on port 80)
-# Container is isolated, non-root not required
+    /app/.tmp
 
 # Default environment variables
 ENV NODE_ENV=production \
@@ -98,7 +87,7 @@ ENV NODE_ENV=production \
     STREAMS_OUTPUT_DIR=/data/streams \
     LOGS_DIR=/data/logs
 
-# Health check
+# Health check (via nginx)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:80/health || exit 1
 
