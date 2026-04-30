@@ -10,14 +10,25 @@
 
 ## 🚀 Быстрый старт
 
-### Установка одной командой
+### Docker (рекомендуется)
+
+```bash
+git clone https://github.com/ya-k0v/MMRC.git
+cd MMRC
+make init          # Создать .env
+make up            # Запустить все сервисы
+```
+
+**Документация Docker:** [`docker/README.md`](docker/README.md)
+
+### Установка одной командой (без Docker)
 
 ```bash
 # Production установка с Nginx и systemd
 sudo bash dev/scripts/quick-install.sh
 ```
 
-### Ручная установка
+### Ручная установка (без Docker)
 
 ```bash
 # 1. Установите зависимости

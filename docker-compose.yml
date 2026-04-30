@@ -1,0 +1,175 @@
+services:
+  # ========================
+  # Основной сервер MMRC
+  # ========================
+  mmrc-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mmrc-server
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - PORT=3000
+      - HOST=0.0.0.0
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - JWT_ACCESS_EXPIRES_IN=${JWT_ACCESS_EXPIRES_IN:-12h}
+      - JWT_REFRESH_EXPIRES_IN=${JWT_REFRESH_EXPIRES_IN:-30d}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - SILENT_CONSOLE=${SILENT_CONSOLE:-false}
+      - CONTENT_ROOT=/data
+      - STREAMS_OUTPUT_DIR=/data/streams
+      - LOGS_DIR=/data/logs
+      - WAL_CHECKPOINT_INTERVAL_MS=${WAL_CHECKPOINT_INTERVAL_MS:-300000}
+      - NIGHT_OPT_START_HOUR=${NIGHT_OPT_START_HOUR:-1}
+      - NIGHT_OPT_END_HOUR=${NIGHT_OPT_END_HOUR:-5}
+      - JOB_RESERVE_CPU_PERCENT=${JOB_RESERVE_CPU_PERCENT:-30}
+      - JOB_RESERVE_MEMORY_MB=${JOB_RESERVE_MEMORY_MB:-2048}
+      - STREAM_MAX_JOBS=${STREAM_MAX_JOBS:-100}
+      - STREAM_IDLE_TIMEOUT_MS=${STREAM_IDLE_TIMEOUT_MS:-180000}
+      # LDAP (опционально)
+      - LDAP_URL=${LDAP_URL:-}
+      - LDAP_BIND_DN=${LDAP_BIND_DN:-}
+      - LDAP_SEARCH_BASE=${LDAP_SEARCH_BASE:-}
+    ports:
+      - "${SERVER_PORT:-3000}:3000"
+    volumes:
+      - mmrc-data:/data
+      - mmrc-config:/app/config
+      - mmrc-temp:/app/.tmp
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - mmrc-network
+    depends_on:
+      - mmrc-optimizer-worker
+      - mmrc-stream-worker
+
+  # ========================
+  # Воркер ночной оптимизации
+  # ========================
+  mmrc-optimizer-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.optimizer
+    container_name: mmrc-optimizer-worker
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - WORKER_MODE=optimizer
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - CONTENT_ROOT=/data
+      - STREAMS_OUTPUT_DIR=/data/streams
+      - LOGS_DIR=/data/logs
+      - NIGHT_OPT_START_HOUR=${NIGHT_OPT_START_HOUR:-1}
+      - NIGHT_OPT_END_HOUR=${NIGHT_OPT_END_HOUR:-5}
+      - JOB_RESERVE_CPU_PERCENT=${OPTIMIZER_CPU_PERCENT:-50}
+      - JOB_RESERVE_MEMORY_MB=${OPTIMIZER_MEMORY_MB:-4096}
+      - JOB_MAX_SINGLE_JOB_PERCENT=${OPTIMIZER_MAX_SINGLE_JOB:-80}
+    volumes:
+      - mmrc-data:/data
+      - mmrc-config:/app/config
+      - mmrc-temp:/app/.tmp
+    networks:
+      - mmrc-network
+    deploy:
+      resources:
+        limits:
+          cpus: "${OPTIMIZER_CPU_LIMIT:-4.0}"
+          memory: ${OPTIMIZER_MEMORY_LIMIT:-8G}
+
+  # ========================
+  # Стрим-воркер (HLS/DASH)
+  # ========================
+  mmrc-stream-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamer
+    container_name: mmrc-stream-worker
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - WORKER_MODE=streamer
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - CONTENT_ROOT=/data
+      - STREAMS_OUTPUT_DIR=/data/streams
+      - LOGS_DIR=/data/logs
+      - STREAM_MAX_JOBS=${STREAM_MAX_JOBS:-100}
+      - STREAM_IDLE_TIMEOUT_MS=${STREAM_IDLE_TIMEOUT_MS:-180000}
+      - JOB_RESERVE_CPU_PERCENT=${STREAMER_CPU_PERCENT:-40}
+      - JOB_RESERVE_MEMORY_MB=${STREAMER_MEMORY_MB:-2048}
+      - JOB_MAX_SINGLE_JOB_PERCENT=${STREAMER_MAX_SINGLE_JOB:-70}
+      - RESTREAM_SEGMENT_DURATION=${RESTREAM_SEGMENT_DURATION:-4}
+      - RESTREAM_PLAYLIST_SIZE=${RESTREAM_PLAYLIST_SIZE:-6}
+    volumes:
+      - mmrc-data:/data
+      - mmrc-config:/app/config
+      - mmrc-temp:/app/.tmp
+    networks:
+      - mmrc-network
+    deploy:
+      resources:
+        limits:
+          cpus: "${STREAMER_CPU_LIMIT:-2.0}"
+          memory: ${STREAMER_MEMORY_LIMIT:-4G}
+
+  # ========================
+  # Nginx Reverse Proxy
+  # ========================
+  mmrc-nginx:
+    image: nginx:alpine
+    container_name: mmrc-nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./docker/nginx/ssl:/etc/nginx/ssl:ro
+      - mmrc-data:/data:ro
+    networks:
+      - mmrc-network
+    depends_on:
+      mmrc-server:
+        condition: service_healthy
+    profiles:
+      - nginx
+
+  # ========================
+  # Backup Service (optional)
+  # ========================
+  mmrc-backup:
+    image: alpine:latest
+    container_name: mmrc-backup
+    restart: "no"
+    volumes:
+      - mmrc-data:/data:ro
+      - mmrc-config:/config:ro
+      - ./docker/backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "=== MMRC Backup ==="
+        echo "Backing up config databases..."
+        cp /config/main.db /backups/main-$(date +%F_%H%M).db
+        cp /config/hero/heroes.db /backups/heroes-$(date +%F_%H%M).db
+        echo "Backup complete!"
+    profiles:
+      - backup
+
+volumes:
+  mmrc-data:
+    driver: local
+  mmrc-config:
+    driver: local
+  mmrc-temp:
+    driver: local
+
+networks:
+  mmrc-network:
+    driver: bridge

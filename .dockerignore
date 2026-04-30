@@ -1,0 +1,80 @@
+# Dependencies
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist
+build
+.next
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Docker
+Dockerfile
+Dockerfile.*
+docker-compose.yml
+.docker
+.dockerignore
+
+# Documentation
+*.md
+!README.md
+
+# Dev
+dev/
+.devcontainer
+
+# Clients (not needed for server)
+clients/
+
+# Test
+test
+tests
+__tests__
+coverage
+.nyc_output
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+.tmp/
+
+# Logs (handled by volume)
+data/logs
+data/content
+data/streams
+data/cache
+
+# Config databases (handled by volume)
+config/*.db
+config/*.db-*
+config/hero/*.db
+config/hero/*.db-*
+
+# APK files
+*.apk
+
+# Misc
+MMRCPlayer-*.apk
