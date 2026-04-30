@@ -51,11 +51,13 @@ WORKDIR /app
 
 # Copy from builder
 COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/server.js ./server.js
-COPY --from=builder /app/src ./src
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/scripts ./scripts
+
+# Copy application files from build context
+COPY package.json ./
+COPY server.js ./
+COPY src ./src
+COPY public ./public
+COPY scripts ./scripts
 
 # Copy entrypoint
 COPY docker-entrypoint.sh /usr/local/bin/
