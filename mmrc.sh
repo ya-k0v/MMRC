@@ -142,6 +142,15 @@ cmd_install() {
     }
     success "docker-compose.yml downloaded"
 
+    # Download nginx config
+    info "Downloading nginx configuration..."
+    mkdir -p "$APP_DIR/docker/nginx"
+    curl -fsSL -o "$APP_DIR/docker/nginx/nginx.conf" \
+        "${MMRC_SCRIPTS_REPO}/raw/feature/v3.2.1/docker/nginx/nginx.conf" || {
+        warn "Failed to download nginx.conf (optional)"
+    }
+    success "nginx.conf downloaded"
+
     # Generate .env
     info "Generating configuration..."
     JWT_SECRET=$(openssl rand -hex 64)

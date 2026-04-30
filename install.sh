@@ -132,10 +132,15 @@ install_mmrc() {
     mkdir -p "$INSTALL_DIR" "$DATA_DIR"
     success "Directories created"
 
-    # Download docker-compose.yml with progress
+    # Download docker-compose.yml and nginx config with progress
     info "Downloading docker-compose.yml..."
     curl -# -L -o "$COMPOSE_FILE" "$MMRC_RAW/docker-compose.deploy.yml"
     success "docker-compose.yml downloaded"
+
+    info "Downloading nginx configuration..."
+    mkdir -p "$INSTALL_DIR/docker/nginx"
+    curl -# -L -o "$INSTALL_DIR/docker/nginx/nginx.conf" "$MMRC_RAW/docker/nginx/nginx.conf"
+    success "nginx.conf downloaded"
 
     # Generate .env
     info "Generating configuration..."
