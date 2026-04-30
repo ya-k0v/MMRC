@@ -27,9 +27,9 @@ services:
       - STREAM_MAX_JOBS=${STREAM_MAX_JOBS:-100}
       - STREAM_IDLE_TIMEOUT_MS=${STREAM_IDLE_TIMEOUT_MS:-180000}
       # LDAP (optional)
-      - LDAP_URL=${LDAP_URL:-}
-      - LDAP_BIND_DN=${LDAP_BIND_DN:-}
-      - LDAP_SEARCH_BASE=${LDAP_SEARCH_BASE:-}
+      - LDAP_URL=${LDAP_URL:-ldap://disabled}
+      - LDAP_BIND_DN=${LDAP_BIND_DN:-cn=admin,dc=disabled}
+      - LDAP_SEARCH_BASE=${LDAP_SEARCH_BASE:-dc=disabled}
     ports:
       - "${SERVER_PORT:-3000}:3000"
     volumes:
