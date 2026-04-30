@@ -188,21 +188,9 @@ LDAP_SEARCH_BASE=
 ENVEOF
     success "Configuration generated"
 
-    # Determine content directory
-    # Use CONTENT_DIR env var if set, otherwise try interactive prompt, then default
-    if [ -n "$CONTENT_DIR" ]; then
-        content_dir="$CONTENT_DIR"
-        info "Using content directory from environment: $content_dir"
-    elif [ -t 0 ]; then
-        echo ""
-        colorized_echo yellow "📁 Where do you want to store media content?"
-        read -p "   Enter path [default: /mnt/mmrc-content]: " content_dir < /dev/tty
-        content_dir="${content_dir:-/mnt/mmrc-content}"
-    else
-        content_dir="/mnt/mmrc-content"
-        warn "Non-interactive mode. Using default: $content_dir"
-        info "Override: export CONTENT_DIR=/your/path before running install"
-    fi
+    # Content directory: use env var or default
+    content_dir="${CONTENT_DIR:-/mnt/mmrc-content}"
+    info "Content directory: $content_dir"
     
     sed -i "s|^CONTENT_DIR=.*|CONTENT_DIR=${content_dir}|" "$ENV_FILE"
     mkdir -p "$content_dir"
