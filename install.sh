@@ -188,13 +188,25 @@ LDAP_SEARCH_BASE=
 ENVEOF
     success "Configuration generated"
 
-    # Content directory: use env var or default
-    content_dir="${CONTENT_DIR:-/mnt/mmrc-content}"
-    info "Content directory: $content_dir"
-    
+    # Ask for content directory (reads from terminal, not stdin pipe)
+    echo ""
+    colorized_echo yellow "📁 Where do you want to store media content?"
+    echo ""
+    echo "  Default: project directory ($(pwd)/data/content)"
+    echo "  External disk: /mnt/mmrc-content"
+    echo "  Custom path: /your/path"
+    echo ""
+    content_dir=""
+    while [ -z "$content_dir" ]; do
+        read -p "  Enter path [default: project dir]: " content_dir < /dev/tty
+        if [ -z "$content_dir" ]; then
+            content_dir="$INSTALL_DIR/data/content"
+        fi
+    done
+
     sed -i "s|^CONTENT_DIR=.*|CONTENT_DIR=${content_dir}|" "$ENV_FILE"
     mkdir -p "$content_dir"
-    success "Content directory created: $content_dir"
+    success "Content directory: $content_dir"
 
     # Pull images with progress
     echo ""

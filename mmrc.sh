@@ -199,10 +199,15 @@ ENVEOF
 
     # Ask about content directory
     echo ""
-    colorized_echo yellow "Where do you want to store media content?"
-    colorized_echo yellow "Default: /mnt/mmrc-content"
-    read -p "Enter path (or press Enter for default): " content_dir
-    content_dir="${content_dir:-/mnt/mmrc-content}"
+    colorized_echo yellow "📁 Where do you want to store media content?"
+    colorized_echo yellow "Default: $APP_DIR/data/content"
+    content_dir=""
+    while [ -z "$content_dir" ]; do
+        read -p "  Enter path [default: $APP_DIR/data/content]: " content_dir < /dev/tty
+        if [ -z "$content_dir" ]; then
+            content_dir="$APP_DIR/data/content"
+        fi
+    done
     replace_or_append_env "CONTENT_DIR" "$content_dir"
 
     # Create content directory
@@ -212,9 +217,9 @@ ENVEOF
     # SSL Setup
     echo ""
     colorized_echo yellow "Enable SSL (Let's Encrypt)?"
-    read -p "Enable SSL? [y/N]: " ssl_choice
+    read -p "  Enable SSL? [y/N]: " ssl_choice < /dev/tty
     if [[ "$ssl_choice" =~ ^[Yy]$ ]]; then
-        read -p "Enter domain: " ssl_domain
+        read -p "  Enter domain: " ssl_domain < /dev/tty
         if [ -n "$ssl_domain" ]; then
             replace_or_append_env "SSL_DOMAIN" "$ssl_domain"
             info "SSL will be configured after first start"
@@ -441,7 +446,7 @@ cmd_ssl() {
 
     cd "$APP_DIR"
 
-    read -p "Enter your domain: " domain
+    read -p "Enter your domain: " domain < /dev/tty
     if [ -z "$domain" ]; then
         error "Domain is required"
         exit 1
@@ -508,7 +513,7 @@ cmd_uninstall() {
 ╚══════════════════════════════════════════╝
 "
 
-    read -p "Are you sure? Type 'yes' to confirm: " confirm
+    read -p "Are you sure? Type 'yes' to confirm: " confirm < /dev/tty
     if [ "$confirm" != "yes" ]; then
         info "Aborted"
         exit 0
