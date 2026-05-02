@@ -65,5 +65,5 @@ export const ALLOWED_EXT = /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg
 
 // Сетевые настройки
 export const PORT = process.env.PORT || 3000;
-export const HOST = '127.0.0.1'; // Слушаем только localhost, доступ только через Nginx
+export const HOST = process.env.HOST || '127.0.0.1'; // 127.0.0.1 для server (Nginx в том же контейнере), 0.0.0.0 для воркеров
 

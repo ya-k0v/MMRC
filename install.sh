@@ -160,6 +160,8 @@ ENVEOF
     cat >> "$ENV_FILE" << 'ENVEOF2'
 # Server
 SERVER_PORT=3000
+SERVER_URL=http://mmrc-server:3000
+ADMIN_INTERNAL_API_URL=http://mmrc-server:3000
 
 # Database
 WAL_CHECKPOINT_INTERVAL_MS=300000

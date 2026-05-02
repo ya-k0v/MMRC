@@ -7,6 +7,7 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { getAnyFileMetadataBySafeName, getFileMetadata } from '../database/files-metadata.js';
+import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import logger from '../utils/logger.js';
 import { spawn } from 'child_process';
@@ -124,7 +125,7 @@ router.get('/resolve-all/*fileName', (req, res) => {
 
   if (!metadata || !metadata.file_path || !fs.existsSync(metadata.file_path)) {
     // Fallback: пробуем физически в общем контенте
-    const fallbackPath = path.join('/mnt/videocontrol-data/content', fileName);
+    const fallbackPath = path.join(getDevicesPath(), fileName);
     if (fs.existsSync(fallbackPath)) {
       const stat = fs.statSync(fallbackPath);
       metadata = {
@@ -160,7 +161,7 @@ router.get('/resolve/:deviceId/*fileName', (req, res) => {
     // Попробуем без привязки к устройству
     metadata = getAnyFileMetadataBySafeName(fileName);
     if (!metadata || !metadata.file_path || !fs.existsSync(metadata.file_path)) {
-      const fallbackPath = path.join('/mnt/videocontrol-data/content', fileName);
+      const fallbackPath = path.join(getDevicesPath(), fileName);
       if (fs.existsSync(fallbackPath)) {
         const stat = fs.statSync(fallbackPath);
         metadata = {

@@ -49,15 +49,15 @@ case "$ROLE" in
 esac
 
 # Create directories if they don't exist
-mkdir -p "${CONTENT_ROOT:-/data}/content"
-mkdir -p "${CONTENT_ROOT:-/data}/streams"
-mkdir -p "${CONTENT_ROOT:-/data}/cache/trailers"
-mkdir -p "${CONTENT_ROOT:-/data}/cache/converted"
-mkdir -p "${CONTENT_ROOT:-/data}/logs"
+mkdir -p "${CONTENT_ROOT:-/app/data}/content"
+mkdir -p "${CONTENT_ROOT:-/app/data}/streams"
+mkdir -p "${CONTENT_ROOT:-/app/data}/cache/trailers"
+mkdir -p "${CONTENT_ROOT:-/app/data}/cache/converted"
+mkdir -p "${CONTENT_ROOT:-/app/data}/logs"
 mkdir -p /app/config/hero
 mkdir -p /app/.tmp
 
-echo "📁 Content Root: ${CONTENT_ROOT:-/data}"
+echo "📁 Content Root: ${CONTENT_ROOT:-/app/data}"
 echo "📡 Port: ${PORT}"
 echo "✅ Starting service..."
 

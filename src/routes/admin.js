@@ -58,6 +58,11 @@ function getInternalApiBaseUrl() {
     return configured.replace(/\/$/, '');
   }
 
+  const serverUrl = String(process.env.SERVER_URL || '').trim();
+  if (serverUrl) {
+    return serverUrl.replace(/\/$/, '');
+  }
+
   const port = String(process.env.PORT || '3000').trim() || '3000';
   return `http://127.0.0.1:${port}`;
 }

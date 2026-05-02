@@ -39,6 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sqlite3 \
     curl \
     graphicsmagick \
+    ghostscript \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 WORKDIR /app
@@ -66,9 +67,9 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     LOG_LEVEL=info \
     WORKER_MODE=optimizer \
-    CONTENT_ROOT=/data \
-    STREAMS_OUTPUT_DIR=/data/streams \
-    LOGS_DIR=/data/logs
+    CONTENT_ROOT=/app/data \
+    STREAMS_OUTPUT_DIR=/app/data/streams \
+    LOGS_DIR=/app/data/logs
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \

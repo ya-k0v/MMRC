@@ -44,6 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-liberation \
     nginx \
     graphicsmagick \
+    ghostscript \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
     && mkdir -p /var/log/nginx /run/nginx /etc/nginx/ssl /etc/nginx/ssl-certs
 
@@ -86,9 +87,9 @@ ENV NODE_ENV=production \
     PORT=3000 \
     HOST=0.0.0.0 \
     LOG_LEVEL=info \
-    CONTENT_ROOT=/data \
-    STREAMS_OUTPUT_DIR=/data/streams \
-    LOGS_DIR=/data/logs
+    CONTENT_ROOT=/app/data \
+    STREAMS_OUTPUT_DIR=/app/data/streams \
+    LOGS_DIR=/app/data/logs
 
 # Health check (via nginx on port 80)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
