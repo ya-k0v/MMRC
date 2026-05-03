@@ -75,6 +75,9 @@ COPY public ./public
 COPY scripts ./scripts
 COPY config /app/config
 
+# Copy Android APK for admin installation
+COPY clients/android-mediaplayer/app-release.apk /app/clients/android-mediaplayer/app-release.apk
+
 # Copy entrypoint and nginx config
 COPY docker-entrypoint.sh /usr/local/bin/
 COPY docker/nginx/nginx.conf /etc/nginx/nginx.conf
