@@ -3,17 +3,19 @@
 # ========================
 # Build stage
 # ========================
-FROM node:20-bookworm-slim AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apk add --no-cache \
     git \
     python3 \
     make \
     g++ \
-    && rm -rf /var/lib/apt/lists/*
+    libc-dev \
+    pkgconfig \
+    && rm -rf /var/cache/apk/*
 
 # Copy package files
 COPY package.json package-lock.json ./
@@ -24,7 +26,7 @@ RUN npm ci --omit=dev
 # ========================
 # Production stage - Stream Worker
 # ========================
-FROM node:20-bookworm-slim
+FROM node:20-alpine
 
 ARG MMRC_ROLE=streamer
 ENV ROLE=${MMRC_ROLE}
@@ -34,14 +36,15 @@ LABEL description="MMRC - Stream Worker (HLS/DASH)"
 LABEL version="3.2.1"
 
 # Install runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apk add --no-cache \
     ffmpeg \
-    sqlite3 \
+    sqlite \
     curl \
     bash \
-    graphicsmagick \
+    imagemagick \
     tini \
-    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    suhosin \
+    && rm -rf /var/cache/apk/*
 
 WORKDIR /app
 
@@ -79,5 +82,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 EXPOSE 3002
 
-ENTRYPOINT ["/usr/bin/tini","--","/usr/local/bin/docker-entrypoint.sh"]
+ENTRYPOINT ["/sbin/tini","--","/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "server.js"]

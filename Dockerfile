@@ -3,17 +3,25 @@
 # ========================
 # Build stage
 # ========================
-FROM node:20-bookworm-slim AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apk add --no-cache \
     git \
     python3 \
     make \
     g++ \
-    && rm -rf /var/lib/apt/lists/*
+    libc-dev \
+    pkgconfig \
+    vips-dev \
+    fftw-dev \
+    cgif-dev \
+    libpng-dev \
+    libjpeg-turbo-dev \
+    imagemagick-dev \
+    && rm -rf /var/cache/apk/*
 
 # Copy package files
 COPY package.json package-lock.json ./
@@ -24,7 +32,7 @@ RUN npm ci --omit=dev
 # ========================
 # Production stage
 # ========================
-FROM node:20-bookworm-slim
+FROM node:20-alpine
 
 ARG MMRC_ROLE=server
 ENV ROLE=${MMRC_ROLE}
@@ -33,25 +41,23 @@ LABEL maintainer="ya-k0v"
 LABEL description="MMRC - Media Management and Remote Control System"
 LABEL version="3.2.1"
 
-# Install runtime dependencies (essential)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install runtime dependencies (alpine packages)
+RUN apk add --no-cache \
     ffmpeg \
-    sqlite3 \
+    sqlite \
     curl \
     bash \
     wget \
     ca-certificates \
-    fontconfig \
-    fonts-liberation \
+    font-noto-cjk \
     nginx \
-    graphicsmagick \
+    imagemagick \
     tini \
-    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
+    suhosin \
+    && rm -rf /var/cache/apk/* \
     && mkdir -p /var/log/nginx /run/nginx /etc/nginx/ssl /etc/nginx/ssl-certs
 
-# LibreOffice removed from main image; use separate converter sidecar image to reduce image size
-
-# Install yt-dlp (critical for video URL downloads)
+# yt-dlp
 RUN wget -q -O /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
     && chmod +x /usr/local/bin/yt-dlp
 
@@ -73,7 +79,7 @@ COPY docker-entrypoint.sh /usr/local/bin/
 COPY docker/nginx/nginx.conf /etc/nginx/nginx.conf
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Create required directories (new structure)
+# Create required directories
 RUN mkdir -p /app/data/{db,content,streams,cache/converted,cache/trailers,logs,hero} \
     /app/.tmp
 
@@ -81,7 +87,7 @@ RUN mkdir -p /app/data/{db,content,streams,cache/converted,cache/trailers,logs,h
 RUN mkdir -p /opt/mmrc-bin \
     && ln -sf /opt/mmrc-bin/soffice /usr/local/bin/soffice || true
 
-# Default environment variables (use system-wide data directory)
+# Default environment variables
 ENV NODE_ENV=production \
     PORT=3000 \
     HOST=0.0.0.0 \
@@ -98,5 +104,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 # Expose ports (80 for Nginx, 3000 for Node.js internal)
 EXPOSE 80 443 3000
 
-ENTRYPOINT ["/usr/bin/tini","--","/usr/local/bin/docker-entrypoint.sh"]
+ENTRYPOINT ["/sbin/tini","--","/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "server.js"]

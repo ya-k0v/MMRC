@@ -1,20 +1,20 @@
 # syntax=docker/dockerfile:1
 
-FROM debian:bookworm-slim
+FROM alpine:3.19
 
 LABEL maintainer="ya-k0v"
 LABEL description="MMRC - LibreOffice converter sidecar"
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apk add --no-cache \
     libreoffice-impress \
     ca-certificates \
     wget \
     bash \
     tini \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/cache/apk/*
 
 COPY docker/converter-entrypoint.sh /usr/local/bin/converter-entrypoint.sh
 RUN chmod +x /usr/local/bin/converter-entrypoint.sh
 
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/converter-entrypoint.sh"]
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/converter-entrypoint.sh"]
 CMD ["sleep", "infinity"]
