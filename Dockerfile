@@ -41,7 +41,7 @@ LABEL maintainer="ya-k0v"
 LABEL description="MMRC - Media Management and Remote Control System"
 LABEL version="3.2.1"
 
-# Enable community repo for ffmpeg
+# Enable community repo for ffmpeg and imagemagick
 RUN echo "http://dl-cdn.alpinelinux.org/alpine/v3.19/community" >> /etc/apk/repositories
 
 # Install runtime dependencies (alpine packages)
@@ -53,8 +53,12 @@ RUN apk add --no-cache \
     wget \
     ca-certificates \
     nginx \
-    imagemagick \
     tini \
+    imagemagick \
+    imagemagick-jpeg \
+    imagemagick-png \
+    imagemagick-webp \
+    imagemagick-heic \
     && rm -rf /var/cache/apk/* \
     && mkdir -p /var/log/nginx /run/nginx /etc/nginx/ssl /etc/nginx/ssl-certs
 
