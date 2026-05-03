@@ -44,16 +44,14 @@ LABEL version="3.2.1"
 # Install runtime dependencies (alpine packages)
 RUN apk add --no-cache \
     ffmpeg \
-    sqlite \
+    sqlite3 \
     curl \
     bash \
     wget \
     ca-certificates \
-    font-noto-cjk \
     nginx \
     imagemagick \
     tini \
-    suhosin \
     && rm -rf /var/cache/apk/* \
     && mkdir -p /var/log/nginx /run/nginx /etc/nginx/ssl /etc/nginx/ssl-certs
 

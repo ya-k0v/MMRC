@@ -38,12 +38,11 @@ LABEL version="3.2.1"
 # Install runtime dependencies
 RUN apk add --no-cache \
     ffmpeg \
-    sqlite \
+    sqlite3 \
     curl \
     bash \
     imagemagick \
     tini \
-    suhosin \
     && rm -rf /var/cache/apk/*
 
 WORKDIR /app
