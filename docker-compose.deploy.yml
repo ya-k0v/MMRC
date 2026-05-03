@@ -51,7 +51,7 @@ services:
           - mmrc-server
 
   # ========================
-  # Воркер ночной оптимизации (только внутренняя сеть)
+  # Converter (LibreOffice)
   # ========================
   mmrc-converter:
     image: ${DOCKER_CONVERTER_IMAGE:-pingwin1900/mmrc-converter}:latest
@@ -95,8 +95,6 @@ services:
       - mmrc-server
     networks:
       - mmrc-network
-    depends_on:
-      - mmrc-server
     deploy:
       resources:
         limits:
@@ -134,8 +132,6 @@ services:
       - mmrc-server
     networks:
       - mmrc-network
-    depends_on:
-      - mmrc-server
     deploy:
       resources:
         limits:
