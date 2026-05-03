@@ -3,7 +3,7 @@
 # ========================
 # Build stage
 # ========================
-FROM node:20-alpine AS builder
+FROM node:20-alpine3.20 AS builder
 
 WORKDIR /app
 
@@ -32,7 +32,7 @@ RUN npm ci --omit=dev
 # ========================
 # Production stage
 # ========================
-FROM node:20-alpine
+FROM node:20-alpine3.20
 
 ARG MMRC_ROLE=server
 ENV ROLE=${MMRC_ROLE}
@@ -42,7 +42,7 @@ LABEL description="MMRC - Media Management and Remote Control System"
 LABEL version="3.2.1"
 
 # Enable community repo for ffmpeg and imagemagick
-RUN echo "http://dl-cdn.alpinelinux.org/alpine/v3.19/community" >> /etc/apk/repositories
+RUN echo "http://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repositories
 
 # Install runtime dependencies (alpine packages)
 RUN apk add --no-cache \
