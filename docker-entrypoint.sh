@@ -76,15 +76,35 @@ if [ "${ROLE}" != "server" ]; then
 fi
 
 # Create directories if they don't exist
-mkdir -p "${CONTENT_ROOT:-/app/data}/content"
-mkdir -p "${CONTENT_ROOT:-/app/data}/streams"
-mkdir -p "${CONTENT_ROOT:-/app/data}/cache/trailers"
-mkdir -p "${CONTENT_ROOT:-/app/data}/cache/converted"
-mkdir -p "${CONTENT_ROOT:-/app/data}/logs"
-mkdir -p /app/config/hero
+# Use MMRC_DATA_DIR for system-wide data or fallback to /app/data
+DATA_DIR="${MMRC_DATA_DIR:-${CONTENT_ROOT:-/app/data}}"
+
+mkdir -p "${DATA_DIR}/db"
+mkdir -p "${DATA_DIR}/content"
+mkdir -p "${DATA_DIR}/streams"
+mkdir -p "${DATA_DIR}/cache/trailers"
+mkdir -p "${DATA_DIR}/cache/converted"
+mkdir -p "${DATA_DIR}/logs"
+mkdir -p "${DATA_DIR}/hero"
 mkdir -p /app/.tmp
 
-echo "📁 Content Root: ${CONTENT_ROOT:-/app/data}"
+# Migrate legacy DB files if they exist in /app/config
+if [ -f "/app/config/main.db" ] && [ ! -f "${DATA_DIR}/db/main.db" ]; then
+    echo "🔄 Migrating main.db to ${DATA_DIR}/db/"
+    cp /app/config/main.db "${DATA_DIR}/db/main.db" 2>/dev/null || true
+    cp /app/config/main.db-shm "${DATA_DIR}/db/main.db-shm" 2>/dev/null || true
+    cp /app/config/main.db-wal "${DATA_DIR}/db/main.db-wal" 2>/dev/null || true
+fi
+
+if [ -f "/app/config/hero/heroes.db" ] && [ ! -f "${DATA_DIR}/db/heroes.db" ]; then
+    echo "🔄 Migrating heroes.db to ${DATA_DIR}/db/"
+    mkdir -p "${DATA_DIR}/db"
+    cp /app/config/hero/heroes.db "${DATA_DIR}/db/heroes.db" 2>/dev/null || true
+    cp /app/config/hero/heroes.db-shm "${DATA_DIR}/db/heroes.db-shm" 2>/dev/null || true
+    cp /app/config/hero/heroes.db-wal "${DATA_DIR}/db/heroes.db-wal" 2>/dev/null || true
+fi
+
+echo "📁 Content Root: ${DATA_DIR}"
 echo "📡 Port: ${PORT}"
 echo "✅ Starting service..."
 

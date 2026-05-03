@@ -19,15 +19,17 @@ export const PUBLIC = path.join(ROOT, 'public');
 // - getTempDir() - директория для временных файлов
 // - getDevicesPath() - путь к контенту устройств (то же что getDataRoot())
 
+// Use system-wide data directory if MMRC_DATA_DIR is set, otherwise fallback to project-local
+const DATA_DIR = process.env.MMRC_DATA_DIR || path.join(ROOT, 'data');
+
 // Путь по умолчанию (используется только при первой инициализации)
 // ВАЖНО: После инициализации все пути берутся из настроек БД (config/app-settings.json)
-// По умолчанию используется локальная папка проекта (/var/lib/mmrc/data)
+// По умолчанию используется системная папка (/var/lib/mmrc-data) или локальная (/var/lib/mmrc/data)
 // Админ может изменить на внешний диск через настройки (/mnt/videocontrol-data)
-export const DEFAULT_DATA_ROOT = path.join(ROOT, 'data');
+export const DEFAULT_DATA_ROOT = DATA_DIR;
 const useExternalDataDisk = process.env.DATA_ROOT && fs.existsSync(process.env.DATA_ROOT);
 
 // Единая директория для всех данных по умолчанию (до загрузки настроек)
-// Теперь всегда используем DEFAULT_DATA_ROOT (локальная папка проекта)
 const DEFAULT_DATA_DIR = DEFAULT_DATA_ROOT;
 
 // Экспортируем для логирования в server.js (устаревшее, оставлено для обратной совместимости)

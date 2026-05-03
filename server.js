@@ -116,8 +116,8 @@ app.use('/api/', apiSpeedLimiter);
 // ========================================
 // DATABASE INITIALIZATION
 // ========================================
-// Use system-wide data directory outside project tree
-const DATA_DIR = process.env.MMRC_DATA_DIR || '/var/lib/mmrc-data';
+// Use system-wide data directory if set, otherwise use project-local data/
+const DATA_DIR = process.env.MMRC_DATA_DIR || path.join(ROOT, 'data');
 const DB_PATH = path.join(DATA_DIR, 'db', 'main.db');
 try {
   // Run migrations / ensure schema before continuing startup

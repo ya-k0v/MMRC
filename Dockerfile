@@ -67,33 +67,29 @@ COPY server.js ./
 COPY src ./src
 COPY public ./public
 COPY scripts ./scripts
-COPY config /app/config
-# Include Android release APK if present to support automatic installation/update
-RUN mkdir -p /app/clients/android-mediaplayer/app/build/outputs/apk/release || true
-COPY clients/android-mediaplayer/app-release.apk /app/clients/android-mediaplayer/app-release.apk
 
 # Copy entrypoint and nginx config
 COPY docker-entrypoint.sh /usr/local/bin/
 COPY docker/nginx/nginx.conf /etc/nginx/nginx.conf
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Create required directories
-RUN mkdir -p /app/data/{content,streams,cache/converted,cache/trailers,logs} \
-    /app/config/hero \
+# Create required directories (new structure)
+RUN mkdir -p /var/lib/mmrc-data/{db,content,streams,cache/converted,cache/trailers,logs,hero} \
     /app/.tmp
 
 # Prepare optional folder for external binaries (converter will populate /opt/mmrc-bin/soffice)
 RUN mkdir -p /opt/mmrc-bin \
     && ln -sf /opt/mmrc-bin/soffice /usr/local/bin/soffice || true
 
-# Default environment variables
+# Default environment variables (use system-wide data directory)
 ENV NODE_ENV=production \
     PORT=3000 \
     HOST=0.0.0.0 \
     LOG_LEVEL=info \
-    CONTENT_ROOT=/app/data \
-    STREAMS_OUTPUT_DIR=/app/data/streams \
-    LOGS_DIR=/app/data/logs
+    MMRC_DATA_DIR=/var/lib/mmrc-data \
+    CONTENT_ROOT=/var/lib/mmrc-data/content \
+    STREAMS_OUTPUT_DIR=/var/lib/mmrc-data/streams \
+    LOGS_DIR=/var/lib/mmrc-data/logs
 
 # Health check (via nginx on port 80)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \

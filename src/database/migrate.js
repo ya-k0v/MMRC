@@ -84,7 +84,8 @@ function runRegisteredMigrations(db) {
 }
 
 export function runMigrations(dbPath) {
-  const finalPath = dbPath || path.join(ROOT, 'config', 'main.db');
+  const DATA_DIR = process.env.MMRC_DATA_DIR || path.join(ROOT, 'data');
+  const finalPath = dbPath || path.join(DATA_DIR, 'db', 'main.db');
   logger.info('[migrate] Running database initialization/migration', { dbPath: finalPath });
   initDatabase(finalPath);
   const db = getDatabase();
