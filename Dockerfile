@@ -3,7 +3,7 @@
 # ========================
 # Build stage
 # ========================
-FROM node:20-bookworm-slim AS builder
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
@@ -24,16 +24,16 @@ RUN npm ci --omit=dev
 # ========================
 # Production stage
 # ========================
-FROM debian:bookworm-slim
+FROM node:20-slim
 
 ARG MMRC_ROLE=server
 ENV ROLE=${MMRC_ROLE}
 
 LABEL maintainer="ya-k0v"
-LABEL description="MMRC - Media Management and Remote Control System"
+LABEL description="MMRC - Media Management and Remote Control"
 LABEL version="3.2.1"
 
-# Install runtime dependencies (slim - only essential)
+# Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     sqlite3 \
@@ -64,38 +64,22 @@ COPY src ./src
 COPY public ./public
 COPY scripts ./scripts
 COPY config /app/config
-
-# Copy Android APK for admin installation
 COPY clients/android-mediaplayer/app-release.apk /app/clients/android-mediaplayer/app-release.apk
 
-# Copy entrypoint and nginx config
 COPY docker-entrypoint.sh /usr/local/bin/
 COPY docker/nginx/nginx.conf /etc/nginx/nginx.conf
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Create required directories
-RUN mkdir -p /app/data/{db,content,streams,cache/converted,cache/trailers,logs,hero} \
-    /app/.tmp
+RUN mkdir -p /app/data/{db,content,streams,cache/converted,cache/trailers,logs,hero} /app/.tmp
+RUN mkdir -p /opt/mmrc-bin && ln -sf /opt/mmrc-bin/soffice /usr/local/bin/soffice || true
 
-# Prepare optional folder for external binaries (converter will populate /opt/mmrc-bin/soffice)
-RUN mkdir -p /opt/mmrc-bin \
-    && ln -sf /opt/mmrc-bin/soffice /usr/local/bin/soffice || true
+ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0 LOG_LEVEL=info \
+    MMRC_DATA_DIR=/app/data CONTENT_ROOT=/app/data/content \
+    STREAMS_OUTPUT_DIR=/app/data/streams LOGS_DIR=/app/data/logs
 
-# Default environment variables
-ENV NODE_ENV=production \
-    PORT=3000 \
-    HOST=0.0.0.0 \
-    LOG_LEVEL=info \
-    MMRC_DATA_DIR=/app/data \
-    CONTENT_ROOT=/app/data/content \
-    STREAMS_OUTPUT_DIR=/app/data/streams \
-    LOGS_DIR=/app/data/logs
-
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://127.0.0.1:80/health || exit 1
 
-# Expose ports
 EXPOSE 80 443 3000
 
 ENTRYPOINT ["/usr/bin/tini","--","/usr/local/bin/docker-entrypoint.sh"]
