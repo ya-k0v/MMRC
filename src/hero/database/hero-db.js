@@ -7,8 +7,11 @@ import logger from '../../utils/logger.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DB_PATH = path.join(process.cwd(), 'config', 'hero', 'heroes.db');
+// Use system-wide data directory
+const DATA_DIR = process.env.MMRC_DATA_DIR || '/var/lib/mmrc-data';
+const DB_PATH = path.join(DATA_DIR, 'db', 'heroes.db');
 const LEGACY_DB_PATH = path.join(process.cwd(), 'config', 'heroes.db');
+const LEGACY_DB_PATH2 = path.join(process.cwd(), 'config', 'hero', 'heroes.db');
 
 const moveFileIfExists = (source, destination) => {
   try {
@@ -25,21 +28,32 @@ const moveFileIfExists = (source, destination) => {
 };
 
 const migrateLegacyDb = () => {
-  if (!fs.existsSync(LEGACY_DB_PATH)) return;
+  // Try multiple legacy locations
+  const legacyPaths = [LEGACY_DB_PATH, LEGACY_DB_PATH2].filter(p => p && fs.existsSync(p));
 
-  if (!fs.existsSync(DB_PATH)) {
-    logger.info('[Hero DB] Legacy heroes.db detected. Migrating to config/hero/heroes.db ...');
-    moveFileIfExists(LEGACY_DB_PATH, DB_PATH);
+  if (legacyPaths.length === 0) return;
+
+  // Ensure target directory exists
+  const targetDir = path.dirname(DB_PATH);
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true });
   }
 
-  // Переносим wal/shm файлы, если они остались
-  ['-wal', '-shm'].forEach((suffix) => {
-    const legacyFile = `${LEGACY_DB_PATH}${suffix}`;
-    const newFile = `${DB_PATH}${suffix}`;
-    if (!fs.existsSync(newFile)) {
-      moveFileIfExists(legacyFile, newFile);
+  for (const legacyPath of legacyPaths) {
+    if (!fs.existsSync(DB_PATH)) {
+      logger.info(`[Hero DB] Migrating from ${legacyPath} -> ${DB_PATH}`);
+      moveFileIfExists(legacyPath, DB_PATH);
     }
-  });
+
+    // Migrate wal/shm files
+    ['-wal', '-shm'].forEach((suffix) => {
+      const legacyFile = `${legacyPath}${suffix}`;
+      const newFile = `${DB_PATH}${suffix}`;
+      if (fs.existsSync(legacyFile) && !fs.existsSync(newFile)) {
+        moveFileIfExists(legacyFile, newFile);
+      }
+    });
+  }
 };
 
 const ensureHeroesDb = () => {

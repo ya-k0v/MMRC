@@ -20,7 +20,7 @@ const RECONNECT_DELAY = 5000;
 
 /**
  * Инициализация базы данных
- * @param {string} dbPath - Путь к файлу БД (по умолчанию: ROOT/config/main.db)
+ * @param {string} dbPath - Путь к файлу БД (по умолчанию: /var/lib/mmrc-data/db/main.db)
  * @returns {Database} Экземпляр БД
  */
 export function initDatabase(initialDbPath) {

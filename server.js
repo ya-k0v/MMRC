@@ -116,7 +116,9 @@ app.use('/api/', apiSpeedLimiter);
 // ========================================
 // DATABASE INITIALIZATION
 // ========================================
-const DB_PATH = path.join(ROOT, 'config', 'main.db');
+// Use system-wide data directory outside project tree
+const DATA_DIR = process.env.MMRC_DATA_DIR || '/var/lib/mmrc-data';
+const DB_PATH = path.join(DATA_DIR, 'db', 'main.db');
 try {
   // Run migrations / ensure schema before continuing startup
   runMigrations(DB_PATH);
@@ -1423,8 +1425,9 @@ function hydrateDevicesFromDatabase() {
   saveDevicesToDB(devices);
 
   // КРИТИЧНО: Автоматическая очистка несуществующих файлов из БД при старте
-  // Проверяем только если установлена переменная окружения AUTO_CLEANUP_MISSING_FILES=true
+  // По умолчанию ОТКЛЮЧЕНО - установите AUTO_CLEANUP_MISSING_FILES=true только после миграции путей!
   if (process.env.AUTO_CLEANUP_MISSING_FILES === 'true') {
+    logger.warn('[Server] Auto-cleanup is ENABLED - this may delete DB records if paths are incorrect!');
     logger.info('[Server] Auto-cleanup enabled, checking for missing files...');
     cleanupMissingFiles({ deviceId: null, dryRun: false })
       .then(result => {
