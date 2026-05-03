@@ -116,9 +116,20 @@ app.use('/api/', apiSpeedLimiter);
 // ========================================
 // DATABASE INITIALIZATION
 // ========================================
-// Use system-wide data directory if set, otherwise use project-local data/
-const DATA_DIR = process.env.MMRC_DATA_DIR || path.join(ROOT, 'data');
+// Use system-wide data directory if set AND exists, otherwise use project-local data/
+// In Docker: MMRC_DATA_DIR=/var/lib/mmrc-data (created by Dockerfile)
+// Local dev: falls back to ./data/ automatically
+let DATA_DIR = path.join(ROOT, 'data');
+if (process.env.MMRC_DATA_DIR && fs.existsSync(process.env.MMRC_DATA_DIR)) {
+  try {
+    fs.accessSync(process.env.MMRC_DATA_DIR, fs.constants.W_OK);
+    DATA_DIR = process.env.MMRC_DATA_DIR;
+  } catch (err) {
+    logger.warn('[Server] MMRC_DATA_DIR not writable, using local', { dir: process.env.MMRC_DATA_DIR });
+  }
+}
 const DB_PATH = path.join(DATA_DIR, 'db', 'main.db');
+logger.info('[Server] Database path', { dbPath: DB_PATH, dataDir: DATA_DIR });
 try {
   // Run migrations / ensure schema before continuing startup
   runMigrations(DB_PATH);

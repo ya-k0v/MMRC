@@ -31,8 +31,6 @@ Thumbs.db
 .gitattributes
 
 # Docker
-Dockerfile
-Dockerfile.*
 docker-compose.yml
 .docker
 .dockerignore

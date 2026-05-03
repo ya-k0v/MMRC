@@ -4,6 +4,29 @@
     "context7": {
       "type": "remote",
       "url": "https://mcp.context7.com/mcp"
+    },
+    "docker": {
+      "type": "stdio",
+      "command": "docker",
+      "args": ["mcp-server"],
+      "description": "Docker MCP server for container management, image building, and Docker Compose operations"
+    },
+    "kubernetes": {
+      "type": "stdio",
+      "command": "kubectl",
+      "args": ["mcp", "serve"],
+      "description": "Kubernetes MCP server for cluster management, deployments, and resource operations"
+    },
+    "github-actions": {
+      "type": "remote",
+      "url": "https://api.github.com/mcp",
+      "description": "GitHub MCP server for CI/CD pipeline management, workflow operations, and repository CI/CD integration"
+    },
+    "docker-build": {
+      "type": "stdio",
+      "command": "docker-buildx",
+      "args": ["mcp"],
+      "description": "Docker Buildx MCP server for advanced build operations, multi-platform builds, and build cache management"
     }
   }
 }

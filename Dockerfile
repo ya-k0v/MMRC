@@ -67,6 +67,7 @@ COPY server.js ./
 COPY src ./src
 COPY public ./public
 COPY scripts ./scripts
+COPY config /app/config
 
 # Copy entrypoint and nginx config
 COPY docker-entrypoint.sh /usr/local/bin/
@@ -74,7 +75,7 @@ COPY docker/nginx/nginx.conf /etc/nginx/nginx.conf
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Create required directories (new structure)
-RUN mkdir -p /var/lib/mmrc-data/{db,content,streams,cache/converted,cache/trailers,logs,hero} \
+RUN mkdir -p /app/data/{db,content,streams,cache/converted,cache/trailers,logs,hero} \
     /app/.tmp
 
 # Prepare optional folder for external binaries (converter will populate /opt/mmrc-bin/soffice)
@@ -86,10 +87,10 @@ ENV NODE_ENV=production \
     PORT=3000 \
     HOST=0.0.0.0 \
     LOG_LEVEL=info \
-    MMRC_DATA_DIR=/var/lib/mmrc-data \
-    CONTENT_ROOT=/var/lib/mmrc-data/content \
-    STREAMS_OUTPUT_DIR=/var/lib/mmrc-data/streams \
-    LOGS_DIR=/var/lib/mmrc-data/logs
+    MMRC_DATA_DIR=/app/data \
+    CONTENT_ROOT=/app/data/content \
+    STREAMS_OUTPUT_DIR=/app/data/streams \
+    LOGS_DIR=/app/data/logs
 
 # Health check (via nginx on port 80)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \

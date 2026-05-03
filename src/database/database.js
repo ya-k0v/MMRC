@@ -33,7 +33,12 @@ export function initDatabase(initialDbPath) {
 
   try {
     const dir = path.dirname(dbPath);
+    // Only create directory for local paths, NOT system paths (Docker creates them)
     if (!fs.existsSync(dir)) {
+      const isSystemPath = dir.startsWith('/var/') || dir.startsWith('/etc/') || dir.startsWith('/usr/');
+      if (isSystemPath) {
+        throw new Error(`Database directory does not exist: ${dir}. Docker should create it.`);
+      }
       fs.mkdirSync(dir, { recursive: true });
     }
 
