@@ -48,6 +48,33 @@ case "$ROLE" in
         ;;
 esac
 
+# If running as a worker, wait for mmrc-server health endpoint before starting
+if [ "${ROLE}" != "server" ]; then
+    WAIT_TIMEOUT=${WAIT_FOR_SERVER_TIMEOUT:-60}
+    echo "⏳ Waiting for mmrc-server health (timeout ${WAIT_TIMEOUT}s)..."
+    COUNT=0
+    # determine health endpoint: prefer internal API URLs if provided
+    if [ -n "${ADMIN_INTERNAL_API_URL:-}" ]; then
+        HEALTH_BASE=${ADMIN_INTERNAL_API_URL}
+    elif [ -n "${SERVER_URL:-}" ]; then
+        HEALTH_BASE=${SERVER_URL}
+    else
+        HEALTH_BASE="http://mmrc-server:3000"
+    fi
+    # strip trailing slash and append /health
+    HEALTH_URL="${HEALTH_BASE%/}/health"
+    echo "Checking ${HEALTH_URL} ..."
+    until curl -fsS "$HEALTH_URL" >/dev/null 2>&1; do
+        COUNT=$((COUNT+1))
+        if [ "$COUNT" -ge "$WAIT_TIMEOUT" ]; then
+            echo "⚠️  Timeout waiting for mmrc-server; proceeding anyway"
+            break
+        fi
+        sleep 1
+    done
+    echo "✅ mmrc-server reachable (or timeout reached)"
+fi
+
 # Create directories if they don't exist
 mkdir -p "${CONTENT_ROOT:-/app/data}/content"
 mkdir -p "${CONTENT_ROOT:-/app/data}/streams"

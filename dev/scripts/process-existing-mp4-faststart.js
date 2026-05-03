@@ -10,9 +10,9 @@
  *   node dev/scripts/process-existing-mp4-faststart.js --all   # Обработать все файлы всех устройств
  */
 
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { applyFaststart, needsFaststart } from '../../src/video/mp4-faststart.js';
 import { getDeviceFilesMetadata } from '../../src/database/files-metadata.js';
 import { initDatabase, getDatabase } from '../../src/database/database.js';

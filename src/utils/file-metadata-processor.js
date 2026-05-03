@@ -3,8 +3,8 @@
  * @module utils/file-metadata-processor
  */
 
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 import { calculateMD5, saveFileMetadata, findDuplicateFile, getFileMetadata } from '../database/files-metadata.js';
 import { checkVideoParameters } from '../video/ffmpeg-wrapper.js';
 import logger, { logFile } from '../utils/logger.js';

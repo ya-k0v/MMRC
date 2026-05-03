@@ -38,8 +38,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     sqlite3 \
     curl \
+    bash \
     graphicsmagick \
     ghostscript \
+    tini \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 WORKDIR /app
@@ -51,6 +53,7 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY package.json ./
 COPY server.js ./
 COPY src ./src
+COPY config /app/config
 
 # Copy entrypoint
 COPY docker-entrypoint.sh /usr/local/bin/
@@ -77,5 +80,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 EXPOSE 3001
 
-ENTRYPOINT ["docker-entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/tini","--","/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "server.js"]

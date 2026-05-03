@@ -1,9 +1,9 @@
 /**
  * Trailer generator - создаёт короткий MP4 (≈10s) для превью видео
  */
-import fs from 'fs';
-import path from 'path';
-import { spawn } from 'child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { getConvertedCache } from '../config/settings-manager.js';
 
 // TRAILERS_DIR вычисляется динамически из настроек БД

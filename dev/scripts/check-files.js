@@ -6,9 +6,9 @@
  * - Файлы на диске, которых нет в БД
  */
 
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { initDatabase, getDatabase, closeDatabase } from '../../src/database/database.js';
 import { getDataRoot } from '../../src/config/settings-manager.js';
 import logger from '../../src/utils/logger.js';

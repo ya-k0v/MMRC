@@ -1,10 +1,10 @@
-import { spawn, exec } from 'child_process';
-import { promisify } from 'util';
-import fs from 'fs';
-import path from 'path';
-import EventEmitter from 'events';
-import https from 'https';
-import http from 'http';
+import { spawn, exec } from 'node:child_process';
+import { promisify } from 'node:util';
+import fs from 'node:fs';
+import path from 'node:path';
+import EventEmitter from 'node:events';
+import https from 'node:https';
+import http from 'node:http';
 import logger from '../utils/logger.js';
 import { getStreamsOutputDir } from '../config/settings-manager.js';
 import { 

@@ -4,13 +4,13 @@
  */
 
 import express from 'express';
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 import { getAnyFileMetadataBySafeName, getFileMetadata } from '../database/files-metadata.js';
 import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import logger from '../utils/logger.js';
-import { spawn } from 'child_process';
+import { spawn } from 'node:child_process';
 
 const router = express.Router();
 

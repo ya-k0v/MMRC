@@ -48,6 +48,10 @@ dev/
 # Clients (not needed for server)
 clients/
 
+# Allow Android release APK to be included in image for automatic installation
+!clients/android-mediaplayer/app-release.apk
+!clients/android-mediaplayer/app/build/outputs/apk/**
+
 # Test
 test
 tests
@@ -75,6 +79,7 @@ config/hero/*.db-*
 
 # APK files
 *.apk
+!clients/android-mediaplayer/app-release.apk
 
 # Misc
 MMRCPlayer-*.apk

@@ -5,8 +5,8 @@
 
 import { getDatabase } from './database.js';
 import { getDevicesPath } from '../config/settings-manager.js';
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 import logger from '../utils/logger.js';
 
 /**

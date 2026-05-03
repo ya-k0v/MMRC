@@ -3,9 +3,9 @@
  * @module database/files-metadata
  */
 
-import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { getDatabase } from './database.js';
 import logger, { logFile } from '../utils/logger.js';
 import { withRetrySync, isRetryableDatabaseError } from '../utils/retry.js';

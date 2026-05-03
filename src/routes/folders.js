@@ -4,8 +4,9 @@
  */
 
 import express from 'express';
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import { access, constants } from 'node:fs/promises';
+import path from 'node:path';
 import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { hasDeviceAccess } from '../middleware/device-access.js';
@@ -86,12 +87,18 @@ export function createFoldersRouter(deps) {
         return res.status(404).json({ error: 'Изображение не найдено' });
       }
       
-      const imageName = images[index - 1]; // Convert to 0-based
-      const imagePath = folderPath ? path.join(folderPath, imageName) : null;
-      
-      if (!imagePath || !fs.existsSync(imagePath)) {
-        return res.status(404).json({ error: 'Файл изображения не найден' });
-      }
+       const imageName = images[index - 1]; // Convert to 0-based
+       const imagePath = folderPath ? path.join(folderPath, imageName) : null;
+
+       if (!imagePath) {
+         return res.status(404).json({ error: 'Файл изображения не найден' });
+       }
+
+       try {
+         await access(imagePath, constants.F_OK);
+       } catch {
+         return res.status(404).json({ error: 'Файл изображения не найден' });
+       }
       
       // Отправляем изображение
       res.sendFile(imagePath, (err) => {

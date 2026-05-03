@@ -38,6 +38,7 @@ services:
       - mmrc-data:/app/data
       - mmrc-config:/app/config
       - mmrc-temp:/app/.tmp
+      - mmrc-bin:/opt/mmrc-bin
       - ./docker/nginx/ssl:/etc/nginx/ssl:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:80/health"]
@@ -49,6 +50,23 @@ services:
       mmrc-network:
         aliases:
           - mmrc-server
+
+  # Optional converter sidecar - provides LibreOffice soffice binary into shared volume
+  mmrc-converter:
+    build:
+      context: .
+      dockerfile: Dockerfile.converter
+    container_name: mmrc-converter
+    restart: unless-stopped
+    volumes:
+      - mmrc-bin:/out
+    networks:
+      - mmrc-network
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: ${CONVERTER_MEMORY_LIMIT:-1G}
 
   # ========================
   # Воркер ночной оптимизации (только внутренняя сеть)
@@ -81,8 +99,7 @@ services:
     networks:
       - mmrc-network
     depends_on:
-      mmrc-server:
-        condition: service_healthy
+      - mmrc-server
     deploy:
       resources:
         limits:
@@ -122,8 +139,7 @@ services:
     networks:
       - mmrc-network
     depends_on:
-      mmrc-server:
-        condition: service_healthy
+      - mmrc-server
     deploy:
       resources:
         limits:
@@ -136,6 +152,8 @@ volumes:
   mmrc-config:
     driver: local
   mmrc-temp:
+    driver: local
+  mmrc-bin:
     driver: local
 
 networks:

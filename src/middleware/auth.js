@@ -4,7 +4,7 @@
  */
 
 import jwt from 'jsonwebtoken';
-import crypto from 'crypto';
+import crypto from 'node:crypto';
 import logger from '../utils/logger.js';
 
 // Генерируем JWT_SECRET при запуске если не задан в env

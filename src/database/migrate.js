@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import path from 'path';
-import { fileURLToPath } from 'url';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { initDatabase, getDatabase } from './database.js';
 import { ROOT } from '../config/constants.js';
 import logger from '../utils/logger.js';

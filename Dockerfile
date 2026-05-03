@@ -38,6 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     sqlite3 \
     curl \
+    bash \
     wget \
     ca-certificates \
     fontconfig \
@@ -45,16 +46,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     graphicsmagick \
     ghostscript \
+    tini \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
     && mkdir -p /var/log/nginx /run/nginx /etc/nginx/ssl /etc/nginx/ssl-certs
 
-# Install LibreOffice (only impress for PPTX conversion, minimal)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    libreoffice-impress \
-    && apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /usr/share/man/* /usr/share/doc/* /usr/share/icons/* \
-    /usr/share/help/* /usr/share/bug/* /usr/share/lintian/*
+# LibreOffice removed from main image; use separate converter sidecar image to reduce image size
 
 # Install yt-dlp (critical for video URL downloads)
 RUN wget -q -O /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
@@ -71,6 +67,10 @@ COPY server.js ./
 COPY src ./src
 COPY public ./public
 COPY scripts ./scripts
+COPY config /app/config
+# Include Android release APK if present to support automatic installation/update
+RUN mkdir -p /app/clients/android-mediaplayer/app/build/outputs/apk/release || true
+COPY clients/android-mediaplayer/app-release.apk /app/clients/android-mediaplayer/app-release.apk
 
 # Copy entrypoint and nginx config
 COPY docker-entrypoint.sh /usr/local/bin/
@@ -81,6 +81,10 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 RUN mkdir -p /app/data/{content,streams,cache/converted,cache/trailers,logs} \
     /app/config/hero \
     /app/.tmp
+
+# Prepare optional folder for external binaries (converter will populate /opt/mmrc-bin/soffice)
+RUN mkdir -p /opt/mmrc-bin \
+    && ln -sf /opt/mmrc-bin/soffice /usr/local/bin/soffice || true
 
 # Default environment variables
 ENV NODE_ENV=production \
@@ -98,5 +102,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 # Expose ports (80 for Nginx, 3000 for Node.js internal)
 EXPOSE 80 443 3000
 
-ENTRYPOINT ["docker-entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/tini","--","/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "server.js"]

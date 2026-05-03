@@ -3,7 +3,7 @@
  * @module utils/job-resource-manager
  */
 
-import os from 'os';
+import os from 'node:os';
 import logger from './logger.js';
 
 function toPositiveInt(value, fallback) {

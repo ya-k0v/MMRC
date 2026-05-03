@@ -1,18 +1,24 @@
 // src/utils/apk-installer.js
 // Утилита для установки и настройки Android APK на устройстве через adb
 
-import fs from 'fs';
-import net from 'net';
-import path from 'path';
-import { execFileSync, spawnSync } from 'child_process';
+import fs from 'node:fs';
+import net from 'node:net';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { validatePath } from './path-validator.js';
 
+const execFileAsync = promisify(execFile);
 const APK_UPLOAD_DIR = path.resolve(process.env.MMRC_APK_UPLOAD_DIR || '/tmp/mmrc-apk-upload');
 const PROJECT_ROOT = path.resolve(process.cwd());
 
-function commandExists(command) {
-  const probe = spawnSync('bash', ['-lc', `command -v ${command}`], { stdio: 'ignore' });
-  return probe.status === 0;
+async function commandExists(command) {
+  try {
+    await execFileAsync('bash', ['-lc', `command -v ${command}`], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function normalizeDeviceId(deviceId) {
@@ -62,8 +68,8 @@ function resolveAndValidateApkPath(apkPath) {
   return resolved;
 }
 
-function runAdb(args, options = {}) {
-  return execFileSync('adb', args, options);
+async function runAdb(args, options = {}) {
+  return execFileAsync('adb', args, { ...options, encoding: 'utf-8' });
 }
 
 function escapeXml(value) {
@@ -112,37 +118,37 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
     throw new Error('IP и deviceId обязательны');
   }
 
-  if (!commandExists('adb')) {
+  if (!await commandExists('adb')) {
     throw new Error('adb не установлен в системе. Установите пакет android-tools/adb и повторите попытку.');
   }
 
-  if (!fs.existsSync(safeApkPath)) {
+  try {
+    const apkStats = await fs.promises.stat(safeApkPath);
+    if (!apkStats.isFile()) {
+      throw new Error('APK путь должен указывать на файл');
+    }
+  } catch {
     throw new Error('APK файл не найден');
-  }
-
-  const apkStats = fs.statSync(safeApkPath);
-  if (!apkStats.isFile()) {
-    throw new Error('APK путь должен указывать на файл');
   }
 
   const adbTarget = `${host}:5555`;
 
   // Проверяем adb connect
-  const out = runAdb(['connect', adbTarget], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const out = await runAdb(['connect', adbTarget], { stdio: ['ignore', 'pipe', 'pipe'] });
   if (!out.includes('connected') && !out.includes('already connected')) {
     throw new Error(`adb не удалось подключиться к ${adbTarget}: ${out}`);
   }
 
   // Установка APK
-  runAdb(['connect', adbTarget], { stdio: 'ignore' });
-  runAdb(['-s', adbTarget, 'install', '-r', safeApkPath], { stdio: 'ignore' });
+  await runAdb(['connect', adbTarget], { stdio: 'ignore' });
+  await runAdb(['-s', adbTarget, 'install', '-r', safeApkPath], { stdio: 'ignore' });
 
   // Запуск приложения для создания папок
-  runAdb(['-s', adbTarget, 'shell', 'monkey', '-p', 'com.videocontrol.mediaplayer', '-c', 'android.intent.category.LAUNCHER', '1'], { stdio: 'ignore' });
+  await runAdb(['-s', adbTarget, 'shell', 'monkey', '-p', 'com.videocontrol.mediaplayer', '-c', 'android.intent.category.LAUNCHER', '1'], { stdio: 'ignore' });
   await new Promise(r => setTimeout(r, 7000));
 
   // Остановка приложения
-  runAdb(['-s', adbTarget, 'shell', 'am', 'force-stop', 'com.videocontrol.mediaplayer'], { stdio: 'ignore' });
+  await runAdb(['-s', adbTarget, 'shell', 'am', 'force-stop', 'com.videocontrol.mediaplayer'], { stdio: 'ignore' });
 
   // Формируем XML-файл настроек
   const urlForXml = normalizeServerUrlForXml(serverUrl);
@@ -153,14 +159,13 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
   const prefsPath = `/data/data/com.videocontrol.mediaplayer/shared_prefs/VCMediaPlayerSettings.xml`;
 
   // Передаем XML напрямую через stdin в файл на устройстве, не создавая временный файл на сервере.
-  runAdb(['-s', adbTarget, 'shell', 'sh', '-c', `cat > ${tmpDevicePath}`], {
+  await runAdb(['-s', adbTarget, 'shell', 'sh', '-c', `cat > ${tmpDevicePath}`], {
     input: xmlSettings,
-    encoding: 'utf-8',
     stdio: ['pipe', 'ignore', 'pipe']
   });
-  runAdb(['-s', adbTarget, 'shell', 'run-as', 'com.videocontrol.mediaplayer', 'cp', tmpDevicePath, prefsPath], { stdio: 'inherit' });
-  runAdb(['-s', adbTarget, 'shell', 'rm', '-f', tmpDevicePath], { stdio: 'ignore' });
+  await runAdb(['-s', adbTarget, 'shell', 'run-as', 'com.videocontrol.mediaplayer', 'cp', tmpDevicePath, prefsPath], { stdio: 'inherit' });
+  await runAdb(['-s', adbTarget, 'shell', 'rm', '-f', tmpDevicePath], { stdio: 'ignore' });
 
   // Снова запускаем приложение с новыми настройками
-  runAdb(['-s', adbTarget, 'shell', 'monkey', '-p', 'com.videocontrol.mediaplayer', '-c', 'android.intent.category.LAUNCHER', '1'], { stdio: 'ignore' });
+  await runAdb(['-s', adbTarget, 'shell', 'monkey', '-p', 'com.videocontrol.mediaplayer', '-c', 'android.intent.category.LAUNCHER', '1'], { stdio: 'ignore' });
 }

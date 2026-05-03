@@ -1,8 +1,8 @@
 import express from 'express';
 import multer from 'multer';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { requireAdmin } from '../middleware/auth.js';
 import logger from '../utils/logger.js';
 import { installAndSetupApk } from '../utils/apk-installer.js';

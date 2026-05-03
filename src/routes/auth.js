@@ -5,7 +5,7 @@
 
 import express from 'express';
 import bcrypt from 'bcrypt';
-import crypto from 'crypto';
+import crypto from 'node:crypto';
 import { body, validationResult } from 'express-validator';
 import { getDatabase } from '../database/database.js';
 import { getLdapAuthSettings } from '../config/settings-manager.js';

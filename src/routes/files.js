@@ -4,13 +4,13 @@
  */
 
 import express from 'express';
-import fs from 'fs';
-import path from 'path';
-import crypto from 'crypto';
-import os from 'os';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import os from 'node:os';
 import archiver from 'archiver';
 import sanitizeFilename from 'sanitize-filename';
-import { spawn } from 'child_process';
+import { spawn } from 'node:child_process';
 import { getDevicesPath, getDataRoot } from '../config/settings-manager.js';
 import { ROOT } from '../config/constants.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';

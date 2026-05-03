@@ -1,5 +1,5 @@
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 import { ROOT, DEFAULT_DEVICES_PATH, DEFAULT_DATA_ROOT, setDevicesPath, DEVICES } from './constants.js';
 import { validatePath } from '../utils/path-validator.js';
 
