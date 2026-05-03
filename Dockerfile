@@ -41,6 +41,9 @@ LABEL maintainer="ya-k0v"
 LABEL description="MMRC - Media Management and Remote Control System"
 LABEL version="3.2.1"
 
+# Enable community repo for ffmpeg
+RUN echo "http://dl-cdn.alpinelinux.org/alpine/v3.19/community" >> /etc/apk/repositories
+
 # Install runtime dependencies (alpine packages)
 RUN apk add --no-cache \
     ffmpeg \
