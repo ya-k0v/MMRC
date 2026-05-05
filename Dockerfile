@@ -44,6 +44,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-noto-cjk \
     nginx \
     imagemagick \
+    libreoffice-impress \
+    libreoffice-impress \
     tini \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
     && mkdir -p /var/log/nginx /run/nginx /etc/nginx/ssl /etc/nginx/ssl-certs
@@ -71,7 +73,6 @@ COPY docker/nginx/nginx.conf /etc/nginx/nginx.conf
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 RUN mkdir -p /app/data/{db,content,streams,converted/trailers,logs,temp,hero} /app/.tmp
-RUN mkdir -p /opt/mmrc-bin && ln -sf /opt/mmrc-bin/soffice /usr/local/bin/soffice || true
 
 ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0 LOG_LEVEL=info \
     MMRC_DATA_DIR=/app/data CONTENT_ROOT=/app/data \

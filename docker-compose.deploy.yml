@@ -1,13 +1,9 @@
 services:
-  # ========================
-  # Основной сервер MMRC (единственный с внешними портами)
-  # ========================
-  mmrc-server:
+  mmrc:
     image: ${DOCKER_IMAGE:-pingwin1900/mmrc}:latest
-    container_name: mmrc-server
+    container_name: mmrc
     restart: unless-stopped
     environment:
-      - ROLE=server
       - NODE_ENV=${NODE_ENV:-production}
       - PORT=3000
       - HOST=0.0.0.0
@@ -27,7 +23,6 @@ services:
       - JOB_RESERVE_MEMORY_MB=${JOB_RESERVE_MEMORY_MB:-2048}
       - STREAM_MAX_JOBS=${STREAM_MAX_JOBS:-100}
       - STREAM_IDLE_TIMEOUT_MS=${STREAM_IDLE_TIMEOUT_MS:-180000}
-      # LDAP (optional)
       - LDAP_URL=${LDAP_URL:-ldap://disabled}
       - LDAP_BIND_DN=${LDAP_BIND_DN:-cn=admin,dc=disabled}
       - LDAP_SEARCH_BASE=${LDAP_SEARCH_BASE:-dc=disabled}
@@ -38,7 +33,6 @@ services:
       - ${CONTENT_DIR:-./data}:/app/data
       - mmrc-config:/app/config
       - mmrc-temp:/app/.tmp
-      - mmrc-bin:/opt/mmrc-bin
       - mmrc-certs:/etc/nginx/ssl-certs:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:80/health"]
@@ -51,105 +45,12 @@ services:
         aliases:
           - mmrc-server
 
-  # ========================
-  # Converter (LibreOffice)
-  # ========================
-  mmrc-converter:
-    image: ${DOCKER_CONVERTER_IMAGE:-pingwin1900/mmrc-converter}:latest
-    container_name: mmrc-converter
-    restart: unless-stopped
-    volumes:
-      - mmrc-bin:/out
-    networks:
-      - mmrc-network
-    deploy:
-      replicas: 1
-      resources:
-        limits:
-          memory: ${CONVERTER_MEMORY_LIMIT:-1G}
-
-  mmrc-optimizer:
-    image: ${DOCKER_OPTIMIZER_IMAGE:-pingwin1900/mmrc-optimizer}:latest
-    container_name: mmrc-optimizer
-    restart: unless-stopped
-    environment:
-      - ROLE=optimizer
-      - NODE_ENV=${NODE_ENV:-production}
-      - JWT_SECRET=${JWT_SECRET}
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-      - MMRC_DATA_DIR=/app/data
-      - CONTENT_ROOT=/app/data
-      - STREAMS_OUTPUT_DIR=/app/data/streams
-      - LOGS_DIR=/app/data/logs
-      - SERVER_URL=http://mmrc-server:3000
-      - ADMIN_INTERNAL_API_URL=http://mmrc-server:3000
-      - NIGHT_OPT_START_HOUR=${NIGHT_OPT_START_HOUR:-1}
-      - NIGHT_OPT_END_HOUR=${NIGHT_OPT_END_HOUR:-5}
-      - JOB_RESERVE_CPU_PERCENT=${OPTIMIZER_CPU_PERCENT:-50}
-      - JOB_RESERVE_MEMORY_MB=${OPTIMIZER_MEMORY_MB:-4096}
-      - JOB_MAX_SINGLE_JOB_PERCENT=${OPTIMIZER_MAX_SINGLE_JOB:-80}
-    volumes:
-      - ${CONTENT_DIR:-./data}:/app/data
-      - mmrc-config:/app/config
-      - mmrc-temp:/app/.tmp
-    depends_on:
-      - mmrc-converter
-      - mmrc-server
-    networks:
-      - mmrc-network
-    deploy:
-      resources:
-        limits:
-          cpus: "${OPTIMIZER_CPU_LIMIT:-4.0}"
-          memory: ${OPTIMIZER_MEMORY_LIMIT:-8G}
-
-  # ========================
-  # Стрим-воркер (HLS/DASH, только внутренняя сеть)
-  # ========================
-  mmrc-streamer:
-    image: ${DOCKER_STREAMER_IMAGE:-pingwin1900/mmrc-streamer}:latest
-    container_name: mmrc-streamer
-    restart: unless-stopped
-    environment:
-      - ROLE=streamer
-      - NODE_ENV=${NODE_ENV:-production}
-      - JWT_SECRET=${JWT_SECRET}
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-      - MMRC_DATA_DIR=/app/data
-      - CONTENT_ROOT=/app/data
-      - STREAMS_OUTPUT_DIR=/app/data/streams
-      - LOGS_DIR=/app/data/logs
-      - SERVER_URL=http://mmrc-server:3000
-      - ADMIN_INTERNAL_API_URL=http://mmrc-server:3000
-      - STREAM_MAX_JOBS=${STREAM_MAX_JOBS:-100}
-      - STREAM_IDLE_TIMEOUT_MS=${STREAM_IDLE_TIMEOUT_MS:-180000}
-      - JOB_RESERVE_CPU_PERCENT=${STREAMER_CPU_PERCENT:-40}
-      - JOB_RESERVE_MEMORY_MB=${STREAMER_MEMORY_MB:-2048}
-      - JOB_MAX_SINGLE_JOB_PERCENT=${STREAMER_MAX_SINGLE_JOB:-70}
-    volumes:
-      - ${CONTENT_DIR:-./data}:/app/data
-      - mmrc-config:/app/config
-      - mmrc-temp:/app/.tmp
-    depends_on:
-      - mmrc-converter
-      - mmrc-server
-    networks:
-      - mmrc-network
-    deploy:
-      resources:
-        limits:
-          cpus: "${STREAMER_CPU_LIMIT:-2.0}"
-          memory: ${STREAMER_MEMORY_LIMIT:-4G}
-
 volumes:
   mmrc-config:
     driver: local
   mmrc-temp:
     driver: local
   mmrc-certs:
-    driver: local
-
-  mmrc-bin:
     driver: local
 
 networks:

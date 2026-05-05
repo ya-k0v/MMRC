@@ -65,7 +65,7 @@ mmrc ssl          # Настройка SSL сертификата
 
 | Сервис | Описание | Порты |
 |--------|----------|-------|
-| `mmrc-server` | Основной сервер (API + Socket.IO + UI) | 3000 |
+| `mmrc` | Основной сервер (API + Socket.IO + UI) | 3000 |
 | `mmrc-optimizer` | Воркер ночной оптимизации видео | - |
 | `mmrc-streamer` | Воркер HLS/DASH стриминга | - |
 
@@ -215,7 +215,7 @@ make restore BACKUP=main-2024-01-01_1200.db
 
 ```bash
 # Бэкап через sqlite3
-docker compose exec mmrc-server sqlite3 /app/config/main.db ".backup /data/main-backup.db"
+docker compose exec mmrc sqlite3 /app/config/main.db ".backup /data/main-backup.db"
 
 # Копирование на хост
 docker cp mmrc-config:/app/config/main.db ./main.db.backup
@@ -298,7 +298,7 @@ docker volume inspect mmrc_mmrc-data
 
 ```bash
 # Проверить FFmpeg в контейнере
-docker compose exec mmrc-server ffmpeg -version
+docker compose exec mmrc ffmpeg -version
 ```
 
 ### Проблемы с производительностью
@@ -319,7 +319,7 @@ OPTIMIZER_MEMORY_LIMIT=16G
 docker system prune -a --volumes
 
 # Очистить кэш трейлеров
-docker compose exec mmrc-server find /data/cache/trailers -type f -mtime +7 -delete
+docker compose exec mmrc find /data/cache/trailers -type f -mtime +7 -delete
 ```
 
 ---

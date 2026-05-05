@@ -182,13 +182,7 @@ JOB_RESERVE_CPU_PERCENT=30
 JOB_RESERVE_MEMORY_MB=2048
 JOB_MAX_SINGLE_JOB_PERCENT=70
 
-# Optimizer Worker
-OPTIMIZER_CPU_LIMIT=4.0
-OPTIMIZER_MEMORY_LIMIT=8G
 
-# Stream Worker
-STREAMER_CPU_LIMIT=2.0
-STREAMER_MEMORY_LIMIT=4G
 STREAM_MAX_JOBS=100
 STREAM_IDLE_TIMEOUT_MS=180000
 
@@ -346,9 +340,7 @@ cmd_logs() {
 
     if [ -n "$1" ]; then
         case $1 in
-            server) $COMPOSE logs -f mmrc-server ;;
-            optimizer) $COMPOSE logs -f mmrc-optimizer ;;
-            streamer) $COMPOSE logs -f mmrc-streamer ;;
+            server) $COMPOSE logs -f mmrc ;;
             nginx) $COMPOSE logs -f mmrc-nginx ;;
             *) $COMPOSE logs -f "$1" ;;
         esac
@@ -423,13 +415,13 @@ cmd_backup() {
     cd "$APP_DIR"
 
     if [ -f "config/main.db" ]; then
-        docker compose exec -T mmrc-server sqlite3 /app/config/main.db ".backup /app/config/main.db.backup"
+        docker compose exec -T mmrc sqlite3 /app/config/main.db ".backup /app/config/main.db.backup"
         cp "config/main.db.backup" "$BACKUP_DIR/main-${TIMESTAMP}.db"
         success "Main database backed up"
     fi
 
     if [ -f "config/hero/heroes.db" ]; then
-        docker compose exec -T mmrc-server sqlite3 /app/config/hero/heroes.db ".backup /app/config/hero/heroes.db.backup"
+        docker compose exec -T mmrc sqlite3 /app/config/hero/heroes.db ".backup /app/config/hero/heroes.db.backup"
         cp "config/hero/heroes.db.backup" "$BACKUP_DIR/heroes-${TIMESTAMP}.db"
         success "Heroes database backed up"
     fi
@@ -506,7 +498,7 @@ cmd_shell() {
     detect_compose
     cd "$APP_DIR"
 
-    SERVICE="${1:-mmrc-server}"
+    SERVICE="${1:-mmrc}"
     info "Opening shell in $SERVICE..."
     $COMPOSE exec "$SERVICE" /bin/sh
 }

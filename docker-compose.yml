@@ -1,12 +1,9 @@
 services:
-  # ========================
-  # Основной сервер MMRC (единственный с внешними портами)
-  # ========================
-  mmrc-server:
+  mmrc:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: mmrc-server
+    container_name: mmrc
     restart: unless-stopped
     environment:
       - NODE_ENV=${NODE_ENV:-production}
@@ -28,7 +25,6 @@ services:
       - JOB_RESERVE_MEMORY_MB=${JOB_RESERVE_MEMORY_MB:-2048}
       - STREAM_MAX_JOBS=${STREAM_MAX_JOBS:-100}
       - STREAM_IDLE_TIMEOUT_MS=${STREAM_IDLE_TIMEOUT_MS:-180000}
-      # LDAP (опционально)
       - LDAP_URL=${LDAP_URL:-}
       - LDAP_BIND_DN=${LDAP_BIND_DN:-}
       - LDAP_SEARCH_BASE=${LDAP_SEARCH_BASE:-}
@@ -39,7 +35,6 @@ services:
       - mmrc-data:/app/data
       - mmrc-config:/app/config
       - mmrc-temp:/app/.tmp
-      - mmrc-bin:/opt/mmrc-bin
       - ./docker/nginx/ssl:/etc/nginx/ssl:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:80/health"]
@@ -52,111 +47,12 @@ services:
         aliases:
           - mmrc-server
 
-  # Optional converter sidecar - provides LibreOffice soffice binary into shared volume
-  mmrc-converter:
-    build:
-      context: .
-      dockerfile: Dockerfile.converter
-    container_name: mmrc-converter
-    restart: unless-stopped
-    volumes:
-      - mmrc-bin:/out
-    networks:
-      - mmrc-network
-    deploy:
-      replicas: 1
-      resources:
-        limits:
-          memory: ${CONVERTER_MEMORY_LIMIT:-1G}
-
-  # ========================
-  # Воркер ночной оптимизации (только внутренняя сеть)
-  # ========================
-  mmrc-optimizer-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.optimizer
-    container_name: mmrc-optimizer-worker
-    restart: unless-stopped
-    environment:
-      - NODE_ENV=${NODE_ENV:-production}
-      - WORKER_MODE=optimizer
-      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-      - MMRC_DATA_DIR=/app/data
-      - CONTENT_ROOT=/app/data
-      - STREAMS_OUTPUT_DIR=/app/data/streams
-      - LOGS_DIR=/app/data/logs
-      - SERVER_URL=http://mmrc-server:3000
-      - ADMIN_INTERNAL_API_URL=http://mmrc-server:3000
-      - NIGHT_OPT_START_HOUR=${NIGHT_OPT_START_HOUR:-1}
-      - NIGHT_OPT_END_HOUR=${NIGHT_OPT_END_HOUR:-5}
-      - JOB_RESERVE_CPU_PERCENT=${OPTIMIZER_CPU_PERCENT:-50}
-      - JOB_RESERVE_MEMORY_MB=${OPTIMIZER_MEMORY_MB:-4096}
-      - JOB_MAX_SINGLE_JOB_PERCENT=${OPTIMIZER_MAX_SINGLE_JOB:-80}
-    volumes:
-      - mmrc-data:/app/data
-      - mmrc-config:/app/config
-      - mmrc-temp:/app/.tmp
-    networks:
-      - mmrc-network
-    depends_on:
-      - mmrc-server
-    deploy:
-      resources:
-        limits:
-          cpus: "${OPTIMIZER_CPU_LIMIT:-4.0}"
-          memory: ${OPTIMIZER_MEMORY_LIMIT:-8G}
-
-  # ========================
-  # Стрим-воркер (HLS/DASH, только внутренняя сеть)
-  # ========================
-  mmrc-stream-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.streamer
-    container_name: mmrc-stream-worker
-    restart: unless-stopped
-    environment:
-      - NODE_ENV=${NODE_ENV:-production}
-      - WORKER_MODE=streamer
-      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-      - MMRC_DATA_DIR=/app/data
-      - CONTENT_ROOT=/app/data
-      - STREAMS_OUTPUT_DIR=/app/data/streams
-      - LOGS_DIR=/app/data/logs
-      - SERVER_URL=http://mmrc-server:3000
-      - ADMIN_INTERNAL_API_URL=http://mmrc-server:3000
-      - STREAM_MAX_JOBS=${STREAM_MAX_JOBS:-100}
-      - STREAM_IDLE_TIMEOUT_MS=${STREAM_IDLE_TIMEOUT_MS:-180000}
-      - JOB_RESERVE_CPU_PERCENT=${STREAMER_CPU_PERCENT:-40}
-      - JOB_RESERVE_MEMORY_MB=${STREAMER_MEMORY_MB:-2048}
-      - JOB_MAX_SINGLE_JOB_PERCENT=${STREAMER_MAX_SINGLE_JOB:-70}
-      - RESTREAM_SEGMENT_DURATION=${RESTREAM_SEGMENT_DURATION:-4}
-      - RESTREAM_PLAYLIST_SIZE=${RESTREAM_PLAYLIST_SIZE:-6}
-    volumes:
-      - mmrc-data:/app/data
-      - mmrc-config:/app/config
-      - mmrc-temp:/app/.tmp
-    networks:
-      - mmrc-network
-    depends_on:
-      - mmrc-server
-    deploy:
-      resources:
-        limits:
-          cpus: "${STREAMER_CPU_LIMIT:-2.0}"
-          memory: ${STREAMER_MEMORY_LIMIT:-4G}
-
 volumes:
   mmrc-data:
     driver: local
   mmrc-config:
     driver: local
   mmrc-temp:
-    driver: local
-  mmrc-bin:
     driver: local
 
 networks:
