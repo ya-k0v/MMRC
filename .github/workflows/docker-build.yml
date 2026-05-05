@@ -31,30 +31,3 @@ jobs:
           push: true
           tags: pingwin1900/mmrc:latest
           platforms: linux/amd64
-
-      - name: Build and push Optimizer image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile.optimizer
-          push: true
-          tags: pingwin1900/mmrc-optimizer:latest
-          platforms: linux/amd64
-
-      - name: Build and push Streamer image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile.streamer
-          push: true
-          tags: pingwin1900/mmrc-streamer:latest
-          platforms: linux/amd64
-
-      - name: Build and push Converter image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile.converter
-          push: true
-          tags: pingwin1900/mmrc-converter:latest
-          platforms: linux/amd64
