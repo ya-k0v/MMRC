@@ -82,9 +82,9 @@ DATA_DIR="${MMRC_DATA_DIR:-${CONTENT_ROOT:-/app/data}}"
 mkdir -p "${DATA_DIR}/db"
 mkdir -p "${DATA_DIR}/content"
 mkdir -p "${DATA_DIR}/streams"
-mkdir -p "${DATA_DIR}/cache/trailers"
-mkdir -p "${DATA_DIR}/cache/converted"
+mkdir -p "${DATA_DIR}/converted/trailers"
 mkdir -p "${DATA_DIR}/logs"
+mkdir -p "${DATA_DIR}/temp"
 mkdir -p "${DATA_DIR}/hero"
 mkdir -p /app/.tmp
 

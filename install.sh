@@ -185,8 +185,8 @@ STREAMER_MEMORY_LIMIT=4G
 STREAM_MAX_JOBS=100
 STREAM_IDLE_TIMEOUT_MS=180000
 
-# Content Storage (external disk)
-CONTENT_DIR=/mnt/mmrc-content
+# Content Storage (project dir by default)
+CONTENT_DIR=/opt/mmrc/data
 
 # LDAP (optional)
 LDAP_URL=
@@ -199,7 +199,7 @@ ENVEOF2
     echo ""
     colorized_echo yellow "📁 Where do you want to store media content?"
     echo ""
-    echo "  Default: project directory ($(pwd)/data/content)"
+    echo "  Default: project directory ($INSTALL_DIR/data)"
     echo "  External disk: /mnt/mmrc-content"
     echo "  Custom path: /your/path"
     echo ""
@@ -207,12 +207,12 @@ ENVEOF2
     while [ -z "$content_dir" ]; do
         read -p "  Enter path [default: project dir]: " content_dir < /dev/tty
         if [ -z "$content_dir" ]; then
-            content_dir="$INSTALL_DIR/data/content"
+            content_dir="$INSTALL_DIR/data"
         fi
     done
 
     sed -i "s|^CONTENT_DIR=.*|CONTENT_DIR=${content_dir}|" "$ENV_FILE"
-    mkdir -p "$content_dir"/{content,streams,cache/trailers,cache/converted,logs}
+    mkdir -p "$content_dir"/{db,content,streams,converted/trailers,logs,temp,hero}
     chown -R 1001:1001 "$content_dir" 2>/dev/null || true
     success "Content directory: $content_dir"
 

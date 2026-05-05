@@ -47,6 +47,12 @@ dev/
 clients/
 
 # Allow Android release APK to be included in image for automatic installation
+!clients/
+!clients/android-mediaplayer/
+!clients/android-mediaplayer/app/
+!clients/android-mediaplayer/app/build/
+!clients/android-mediaplayer/app/build/outputs/
+!clients/android-mediaplayer/app/build/outputs/apk/
 !clients/android-mediaplayer/app-release.apk
 !clients/android-mediaplayer/app/build/outputs/apk/**
 
@@ -64,10 +70,14 @@ temp/
 .tmp/
 
 # Logs (handled by volume)
+data/
 data/logs
 data/content
 data/streams
-data/cache
+data/converted
+data/temp
+data/db
+data/hero
 
 # Config databases (handled by volume)
 config/*.db

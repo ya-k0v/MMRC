@@ -70,11 +70,11 @@ COPY docker-entrypoint.sh /usr/local/bin/
 COPY docker/nginx/nginx.conf /etc/nginx/nginx.conf
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-RUN mkdir -p /app/data/{db,content,streams,cache/converted,cache/trailers,logs,hero} /app/.tmp
+RUN mkdir -p /app/data/{db,content,streams,converted/trailers,logs,temp,hero} /app/.tmp
 RUN mkdir -p /opt/mmrc-bin && ln -sf /opt/mmrc-bin/soffice /usr/local/bin/soffice || true
 
 ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0 LOG_LEVEL=info \
-    MMRC_DATA_DIR=/app/data CONTENT_ROOT=/app/data/content \
+    MMRC_DATA_DIR=/app/data CONTENT_ROOT=/app/data \
     STREAMS_OUTPUT_DIR=/app/data/streams LOGS_DIR=/app/data/logs
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \

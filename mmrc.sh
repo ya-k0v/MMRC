@@ -196,8 +196,8 @@ STREAM_IDLE_TIMEOUT_MS=180000
 NGINX_HTTP_PORT=80
 NGINX_HTTPS_PORT=443
 
-# Content Storage (external disk)
-CONTENT_DIR=/mnt/mmrc-content
+# Content Storage (project dir by default)
+CONTENT_DIR=$APP_DIR/data
 
 # LDAP (optional)
 LDAP_URL=
@@ -209,18 +209,18 @@ ENVEOF
     # Ask about content directory
     echo ""
     colorized_echo yellow "📁 Where do you want to store media content?"
-    colorized_echo yellow "Default: $APP_DIR/data/content"
+    colorized_echo yellow "Default: $APP_DIR/data"
     content_dir=""
     while [ -z "$content_dir" ]; do
-        read -p "  Enter path [default: $APP_DIR/data/content]: " content_dir < /dev/tty
+        read -p "  Enter path [default: $APP_DIR/data]: " content_dir < /dev/tty
         if [ -z "$content_dir" ]; then
-            content_dir="$APP_DIR/data/content"
+            content_dir="$APP_DIR/data"
         fi
     done
     replace_or_append_env "CONTENT_DIR" "$content_dir"
 
-    # Create content directory
-    mkdir -p "$content_dir"
+    # Create content directory structure
+    mkdir -p "$content_dir"/{db,content,streams,converted/trailers,logs,temp,hero}
     success "Content directory created: $content_dir"
 
     # SSL Setup

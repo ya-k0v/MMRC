@@ -31,10 +31,11 @@ COPY config /app/config
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-RUN mkdir -p /app/data/{content,streams,cache/converted,cache/trailers,logs} /app/config/hero /app/.tmp
+RUN mkdir -p /app/data/{content,streams,converted/trailers,logs,temp} /app/config/hero /app/.tmp
 
 ENV NODE_ENV=production PORT=3002 HOST=0.0.0.0 LOG_LEVEL=info WORKER_MODE=streamer \
-    CONTENT_ROOT=/app/data STREAMS_OUTPUT_DIR=/app/data/streams LOGS_DIR=/app/data/logs
+    MMRC_DATA_DIR=/app/data CONTENT_ROOT=/app/data \
+    STREAMS_OUTPUT_DIR=/app/data/streams LOGS_DIR=/app/data/logs
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://127.0.0.1:3002/health || exit 1
