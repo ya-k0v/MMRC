@@ -17,7 +17,7 @@
     "ytdlp:version": "./bin/yt-dlp --version"
   },
   "dependencies": {
-    "archiver": "^7.0.1",
+    "archiver": "^8.0.0",
     "bcrypt": "^6.0.0",
     "better-sqlite3": "^12.9.0",
     "dotenv": "^17.4.2",
