@@ -4,14 +4,15 @@
  */
 
 import express from 'express';
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 import { getAnyFileMetadataBySafeName, getFileMetadata } from '../database/files-metadata.js';
+import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { validatePath } from '../utils/path-validator.js';
 import { getDataRoot } from '../config/settings-manager.js';
 import logger from '../utils/logger.js';
-import { spawn } from 'child_process';
+import { spawn } from 'node:child_process';
 
 const router = express.Router();
 
@@ -140,16 +141,7 @@ router.get('/resolve-all/*fileName', async (req, res) => {
 
   if (!metadata || !metadata.file_path || !fs.existsSync(metadata.file_path)) {
     // Fallback: пробуем физически в общем контенте
-    let fallbackPath;
-    try {
-      fallbackPath = validatePath(
-        path.join('/mnt/videocontrol-data/content', fileName),
-        '/mnt/videocontrol-data/content'
-      );
-    } catch (err) {
-      logger.warn('[Resolver] Invalid fallback path in resolve-all', { fileName, error: err.message });
-      return res.status(400).send('Invalid path');
-    }
+    const fallbackPath = path.join(getDevicesPath(), fileName);
     if (fs.existsSync(fallbackPath)) {
       const stat = fs.statSync(fallbackPath);
       metadata = {
@@ -185,7 +177,7 @@ router.get('/resolve/:deviceId/*fileName', async (req, res) => {
     // Попробуем без привязки к устройству
     metadata = await getAnyFileMetadataBySafeName(fileName);
     if (!metadata || !metadata.file_path || !fs.existsSync(metadata.file_path)) {
-      const fallbackPath = path.join('/mnt/videocontrol-data/content', fileName);
+      const fallbackPath = path.join(getDevicesPath(), fileName);
       if (fs.existsSync(fallbackPath)) {
         const stat = fs.statSync(fallbackPath);
         metadata = {

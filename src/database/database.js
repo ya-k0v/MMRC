@@ -1,5 +1,11 @@
-import fs from 'fs';
-import path from 'path';
+/**
+ * Database module - SQLite database for MMRC
+ * @module database/database
+ */
+
+import Database from 'better-sqlite3';
+import fs from 'node:fs';
+import path from 'node:path';
 import { withRetrySync, isRetryableDatabaseError } from '../utils/retry.js';
 import { circuitBreakers } from '../utils/circuit-breaker.js';
 import logger from '../utils/logger.js';
@@ -14,8 +20,13 @@ let driver = null;
 let driverType = 'sqlite';
 let dbPath = null;
 
-export async function initDatabase(config) {
-  if (driver) {
+/**
+ * Инициализация базы данных
+ * @param {string} dbPath - Путь к файлу БД (по умолчанию: /var/lib/mmrc-data/db/main.db)
+ * @returns {Database} Экземпляр БД
+ */
+export function initDatabase(initialDbPath) {
+  if (db) {
     logger.info('[DB] Database already initialized');
     return driver;
   }
@@ -25,7 +36,15 @@ export async function initDatabase(config) {
   dbPath = resolvedConfig.path || null;
 
   try {
-    driver = await createDriver(resolvedConfig);
+    const dir = path.dirname(dbPath);
+    // Only create directory for local paths, NOT system paths (Docker creates them)
+    if (!fs.existsSync(dir)) {
+      const isSystemPath = dir.startsWith('/var/') || dir.startsWith('/etc/') || dir.startsWith('/usr/');
+      if (isSystemPath) {
+        throw new Error(`Database directory does not exist: ${dir}. Docker should create it.`);
+      }
+      fs.mkdirSync(dir, { recursive: true });
+    }
 
     const schemaSql = getSchemaSql(driverType);
     await driver.exec(schemaSql);

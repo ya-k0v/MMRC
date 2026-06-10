@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { heroQueries } from '../database/queries.js';
-import path from 'path';
-import fs from 'fs';
-import crypto from 'crypto';
+import { HERO_DB_PATH, LEGACY_HERO_DB_PATH, reloadHeroDb } from '../database/hero-db.js';
+import path from 'node:path';
+import fs from 'node:fs';
+import crypto from 'node:crypto';
 import logger from '../../utils/logger.js';
 import { createLimiter, deleteLimiter } from '../../middleware/rate-limit.js';
 import { validatePath } from '../../utils/path-validator.js';

@@ -4,8 +4,8 @@
  * @module video/resolution-cache
  */
 
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 
 // In-memory кэш: { filePath: { width, height, duration, mtime, lastAccess } }
 const resolutionCache = new Map();

@@ -3,10 +3,10 @@
  * @module converters/document-converter
  */
 
-import fs from 'fs';
-import path from 'path';
-import { execFile } from 'child_process';
-import util from 'util';
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
+import util from 'node:util';
 import { fromPath } from 'pdf2pic';
 import { PDFDocument } from 'pdf-lib';
 import { getDataRoot, getDevicesPath } from '../config/settings-manager.js';

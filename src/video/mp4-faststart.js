@@ -30,9 +30,9 @@
  * что позволяет ExoPlayer сразу получить всю необходимую информацию для перемотки.
  */
 
-import { spawn } from 'child_process';
-import fs from 'fs';
-import path from 'path';
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import logger from '../utils/logger.js';
 
 /**

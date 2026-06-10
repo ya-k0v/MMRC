@@ -3,8 +3,8 @@
  * @module video/ffmpeg-wrapper
  */
 
-import { execFile } from 'child_process';
-import util from 'util';
+import { execFile } from 'node:child_process';
+import util from 'node:util';
 import logger from '../utils/logger.js';
 
 const execFileAsync = util.promisify(execFile);

@@ -3,8 +3,8 @@
  * @module utils/path-validator
  */
 
-import path from 'path';
-import fs from 'fs';
+import path from 'node:path';
+import fs from 'node:fs';
 
 /**
  * Валидация пути для защиты от path traversal

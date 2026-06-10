@@ -3,10 +3,10 @@
  * @module utils/update-manager
  */
 
-import fs from 'fs';
-import path from 'path';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { ROOT } from '../config/constants.js';
 import logger from './logger.js';
 import { notificationsManager } from './notifications.js';

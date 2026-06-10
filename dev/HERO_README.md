@@ -1,4 +1,4 @@
-# 🎖️ Hero Module — Картотека героев
+# 🎖️ Hero Module — Картотека героев MMRC 3.2.1
 
 ## Описание
 
@@ -32,25 +32,28 @@ Hero Module предназначен для:
 **Админ-панель:**
 - `public/hero/admin.html` — админ-панель героев (CRUD операции)
 - `public/hero/js/hero-admin.js` — клиентский код для админ-панели
-- `public/hero/js/hero-utils.js` — общие утилиты
 
 **Стили:**
 - `public/css/hero.css` — стили для панелей героев
 
 ### Серверный код (Backend)
 
-- `src/hero/index.js` — главный экспорт модуля (создание роутера)
-- `src/hero/routes/hero-router.js` — API роуты для героев
+- `src/hero/index.js` — главный экспорт модуля
+- `src/hero/routes/hero-router.js` — API роуты
 - `src/hero/database/hero-db.js` — инициализация базы данных
 - `src/hero/database/queries.js` — запросы к базе данных
 - `src/hero/database/schema.sql` — схема базы данных
 
 ### База данных
 
-- `config/hero/heroes.db` — SQLite база данных героев (создается автоматически при первом запуске)
+- `config/hero/heroes.db` — SQLite база данных героев
 
 **Схема БД:**
 - `heroes` — таблица героев (id, full_name, biography, photo_url, video_url, created_at, updated_at)
+- `hero_media` — медиаматериалы (хранятся как base64 в SQLite)
+
+**Миграции:**
+- Автоматическая миграция из старой `config/heroes.db` в новую `config/hero/`
 - Автоматические миграции при старте сервера
 
 ---
@@ -80,7 +83,7 @@ Hero Module предназначен для:
 **Особенности поиска:**
 - Поиск по началу строки (prefix search)
 - Регистронезависимый поиск
-- Нормализация 'е' и 'ё' (например: "Елена" найдёт "Елена" и "Ёлена")
+- **Нормализация 'е' и 'ё'** (например: "Елена" найдёт "Елена" и "Ёлена")
 - Автоматические подсказки при вводе
 
 **API:**
@@ -99,23 +102,9 @@ Hero Module предназначен для:
 - Адаптивный дизайн для разных размеров экранов
 - Lightbox для просмотра фото/видео в полном размере
 
-### Технические детали
-
-**Модули:**
-- `hero.js` — основной код публичной панели
-- `hero-utils.js` — утилиты (поиск, нормализация, отображение)
-
-**API Endpoints:**
-- `GET /api/hero/search?q=query` — поиск героев
-- `GET /api/hero/:id` — получить героя по ID
-
 ---
 
 ## Админ-панель (`/hero/admin.html`)
-
-### Назначение
-
-Админ-панель предназначена для управления картотекой героев (создание, редактирование, удаление).
 
 ### Структура
 
@@ -145,7 +134,6 @@ Hero Module предназначен для:
 
 #### Создание героя
 
-**Шаги:**
 1. Нажать кнопку **"Добавить"** в toolbar
 2. В форме ввести:
    - **ФИО** — полное имя героя (обязательно)
@@ -159,7 +147,6 @@ Hero Module предназначен для:
 
 #### Редактирование героя
 
-**Шаги:**
 1. Выбрать героя из списка
 2. В форме редактирования изменить данные
 3. Нажать **"Сохранить"**
@@ -169,7 +156,6 @@ Hero Module предназначен для:
 
 #### Удаление героя
 
-**Шаги:**
 1. Выбрать героя из списка
 2. Нажать кнопку **"Удалить"** в форме редактирования
 3. Подтвердить удаление
@@ -179,33 +165,12 @@ Hero Module предназначен для:
 
 #### Экспорт базы данных
 
-**Назначение:** Создание резервной копии базы данных героев.
-
 **Шаги:**
 1. Нажать кнопку **"Экспорт БД"** в toolbar
 2. Файл `heroes.db` будет скачан
 
 **API:**
 - `GET /api/hero/export-database` — экспорт базы данных
-
-### Технические детали
-
-**Модули:**
-- `hero-admin.js` — основной код админ-панели
-- `hero-utils.js` — утилиты (поиск, нормализация, валидация)
-
-**API Endpoints:**
-- `GET /api/hero/` — получить всех героев
-- `GET /api/hero/search?q=query` — поиск героев
-- `GET /api/hero/:id` — получить героя по ID
-- `POST /api/hero/` — создать героя
-- `PUT /api/hero/:id` — обновить героя
-- `DELETE /api/hero/:id` — удалить героя
-- `GET /api/hero/export-database` — экспорт БД
-
-**Аутентификация:**
-- Требуется роль `admin` или `hero_admin`
-- JWT токены (access 12h, refresh 30d)
 
 ---
 
@@ -230,21 +195,21 @@ GET /api/hero/
   Response: [{ id, full_name, biography, photo_url, video_url, ... }]
 
 POST /api/hero/
-  Headers: Authorization: Bearer <token> (admin или hero_admin)
+  Headers: Authorization: Bearer <token>
   Body: { full_name, biography?, photo_url?, video_url? }
   Response: { id, full_name, biography, ... }
 
 PUT /api/hero/:id
-  Headers: Authorization: Bearer <token> (admin или hero_admin)
+  Headers: Authorization: Bearer <token>
   Body: { full_name?, biography?, photo_url?, video_url? }
   Response: { id, full_name, biography, ... }
 
 DELETE /api/hero/:id
-  Headers: Authorization: Bearer <token> (admin или hero_admin)
+  Headers: Authorization: Bearer <token>
   Response: { ok: true }
 
 GET /api/hero/export-database
-  Headers: Authorization: Bearer <token> (admin или hero_admin)
+  Headers: Authorization: Bearer <token>
   Response: File download (heroes.db)
 ```
 
@@ -277,6 +242,7 @@ GET /api/hero/export-database
 
 - **Автоматическое создание** — БД создаётся при первом запуске
 - **Автоматические миграции** — схема обновляется при старте сервера
+- **Legacy миграция** — автоматический перенос из старой `config/heroes.db`
 - **Экспорт/импорт** — возможность создания резервных копий
 
 ---
@@ -300,14 +266,7 @@ GET /api/hero/export-database
 3. Выбрать героя из списка подсказок
 4. Просмотреть карточку героя
 
-### Сценарий 3: Редактирование биографии
-
-1. Войти в админ-панель
-2. Выбрать героя из списка
-3. Изменить биографию в форме редактирования
-4. Нажать **"Сохранить"**
-
-### Сценарий 4: Экспорт базы данных
+### Сценарий 3: Экспорт базы данных
 
 1. Войти в админ-панель
 2. Нажать кнопку **"Экспорт БД"**
@@ -342,5 +301,4 @@ GET /api/hero/export-database
 
 ## Версия
 
-**Текущая версия:** 3.2.0  
-**Последнее обновление:** 2025-01-XX
+**Текущая версия:** 3.2.1

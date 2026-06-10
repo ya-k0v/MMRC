@@ -3,10 +3,10 @@
  * @module database/files-metadata
  */
 
-import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
-import { getDatabase, driverType } from './database.js';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { getDatabase } from './database.js';
 import logger, { logFile } from '../utils/logger.js';
 import { isRetryableDatabaseError } from '../utils/retry.js';
 import { STATIC_CONTENT_TYPES } from '../config/file-types.js';

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { initDatabase, getDatabase, driverType } from './database.js';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { initDatabase, getDatabase } from './database.js';
 import { ROOT } from '../config/constants.js';
 import logger from '../utils/logger.js';
 
@@ -74,34 +74,13 @@ async function runRegisteredMigrations(driver) {
   }
 }
 
-export async function runMigrations(dbPath) {
-  const dbType = (process.env.DB_TYPE || 'sqlite').toLowerCase();
-
-  let config;
-  if (dbType === 'postgres') {
-    config = {
-      type: 'postgres',
-      host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '5432', 10),
-      database: process.env.DB_NAME || 'mmrc',
-      user: process.env.DB_USER || 'mmrc',
-      password: process.env.DB_PASSWORD || 'mmrc'
-    };
-  } else {
-    const finalPath = dbPath || path.join(ROOT, 'config', 'main.db');
-    config = { type: 'sqlite', path: finalPath };
-  }
-
-  logger.info('[migrate] Running database initialization/migration', {
-    dbType,
-    ...(dbType === 'postgres'
-      ? { host: config.host, port: config.port, database: config.database }
-      : { dbPath: config.path })
-  });
-
-  await initDatabase(config);
-  const driver = getDatabase();
-  await runRegisteredMigrations(driver);
+export function runMigrations(dbPath) {
+  const DATA_DIR = process.env.MMRC_DATA_DIR || path.join(ROOT, 'data');
+  const finalPath = dbPath || path.join(DATA_DIR, 'db', 'main.db');
+  logger.info('[migrate] Running database initialization/migration', { dbPath: finalPath });
+  initDatabase(finalPath);
+  const db = getDatabase();
+  runRegisteredMigrations(db);
   logger.info('[migrate] Database initialization/migration completed');
 }
 

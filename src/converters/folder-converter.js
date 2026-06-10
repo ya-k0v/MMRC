@@ -3,10 +3,10 @@
  * @module converters/folder-converter
  */
 
-import fs from 'fs';
-import path from 'path';
-import { execFile as execFileCallback } from 'child_process';
-import util from 'util';
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFile as execFileCallback } from 'node:child_process';
+import util from 'node:util';
 import { getDevicesPath, getConvertedCache } from '../config/settings-manager.js';
 import { getAnyFileMetadataBySafeName } from '../database/files-metadata.js';
 import { makeSafeFolderName } from '../utils/transliterate.js';

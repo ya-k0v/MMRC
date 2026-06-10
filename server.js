@@ -2,9 +2,9 @@
 import 'dotenv/config';
 
 import express from 'express';
-import http from 'http';
-import fs from 'fs';
-import path from 'path';
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 // Импорты из модулей
@@ -119,6 +119,46 @@ app.use('/api/', apiSpeedLimiter);
 // ========================================
 // DATABASE INITIALIZATION
 // ========================================
+// Use system-wide data directory if set AND exists, otherwise use project-local data/
+// In Docker: MMRC_DATA_DIR=/var/lib/mmrc-data (created by Dockerfile)
+// Local dev: falls back to ./data/ automatically
+let DATA_DIR = path.join(ROOT, 'data');
+if (process.env.MMRC_DATA_DIR && fs.existsSync(process.env.MMRC_DATA_DIR)) {
+  try {
+    fs.accessSync(process.env.MMRC_DATA_DIR, fs.constants.W_OK);
+    DATA_DIR = process.env.MMRC_DATA_DIR;
+  } catch (err) {
+    logger.warn('[Server] MMRC_DATA_DIR not writable, using local', { dir: process.env.MMRC_DATA_DIR });
+  }
+}
+const DB_PATH = path.join(DATA_DIR, 'db', 'main.db');
+logger.info('[Server] Database path', { dbPath: DB_PATH, dataDir: DATA_DIR });
+try {
+  // Run migrations / ensure schema before continuing startup
+  runMigrations(DB_PATH);
+} catch (err) {
+  logger.error('[Server] Database migration failed, aborting startup', { error: err?.message || String(err) });
+  throw err;
+}
+
+// Запускаем периодический WAL checkpoint для стабильности БД
+// Проверяет размер WAL файла каждую минуту и выполняет checkpoint если > 100MB
+const WAL_CHECKPOINT_INTERVAL_MS = parseInt(process.env.WAL_CHECKPOINT_INTERVAL_MS || '60000', 10); // 60 секунд по умолчанию
+startWalCheckpointInterval(WAL_CHECKPOINT_INTERVAL_MS);
+logger.info('[Server] WAL checkpoint interval started', {
+  intervalMs: WAL_CHECKPOINT_INTERVAL_MS,
+  intervalMinutes: WAL_CHECKPOINT_INTERVAL_MS / 60000,
+  thresholdMB: process.env.WAL_CHECKPOINT_THRESHOLD_MB || '100'
+});
+
+// КРИТИЧНО: Завершаем инициализацию настроек с миграцией путей после инициализации БД
+import('./src/config/settings-manager.js').then(module => {
+  module.initializeSettings().catch(err => {
+    logger.warn('[Server] Failed to complete settings initialization', { error: err.message, stack: err.stack });
+  });
+});
+
+// Инициализация данных
 let devices = {};
 let fileNamesMap = {};
 const deviceVolumeState = {};
@@ -1429,8 +1469,9 @@ async function hydrateDevicesFromDatabase() {
   await saveDevicesToDB(devices);
 
   // КРИТИЧНО: Автоматическая очистка несуществующих файлов из БД при старте
-  // Проверяем только если установлена переменная окружения AUTO_CLEANUP_MISSING_FILES=true
+  // По умолчанию ОТКЛЮЧЕНО - установите AUTO_CLEANUP_MISSING_FILES=true только после миграции путей!
   if (process.env.AUTO_CLEANUP_MISSING_FILES === 'true') {
+    logger.warn('[Server] Auto-cleanup is ENABLED - this may delete DB records if paths are incorrect!');
     logger.info('[Server] Auto-cleanup enabled, checking for missing files...');
     cleanupMissingFiles({ deviceId: null, dryRun: false })
       .then(result => {

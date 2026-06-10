@@ -4,9 +4,9 @@
  */
 
 import multer from 'multer';
-import fs from 'fs';
-import path from 'path';
-import crypto from 'crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
 import { MAX_FILE_SIZE, ALLOWED_EXT } from '../config/constants.js';
 import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';

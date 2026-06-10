@@ -3,8 +3,8 @@
  * @module utils/file-scanner
  */
 
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 import { getDevicesPath } from '../config/settings-manager.js';
 import { isSystemFile } from './sanitize.js';
 

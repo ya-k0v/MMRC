@@ -1,15 +1,13 @@
 services:
   mmrc:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${DOCKER_IMAGE:-pingwin1900/mmrc}:latest
     container_name: mmrc
     restart: unless-stopped
     environment:
       - NODE_ENV=${NODE_ENV:-production}
       - PORT=3000
       - HOST=0.0.0.0
-      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - JWT_SECRET=${JWT_SECRET}
       - JWT_ACCESS_EXPIRES_IN=${JWT_ACCESS_EXPIRES_IN:-12h}
       - JWT_REFRESH_EXPIRES_IN=${JWT_REFRESH_EXPIRES_IN:-30d}
       - LOG_LEVEL=${LOG_LEVEL:-info}
@@ -25,17 +23,17 @@ services:
       - JOB_RESERVE_MEMORY_MB=${JOB_RESERVE_MEMORY_MB:-2048}
       - STREAM_MAX_JOBS=${STREAM_MAX_JOBS:-100}
       - STREAM_IDLE_TIMEOUT_MS=${STREAM_IDLE_TIMEOUT_MS:-180000}
-      - LDAP_URL=${LDAP_URL:-}
-      - LDAP_BIND_DN=${LDAP_BIND_DN:-}
-      - LDAP_SEARCH_BASE=${LDAP_SEARCH_BASE:-}
+      - LDAP_URL=${LDAP_URL:-ldap://disabled}
+      - LDAP_BIND_DN=${LDAP_BIND_DN:-cn=admin,dc=disabled}
+      - LDAP_SEARCH_BASE=${LDAP_SEARCH_BASE:-dc=disabled}
     ports:
       - "${NGINX_HTTP_PORT:-80}:80"
       - "${NGINX_HTTPS_PORT:-443}:443"
     volumes:
-      - mmrc-data:/app/data
+      - ${CONTENT_DIR:-./data}:/app/data
       - mmrc-config:/app/config
       - mmrc-temp:/app/.tmp
-      - ./docker/nginx/ssl:/etc/nginx/ssl:ro
+      - mmrc-certs:/etc/nginx/ssl-certs:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:80/health"]
       interval: 30s
@@ -48,11 +46,11 @@ services:
           - mmrc-server
 
 volumes:
-  mmrc-data:
-    driver: local
   mmrc-config:
     driver: local
   mmrc-temp:
+    driver: local
+  mmrc-certs:
     driver: local
 
 networks:

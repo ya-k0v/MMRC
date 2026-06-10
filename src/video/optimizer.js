@@ -3,9 +3,9 @@
  * @module video/optimizer
  */
 
-import fs from 'fs';
-import path from 'path';
-import { spawn } from 'child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { VIDEO_OPTIMIZATION_CONFIG_PATH } from '../config/constants.js';
 import { getDevicesPath } from '../config/settings-manager.js';
 import { checkVideoParameters } from './ffmpeg-wrapper.js';

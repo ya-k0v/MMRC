@@ -4,7 +4,7 @@
  */
 
 import { fileTypeFromFile } from 'file-type';
-import fs from 'fs';
+import fs from 'node:fs';
 import logger from '../utils/logger.js';
 
 /**

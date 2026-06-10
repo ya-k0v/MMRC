@@ -1,8 +1,8 @@
 import express from 'express';
 import multer from 'multer';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { requireAdmin } from '../middleware/auth.js';
 import logger from '../utils/logger.js';
 import { installAndSetupApk } from '../utils/apk-installer.js';
@@ -56,6 +56,11 @@ function getInternalApiBaseUrl() {
   const configured = String(process.env.ADMIN_INTERNAL_API_URL || '').trim();
   if (configured) {
     return configured.replace(/\/$/, '');
+  }
+
+  const serverUrl = String(process.env.SERVER_URL || '').trim();
+  if (serverUrl) {
+    return serverUrl.replace(/\/$/, '');
   }
 
   const port = String(process.env.PORT || '3000').trim() || '3000';

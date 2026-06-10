@@ -1,10 +1,10 @@
-# 📋 Шпаргалка по командам MMRC
+# 📋 Шпаргалка по командам MMRC 3.2.1
 
 Быстрая справка по командам для управления и обслуживания MMRC.
 
 ---
 
-## 🖥️ Видеоконтроль (systemd/Node.js)
+## 🖥️ Сервер (systemd/Node.js)
 
 ### Сервис и логи
 ```bash
@@ -26,12 +26,17 @@ tail -f data/logs/error-*.log
 
 ### Обновление и диагностика
 ```bash
-# Обновление Node.js-приложения
+# Обновление через git
 sudo systemctl stop videocontrol
 git pull --rebase
 npm ci || npm install
+npm run setup-hooks --silent || true
+npm run migrate-db --silent
 sudo systemctl start videocontrol
 sudo journalctl -u videocontrol -n 100 --no-pager
+
+# Обновление через self-update (из админ-панели)
+# Кнопка обновления в настройках админ-панели
 
 # Диагностика FFmpeg и статусов файлов
 ffmpeg -version
@@ -39,18 +44,47 @@ sqlite3 config/main.db "SELECT * FROM file_statuses WHERE status='error' ORDER B
 
 # Проверка видео-эндпоинтов
 curl -I "http://HOST/api/files/trailer/DEVICE/FILE.mp4"
-curl -I -H "Range: bytes=0-524287" "http://HOST/api/files/resolve/DEVICE/FILE.mp4"
+curl -I -H "Range: bytes=0-524287" "http://HOST/api/files/preview/DEVICE/FILE.mp4"
+curl -I "http://HOST/api/files/resolve/DEVICE/FILE.mp4"
 
 # Socket.IO sanity-check
 curl -s "http://HOST/socket.io/?EIO=4&transport=polling" | head -n 1
 
-# Health Check (мониторинг состояния сервера)
+# Health Check
 curl http://HOST/health
-# Возвращает: status, uptime, memory, database, circuitBreakers
 
 # Metrics (требует авторизации admin)
 curl -H "Authorization: Bearer TOKEN" http://HOST/api/metrics
-# Возвращает: метрики запросов, БД, Socket.IO, перцентили времени ответа
+```
+
+---
+
+## 🎬 Ночная оптимизация
+
+```bash
+# Проверить статус оптимизации
+sqlite3 config/main.db "SELECT * FROM night_opt_jobs WHERE status IN ('pending','running') ORDER BY created_at DESC LIMIT 20;"
+
+# Отменить задачу оптимизации
+sqlite3 config/main.db "UPDATE night_opt_jobs SET status='cancelled' WHERE id=JOB_ID;"
+
+# Проверить ресурсы
+sqlite3 config/main.db "SELECT * FROM job_resources WHERE status='active';"
+```
+
+---
+
+## 🌐 Стримы
+
+```bash
+# Просмотр активных стримов
+sqlite3 config/main.db "SELECT * FROM streams WHERE status='running';"
+
+# Логи stream-manager
+journalctl -u videocontrol -n 200 --no-pager | grep "stream"
+
+# Очистить зависшие стримы
+sqlite3 config/main.db "UPDATE streams SET status='stopped' WHERE status='running' AND updated_at < datetime('now', '-1 hour');"
 ```
 
 ---
@@ -101,17 +135,30 @@ FROM devices
 ORDER BY updated_at DESC;
 
 -- Файлы конкретного устройства
-SELECT safe_name, file_size, created_at
+SELECT safe_name, file_size, created_at, md5
 FROM files_metadata
 WHERE device_id = 'DEVICE001'
 ORDER BY created_at DESC
 LIMIT 50;
+
+-- Дедупликация: файлы с одинаковым MD5
+SELECT md5, COUNT(*) as cnt, GROUP_CONCAT(device_id) as devices
+FROM files_metadata
+WHERE md5 IS NOT NULL
+GROUP BY md5
+HAVING cnt > 1;
+
+-- Стримы
+SELECT * FROM streams ORDER BY created_at DESC LIMIT 20;
+
+-- Миграции
+SELECT * FROM schema_migrations ORDER BY applied_at DESC;
 ```
 
 ### Сброс пароля admin
 ```sql
 UPDATE users
-SET password_hash='$2b$10$jgHKNtHUKUhkftKlOfDqOulY9LFBVi/AirOu0YSKfzDlvFD60QI/W',
+SET password_hash='$2b$10$jgHKNtHUKUhkftKlFD60QI/W',
     updated_at=CURRENT_TIMESTAMP
 WHERE username='admin';
 ```
@@ -134,7 +181,7 @@ ls -al data/content
 
 # Перенос данных (если мигрируете со старой структуры)
 rsync -aH --delete public/content/ data/content/ 2>/dev/null || true
-rsync -aH --delete .converted/ data/converted/ 2>/dev/null || true
+rsync -aH --delete .converted/ data/cache/converted/ 2>/dev/null || true
 rsync -aH logs/ data/logs/ 2>/dev/null || true
 
 # Внешний диск через /etc/fstab
@@ -142,9 +189,13 @@ echo '/dev/sdb1 /mnt/videocontrol-data ext4 defaults,noatime 0 2' | sudo tee -a 
 sudo mkdir -p /mnt/videocontrol-data
 sudo mount -a
 
-# Кэш трейлеров (по умолчанию: data/converted/trailers/)
-ls -lh data/converted/trailers/
-find data/converted/trailers -type f -mtime +7 -print -delete
+# Кэш трейлеров
+ls -lh data/cache/trailers/
+find data/cache/trailers -type f -mtime +7 -print -delete
+
+# Кэш стримов
+ls -lh data/streams/
+# Очистка при заполнении диска (оставляет m3u8 + последние 3 .ts)
 ```
 
 ---
@@ -165,13 +216,21 @@ mv config/main.db config/main.db.bak
 mv config/main-restored.db config/main.db
 ```
 
+### Hero БД
+```bash
+# Бэкап
+sqlite3 config/hero/heroes.db '.backup config/hero/heroes-$(date +%F_%H%M).db'
+
+# Или через API админ-панели героев: GET /api/hero/export-database
+```
+
 ### Данные
 ```bash
 # Бэкап всех данных
-rsync -aH --delete data/ /backup/videocontrol-data/
+rsync -aH --delete data/ /backup/mmrc-data/
 
 # Восстановление
-rsync -aH --delete /backup/videocontrol-data/ data/
+rsync -aH --delete /backup/mmrc-data/ data/
 ```
 
 ---
@@ -185,7 +244,16 @@ adb kill-server && adb start-server
 adb connect 192.168.1.50:5555
 adb devices -l
 ```
-Используйте `adb -s SERIAL ...` для конкретного устройства (SERIAL = USB ID или `ip:port`).
+Используйте `adb -s SERIAL ...` для конкретного устройства.
+
+### Автоустановка APK (через скрипт)
+```bash
+cd /var/lib/mmrc
+./dev/scripts/quick-setup-android.sh <device_ip:port> <server_url> <device_id>
+
+# Пример:
+./dev/scripts/quick-setup-android.sh 192.168.11.57:5555 http://192.168.11.1 ATV001
+```
 
 ### Установка и перезапуск плеера
 ```bash
@@ -194,6 +262,13 @@ adb -s SERIAL shell am force-stop com.videocontrol.mediaplayer
 adb -s SERIAL shell monkey -p com.videocontrol.mediaplayer -c android.intent.category.LAUNCHER 1
 adb -s SERIAL shell pm clear com.videocontrol.mediaplayer   # полный сброс
 adb -s SERIAL shell pidof com.videocontrol.mediaplayer
+```
+
+### Настройка shared_prefs
+```bash
+# Ручная настройка Server URL и Device ID через ADB
+adb -s SERIAL shell "mkdir -p /data/data/com.videocontrol.mediaplayer/shared_prefs"
+adb -s SERIAL shell "echo '<?xml version=\"1.0\" encoding=\"utf-8\"?><map><string name=\"server_url\">http://SERVER_IP</string><string name=\"device_id\">DEVICE_ID</string></map>' > /data/data/com.videocontrol.mediaplayer/shared_prefs/com.videocontrol.mediaplayer_preferences.xml"
 ```
 
 ### Сети, память, файлы
@@ -213,19 +288,20 @@ adb -s SERIAL bugreport bugreport-$(date +%F_%H%M).zip
 adb -s SERIAL shell dumpsys package com.videocontrol.mediaplayer | grep granted
 ```
 
-### Типовые сценарии
-```bash
-# Быстрая переустановка
-adb -s SERIAL uninstall com.videocontrol.mediaplayer || true
-adb -s SERIAL install app-release.apk
-adb -s SERIAL shell monkey -p com.videocontrol.mediaplayer -c android.intent.category.LAUNCHER 1
+---
 
-# Чистка зависшего плеера
-adb -s SERIAL shell am force-stop com.videocontrol.mediaplayer
-adb -s SERIAL shell pm clear com.videocontrol.mediaplayer
-adb -s SERIAL shell settings put global stay_on_while_plugged_in 3
-adb -s SERIAL shell svc power stayon true
-adb -s SERIAL shell monkey -p com.videocontrol.mediaplayer -c android.intent.category.LAUNCHER 1
+## 🎖️ Hero Module
+
+```bash
+# Проверить БД героев
+sqlite3 config/hero/heroes.db ".tables"
+sqlite3 config/hero/heroes.db "SELECT id, full_name, created_at FROM heroes ORDER BY created_at DESC LIMIT 20;"
+
+# Экспорт через CLI
+sqlite3 config/hero/heroes.db ".backup config/hero/heroes-backup.db"
+
+# Проверить права
+ls -la config/hero/
 ```
 
 ---
@@ -234,41 +310,18 @@ adb -s SERIAL shell monkey -p com.videocontrol.mediaplayer -c android.intent.cat
 
 ```bash
 # Переменные для quick-install.sh
-export AUTO_CONFIRM=1                  # отключает все вопросы
-export STORAGE_MODE=external           # local | external | external_fstab
-export CONTENT_DIR=/mnt/vc-content
-export CONTENT_SOURCE=/dev/sdb1         # или UUID=xxxx-xxxx
-export CONTENT_FSTAB_OPTS="ext4 defaults,noatime 0 2"
-
-# Неблокирующий запуск
-sudo AUTO_CONFIRM=1 STORAGE_MODE=external CONTENT_DIR=/mnt/vc-content \
-     bash dev/scripts/quick-install.sh /var/lib/mmrc
-
-# Быстрая установка server-only (без Nginx) с автоответами
-sudo AUTO_CONFIRM=1 bash dev/scripts/install-server.sh
-```
-
-### Чистый сервер за 5 шагов
-```bash
-sudo mkfs.ext4 /dev/sdb1
-sudo mkdir -p /mnt/vc-content
-echo '/dev/sdb1 /mnt/vc-content ext4 defaults,noatime 0 2' | sudo tee -a /etc/fstab
-sudo mount -a
-
-sudo mkdir -p /var/lib/mmrc && cd /var/lib/mmrc
-sudo apt-get update -y && sudo apt-get install -y git
-sudo git clone https://github.com/ya-k0v/MMRC.git .
-
-export STORAGE_MODE=external_fstab
+export AUTO_CONFIRM=1
+export STORAGE_MODE=external
 export CONTENT_DIR=/mnt/vc-content
 export CONTENT_SOURCE=/dev/sdb1
 export CONTENT_FSTAB_OPTS="ext4 defaults,noatime 0 2"
 
-printf 'y\ny\n' | sudo bash dev/scripts/quick-install.sh /var/lib/mmrc
+# Неблокирующий запуск
+sudo AUTO_CONFIRM=1 STORAGE_MODE=external CONTENT_DIR=/mnt/vc-content \
+     bash dev/scripts/quick-install.sh
 
-sudo systemctl status videocontrol
-sudo nginx -t && sudo systemctl restart nginx
-echo "URL: http://$(hostname -I | awk '{print $1}')"
+# Быстрая установка server-only (без Nginx) с автоответами
+sudo AUTO_CONFIRM=1 bash scripts/install-server.sh
 ```
 
 ---
@@ -282,9 +335,17 @@ curl -s http://HOST/api/devices | jq '.[] | {device_id, current}'
 
 # Проверка доступности сервера с Android-устройства
 adb -s SERIAL shell ping -c 3 <SERVER_IP>
+
+# Проверка уведомлений
+curl -H "Authorization: Bearer TOKEN" http://HOST/api/notifications
+
+# Проверка circuit breaker статусов
+curl -H "Authorization: Bearer TOKEN" http://HOST/api/metrics
+
+# Проверка self-update статуса
+cat /var/lib/mmrc/.tmp/update-checker-state.json
 ```
 
 ---
 
-**Версия:** 3.2.0
-
+**Версия:** 3.2.1

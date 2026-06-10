@@ -1,8 +1,17 @@
-import fs from 'fs';
-import path from 'path';
-import {
-  getAllDevices, saveDevice, deleteDevice,
-  getAllFileNames, saveFileName, deleteDeviceFileNames
+/**
+ * Управление устройствами через SQLite
+ * @module storage/devices-storage-sqlite
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { 
+  getAllDevices, 
+  saveDevice, 
+  deleteDevice,
+  getAllFileNames,
+  saveFileName,
+  deleteDeviceFileNames
 } from '../database/database.js';
 import { getDevicesPath } from '../config/settings-manager.js';
 import { scanDeviceFiles } from '../utils/file-scanner.js';

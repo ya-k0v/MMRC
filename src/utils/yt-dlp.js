@@ -1,6 +1,6 @@
-import fs from 'fs';
-import path from 'path';
-import https from 'https';
+import fs from 'node:fs';
+import path from 'node:path';
+import https from 'node:https';
 
 const RELEASE_BASE_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download';
 const REDIRECT_STATUS_CODES = new Set([301, 302, 303, 307, 308]);

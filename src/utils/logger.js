@@ -5,8 +5,8 @@
 
 import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
-import path from 'path';
-import fs from 'fs';
+import path from 'node:path';
+import fs from 'node:fs';
 import { getLogsDir } from '../config/settings-manager.js';
 import { ROOT } from '../config/constants.js';
 

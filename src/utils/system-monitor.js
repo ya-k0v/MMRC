@@ -13,11 +13,11 @@ import {
 } from './notifications.js';
 import { getSettings } from '../config/settings-manager.js';
 import { getDatabase } from '../database/database.js';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 import { timerRegistry } from './timer-registry.js';
 
 const execFileAsync = promisify(execFile);
