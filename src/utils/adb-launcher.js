@@ -1,4 +1,4 @@
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 
 /**
  * Запуск Android-приложения на устройстве по IP через adb
@@ -9,13 +9,11 @@ import { exec } from 'child_process';
  */
 export function launchAndroidApp(ip, packageName, activity) {
   return new Promise((resolve) => {
-    // Подключение к устройству
-    exec(`adb connect ${ip}:5555`, (err, stdout, stderr) => {
+    execFile('adb', ['connect', `${ip}:5555`], (err, stdout, stderr) => {
       if (err) {
         return resolve({ ok: false, error: `adb connect error: ${stderr || err.message}` });
       }
-      // Запуск приложения
-      exec(`adb -s ${ip}:5555 shell am start -n ${packageName}/${activity}`, (err2, stdout2, stderr2) => {
+      execFile('adb', ['-s', `${ip}:5555`, 'shell', 'am', 'start', '-n', `${packageName}/${activity}`], (err2, stdout2, stderr2) => {
         if (err2) {
           return resolve({ ok: false, error: `adb shell error: ${stderr2 || err2.message}` });
         }

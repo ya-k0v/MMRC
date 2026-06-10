@@ -248,7 +248,7 @@ export function createDevicesRouter(deps) {
     
     // Останавливаем рестримы устройства
     try {
-      const deviceMeta = getDeviceFilesMetadata(id);
+      const deviceMeta = await getDeviceFilesMetadata(id);
       deviceMeta
         .filter(meta => meta.content_type === 'streaming')
         .forEach(meta => removeStreamJob(id, meta.safe_name, 'device_deleted'));
@@ -261,7 +261,7 @@ export function createDevicesRouter(deps) {
     logDevice('info', `Device deleted from DB`, { deviceId: id });
     
     // 1.5. Удаляем метаданные файлов устройства
-    const deletedMetadata = deleteDeviceFilesMetadata(id);
+    const deletedMetadata = await deleteDeviceFilesMetadata(id);
     logDevice('info', `Device files metadata deleted`, { deviceId: id, filesCount: deletedMetadata });
     
     // 2. Удаляем папку устройства

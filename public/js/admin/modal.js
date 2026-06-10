@@ -1929,54 +1929,57 @@ async function loadSettingsContent(adminFetch) {
 
   // (LDAP/AD UI removed — configuration moved to server .env)
   
-  // Разделитель
-  const divider1 = document.createElement('div');
-  divider1.style.cssText = 'border-top:1px solid var(--border-color, rgba(255,255,255,0.1)); margin:0;';
+  // Разделитель после storage (добавляется только если есть секция БД)
+  let dbSection = null;
+  let divider1 = null;
   
-  // База данных
-  const dbSection = document.createElement('div');
-  dbSection.style.cssText = 'padding:var(--space-md) 0;';
+  if (settingsData.dbType === 'sqlite') {
+    dbSection = document.createElement('div');
+    dbSection.style.cssText = 'padding:var(--space-md) 0;';
+    
+    const dbTitle = document.createElement('div');
+    dbTitle.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary); margin-bottom:var(--space-sm);';
+    dbTitle.textContent = 'База данных';
+    
+    const dbContent = document.createElement('div');
+    dbContent.style.cssText = 'display:flex; align-items:center; gap:var(--space-md);';
+    
+    const dbDescription = document.createElement('div');
+    dbDescription.className = 'meta';
+    dbDescription.style.cssText = 'flex:1; color:var(--text-secondary); line-height:1.4;';
+    dbDescription.textContent = 'Экспортируйте базу данных для резервного копирования или миграции.';
+    
+    const exportDatabaseBtn = document.createElement('button');
+    exportDatabaseBtn.id = 'exportDatabaseBtn';
+    exportDatabaseBtn.className = 'primary';
+    exportDatabaseBtn.style.cssText = 'flex-shrink:0;';
+    exportDatabaseBtn.innerHTML = `${getDownloadIcon(16)} Экспорт`;
+    
+    const importDatabaseBtn = document.createElement('button');
+    importDatabaseBtn.id = 'importDatabaseBtn';
+    importDatabaseBtn.className = 'secondary';
+    importDatabaseBtn.style.cssText = 'flex-shrink:0; margin-left:8px;';
+    importDatabaseBtn.innerHTML = `${getUpDownloadIcon(16)} Импорт`;
+    
+    const importFileInput = document.createElement('input');
+    importFileInput.type = 'file';
+    importFileInput.accept = '.db';
+    importFileInput.style.display = 'none';
+    
+    dbContent.appendChild(dbDescription);
+    dbContent.appendChild(exportDatabaseBtn);
+    dbContent.appendChild(importDatabaseBtn);
+    dbSection.appendChild(importFileInput);
+    dbSection.appendChild(dbTitle);
+    dbSection.appendChild(dbContent);
+    
+    divider1 = document.createElement('div');
+    divider1.style.cssText = 'border-top:1px solid var(--border-color, rgba(255,255,255,0.1)); margin:0;';
+  }
   
-  const dbTitle = document.createElement('div');
-  dbTitle.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary); margin-bottom:var(--space-sm);';
-  dbTitle.textContent = 'База данных';
-  
-  const dbContent = document.createElement('div');
-  dbContent.style.cssText = 'display:flex; align-items:center; gap:var(--space-md);';
-  
-  const dbDescription = document.createElement('div');
-  dbDescription.className = 'meta';
-  dbDescription.style.cssText = 'flex:1; color:var(--text-secondary); line-height:1.4;';
-  dbDescription.textContent = 'Экспортируйте базу данных для резервного копирования или миграции.';
-  
-  const exportDatabaseBtn = document.createElement('button');
-  exportDatabaseBtn.id = 'exportDatabaseBtn';
-  exportDatabaseBtn.className = 'primary';
-  exportDatabaseBtn.style.cssText = 'flex-shrink:0;';
-  exportDatabaseBtn.innerHTML = `${getDownloadIcon(16)} Экспорт`;
-
-  // Кнопка импорта базы данных (скрытый input + кнопка)
-  const importDatabaseBtn = document.createElement('button');
-  importDatabaseBtn.id = 'importDatabaseBtn';
-  importDatabaseBtn.className = 'secondary';
-  importDatabaseBtn.style.cssText = 'flex-shrink:0; margin-left:8px;';
-  importDatabaseBtn.innerHTML = `${getUpDownloadIcon(16)} Импорт`;
-
-  const importFileInput = document.createElement('input');
-  importFileInput.type = 'file';
-  importFileInput.accept = '.db';
-  importFileInput.style.display = 'none';
-  
-  dbContent.appendChild(dbDescription);
-  dbContent.appendChild(exportDatabaseBtn);
-  dbContent.appendChild(importDatabaseBtn);
-  dbSection.appendChild(importFileInput);
-  dbSection.appendChild(dbTitle);
-  dbSection.appendChild(dbContent);
-  
-  // Разделитель 2
-  const divider2 = document.createElement('div');
-  divider2.style.cssText = 'border-top:1px solid var(--border-color, rgba(255,255,255,0.1)); margin:0;';
+  // Разделитель перед секциями очистки
+  const cleanupDivider = document.createElement('div');
+  cleanupDivider.style.cssText = 'border-top:1px solid var(--border-color, rgba(255,255,255,0.1)); margin:0;';
   
   // Контейнер для обеих секций очистки (рядом друг с другом)
   const cleanupContainer = document.createElement('div');
@@ -2253,9 +2256,106 @@ async function loadSettingsContent(adminFetch) {
 
   mainDiv.appendChild(apkSection);
   mainDiv.appendChild(storageSection);
-  mainDiv.appendChild(divider1);
-  mainDiv.appendChild(dbSection);
-  mainDiv.appendChild(divider2);
+  if (divider1) mainDiv.appendChild(divider1);
+  if (dbSection) mainDiv.appendChild(dbSection);
+
+  // Модули
+  const modulesDivider = document.createElement('div');
+  modulesDivider.style.cssText = 'border-top:1px solid var(--border-color, rgba(255,255,255,0.1)); margin:0;';
+
+  const modulesSection = document.createElement('div');
+  modulesSection.style.cssText = 'padding:var(--space-md) 0;';
+
+  const modulesTitle = document.createElement('div');
+  modulesTitle.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary); margin-bottom:var(--space-sm);';
+  modulesTitle.textContent = 'Модули';
+
+  const modulesList = document.createElement('div');
+  modulesList.id = 'modulesList';
+  modulesList.style.cssText = 'display:flex; flex-direction:column; gap:var(--space-sm);';
+
+  const modulesData = settingsData?.modules;
+  if (Array.isArray(modulesData) && modulesData.length > 0) {
+    modulesData.forEach(mod => {
+      const safeName = escapeHtml(mod.name || mod.id || '');
+      const safeDesc = escapeHtml(mod.description || '');
+      const modId = escapeHtml(mod.id || '');
+
+      const row = document.createElement('label');
+      row.style.cssText = 'display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-xs) 0; cursor:pointer;';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = !!mod.enabled;
+      checkbox.dataset.moduleId = modId;
+
+      const info = document.createElement('div');
+      info.style.cssText = 'flex:1; display:flex; flex-direction:column;';
+
+      const nameEl = document.createElement('div');
+      nameEl.style.cssText = 'font-weight:500;';
+      nameEl.textContent = safeName;
+
+      const descEl = document.createElement('div');
+      descEl.className = 'meta';
+      descEl.style.cssText = 'font-size:0.85rem; color:var(--text-secondary);';
+      descEl.textContent = safeDesc;
+
+      const statusEl = document.createElement('div');
+      statusEl.className = 'meta';
+      statusEl.id = `moduleStatus_${modId}`;
+      statusEl.style.cssText = 'font-size:0.8rem; min-height:1.2em;';
+
+      info.appendChild(nameEl);
+      info.appendChild(descEl);
+      info.appendChild(statusEl);
+      row.appendChild(checkbox);
+      row.appendChild(info);
+      modulesList.appendChild(row);
+
+      checkbox.onchange = async () => {
+        const newEnabled = checkbox.checked;
+        const statusSpan = document.getElementById(`moduleStatus_${modId}`);
+        if (statusSpan) statusSpan.textContent = 'Сохранение...';
+
+        try {
+          const resp = await adminFetch(`/api/admin/modules/${modId}/toggle`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: newEnabled })
+          });
+          if (resp.ok) {
+            if (statusSpan) {
+              statusSpan.textContent = newEnabled
+                ? 'Модуль будет активирован после перезапуска сервиса'
+                : 'Модуль будет деактивирован после перезапуска сервиса';
+              statusSpan.style.color = 'var(--warning)';
+            }
+          } else {
+            const errData = await resp.json().catch(() => ({ error: 'Ошибка' }));
+            checkbox.checked = !newEnabled;
+            if (statusSpan) {
+              statusSpan.textContent = errData.error || 'Ошибка';
+              statusSpan.style.color = 'var(--danger)';
+            }
+          }
+        } catch (err) {
+          checkbox.checked = !newEnabled;
+          if (statusSpan) {
+            statusSpan.textContent = 'Ошибка соединения';
+            statusSpan.style.color = 'var(--danger)';
+          }
+        }
+      };
+    });
+  } else {
+    modulesList.innerHTML = '<div class="meta" style="color:var(--text-secondary);">Нет доступных модулей</div>';
+  }
+
+  modulesSection.appendChild(modulesTitle);
+  modulesSection.appendChild(modulesList);
+  mainDiv.appendChild(modulesDivider);
+  mainDiv.appendChild(modulesSection);
   mainDiv.appendChild(cleanupContainer);
   container.appendChild(mainDiv);
   
@@ -2263,13 +2363,13 @@ async function loadSettingsContent(adminFetch) {
   const inputEl = contentRootInput;
   const saveBtn = contentRootSaveBtn;
   const statusEl = contentRootStatus;
-  const exportBtn = exportDatabaseBtn;
-  const importBtn = importDatabaseBtn;
-  const importFileEl = importFileInput;
+  const exportBtn = settingsData.dbType === 'sqlite' ? document.getElementById('exportDatabaseBtn') : null;
+  const importBtn = settingsData.dbType === 'sqlite' ? document.getElementById('importDatabaseBtn') : null;
+  const importFileEl = settingsData.dbType === 'sqlite' ? document.querySelector('#settingsModalContainer input[type="file"][accept=".db"]') : null;
   const cleanupStatusEl = cleanupStatus;
   const orphanedStatusEl = orphanedStatus;
   
-  if (!inputEl || !saveBtn || !statusEl || !exportBtn || !importBtn || !importFileEl || !checkFilesBtn || !cleanupFilesBtn || !cleanupStatusEl || !checkOrphanedBtn || !cleanupOrphanedBtn || !orphanedStatusEl) return;
+  if (!inputEl || !saveBtn || !statusEl || !checkFilesBtn || !cleanupFilesBtn || !cleanupStatusEl || !checkOrphanedBtn || !cleanupOrphanedBtn || !orphanedStatusEl) return;
   
   let lastSavedValue = currentContentRoot;
   inputEl.value = currentContentRoot;
@@ -2325,7 +2425,8 @@ async function loadSettingsContent(adminFetch) {
     }
   };
 
-  exportBtn.onclick = async () => {
+  if (exportBtn) {
+    exportBtn.onclick = async () => {
       exportBtn.disabled = true;
       exportBtn.textContent = 'Экспорт...';
       
@@ -2429,6 +2530,7 @@ async function loadSettingsContent(adminFetch) {
         importBtn.innerHTML = `${getUpDownloadIcon(16)} Импорт`;
       }
     };
+  }
 
   // Обработчики для очистки БД
   let lastCheckResult = null;

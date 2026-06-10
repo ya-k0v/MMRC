@@ -24,7 +24,7 @@ export function createPlaceholderRouter(deps) {
   
   // GET /api/devices/:id/placeholder - Получить текущую заглушку устройства
   // НОВОЕ: Используем БД вместо поиска файла default.*
-  router.get('/:id/placeholder', (req, res) => {
+  router.get('/:id/placeholder', async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
@@ -39,11 +39,11 @@ export function createPlaceholderRouter(deps) {
     try {
       // Ищем файл с флагом is_placeholder в БД
       const db = getDatabase();
-      const placeholder = db.prepare(`
+      const placeholder = await db.get(`
         SELECT safe_name, file_path, mime_type FROM files_metadata 
-        WHERE device_id = ? AND is_placeholder = 1
+        WHERE device_id = ? AND is_placeholder
         LIMIT 1
-      `).get(id);
+      `, [id]);
       
       if (placeholder && fs.existsSync(placeholder.file_path)) {
         logger.info('[placeholder] ✅ Placeholder found in DB', { 
@@ -71,7 +71,7 @@ export function createPlaceholderRouter(deps) {
   
   // POST /api/devices/:id/make-default - Установить файл как заглушку
   // НОВОЕ: Мгновенная установка через БД (без копирования!)
-  router.post('/:id/make-default', (req, res) => {
+  router.post('/:id/make-default', async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
@@ -103,18 +103,18 @@ export function createPlaceholderRouter(deps) {
       const db = getDatabase();
       
       // 1. Снимаем флаг заглушки со всех файлов этого устройства
-      db.prepare(`
+      await db.run(`
         UPDATE files_metadata 
-        SET is_placeholder = 0 
+        SET is_placeholder = FALSE 
         WHERE device_id = ?
-      `).run(id);
+      `, [id]);
       
       // 2. Устанавливаем флаг заглушки на выбранный файл
-      const result = db.prepare(`
+      const result = await db.run(`
         UPDATE files_metadata 
-        SET is_placeholder = 1 
+        SET is_placeholder = TRUE 
         WHERE device_id = ? AND safe_name = ?
-      `).run(id, file);
+      `, [id, file]);
       
       if (result.changes === 0) {
         return res.status(404).json({ error: 'Файл не найден в базе данных' });

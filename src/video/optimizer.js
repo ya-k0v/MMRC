@@ -613,7 +613,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
 
     // ИСПРАВЛЕНО: Получаем путь из БД для новой архитектуры storage
     const { getFileMetadata } = await import('../database/files-metadata.js');
-    const metadata = getFileMetadata(deviceId, fileName);
+    const metadata = await getFileMetadata(deviceId, fileName);
 
     let filePath;
     if (metadata && metadata.file_path) {
@@ -895,10 +895,10 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       const { deleteFileMetadata, saveFileMetadata } = await import('../database/files-metadata.js');
 
       if (resultingSafeName !== fileName) {
-        deleteFileMetadata(deviceId, fileName);
+        await deleteFileMetadata(deviceId, fileName);
       }
 
-      saveFileMetadata({
+      await saveFileMetadata({
         deviceId,
         safeName: resultingSafeName,
         originalName: fileNamesMap[deviceId]?.[resultingSafeName] || metadata.original_name || resultingSafeName,

@@ -612,18 +612,32 @@ class StreamManager extends EventEmitter {
         timeout
       });
       
-      // Для DASH стримов используем специальные параметры ffprobe
-      let ffprobeCmd = `ffprobe -v error -show_streams -of json`;
+      const ffprobeArgs = ['-v', 'error', '-show_streams', '-of', 'json'];
       if (isDash) {
-        // Для DASH добавляем параметры для работы с адаптивными потоками
-        ffprobeCmd += ` -select_streams v:0,a:0`; // Выбираем первое видео и аудио представление
+        ffprobeArgs.push('-select_streams', 'v:0,a:0');
       }
-      ffprobeCmd += ` "${streamUrl}"`;
-      
-      const { stdout } = await execAsync(
-        ffprobeCmd,
-        { timeout, maxBuffer: 1024 * 1024 * 2 } // Увеличиваем буфер для DASH
-      );
+      ffprobeArgs.push(streamUrl);
+
+      const { stdout } = await new Promise((resolve, reject) => {
+        const proc = spawn('ffprobe', ffprobeArgs, {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout
+        });
+        let stdout = '';
+        let stderr = '';
+        proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+        proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+        proc.on('error', reject);
+        proc.on('close', (code) => {
+          if (code === 0) {
+            resolve({ stdout });
+          } else {
+            const err = new Error(stderr.trim() || `ffprobe exited with code ${code}`);
+            err.code = code;
+            reject(err);
+          }
+        });
+      });
       
       const data = JSON.parse(stdout);
       const streams = data.streams || [];
@@ -3232,8 +3246,7 @@ class StreamManager extends EventEmitter {
       // КРИТИЧНО: Ждем, пока FFmpeg создаст плейлист
       // Проверяем наличие плейлиста с таймаутом
       // Для DASH стримов может потребоваться больше времени на инициализацию
-      const safeNameSanitized = sanitizePathFragment(safeName);
-      const paths = this._getPaths(safeNameSanitized);
+      // safeNameSanitized и paths уже объявлены выше
       const isDash = streamMetadata.stream_protocol === 'dash' || (streamMetadata.stream_url?.toLowerCase().includes('.mpd'));
       // Оптимизация: уменьшаем время ожидания плейлиста для ускорения запуска
       const maxWaitTime = isDash ? 15000 : 6000; // 15 секунд для DASH, 6 для остальных (было 20 и 12)
@@ -3774,13 +3787,29 @@ class StreamManager extends EventEmitter {
         timeout
       });
       
-      const { stdout } = await execAsync(
-        `ffprobe -v error -show_entries format=duration -of json "${streamUrl}"`,
-        { 
-          timeout,
-          maxBuffer: 1024 * 1024 
-        }
-      );
+      const { stdout } = await new Promise((resolve, reject) => {
+        const proc = spawn('ffprobe', [
+          '-v', 'error',
+          '-show_entries', 'format=duration',
+          '-of', 'json',
+          streamUrl
+        ], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout
+        });
+        let stdout = '';
+        let stderr = '';
+        proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+        proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+        proc.on('error', reject);
+        proc.on('close', (code) => {
+          if (code === 0) {
+            resolve({ stdout });
+          } else {
+            reject(new Error(stderr.trim() || `ffprobe exited with code ${code}`));
+          }
+        });
+      });
       
       logger.debug('[StreamManager] RTSP/RTMP source check successful', {
         streamUrl

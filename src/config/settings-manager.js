@@ -474,7 +474,7 @@ export async function initializeSettings() {
   if (normalizedPath !== normalizedDefault) {
     try {
       const { getAllFilePaths, migrateFilePaths } = await import('../database/files-metadata.js');
-      const allPaths = getAllFilePaths();
+      const allPaths = await getAllFilePaths();
       
       if (allPaths.length > 0) {
         // Проверяем первый путь чтобы понять, нужна ли миграция
@@ -489,7 +489,7 @@ export async function initializeSettings() {
           const oldRoot = firstPathRoot || trimTrailingPathSeparators(DEFAULT_DATA_ROOT);
           
           logger.info(`[Settings] 🔄 Detected path mismatch, migrating: ${oldRoot} -> ${pathNormalized}`);
-          const updated = migrateFilePaths(oldRoot, pathNormalized);
+          const updated = await migrateFilePaths(oldRoot, pathNormalized);
           if (updated > 0) {
             logger.info(`[Settings] ✅ Migrated ${updated} file paths on startup`);
           }
@@ -673,7 +673,7 @@ export async function updateContentRootPath(newPath) {
   if (normalizedOldRoot !== normalizedNewRoot) {
     try {
       const { migrateFilePaths } = await import('../database/files-metadata.js');
-      const updated = migrateFilePaths(normalizedOldRoot, normalizedNewRoot);
+      const updated = await migrateFilePaths(normalizedOldRoot, normalizedNewRoot);
 
       if (updated > 0) {
         logger.info(`[Settings] ✅ Migrated ${updated} file paths in database`, {

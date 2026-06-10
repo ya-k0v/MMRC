@@ -13,7 +13,7 @@ import logger from '../utils/logger.js';
  * Speaker - только к назначенным устройствам
  * Hero Admin - не имеет доступа к устройствам (своя панель)
  */
-export function checkDeviceAccess(req, res, next) {
+export async function checkDeviceAccess(req, res, next) {
   // Если пользователь не аутентифицирован, requireAuth уже вернул ошибку
   if (!req.user) {
     return res.status(401).json({ error: 'Не аутентифицирован' });
@@ -62,10 +62,10 @@ export function checkDeviceAccess(req, res, next) {
   
   try {
     // Проверяем, есть ли у пользователя доступ к этому устройству
-    const hasAccess = db.prepare(`
+    const hasAccess = await db.get(`
       SELECT 1 FROM user_devices
       WHERE user_id = ? AND device_id = ?
-    `).get(req.user.userId, deviceId);
+    `, [req.user.userId, deviceId]);
 
     if (!hasAccess) {
       // Логируем попытку доступа
@@ -119,16 +119,16 @@ export function checkDeviceAccess(req, res, next) {
  * @param {number} userId - ID пользователя
  * @returns {string[]} Массив device_id
  */
-export function getUserDevices(userId) {
+export async function getUserDevices(userId) {
   const db = getDatabase();
   
   try {
-    const devices = db.prepare(`
+    const devices = await db.query(`
       SELECT device_id
       FROM user_devices
       WHERE user_id = ?
       ORDER BY created_at DESC
-    `).all(userId);
+    `, [userId]);
 
     return devices.map(d => d.device_id);
   } catch (err) {
@@ -148,7 +148,7 @@ export function getUserDevices(userId) {
  * @param {string} userRole - Роль пользователя
  * @returns {boolean}
  */
-export function hasDeviceAccess(userId, deviceId, userRole) {
+export async function hasDeviceAccess(userId, deviceId, userRole) {
   // Hero Admin не имеет доступа к устройствам
   if (userRole === 'hero_admin') {
     return false;
@@ -162,10 +162,10 @@ export function hasDeviceAccess(userId, deviceId, userRole) {
   const db = getDatabase();
   
   try {
-    const hasAccess = db.prepare(`
+    const hasAccess = await db.get(`
       SELECT 1 FROM user_devices
       WHERE user_id = ? AND device_id = ?
-    `).get(userId, deviceId);
+    `, [userId, deviceId]);
 
     return !!hasAccess;
   } catch (err) {

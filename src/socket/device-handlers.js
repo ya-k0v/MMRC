@@ -355,7 +355,7 @@ export function setupDeviceHandlers(socket, deps) {
       // Если длительность не пришла от клиента (0), пытаемся получить из БД
       if (duration === 0 && file) {
         try {
-          const metadata = getFileMetadata(device_id, file);
+          const metadata = await getFileMetadata(device_id, file);
           if (metadata && metadata.video_duration) {
             duration = Math.floor(metadata.video_duration); // Округляем до секунд
           }

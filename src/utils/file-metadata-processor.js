@@ -111,7 +111,7 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
     if (isVideoFile) {
       // Проверяем есть ли дубликат на других устройствах (используем partial для больших файлов)
       const searchMd5 = partialMd5 || md5Hash;
-      duplicate = findDuplicateFile(searchMd5, fileSize, deviceId, !!partialMd5);
+      duplicate = await findDuplicateFile(searchMd5, fileSize, deviceId, !!partialMd5);
       
       if (duplicate && fs.existsSync(duplicate.file_path)) {
         // Дубликат найден! Удаляем обработанный новый файл, используем существующий
@@ -171,7 +171,7 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
     
     // Если применена дедупликация - копируем метаданные из источника
     if (deduplicationApplied && duplicate) {
-      const sourceMetadata = getFileMetadata(duplicate.device_id, duplicate.safe_name);
+      const sourceMetadata = await getFileMetadata(duplicate.device_id, duplicate.safe_name);
       if (sourceMetadata) {
         videoParams = {
           width: sourceMetadata.video_width,
@@ -249,7 +249,7 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
         hasMd5: !!md5Hash
       });
       
-      saveFileMetadata({
+      await saveFileMetadata({
         deviceId,
         safeName,
         originalName,
@@ -596,7 +596,7 @@ export async function processUploadedStaticContent(
       });
       
       // Сохраняем метаданные исходного файла
-      saveFileMetadata({
+      await saveFileMetadata({
         deviceId,
         safeName, // Исходное имя файла (например, "file.pdf")
         originalName, // Оригинальное имя с расширением
@@ -688,11 +688,11 @@ export async function processUploadedStaticContent(
           try {
             // Удаляем метаданные исходного файла
             const { deleteFileMetadata } = await import('../database/files-metadata.js');
-            deleteFileMetadata(deviceId, safeName);
+            await deleteFileMetadata(deviceId, safeName);
 
             // Сохраняем метаданные папки
             const absoluteFolderPath = path.resolve(convertedFolderPath);
-            saveFileMetadata({
+            await saveFileMetadata({
               deviceId,
               safeName: folderName, // Имя папки (без расширения)
               originalName: originalName.replace(/\.(pdf|pptx)$/i, ''), // Убираем расширение из originalName
@@ -790,7 +790,7 @@ export async function processUploadedStaticContent(
         pagesCount
       });
       
-      saveFileMetadata({
+      await saveFileMetadata({
         deviceId,
         safeName: finalSafeName,
         originalName,

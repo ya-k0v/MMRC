@@ -8,6 +8,8 @@ import fs from 'fs';
 import path from 'path';
 import { getAnyFileMetadataBySafeName, getFileMetadata } from '../database/files-metadata.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
+import { validatePath } from '../utils/path-validator.js';
+import { getDataRoot } from '../config/settings-manager.js';
 import logger from '../utils/logger.js';
 import { spawn } from 'child_process';
 
@@ -46,6 +48,15 @@ function isExpectedClientDisconnectError(err) {
  */
 // Универсальная отправка файла с Range и логами
 function sendFileWithRange(res, req, metadata, context = {}) {
+  try {
+    metadata.file_path = validatePath(metadata.file_path, getDataRoot());
+  } catch {
+    logger.error('[Resolver] Path validation failed', { ...context, path: metadata.file_path });
+    if (!res.headersSent) {
+      return res.status(403).send('Forbidden');
+    }
+    return;
+  }
   const options = {
     root: '/',  // Абсолютный путь
     dotfiles: 'allow',
@@ -116,15 +127,29 @@ function sendFileWithRange(res, req, metadata, context = {}) {
 }
 
 // Новый эндпоинт для совместимости: поиск файла без привязки к устройству
-router.get('/resolve-all/*fileName', (req, res) => {
+router.get('/resolve-all/*fileName', async (req, res) => {
+  const rawFileName = req.params.fileName || '';
+  if (rawFileName.includes('..') || rawFileName.includes('~') || path.isAbsolute(rawFileName)) {
+    logger.warn('[Resolver] Path traversal attempt detected in resolve-all', { fileName: rawFileName });
+    return res.status(400).send('Invalid path');
+  }
   const fileName = normalizeFileNameParam(req.params.fileName);
   if (!fileName) return res.status(400).send('Invalid parameters');
 
-  let metadata = getAnyFileMetadataBySafeName(fileName);
+  let metadata = await getAnyFileMetadataBySafeName(fileName);
 
   if (!metadata || !metadata.file_path || !fs.existsSync(metadata.file_path)) {
     // Fallback: пробуем физически в общем контенте
-    const fallbackPath = path.join('/mnt/videocontrol-data/content', fileName);
+    let fallbackPath;
+    try {
+      fallbackPath = validatePath(
+        path.join('/mnt/videocontrol-data/content', fileName),
+        '/mnt/videocontrol-data/content'
+      );
+    } catch (err) {
+      logger.warn('[Resolver] Invalid fallback path in resolve-all', { fileName, error: err.message });
+      return res.status(400).send('Invalid path');
+    }
     if (fs.existsSync(fallbackPath)) {
       const stat = fs.statSync(fallbackPath);
       metadata = {
@@ -145,7 +170,7 @@ router.get('/resolve-all/*fileName', (req, res) => {
 });
 
 // Старый эндпоинт с fallback на resolve-all
-router.get('/resolve/:deviceId/*fileName', (req, res) => {
+router.get('/resolve/:deviceId/*fileName', async (req, res) => {
   const deviceId = sanitizeDeviceId(req.params.deviceId);
   const fileName = normalizeFileNameParam(req.params.fileName);
   
@@ -153,12 +178,12 @@ router.get('/resolve/:deviceId/*fileName', (req, res) => {
     return res.status(400).send('Invalid parameters');
   }
   
-  let metadata = getFileMetadata(deviceId, fileName);
+  let metadata = await getFileMetadata(deviceId, fileName);
   
   if (!metadata || !metadata.file_path || !fs.existsSync(metadata.file_path)) {
     logger.warn('[Resolver] Fallback to resolve-all', { deviceId, fileName });
     // Попробуем без привязки к устройству
-    metadata = getAnyFileMetadataBySafeName(fileName);
+    metadata = await getAnyFileMetadataBySafeName(fileName);
     if (!metadata || !metadata.file_path || !fs.existsSync(metadata.file_path)) {
       const fallbackPath = path.join('/mnt/videocontrol-data/content', fileName);
       if (fs.existsSync(fallbackPath)) {
@@ -184,7 +209,7 @@ router.get('/resolve/:deviceId/*fileName', (req, res) => {
  * GET /api/files/trailer/:deviceId/:fileName
  * Отдаёт готовый трейлер (10s) если он сгенерирован
  */
-router.get('/trailer/:deviceId/*fileName', (req, res) => {
+router.get('/trailer/:deviceId/*fileName', async (req, res) => {
   const deviceId = sanitizeDeviceId(req.params.deviceId);
   const fileName = normalizeFileNameParam(req.params.fileName);
   
@@ -192,10 +217,10 @@ router.get('/trailer/:deviceId/*fileName', (req, res) => {
     return res.status(400).send('Invalid parameters');
   }
   
-  let metadata = getFileMetadata(deviceId, fileName);
+  let metadata = await getFileMetadata(deviceId, fileName);
   if (!metadata) {
     logger.warn('[Resolver] Trailer fallback to resolve-all', { deviceId, fileName });
-    metadata = getAnyFileMetadataBySafeName(fileName);
+    metadata = await getAnyFileMetadataBySafeName(fileName);
   }
   if (!metadata) {
     return res.status(404).send('Not found');
@@ -230,7 +255,7 @@ router.get('/trailer/:deviceId/*fileName', (req, res) => {
  * Отдаёт превью-вырезку видео (по умолчанию первые 10 секунд) без полной загрузки файла
  * КРИТИЧНО: Для обычных файлов отдаем напрямую (без ffmpeg), для стримов используем ffmpeg
  */
-router.get('/preview/:deviceId/*fileName', (req, res) => {
+router.get('/preview/:deviceId/*fileName', async (req, res) => {
   const deviceId = sanitizeDeviceId(req.params.deviceId);
   const fileName = normalizeFileNameParam(req.params.fileName);
   
@@ -238,10 +263,10 @@ router.get('/preview/:deviceId/*fileName', (req, res) => {
     return res.status(400).send('Invalid parameters');
   }
   
-  let metadata = getFileMetadata(deviceId, fileName);
+  let metadata = await getFileMetadata(deviceId, fileName);
   if (!metadata) {
     logger.warn('[Resolver] Preview fallback to resolve-all', { deviceId, fileName });
-    metadata = getAnyFileMetadataBySafeName(fileName);
+    metadata = await getAnyFileMetadataBySafeName(fileName);
   }
   if (!metadata) {
     return res.status(404).send('File not found');
@@ -266,6 +291,13 @@ router.get('/preview/:deviceId/*fileName', (req, res) => {
     // Проверяем существование физического файла
     if (!fs.existsSync(metadata.file_path)) {
       return res.status(404).send('Physical file not found');
+    }
+    
+    try {
+      metadata.file_path = validatePath(metadata.file_path, getDataRoot());
+    } catch {
+      logger.error('[Preview] Path validation failed', { deviceId, fileName, path: metadata.file_path });
+      return res.status(403).send('Forbidden');
     }
     
     // Отдаем файл напрямую с поддержкой Range requests

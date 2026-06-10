@@ -105,6 +105,12 @@ echo ""
 # Определяем установочную директорию
 INSTALL_DIR="${1:-/var/lib/mmrc}"
 
+# Определяем, запущен ли скрипт из локального репозитория
+SCRIPT_SRC="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd 2>/dev/null)"
+if [ ! -f "$SCRIPT_SRC/package.json" ] || [ ! -f "$SCRIPT_SRC/server.js" ]; then
+    SCRIPT_SRC=""
+fi
+
 # Для продакшена всегда используем vcuser
 SERVICE_USER="vcuser"
 SERVICE_GROUP="vcgroup"
@@ -172,6 +178,166 @@ if [ "$STORAGE_MODE" = "external_fstab" ] && [ -z "$CONTENT_SOURCE" ]; then
         exit 1
     fi
     read -p "Enter content device/UUID for /etc/fstab (e.g., /dev/sdb1 or UUID=xxxx): " CONTENT_SOURCE
+fi
+
+# ==========================================
+# DATABASE SELECTION
+# ==========================================
+DB_TYPE="${DB_TYPE:-}"
+
+if [ -z "$DB_TYPE" ]; then
+    if [ "$AUTO_CONFIRM" = "1" ]; then
+        DB_TYPE="sqlite"
+        echo "AUTO_CONFIRM=1 → DB_TYPE не задан, используем sqlite"
+    else
+        echo ""
+        echo "Select database type:"
+        echo "  [1] SQLite (встроенная, не требует настройки)"
+        echo "  [2] PostgreSQL (через Docker, требуется установка Docker)"
+        read -p "Choose [1-2]: " -n 1 -r
+        echo ""
+        case "$REPLY" in
+            1) DB_TYPE="sqlite" ;;
+            2) DB_TYPE="postgres" ;;
+            *) echo "Invalid choice, defaulting to SQLite"; DB_TYPE="sqlite" ;;
+        esac
+    fi
+fi
+
+# PostgreSQL connection defaults
+DB_POSTGRES_HOST="${DB_POSTGRES_HOST:-127.0.0.1}"
+DB_POSTGRES_PORT="${DB_POSTGRES_PORT:-5432}"
+DB_POSTGRES_USER="${DB_POSTGRES_USER:-mmrc}"
+DB_POSTGRES_PASSWORD="${DB_POSTGRES_PASSWORD:-}"
+DB_POSTGRES_DB="${DB_POSTGRES_DB:-mmrc}"
+
+if [ "$DB_TYPE" = "postgres" ]; then
+    echo ""
+    echo -e "${BLUE}PostgreSQL setup...${NC}"
+
+    POSTGRES_SOURCE="${POSTGRES_SOURCE:-}"
+
+    if [ -z "$POSTGRES_SOURCE" ]; then
+        if [ "$AUTO_CONFIRM" = "1" ]; then
+            POSTGRES_SOURCE="docker"
+            echo "  AUTO_CONFIRM=1 → creating Docker PostgreSQL"
+        else
+            echo ""
+            echo "Select PostgreSQL setup method:"
+            echo "  [1] Create new Docker container (recommended)"
+            echo "  [2] Use existing PostgreSQL database"
+            read -p "Choose [1-2]: " -n 1 -r
+            echo ""
+            case "$REPLY" in
+                1) POSTGRES_SOURCE="docker" ;;
+                2) POSTGRES_SOURCE="existing" ;;
+                *) echo "Invalid choice, defaulting to Docker"; POSTGRES_SOURCE="docker" ;;
+            esac
+        fi
+    fi
+
+    if [ "$POSTGRES_SOURCE" = "existing" ]; then
+        # Use existing PostgreSQL — ask for connection params
+        echo "  Using existing PostgreSQL database..."
+        if [ "$AUTO_CONFIRM" != "1" ]; then
+            read -p "PostgreSQL host [127.0.0.1]: " DB_POSTGRES_HOST_INPUT
+            DB_POSTGRES_HOST="${DB_POSTGRES_HOST_INPUT:-$DB_POSTGRES_HOST}"
+            read -p "PostgreSQL port [5432]: " DB_POSTGRES_PORT_INPUT
+            DB_POSTGRES_PORT="${DB_POSTGRES_PORT_INPUT:-$DB_POSTGRES_PORT}"
+            read -p "PostgreSQL database name [mmrc]: " DB_POSTGRES_DB_INPUT
+            DB_POSTGRES_DB="${DB_POSTGRES_DB_INPUT:-$DB_POSTGRES_DB}"
+            read -p "PostgreSQL user [mmrc]: " DB_POSTGRES_USER_INPUT
+            DB_POSTGRES_USER="${DB_POSTGRES_USER_INPUT:-$DB_POSTGRES_USER}"
+            while [ -z "$DB_POSTGRES_PASSWORD" ]; do
+                read -s -p "PostgreSQL password (required): " DB_POSTGRES_PASSWORD_INPUT
+                echo ""
+                DB_POSTGRES_PASSWORD="${DB_POSTGRES_PASSWORD_INPUT:-}"
+                if [ -z "$DB_POSTGRES_PASSWORD" ]; then
+                    echo "  Password cannot be empty!"
+                fi
+            done
+        fi
+        if [ -z "$DB_POSTGRES_PASSWORD" ]; then
+            DB_POSTGRES_PASSWORD="mmrc"
+            echo -e "  ${YELLOW}⚠️  Using default password: mmrc${NC}"
+        fi
+        echo -e "  ${GREEN}✅ Using existing PostgreSQL at ${DB_POSTGRES_HOST}:${DB_POSTGRES_PORT}/${DB_POSTGRES_DB}${NC}"
+    else
+        # Docker setup
+        echo -e "${BLUE}  Setting up PostgreSQL via Docker...${NC}"
+
+        # Install Docker if not present
+        if ! command -v docker &> /dev/null; then
+            echo "  Installing Docker..."
+            curl -fsSL https://get.docker.com | bash
+            systemctl enable docker
+            systemctl start docker
+            echo -e "  ${GREEN}✅ Docker installed${NC}"
+        else
+            echo -e "  ${GREEN}✅ Docker already installed${NC}"
+        fi
+
+        # Ask for DB credentials
+        if [ "$AUTO_CONFIRM" != "1" ]; then
+            read -p "PostgreSQL port [5432]: " DB_POSTGRES_PORT_INPUT
+            DB_POSTGRES_PORT="${DB_POSTGRES_PORT_INPUT:-$DB_POSTGRES_PORT}"
+            read -p "PostgreSQL database name [mmrc]: " DB_POSTGRES_DB_INPUT
+            DB_POSTGRES_DB="${DB_POSTGRES_DB_INPUT:-$DB_POSTGRES_DB}"
+            read -p "PostgreSQL user [mmrc]: " DB_POSTGRES_USER_INPUT
+            DB_POSTGRES_USER="${DB_POSTGRES_USER_INPUT:-$DB_POSTGRES_USER}"
+            while [ -z "$DB_POSTGRES_PASSWORD" ]; do
+                read -s -p "PostgreSQL password (required): " DB_POSTGRES_PASSWORD_INPUT
+                echo ""
+                DB_POSTGRES_PASSWORD="${DB_POSTGRES_PASSWORD_INPUT:-}"
+                if [ -z "$DB_POSTGRES_PASSWORD" ]; then
+                    echo "  Password cannot be empty!"
+                fi
+            done
+        fi
+
+        if [ -z "$DB_POSTGRES_PASSWORD" ]; then
+            DB_POSTGRES_PASSWORD="mmrc"
+            echo -e "  ${YELLOW}⚠️  Using default password: mmrc${NC}"
+        fi
+
+        # Pull and start PostgreSQL container
+        echo "  Pulling postgres:16-alpine..."
+        docker images -q postgres:16-alpine 2>/dev/null | grep -q . || docker pull postgres:16-alpine
+
+        # Check if container already exists
+        if docker ps -a --format '{{.Names}}' | grep -q '^mmrc-postgres$'; then
+            echo "  Container mmrc-postgres already exists, starting..."
+            docker start mmrc-postgres || true
+        else
+            echo "  Starting PostgreSQL container..."
+            docker run -d \
+                --name mmrc-postgres \
+                --restart unless-stopped \
+                -p 127.0.0.1:${DB_POSTGRES_PORT}:5432 \
+                -e POSTGRES_DB=${DB_POSTGRES_DB} \
+                -e POSTGRES_USER=${DB_POSTGRES_USER} \
+                -e POSTGRES_PASSWORD=${DB_POSTGRES_PASSWORD} \
+                -v mmrc-pgdata:/var/lib/postgresql/data \
+                postgres:16-alpine
+        fi
+
+        # Wait for PostgreSQL to be ready
+        echo "  Waiting for PostgreSQL to be ready..."
+        for i in {1..30}; do
+            if docker exec mmrc-postgres pg_isready -U ${DB_POSTGRES_USER} >/dev/null 2>&1; then
+                echo -e "  ${GREEN}✅ PostgreSQL is ready${NC}"
+                break
+            fi
+            if [ "$i" -eq 30 ]; then
+                echo -e "  ${RED}❌ PostgreSQL failed to start${NC}"
+                docker logs mmrc-postgres --tail 20
+                exit 1
+            fi
+            sleep 2
+        done
+
+        echo -e "${GREEN}✅ PostgreSQL container running on 127.0.0.1:${DB_POSTGRES_PORT}${NC}"
+    fi
 fi
 
 # ==========================================
@@ -254,9 +420,13 @@ fi
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-# Клонируем из GitHub
-echo "  Cloning from GitHub..."
-git clone https://github.com/ya-k0v/MMRC.git .
+if [ -n "$SCRIPT_SRC" ]; then
+    echo "  Copying from local repository: $SCRIPT_SRC"
+    rsync -a --exclude='.git' --exclude='node_modules' --exclude='data' "$SCRIPT_SRC"/ .
+else
+    echo "  Cloning from GitHub..."
+    git clone https://github.com/ya-k0v/MMRC.git .
+fi
 
 echo -e "${GREEN}✅ Project downloaded${NC}"
 
@@ -384,6 +554,33 @@ NODE_ENV=production
 PORT=3000
 HOST=127.0.0.1
 
+# Database type: sqlite | postgres
+DB_TYPE=$DB_TYPE
+
+EOF
+
+    if [ "$DB_TYPE" = "postgres" ]; then
+        cat >> .env << EOF
+# PostgreSQL connection
+DB_HOST=$DB_POSTGRES_HOST
+DB_PORT=$DB_POSTGRES_PORT
+DB_NAME=$DB_POSTGRES_DB
+DB_USER=$DB_POSTGRES_USER
+DB_PASSWORD=$DB_POSTGRES_PASSWORD
+EOF
+    else
+        cat >> .env << EOF
+# SQLite database path
+DB_PATH=config/main.db
+
+# SQLite WAL Checkpoint
+WAL_CHECKPOINT_INTERVAL_MS=60000
+WAL_CHECKPOINT_THRESHOLD_MB=100
+EOF
+    fi
+
+    cat >> .env << EOF
+
 # JWT Authentication (12h access, 30d refresh)
 JWT_SECRET=$JWT_SECRET
 JWT_ACCESS_EXPIRES_IN=12h
@@ -392,10 +589,6 @@ JWT_REFRESH_EXPIRES_IN=30d
 # Logging
 LOG_LEVEL=info
 SILENT_CONSOLE=false
-
-# SQLite WAL Checkpoint
-WAL_CHECKPOINT_INTERVAL_MS=60000
-WAL_CHECKPOINT_THRESHOLD_MB=100
 
 # File Management
 AUTO_CLEANUP_MISSING_FILES=false
@@ -406,27 +599,28 @@ EOF
 fi
 
 # Инициализируем БД и применяем миграции
-echo "  Initializing SQLite database..."
-if [ ! -f config/main.db ]; then
-    sqlite3 config/main.db < src/database/init.sql
-    # Права будут установлены на vcuser в PHASE 7
-    chown $CURRENT_USER:$CURRENT_USER config/main.db 2>/dev/null || true
-    echo -e "  ${GREEN}✅ Database initialized with default schema and admin user${NC}"
+if [ "$DB_TYPE" = "sqlite" ]; then
+    echo "  Initializing SQLite database..."
+    if [ ! -f config/main.db ]; then
+        sqlite3 config/main.db < src/database/init.sql
+        # Права будут установлены на vcuser в PHASE 7
+        chown $CURRENT_USER:$CURRENT_USER config/main.db 2>/dev/null || true
+        echo -e "  ${GREEN}✅ Database initialized with default schema and admin user${NC}"
+        echo -e "  ${YELLOW}📝 Default admin: admin / admin123${NC}"
+        echo -e "  ${RED}⚠️  CHANGE PASSWORD AFTER FIRST LOGIN!${NC}"
+    else
+        echo -e "  ${YELLOW}⚠️  Database already exists${NC}"
+    fi
+elif [ "$DB_TYPE" = "postgres" ]; then
+    echo "  Initializing PostgreSQL database via migration..."
+    # Run migration to create schema (reads DB_TYPE from .env)
+    node src/database/migrate.js
+    echo -e "  ${GREEN}✅ PostgreSQL schema initialized${NC}"
     echo -e "  ${YELLOW}📝 Default admin: admin / admin123${NC}"
     echo -e "  ${RED}⚠️  CHANGE PASSWORD AFTER FIRST LOGIN!${NC}"
-else
-    echo -e "  ${YELLOW}⚠️  Database already exists${NC}"
 fi
 
-echo "  Initializing hero module database..."
-if [ ! -f config/hero/heroes.db ]; then
-    sqlite3 config/hero/heroes.db < src/hero/database/schema.sql
-    # Права будут установлены на vcuser в PHASE 7
-    chown $CURRENT_USER:$CURRENT_USER config/hero/heroes.db 2>/dev/null || true
-    echo -e "  ${GREEN}✅ Hero database initialized (config/hero/heroes.db)${NC}"
-else
-    echo -e "  ${YELLOW}⚠️  Hero database already exists${NC}"
-fi
+echo "  Hero module uses main database (initialized at server startup)"
 
 # Создаем конфигурацию видео-оптимизации если нет
 if [ ! -f config/video-optimization.json ]; then
@@ -660,13 +854,15 @@ fi
 cat > /etc/systemd/system/videocontrol.service << EOF
 [Unit]
 Description=VideoControl Server v3.2.0
-After=network.target
+After=network.target$([ "$DB_TYPE" = "postgres" ] && echo " docker.target")
+Wants=$([ "$DB_TYPE" = "postgres" ] && echo "docker.target")
 
 [Service]
 Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_GROUP
 WorkingDirectory=$INSTALL_DIR
+ExecStartPre=/usr/bin/node $INSTALL_DIR/src/database/migrate.js
 ExecStart=/usr/bin/node $INSTALL_DIR/server.js
 Restart=always
 RestartSec=10
@@ -727,7 +923,11 @@ echo "🎉 VideoControl v3.2.0 successfully installed!"
 echo ""
 echo "📂 Installation directory: $INSTALL_DIR"
 echo "👤 Service user: $SERVICE_USER ($SERVICE_GROUP)"
+if [ "$DB_TYPE" = "postgres" ]; then
+echo "📊 Database: PostgreSQL (${POSTGRES_SOURCE:-docker}) - $DB_POSTGRES_HOST:$DB_POSTGRES_PORT/$DB_POSTGRES_DB"
+else
 echo "📊 Database: config/main.db (SQLite)"
+fi
 echo "🌐 Server: http://$(hostname -I | awk '{print $1}')"
 echo ""
 echo "📦 Data storage:"
@@ -783,7 +983,9 @@ else
 fi
 echo "  Logs:    tail -f $LOGS_DIR/combined-*.log"
 echo "  Errors:  tail -f $LOGS_DIR/error-*.log"
+if [ "$DB_TYPE" != "postgres" ]; then
 echo "  Audit:   sqlite3 $INSTALL_DIR/config/main.db 'SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 10;'"
+fi
 echo "  Stop:    sudo systemctl stop videocontrol"
 echo ""
 echo "📚 Documentation:"

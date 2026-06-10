@@ -287,7 +287,7 @@ export function setupControlHandlers(socket, deps) {
               if (!existingUrl) {
                 // КРИТИЧНО: Если стрим найден в устройстве-источнике, берем метаданные оттуда
                 const metadataDeviceId = streamSourceDeviceId;
-                const metadata = getFileMetadata(metadataDeviceId, file);
+                const metadata = await getFileMetadata(metadataDeviceId, file);
                 if (metadata && metadata.content_type === 'streaming') {
                   try {
                     localPlaybackStreamUrl = await streamManager.ensureStreamRunning(device_id, file, metadata);
@@ -454,7 +454,7 @@ export function setupControlHandlers(socket, deps) {
               // FFmpeg не запущен - запускаем его (lazy loading)
               // КРИТИЧНО: Если стрим найден в устройстве-источнике, берем метаданные оттуда
               const metadataDeviceId = streamSourceDeviceId;
-              const metadata = getFileMetadata(metadataDeviceId, file);
+              const metadata = await getFileMetadata(metadataDeviceId, file);
               logger.info('[Control] 🔍 Checking metadata for stream', {
                 deviceId: device_id,
                 metadataDeviceId,
@@ -560,7 +560,7 @@ export function setupControlHandlers(socket, deps) {
       if (!type) {
         // КРИТИЧНО: Если указан originDeviceId, проверяем метаданные в устройстве-источнике
         const metadataDeviceId = (originDeviceId && originDeviceId !== device_id) ? originDeviceId : device_id;
-        const metadata = getFileMetadata(metadataDeviceId, file);
+        const metadata = await getFileMetadata(metadataDeviceId, file);
         if (metadata && metadata.content_type) {
           type = metadata.content_type;
           logger.info('[Control] 🔍 Type from DB', {
@@ -612,7 +612,7 @@ export function setupControlHandlers(socket, deps) {
         });
         
         // Проверяем БД - может быть стрим есть, но d.streams не обновлен
-        const metadata = getFileMetadata(device_id, file);
+        const metadata = await getFileMetadata(device_id, file);
         logger.info('[Control] 🔍 DB metadata check', {
           deviceId: device_id,
           file,

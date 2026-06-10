@@ -471,7 +471,7 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
     try {
       const stat = fs.statSync(targetPath);
       const pagesCount = await getFolderImagesCount(targetId, targetSafeName);
-      saveFileMetadata({
+      await saveFileMetadata({
         deviceId: targetId,
         safeName: targetSafeName,
         originalName: originalName || targetSafeName,
@@ -534,12 +534,12 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
  * @param {Object} devices - Объект devices
  * @param {Object} fileNamesMap - Маппинг имен
  */
-export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
+export async function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
   const device = devices[deviceId];
   if (!device) return;
   
   // 1. Получаем файлы из БД (обычные файлы)
-  const filesMetadata = getDeviceFilesMetadata(deviceId);
+  const filesMetadata = await getDeviceFilesMetadata(deviceId);
   
   logger.debug(`[updateDeviceFilesFromDB] Получено метаданных из БД для ${deviceId}: ${filesMetadata.length}`, {
     deviceId,
@@ -829,10 +829,10 @@ export function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
               const pagesCount = await getFolderImagesCount(deviceId, folderName);
               
               // Удаляем старую запись
-              deleteFileMetadata(deviceId, safeName);
+              await deleteFileMetadata(deviceId, safeName);
               
               // Создаем новую запись для папки
-              saveFileMetadata({
+              await saveFileMetadata({
                 deviceId,
                 safeName: folderName,
                 originalName: displayName.replace(/\.(pdf|pptx)$/i, ''),
@@ -1570,7 +1570,7 @@ export function createFilesRouter(deps) {
     updateDeviceFilesFromDB(deviceId, devices, fileNamesMap);
     io.emit('devices/updated');
 
-    const currentMetadata = getFileMetadata(deviceId, safeName);
+    const currentMetadata = await getFileMetadata(deviceId, safeName);
     const optimizationPath = currentMetadata?.file_path && fs.existsSync(currentMetadata.file_path)
       ? currentMetadata.file_path
       : finalPath;
@@ -1586,7 +1586,7 @@ export function createFilesRouter(deps) {
 
   // GET /api/devices/all/files - агрегированный список файлов по всем устройствам
   // Доступен только для авторизованных ролей (requireSpeaker: speaker/admin/hero_admin)
-  router.get('/all/files', requireSpeaker[0], requireSpeaker[1], (req, res) => {
+  router.get('/all/files', requireSpeaker[0], requireSpeaker[1], async (req, res) => {
     const readyOnly = req.query.readyOnly === '1' || req.query.readyOnly === 'true';
     const q = (req.query.q || '').toString().trim();
     const deviceFilter = sanitizeDeviceId(req.query.device);
@@ -1594,7 +1594,7 @@ export function createFilesRouter(deps) {
     const limit = Math.min(Math.max(parseInt(req.query.limit || '200', 10) || 200, 1), 500);
     const offset = Math.max(parseInt(req.query.offset || '0', 10) || 0, 0);
     const isSpeaker = req.user?.role === 'speaker';
-    const allowedDevices = isSpeaker ? getUserDevices(req.user.userId) : [];
+    const allowedDevices = isSpeaker ? await getUserDevices(req.user.userId) : [];
     const allowedDevicesSet = new Set(allowedDevices);
 
     if (isSpeaker && allowedDevices.length === 0) {
@@ -1643,14 +1643,15 @@ export function createFilesRouter(deps) {
       }
 
       // КРИТИЧНО: Исключаем плейсхолдеры и временные файлы
-      where.push('(is_placeholder = 0 OR is_placeholder IS NULL)');
+      where.push('(NOT is_placeholder OR is_placeholder IS NULL)');
       where.push('safe_name NOT LIKE ?');
       where.push('safe_name NOT LIKE ?');
       where.push('safe_name != ?');
       params.push('.optimizing_%', '.placeholder%', 'placeholder.mp4');
 
       const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-      const stmt = db.prepare(`
+
+      const rows = await db.query(`
         SELECT 
           device_id,
           safe_name,
@@ -1671,14 +1672,13 @@ export function createFilesRouter(deps) {
         ${whereSql}
         ORDER BY file_mtime DESC, created_at DESC
         LIMIT ? OFFSET ?
-      `);
+      `, [...params, limit, offset]);
 
-      const rows = stmt.all(...params, limit, offset);
       const visibleRows = readyOnly
         ? rows.filter((row) => isFileReadyForSpeaker(row.device_id, row.safe_name))
         : rows;
       // COUNT запрос использует те же условия WHERE
-      const countRow = db.prepare(`SELECT COUNT(*) as total FROM files_metadata ${whereSql}`).get(...params);
+      const countRow = await db.get(`SELECT COUNT(*) as total FROM files_metadata ${whereSql}`, params);
       const total = countRow?.total ?? rows.length;
 
       // Дополняем списком папок/PDF/PPTX, которые не лежат в files_metadata
@@ -1773,15 +1773,15 @@ export function createFilesRouter(deps) {
     }
 
     if (req.user?.role === 'speaker') {
-      const hasSourceAccess = hasDeviceAccess(req.user.userId, sourceDeviceId, req.user.role);
-      const hasTargetAccess = hasDeviceAccess(req.user.userId, targetDeviceId, req.user.role);
+      const hasSourceAccess = await hasDeviceAccess(req.user.userId, sourceDeviceId, req.user.role);
+      const hasTargetAccess = await hasDeviceAccess(req.user.userId, targetDeviceId, req.user.role);
 
       if (!hasSourceAccess || !hasTargetAccess) {
         return res.status(403).json({ error: 'Доступ к одному из устройств запрещен' });
       }
     }
 
-    let sourceMeta = getFileMetadata(sourceDeviceId, safeName);
+    let sourceMeta = await getFileMetadata(sourceDeviceId, safeName);
 
     // Fallback для папок/PDF/PPTX, которые не лежат в files_metadata, но есть в файловой системе
     if (!sourceMeta) {
@@ -1822,7 +1822,7 @@ export function createFilesRouter(deps) {
           original_name: originalName, // КРИТИЧНО: Используем реальное originalName, а не safeName
           file_path: filePath,
           file_size: fileSize,
-          file_mtime: stat.mtime?.toISOString?.() || null,
+          file_mtime: stat.mtimeMs ? Math.floor(stat.mtimeMs) : null,
           content_type: isFolder ? 'folder' : (isPdf ? 'pdf' : isPptx ? 'pptx' : null),
           mime_type: mimeGuess,
           md5_hash: null,
@@ -1863,7 +1863,7 @@ export function createFilesRouter(deps) {
     // Ищем существующий safeName на целевом устройстве
     let targetSafeName = safeName;
     let skipCopy = false;
-    const existing = getFileMetadata(targetDeviceId, targetSafeName);
+    const existing = await getFileMetadata(targetDeviceId, targetSafeName);
 
     if (existing) {
       const existingPath = existing.file_path;
@@ -1924,7 +1924,7 @@ export function createFilesRouter(deps) {
         : (targetDeviceId === sourceDeviceId && !alreadyLinked); // для статического контента/изображений не сохраняем запись на целевое устройство, если оно другое
 
     if (shouldSaveMetadata) {
-      saveFileMetadata({
+      await saveFileMetadata({
         deviceId: targetDeviceId,
         safeName: targetSafeName,
         originalName,
@@ -1967,7 +1967,7 @@ export function createFilesRouter(deps) {
         saveFileNamesMap(fileNamesMap);
         // Обновляем метаданные в БД, если originalName отличается
         if (existing && existing.original_name !== originalName) {
-          updateFileOriginalName(targetDeviceId, targetSafeName, originalName);
+          await updateFileOriginalName(targetDeviceId, targetSafeName, originalName);
         }
         updateDeviceFilesFromDB(targetDeviceId, devices, fileNamesMap);
       }
@@ -2052,7 +2052,7 @@ export function createFilesRouter(deps) {
     }
 
     try {
-      createStreamingEntry({
+      await createStreamingEntry({
         deviceId: id,
         safeName,
         originalName: name,
@@ -2096,14 +2096,14 @@ export function createFilesRouter(deps) {
   });
 
   // GET /api/devices/:id/streams/:safeName - Получить данные стрима (для плееров)
-  router.get('/:id/streams/:safeName/dash-utc-time.xml', (req, res) => {
+  router.get('/:id/streams/:safeName/dash-utc-time.xml', async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
     if (!id) return res.status(400).send('invalid device id');
 
     const safeName = req.params.safeName;
     if (!safeName) return res.status(400).send('invalid stream name');
 
-    const metadata = getFileMetadata(id, safeName);
+    const metadata = await getFileMetadata(id, safeName);
     if (!metadata || metadata.content_type !== 'streaming') {
       return res.status(404).send('stream not found');
     }
@@ -2125,7 +2125,7 @@ export function createFilesRouter(deps) {
     const safeName = req.params.safeName;
     if (!safeName) return res.status(400).json({ error: 'Неверное название стрима' });
 
-    const metadata = getFileMetadata(id, safeName);
+    const metadata = await getFileMetadata(id, safeName);
     if (!metadata || metadata.content_type !== 'streaming') {
       return res.status(404).json({ error: 'Стрим не найден' });
     }
@@ -2191,7 +2191,7 @@ export function createFilesRouter(deps) {
     const safeName = req.params.safeName;
     if (!safeName) return res.status(400).json({ error: 'Неверное название стрима' });
 
-    const metadata = getFileMetadata(id, safeName);
+    const metadata = await getFileMetadata(id, safeName);
     if (!metadata || metadata.content_type !== 'streaming') {
       return res.status(404).json({ error: 'Стрим не найден' });
     }
@@ -2234,7 +2234,7 @@ export function createFilesRouter(deps) {
     }
 
     // Проверяем существование стрима
-    const existingMetadata = getFileMetadata(id, safeName);
+    const existingMetadata = await getFileMetadata(id, safeName);
     if (!existingMetadata || existingMetadata.content_type !== 'streaming') {
       return res.status(404).json({ error: 'Стрим не найден' });
     }
@@ -2257,7 +2257,7 @@ export function createFilesRouter(deps) {
 
     try {
       // Обновляем метаданные стрима
-      const updated = updateStreamMetadata(
+      const updated = await updateStreamMetadata(
         id,
         safeName,
         name,
@@ -2316,7 +2316,7 @@ export function createFilesRouter(deps) {
     const id = sanitizeDeviceId(req.params.id);
     if (!id) return res.status(400).json({ error: 'Неверный ID устройства' });
 
-    if (!hasDeviceAccess(req.user.userId, id, req.user.role)) {
+    if (!(await hasDeviceAccess(req.user.userId, id, req.user.role))) {
       return res.status(403).json({ error: 'Доступ к устройству запрещен' });
     }
 
@@ -2328,7 +2328,7 @@ export function createFilesRouter(deps) {
       return res.status(404).json({ error: 'Устройство не найдено' });
     }
 
-    const metadata = getFileMetadata(id, safeName);
+    const metadata = await getFileMetadata(id, safeName);
     if (!metadata || metadata.content_type !== 'streaming') {
       return res.status(404).json({ error: 'Стрим не найден' });
     }
@@ -2365,7 +2365,7 @@ export function createFilesRouter(deps) {
       return res.status(404).json({ error: 'Устройство не найдено' });
     }
 
-    const metadata = getFileMetadata(id, safeName);
+    const metadata = await getFileMetadata(id, safeName);
     if (!metadata || metadata.content_type !== 'streaming') {
       return res.status(404).json({ error: 'Стрим не найден' });
     }
@@ -3843,7 +3843,7 @@ export function createFilesRouter(deps) {
     } 
       
       // 1. Получаем метаданные файла из источника (обычный файл)
-      const sourceMetadata = getFileMetadata(sourceId, fileName);
+      const sourceMetadata = await getFileMetadata(sourceId, fileName);
       
       if (!sourceMetadata) {
         return res.status(404).json({ error: 'Исходный файл не найден в базе данных' });
@@ -3851,7 +3851,7 @@ export function createFilesRouter(deps) {
     
       if (sourceMetadata.content_type === 'streaming') {
         let targetSafeNameStreaming = fileName;
-        const existingStream = getFileMetadata(targetId, targetSafeNameStreaming);
+        const existingStream = await getFileMetadata(targetId, targetSafeNameStreaming);
         if (existingStream) {
           const ext = path.extname(fileName);
           const nameBase = path.basename(fileName, ext);
@@ -3867,7 +3867,7 @@ export function createFilesRouter(deps) {
         const targetOriginalNameStreaming = sourceMetadata.original_name || fileNamesMap[sourceId]?.[fileName] || fileName;
         const sourceProtocol = normalizeStreamProtocol(sourceMetadata.stream_protocol, streamUrl, sourceMetadata.mime_type);
 
-        createStreamingEntry({
+        await createStreamingEntry({
           deviceId: targetId,
           safeName: targetSafeNameStreaming,
           originalName: targetOriginalNameStreaming,
@@ -3879,7 +3879,7 @@ export function createFilesRouter(deps) {
         fileNamesMap[targetId][targetSafeNameStreaming] = targetOriginalNameStreaming;
         saveFileNamesMap(fileNamesMap);
         if (move) {
-          deleteFileMetadata(sourceId, fileName);
+          await deleteFileMetadata(sourceId, fileName);
           removeStreamJob(sourceId, fileName, 'moved');
           if (fileNamesMap[sourceId] && fileNamesMap[sourceId][fileName]) {
             delete fileNamesMap[sourceId][fileName];
@@ -3918,7 +3918,7 @@ export function createFilesRouter(deps) {
       
       // 2. Проверяем не существует ли уже на целевом устройстве
       let targetSafeName = fileName;
-      const existingOnTarget = getFileMetadata(targetId, fileName);
+      const existingOnTarget = await getFileMetadata(targetId, fileName);
       
       if (existingOnTarget) {
         // Если файл существует - генерируем уникальное имя (как в Multer)
@@ -3945,7 +3945,7 @@ export function createFilesRouter(deps) {
         targetOriginalName = fileNamesMap[sourceId][fileName];
       }
       
-      saveFileMetadata({
+      await saveFileMetadata({
         deviceId: targetId,
         safeName: targetSafeName,
         originalName: targetOriginalName,
@@ -3976,7 +3976,7 @@ export function createFilesRouter(deps) {
       
       // 5. Если move - удаляем из источника (только из БД!)
       if (move) {
-        deleteFileMetadata(sourceId, fileName);
+        await deleteFileMetadata(sourceId, fileName);
         
         if (fileNamesMap[sourceId] && fileNamesMap[sourceId][fileName]) {
           delete fileNamesMap[sourceId][fileName];
@@ -4030,7 +4030,7 @@ export function createFilesRouter(deps) {
   });
   
   // POST /api/devices/:id/files/:name/rename - Переименование файла или папки
-  router.post('/:id/files/:name/rename', express.json(), (req, res) => {
+  router.post('/:id/files/:name/rename', express.json(), async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
@@ -4054,11 +4054,11 @@ export function createFilesRouter(deps) {
     const deviceFolder = path.join(devicesPath, d.folder);
     
     // НОВОЕ: Проверяем, это медиафайл с metadata в БД?
-    const metadata = getFileMetadata(id, oldName);
+    const metadata = await getFileMetadata(id, oldName);
     if (metadata) {
       // Медиафайл - обновляем только original_name в БД, физический файл НЕ трогаем
       logFile('info', `📝 Обновление originalName в БД: ${oldName} -> ${newName}`, { deviceId: id, oldName, newName });
-      updateFileOriginalName(id, oldName, newName);
+      await updateFileOriginalName(id, oldName, newName);
       
       // КРИТИЧНО: Также обновляем fileNamesMap чтобы при копировании использовалось правильное имя
       if (!fileNamesMap[id]) fileNamesMap[id] = {};
@@ -4193,7 +4193,7 @@ export function createFilesRouter(deps) {
       return res.status(400).json({ error: 'Неверный ID устройства' });
     }
 
-    if (!hasDeviceAccess(req.user.userId, id, req.user.role)) {
+    if (!(await hasDeviceAccess(req.user.userId, id, req.user.role))) {
       return res.status(403).json({ error: 'Доступ к устройству запрещен' });
     }
 
@@ -4252,7 +4252,7 @@ export function createFilesRouter(deps) {
       return res.status(404).json({ error: 'Устройство не найдено' });
     }
 
-    const metadata = getFileMetadata(id, name);
+    const metadata = await getFileMetadata(id, name);
 
     if (metadata?.content_type === 'streaming') {
       return res.status(400).json({ error: 'Стримы нельзя скачать как файл' });
@@ -4466,7 +4466,7 @@ export function createFilesRouter(deps) {
       logger.info('[clear-device-files] Начало очистки устройства', { deviceId: id, devicePath });
       
       // Останавливаем все стримы устройства перед очисткой
-      const metadata = getDeviceFilesMetadata(id);
+      const metadata = await getDeviceFilesMetadata(id);
       const streamingFiles = metadata.filter(m => m.content_type === 'streaming');
       
       for (const fileMeta of streamingFiles) {
@@ -4495,7 +4495,7 @@ export function createFilesRouter(deps) {
       logger.info('[clear-device-files] Директория создана заново', { deviceId: id, devicePath });
       
       // Очищаем метаданные в БД (используем функцию вместо цикла)
-      const deletedCount = deleteDeviceFilesMetadata(id);
+      const deletedCount = await deleteDeviceFilesMetadata(id);
       logger.info('[clear-device-files] Метаданные удалены', { deviceId: id, deletedCount });
       
       // Очищаем fileNamesMap и сохраняем
@@ -4552,9 +4552,9 @@ export function createFilesRouter(deps) {
     const devicesPath = getDevicesPath();
     const deviceFolder = path.join(devicesPath, d.folder);
     
-    // ЗАЩИТА: Простая проверка path traversal
-    if (name.includes('..') || name.startsWith('/') || name.startsWith('\\')) {
-      // Логируем подозрительную активность
+    // ЗАЩИТА: проверка path traversal через нормализацию пути
+    const resolvedPath = path.resolve(deviceFolder, name);
+    if (!resolvedPath.startsWith(deviceFolder)) {
       await auditLog({
         userId: req.user?.id || null,
         action: AuditAction.PATH_TRAVERSAL_ATTEMPT,
@@ -4572,7 +4572,7 @@ export function createFilesRouter(deps) {
       return res.status(400).json({ error: 'Неверный путь к файлу' });
     }
     
-    const existingMetadata = getFileMetadata(id, name);
+    const existingMetadata = await getFileMetadata(id, name);
     if (existingMetadata && existingMetadata.content_type === 'streaming') {
       // КРИТИЧНО: Останавливаем FFmpeg перед удалением из БД
       try {
@@ -4588,7 +4588,7 @@ export function createFilesRouter(deps) {
       
       // Удаляем из БД
       try {
-        deleteFileMetadata(id, name);
+        await deleteFileMetadata(id, name);
       } catch (err) {
         logger.error('[DELETE file] Failed to delete stream metadata', { 
           deviceId: id, 
@@ -4647,6 +4647,9 @@ export function createFilesRouter(deps) {
         deletedFileName = folderName;
         isFolder = true;
         logFile('info', `Удалена папка PDF/PPTX: ${folderName}`, { deviceId: id, fileName: name, folderName });
+        
+        // Удаляем запись из БД
+        await deleteFileMetadata(id, folderName);
       } catch (e) {
         logger.error(`[DELETE file] Ошибка удаления папки ${folderName}`, { error: e.message, stack: e.stack, deviceId: id, fileName: name, folderName });
         return res.status(500).json({ error: 'Не удалось удалить папку' });
@@ -4661,6 +4664,9 @@ export function createFilesRouter(deps) {
           deletedFileName = name;
           isFolder = true;
           logFile('info', `Удалена папка с изображениями: ${name}`, { deviceId: id, fileName: name });
+          
+          // Удаляем запись из БД
+          await deleteFileMetadata(id, name);
         } catch (e) {
           logger.error(`[DELETE file] Ошибка удаления папки ${name}`, { error: e.message, stack: e.stack, deviceId: id, fileName: name });
           return res.status(500).json({ error: 'Не удалось удалить папку с изображениями' });
@@ -4670,7 +4676,7 @@ export function createFilesRouter(deps) {
       // НОВОЕ: Обычный файл - умное удаление с подсчетом ссылок
       
       // 1. Получаем метаданные из БД
-      const metadata = existingMetadata || getFileMetadata(id, name);
+      const metadata = existingMetadata || await getFileMetadata(id, name);
       
       if (!metadata) {
         logFile('warn', 'File not found in DB', { deviceId: id, fileName: name });
@@ -4680,10 +4686,10 @@ export function createFilesRouter(deps) {
       const physicalPath = metadata.file_path;
       
       // 2. Удаляем запись из БД
-      deleteFileMetadata(id, name);
+      await deleteFileMetadata(id, name);
       
       // 3. Подсчитываем сколько еще устройств используют этот файл
-      const refCount = countFileReferences(physicalPath);
+      const refCount = await countFileReferences(physicalPath);
       
       logFile('info', 'File reference removed', {
         deviceId: id,
@@ -4817,7 +4823,7 @@ export function createFilesRouter(deps) {
       return res.status(400).json({ error: 'Неверный ID устройства' });
     }
 
-    if (!hasDeviceAccess(req.user.userId, id, req.user.role)) {
+    if (!(await hasDeviceAccess(req.user.userId, id, req.user.role))) {
       return res.status(403).json({ error: 'Доступ к устройству запрещен' });
     }
     
@@ -4893,7 +4899,7 @@ export function createFilesRouter(deps) {
       
       // Получаем метаданные из БД (разрешение + флаг заглушки + originalName)
       const ext = path.extname(safeName).toLowerCase();
-      let metadata = getFileMetadata(id, safeName);
+      let metadata = await getFileMetadata(id, safeName);
       let needsOptimizationHint = inferNeedsOptimizationFromMetadata(safeName, metadata);
       
       // КРИТИЧНО: originalName берем с правильным приоритетом: metadata.original_name → fileNamesMap → fileNames → safeName
@@ -5028,10 +5034,10 @@ export function createFilesRouter(deps) {
                 const pagesCount = await getFolderImagesCount(id, folderName);
                 
                 // Удаляем старую запись
-                deleteFileMetadata(id, safeName);
+                await deleteFileMetadata(id, safeName);
                 
                 // Создаем новую запись для папки
-                saveFileMetadata({
+                await saveFileMetadata({
                   deviceId: id,
                   safeName: folderName,
                   originalName: originalName.replace(/\.(pdf|pptx)$/i, ''),
@@ -5058,7 +5064,7 @@ export function createFilesRouter(deps) {
                 
                 // Обновляем safeName для дальнейшей обработки
                 safeName = folderName;
-                metadata = getFileMetadata(id, folderName);
+                metadata = await getFileMetadata(id, folderName);
                 needsOptimizationHint = inferNeedsOptimizationFromMetadata(safeName, metadata);
                 if (metadata) {
                   contentType = metadata.content_type || 'folder';

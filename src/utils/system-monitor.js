@@ -162,7 +162,7 @@ class SystemMonitor {
       
       // Простая проверка - выполняем простой запрос
       try {
-        db.prepare('SELECT 1').get();
+        await db.get('SELECT 1');
       } catch (error) {
         // Если БД заблокирована - это нормально, не отправляем уведомление
         if (error.message?.includes('locked') || error.message?.includes('busy')) {

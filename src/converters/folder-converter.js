@@ -164,7 +164,7 @@ export async function extractZipToFolder(deviceId, zipFileName, deviceFolderName
  * @param {string} folderName - Имя папки
  * @returns {Promise<string[]>} Список файлов изображений
  */
-export function resolveFolderPath(deviceId, folderName) {
+export async function resolveFolderPath(deviceId, folderName) {
   const devicesPath = getDevicesPath();
   const candidates = [];
   if (deviceId) {
@@ -196,7 +196,7 @@ export function resolveFolderPath(deviceId, folderName) {
 
   // Fallback: ищем по метаданным (любое устройство)
   try {
-    const meta = getAnyFileMetadataBySafeName(folderName);
+    const meta = await getAnyFileMetadataBySafeName(folderName);
     if (meta?.file_path && fs.existsSync(meta.file_path) && fs.statSync(meta.file_path).isDirectory()) {
       return meta.file_path;
     }
@@ -208,7 +208,7 @@ export function resolveFolderPath(deviceId, folderName) {
 
 export async function getFolderImages(deviceId, folderName) {
   try {
-    const folderPath = resolveFolderPath(deviceId, folderName);
+    const folderPath = await resolveFolderPath(deviceId, folderName);
     if (!folderPath) return { files: [], folderPath: null };
 
     const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];

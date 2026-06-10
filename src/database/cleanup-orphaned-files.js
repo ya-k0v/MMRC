@@ -28,11 +28,11 @@ export async function cleanupOrphanedFiles({ dryRun = false, excludeExtensions =
     });
     
     // 1. Получаем все пути файлов из БД
-    const allFilePaths = db.prepare(`
+    const allFilePaths = await db.query(`
       SELECT DISTINCT file_path 
       FROM files_metadata 
       WHERE file_path IS NOT NULL AND file_path != ''
-    `).all();
+    `);
     
     const dbFilePaths = new Set(
       allFilePaths.map(row => path.resolve(row.file_path))

@@ -261,12 +261,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   const settingsBtn = document.getElementById('settingsBtn');
   const heroBtn = document.getElementById('heroBtn');
   if (heroBtn) {
+    heroBtn.style.display = 'none';
     if (user.role === 'admin') {
-      heroBtn.onclick = () => {
-        window.open('/hero/admin.html', '_blank');
-      };
-    } else {
-      heroBtn.style.display = 'none';
+      // Загружаем статус модулей
+      adminFetch('/api/admin/modules').then(r => r.json()).then(data => {
+        const heroModule = (data.modules || []).find(m => m.id === 'hero');
+        if (heroModule && heroModule.enabled) {
+          heroBtn.style.display = '';
+          heroBtn.onclick = () => {
+            window.open('/hero/admin.html', '_blank');
+          };
+        }
+      }).catch(() => {});
     }
   }
   if (settingsBtn) {

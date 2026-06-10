@@ -15,6 +15,7 @@ import { createSocketServer } from './src/config/socket-config.js';
 import { 
   closeDatabase, 
   getDatabase, 
+  getDriverType,
   getAllDeviceVolumeStates, 
   saveDeviceVolumeState,
   startWalCheckpointInterval,
@@ -67,6 +68,8 @@ import { getMetrics } from './src/utils/metrics.js';
 import { timerRegistry } from './src/utils/timer-registry.js';
 import { createUpdateManager } from './src/utils/update-manager.js';
 import adminRouter from './src/routes/admin.js';
+import { createModulesRouter } from './src/routes/modules.js';
+import { initEnabledModules, getEnabledModules } from './src/modules/index.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -116,66 +119,59 @@ app.use('/api/', apiSpeedLimiter);
 // ========================================
 // DATABASE INITIALIZATION
 // ========================================
-const DB_PATH = path.join(ROOT, 'config', 'main.db');
-try {
-  // Run migrations / ensure schema before continuing startup
-  runMigrations(DB_PATH);
-} catch (err) {
-  logger.error('[Server] Database migration failed, aborting startup', { error: err?.message || String(err) });
-  throw err;
-}
-
-// Запускаем периодический WAL checkpoint для стабильности БД
-// Проверяет размер WAL файла каждую минуту и выполняет checkpoint если > 100MB
-const WAL_CHECKPOINT_INTERVAL_MS = parseInt(process.env.WAL_CHECKPOINT_INTERVAL_MS || '60000', 10); // 60 секунд по умолчанию
-startWalCheckpointInterval(WAL_CHECKPOINT_INTERVAL_MS);
-logger.info('[Server] WAL checkpoint interval started', {
-  intervalMs: WAL_CHECKPOINT_INTERVAL_MS,
-  intervalMinutes: WAL_CHECKPOINT_INTERVAL_MS / 60000,
-  thresholdMB: process.env.WAL_CHECKPOINT_THRESHOLD_MB || '100'
-});
-
-// КРИТИЧНО: Завершаем инициализацию настроек с миграцией путей после инициализации БД
-import('./src/config/settings-manager.js').then(module => {
-  module.initializeSettings().catch(err => {
-    logger.warn('[Server] Failed to complete settings initialization', { error: err.message, stack: err.stack });
-  });
-});
-
-// Инициализация данных
 let devices = {};
 let fileNamesMap = {};
 const deviceVolumeState = {};
 
-// Загружаем данные из SQLite БД
-devices = loadDevicesFromDB();
-fileNamesMap = loadFileNamesFromDB();
+async function startupDatabase() {
+  const DB_PATH = path.join(ROOT, 'config', 'main.db');
+  try {
+    await runMigrations(DB_PATH);
+  } catch (err) {
+    logger.error('[Server] Database migration failed, aborting startup', { error: err?.message || String(err) });
+    throw err;
+  }
+
+  const WAL_CHECKPOINT_INTERVAL_MS = parseInt(process.env.WAL_CHECKPOINT_INTERVAL_MS || '60000', 10);
+  startWalCheckpointInterval(WAL_CHECKPOINT_INTERVAL_MS);
+  logger.info('[Server] WAL checkpoint interval started', {
+    intervalMs: WAL_CHECKPOINT_INTERVAL_MS,
+    intervalMinutes: WAL_CHECKPOINT_INTERVAL_MS / 60000,
+    thresholdMB: process.env.WAL_CHECKPOINT_THRESHOLD_MB || '100'
+  });
+
+  devices = await loadDevicesFromDB();
+  fileNamesMap = await loadFileNamesFromDB();
+
+  const enabledModules = await initEnabledModules();
+  if (enabledModules.length > 0) {
+    logger.info('[Server] Enabled modules:', { modules: enabledModules.join(', ') });
+  }
+  return enabledModules;
+}
+const enabledModules = await startupDatabase();
 
 const streamManager = initStreamManager({
-  outputRoot: getStreamsOutputDir(), // Используем функцию из settings-manager
+  outputRoot: getStreamsOutputDir(),
   publicBasePath: '/streams'
 });
-// КРИТИЧНО: НЕ запускаем FFmpeg для всех стримов при старте
-// FFmpeg будет запускаться только когда стрим действительно используется (lazy loading)
-// Это экономит ресурсы сервера, так как не все стримы используются одновременно
-// const streamingEntries = getAllStreamingMetadata();
-// syncStreamJobs(streamingEntries);
 
-// Загружаем состояние громкости устройств
-const persistedVolumeState = getAllDeviceVolumeStates();
-for (const [deviceId, state] of Object.entries(persistedVolumeState)) {
-  deviceVolumeState[deviceId] = {
-    level: typeof state.level === 'number' ? state.level : 50,
-    muted: Boolean(state.muted),
-    updatedAt: state.updatedAt || null
-  };
-}
+{
+  const persistedVolumeState = await getAllDeviceVolumeStates();
+  for (const [deviceId, state] of Object.entries(persistedVolumeState)) {
+    deviceVolumeState[deviceId] = {
+      level: typeof state.level === 'number' ? state.level : 50,
+      muted: Boolean(state.muted),
+      updatedAt: state.updatedAt || null
+    };
+  }
 
-for (const deviceId of Object.keys(devices)) {
-  if (!deviceVolumeState[deviceId]) {
-    const now = new Date().toISOString();
-    deviceVolumeState[deviceId] = { level: 50, muted: false, updatedAt: now };
-    saveDeviceVolumeState(deviceId, { volumeLevel: 50, isMuted: false });
+  for (const deviceId of Object.keys(devices)) {
+    if (!deviceVolumeState[deviceId]) {
+      const now = new Date().toISOString();
+      deviceVolumeState[deviceId] = { level: 50, muted: false, updatedAt: now };
+      await saveDeviceVolumeState(deviceId, { volumeLevel: 50, isMuted: false });
+    }
   }
 }
 
@@ -383,7 +379,7 @@ const deduplicationRouter = createDeduplicationRouter({
   updateDeviceFilesFromDB
 });
 
-const heroRouter = createHeroRouter({ requireHeroAdmin });
+const heroRouter = enabledModules.includes('hero') ? createHeroRouter({ requireHeroAdmin }) : null;
 const volumeRouter = createVolumeRouter({
   devices,
   getVolumeState,
@@ -398,7 +394,9 @@ app.use('/api/devices', conversionRouter);
 app.use('/api/devices', foldersRouter);
 app.use('/api/devices', deduplicationRouter);  // Дедупликация (check-duplicate, copy-from-duplicate)
 app.use('/api/devices', volumeRouter);
-app.use('/api/hero', heroRouter);
+if (heroRouter) {
+  app.use('/api/hero', heroRouter);
+}
 app.use('/api/notifications', notificationsRouter);  // Роутер уведомлений
 
 // ВАЖНО: devicesRouter, placeholderRouter, filesRouter, videoInfoRouter
@@ -871,7 +869,7 @@ app.get('/api/admin/export-database', requireAuth, requireAdmin, (req, res) => {
 });
 
 // Импорт базы данных (замена текущей БД). Принимает FormData с полем `file` (.db).
-app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUploadSize, (req, res) => {
+app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUploadSize, async (req, res) => {
   try {
     const tempUploadDir = ADMIN_DB_IMPORT_DIR;
     if (!fs.existsSync(tempUploadDir)) fs.mkdirSync(tempUploadDir, { recursive: true });
@@ -971,7 +969,7 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
         }
 
         try {
-          closeDatabase();
+          await closeDatabase();
         } catch (e) {
           logger.warn('[Admin] closeDatabase warning', { error: e.message });
         }
@@ -984,11 +982,11 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
         logger.info('[Admin] Database file replaced', { dbPath: DB_PATH });
 
         // Применяем миграции на новой базе
-        runMigrations(DB_PATH);
+        await runMigrations(DB_PATH);
 
         // КРИТИЧНО: После импорта БД из другого окружения пути к файлам
         // могут указывать на старый contentRoot. Пробуем восстановить их автоматически.
-        const repairResult = repairImportedFilePaths({ devicesPath: getDevicesPath() });
+        const repairResult = await repairImportedFilePaths({ devicesPath: getDevicesPath() });
         logger.info('[Admin] Imported DB paths repair completed', {
           checked: repairResult.checked,
           repaired: repairResult.repaired,
@@ -998,12 +996,12 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
         });
 
         // Перезагрузим in-memory данные (devices, fileNamesMap)
-        devices = loadDevicesFromDB();
-        fileNamesMap = loadFileNamesFromDB();
+        devices = await loadDevicesFromDB();
+        fileNamesMap = await loadFileNamesFromDB();
         Object.keys(devices).forEach((deviceId) => {
           updateDeviceFilesFromDB(deviceId, devices, fileNamesMap);
         });
-        saveDevicesToDB(devices);
+        await saveDevicesToDB(devices);
         io.emit('devices/updated');
 
         const restartScheduled = scheduleRestartAfterDbImport();
@@ -1026,9 +1024,9 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
           if (backupCreated && fs.existsSync(backupPath)) {
             removeWalShmFiles();
             fs.copyFileSync(backupPath, DB_PATH);
-            runMigrations(DB_PATH);
-            devices = loadDevicesFromDB();
-            fileNamesMap = loadFileNamesFromDB();
+            await runMigrations(DB_PATH);
+            devices = await loadDevicesFromDB();
+            fileNamesMap = await loadFileNamesFromDB();
             io.emit('devices/updated');
             logger.info('[Admin] Database restored from backup after import error and state reloaded', { backupPath });
           }
@@ -1056,10 +1054,22 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
   }
 });
 
+// Модули (только admin)
+const modulesRouter = createModulesRouter();
+app.use('/api/admin/modules', requireAuth, requireAdmin, modulesRouter);
+
 // Настройки администратора
-app.get('/api/admin/settings', requireAuth, requireAdmin, (req, res) => {
+app.get('/api/admin/settings', requireAuth, requireAdmin, async (req, res) => {
   try {
     const settings = getSettings();
+    const availableModules = (await import('./src/modules/index.js')).getAvailableModules();
+    const enabled = await getEnabledModules();
+    const enabledSet = new Set(enabled);
+    settings.modules = availableModules.map(m => ({
+      ...m,
+      enabled: enabledSet.has(m.id)
+    }));
+    settings.dbType = getDriverType();
     res.json(settings);
   } catch (error) {
     logger.error('[Admin] Failed to load settings:', error);
@@ -1086,7 +1096,7 @@ app.post('/api/admin/settings/content-root', requireAuth, requireAdmin, async (r
     Object.keys(devices).forEach((deviceId) => {
       updateDeviceFilesFromDB(deviceId, devices, fileNamesMap);
     });
-    saveDevicesToDB(devices);
+    await saveDevicesToDB(devices);
     io.emit('devices/updated');
     logger.info('[Admin] Content root path updated successfully', { newPath: normalizedPath });
 
@@ -1185,7 +1195,7 @@ app.post('/api/admin/database/cleanup-missing-files', requireAuth, requireAdmin,
           updateDeviceFilesFromDB(id, devices, fileNamesMap);
         }
       });
-      saveDevicesToDB(devices);
+      await saveDevicesToDB(devices);
       io.emit('devices/updated');
     }
     
@@ -1231,7 +1241,7 @@ app.post('/api/admin/database/cleanup-orphaned-files', requireAuth, requireAdmin
 // ========================================
 // HEALTH CHECK ENDPOINT
 // ========================================
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
   const health = {
     status: 'ok',
     timestamp: Date.now(),
@@ -1249,7 +1259,7 @@ app.get('/health', (req, res) => {
   try {
     const db = getDatabase();
     // Простой запрос для проверки соединения
-    db.prepare('SELECT 1').get();
+    await db.get('SELECT 1');
     health.database = 'connected';
   } catch (e) {
     health.database = 'disconnected';
@@ -1260,16 +1270,12 @@ app.get('/health', (req, res) => {
   for (const [name, breaker] of Object.entries(circuitBreakers)) {
     const state = breaker.getState();
     health.circuitBreakers[name] = {
-      state: state.state,
-      failureCount: state.failureCount
+      state: state,
+      failureCount: breaker.failureCount
     };
-    if (state.state === 'OPEN') {
-      health.status = 'degraded';
-    }
   }
 
-  const statusCode = health.status === 'ok' ? 200 : 503;
-  res.status(statusCode).json(health);
+  res.json(health);
 });
 
 // ========================================
@@ -1345,9 +1351,9 @@ setupNotificationsHandler(io);
 // Запускаем системный мониторинг (проверка диска, БД, процессов и т.д.)
 initSystemMonitor(streamManager, devices);
 
-function hydrateDevicesFromDatabase() {
+async function hydrateDevicesFromDatabase() {
   try {
-    const repairResult = repairImportedFilePaths({ devicesPath: getDevicesPath() });
+    const repairResult = await repairImportedFilePaths({ devicesPath: getDevicesPath() });
     if (repairResult.repaired > 0 || repairResult.unresolved > 0) {
       logger.info('[Server] Startup metadata path repair result', {
         checked: repairResult.checked,
@@ -1420,7 +1426,7 @@ function hydrateDevicesFromDatabase() {
   }
 
   // Сохраняем обновленное состояние в БД
-  saveDevicesToDB(devices);
+  await saveDevicesToDB(devices);
 
   // КРИТИЧНО: Автоматическая очистка несуществующих файлов из БД при старте
   // Проверяем только если установлена переменная окружения AUTO_CLEANUP_MISSING_FILES=true
@@ -1456,9 +1462,9 @@ server.listen(PORT, HOST, () => {
 
   // Переносим тяжелую синхронную подготовку после открытия порта,
   // чтобы nginx мог увидеть upstream сразу после рестарта.
-  setImmediate(() => {
+  setImmediate(async () => {
     try {
-      hydrateDevicesFromDatabase();
+      await hydrateDevicesFromDatabase();
     } catch (error) {
       logger.error('[Server] Deferred bootstrap failed', {
         error: error.message,
@@ -1722,3 +1728,5 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // Admin API (установка APK и др.)
 app.use('/api/admin', adminRouter);
+
+

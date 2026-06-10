@@ -1,8 +1,3 @@
-/**
- * Hero Module - main export
- */
-
 export { createHeroRouter } from './routes/hero-router.js';
 export { heroQueries } from './database/queries.js';
-export { heroDb } from './database/hero-db.js';
-
+export { getHeroDb } from './database/hero-db.js';

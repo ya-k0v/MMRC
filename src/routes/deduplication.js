@@ -67,7 +67,7 @@ export function createDeduplicationRouter(deps) {
     });
     
     // Ищем дубликат на других устройствах (partial MD5 для больших файлов)
-    const duplicate = findDuplicateFile(md5, size, targetDeviceId, isBigFile);
+    const duplicate = await findDuplicateFile(md5, size, targetDeviceId, isBigFile);
     
     if (duplicate) {
       logFile('info', '✅ Duplicate found!', {
@@ -131,7 +131,7 @@ export function createDeduplicationRouter(deps) {
     
     try {
       // Копируем метаданные из исходного файла (БЕЗ физического копирования!)
-      const sourceMetadata = getFileMetadata(sourceDevice, sourceFile);
+      const sourceMetadata = await getFileMetadata(sourceDevice, sourceFile);
       
       if (!sourceMetadata) {
         return res.status(404).json({ error: 'Метаданные исходного файла не найдены' });
@@ -161,7 +161,7 @@ export function createDeduplicationRouter(deps) {
       });
       
       // МГНОВЕННОЕ КОПИРОВАНИЕ: создаем только запись в БД с reference на тот же физический файл
-      saveFileMetadata({
+      await saveFileMetadata({
         deviceId: targetDeviceId,
         safeName: targetFilename,
         originalName: originalName || targetFilename,
@@ -247,7 +247,7 @@ export function createDeduplicationRouter(deps) {
   router.get('/list', async (req, res) => {
     try {
       const db = getDatabase();
-      const duplicates = db.prepare(`SELECT * FROM file_duplicates`).all();
+      const duplicates = await db.query(`SELECT * FROM file_duplicates`);
       
       res.json(duplicates);
     } catch (error) {

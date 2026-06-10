@@ -6,10 +6,29 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { getDatabase } from './database.js';
+import { getDatabase, driverType } from './database.js';
 import logger, { logFile } from '../utils/logger.js';
-import { withRetrySync, isRetryableDatabaseError } from '../utils/retry.js';
+import { isRetryableDatabaseError } from '../utils/retry.js';
 import { STATIC_CONTENT_TYPES } from '../config/file-types.js';
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function withRetryAsync(fn, { maxRetries = 3, delay = 100, shouldRetry, onRetry } = {}) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt < maxRetries && (!shouldRetry || shouldRetry(error))) {
+        if (onRetry) onRetry(error, attempt, maxRetries);
+        await sleep(delay);
+      } else {
+        throw error;
+      }
+    }
+  }
+}
 
 /**
  * Вычислить MD5 хэш файла (полный или частичный)
@@ -62,7 +81,7 @@ export async function calculateMD5(filePath, partial = false) {
  * @param {Object} params.videoParams - Параметры видео (width, height, duration, codec, bitrate)
  * @param {Object} params.audioParams - Параметры аудио (codec, bitrate, channels)
  */
-export function saveFileMetadata({
+export async function saveFileMetadata({
   deviceId,
   safeName,
   originalName,
@@ -83,21 +102,29 @@ export function saveFileMetadata({
     const db = getDatabase();
     
     // КРИТИЧНО: Используем retry для критических операций записи
-    const result = withRetrySync(() => {
+    const result = await withRetryAsync(async () => {
       // КРИТИЧНО: Для статического контента (папки/PDF/PPTX) md5_hash может быть пустой строкой
       // Используем пустую строку вместо NULL для совместимости с NOT NULL constraint
       const finalMd5Hash = md5Hash || '';
       
-      const stmt = db.prepare(`
-        INSERT OR REPLACE INTO files_metadata (
-          device_id, safe_name, original_name, file_path, file_size, md5_hash, partial_md5, mime_type,
-          video_width, video_height, video_duration, video_codec, video_profile, video_bitrate,
-          audio_codec, audio_bitrate, audio_channels, file_mtime, content_type, stream_url,
-          stream_protocol, pages_count
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
+      const finalFileMtime = fileMtime ? Math.floor(fileMtime) : null;
       
-      const result = stmt.run(
+      const cols = [
+        'device_id', 'safe_name', 'original_name', 'file_path', 'file_size', 'md5_hash',
+        'partial_md5', 'mime_type', 'video_width', 'video_height', 'video_duration',
+        'video_codec', 'video_profile', 'video_bitrate', 'audio_codec', 'audio_bitrate',
+        'audio_channels', 'file_mtime', 'content_type', 'stream_url', 'stream_protocol', 'pages_count'
+      ];
+      const ph = cols.map((_, i) => driverType === 'postgres' ? `$${i + 1}` : '?').join(', ');
+      const insertSql = driverType === 'postgres'
+        ? `INSERT INTO files_metadata (${cols.join(', ')})
+           VALUES (${ph})
+           ON CONFLICT (device_id, safe_name) DO UPDATE SET
+             ${cols.slice(2).map(c => `${c} = EXCLUDED.${c}`).join(', ')}`
+        : `INSERT OR REPLACE INTO files_metadata (${cols.join(', ')})
+           VALUES (${ph})`;
+
+      const result = await db.run(insertSql, [
         deviceId,
         safeName,
         originalName,
@@ -110,21 +137,20 @@ export function saveFileMetadata({
         videoParams.height || null,
         videoParams.duration || null,
         videoParams.codec || null,
-        videoParams.profile || null,  // НОВОЕ: Сохраняем profile
+        videoParams.profile || null,
         videoParams.bitrate || null,
         audioParams.codec || null,
         audioParams.bitrate || null,
         audioParams.channels || null,
-        fileMtime,
+        finalFileMtime,
         contentType,
         streamUrl,
         streamProtocol,
         pagesCount
-      );
+      ]);
       
       // Проверяем, что запись действительно в БД
-      const checkStmt = db.prepare('SELECT * FROM files_metadata WHERE device_id = ? AND safe_name = ?');
-      const checkResult = checkStmt.get(deviceId, safeName);
+      const checkResult = await db.get('SELECT * FROM files_metadata WHERE device_id = ? AND safe_name = ?', [deviceId, safeName]);
       
       // Логируем успешное сохранение с деталями
       const logLevel = STATIC_CONTENT_TYPES.has(contentType) ? 'info' : 'debug';
@@ -202,15 +228,13 @@ export function saveFileMetadata({
  * @param {string} safeName
  * @returns {Object|null}
  */
-export function getFileMetadata(deviceId, safeName) {
+export async function getFileMetadata(deviceId, safeName) {
   try {
     const db = getDatabase();
-    const stmt = db.prepare(`
+    return await db.get(`
       SELECT * FROM files_metadata 
       WHERE device_id = ? AND safe_name = ?
-    `);
-    
-    return stmt.get(deviceId, safeName);
+    `, [deviceId, safeName]);
   } catch (error) {
     logger.error('Failed to get file metadata', { error: error.message, deviceId, safeName });
     return null;
@@ -223,17 +247,16 @@ export function getFileMetadata(deviceId, safeName) {
  * @param {string} safeName
  * @returns {Object|null}
  */
-export function getAnyFileMetadataBySafeName(safeName) {
+export async function getAnyFileMetadataBySafeName(safeName) {
   try {
     const db = getDatabase();
-    const stmt = db.prepare(`
+    return await db.get(`
       SELECT *
       FROM files_metadata
       WHERE safe_name = ?
       ORDER BY file_mtime DESC, created_at DESC
       LIMIT 1
-    `);
-    return stmt.get(safeName);
+    `, [safeName]);
   } catch (error) {
     logger.error('Failed to get file metadata by safe name', { error: error.message, safeName });
     return null;
@@ -245,30 +268,27 @@ export function getAnyFileMetadataBySafeName(safeName) {
  * @param {string} deviceId
  * @returns {Array}
  */
-export function getDeviceFilesMetadata(deviceId) {
+export async function getDeviceFilesMetadata(deviceId) {
   try {
     const db = getDatabase();
-    const stmt = db.prepare(`
+    return await db.query(`
       SELECT * FROM files_metadata 
       WHERE device_id = ?
       ORDER BY created_at DESC
-    `);
-    
-    return stmt.all(deviceId);
+    `, [deviceId]);
   } catch (error) {
     logger.error('Failed to get device files metadata', { error: error.message, deviceId });
     return [];
   }
 }
 
-export function getAllStreamingMetadata() {
+export async function getAllStreamingMetadata() {
   try {
     const db = getDatabase();
-    const stmt = db.prepare(`
+    return await db.query(`
       SELECT * FROM files_metadata
       WHERE content_type = 'streaming'
     `);
-    return stmt.all();
   } catch (error) {
     logger.error('Failed to get streaming metadata', { error: error.message });
     return [];
@@ -284,7 +304,7 @@ export function getAllStreamingMetadata() {
  * @param {boolean} isPartial - Является ли MD5 частичным (первые 10MB)
  * @returns {Object|null} - { device_id, safe_name, file_path }
  */
-export function findDuplicateFile(md5Hash, fileSize, excludeDeviceId = null, isPartial = false) {
+export async function findDuplicateFile(md5Hash, fileSize, excludeDeviceId = null, isPartial = false) {
   try {
     const db = getDatabase();
     
@@ -318,8 +338,7 @@ export function findDuplicateFile(md5Hash, fileSize, excludeDeviceId = null, isP
     
     query += ` LIMIT 1`;
     
-    const stmt = db.prepare(query);
-    const result = stmt.get(...params);
+    const result = await db.get(query, params);
     
     if (result) {
       logger.info('Duplicate found', { 
@@ -343,18 +362,16 @@ export function findDuplicateFile(md5Hash, fileSize, excludeDeviceId = null, isP
  * @param {string} deviceId
  * @param {string} safeName
  */
-export function deleteFileMetadata(deviceId, safeName) {
+export async function deleteFileMetadata(deviceId, safeName) {
   try {
     const db = getDatabase();
     
     // КРИТИЧНО: Используем retry для критических операций удаления
-    withRetrySync(() => {
-      const stmt = db.prepare(`
+    await withRetryAsync(async () => {
+      await db.run(`
         DELETE FROM files_metadata 
         WHERE device_id = ? AND safe_name = ?
-      `);
-      
-      stmt.run(deviceId, safeName);
+      `, [deviceId, safeName]);
     }, {
       maxRetries: 3,
       delay: 100,
@@ -386,15 +403,13 @@ export function deleteFileMetadata(deviceId, safeName) {
  * Удалить все метаданные устройства
  * @param {string} deviceId
  */
-export function deleteDeviceFilesMetadata(deviceId) {
+export async function deleteDeviceFilesMetadata(deviceId) {
   try {
     const db = getDatabase();
-    const stmt = db.prepare(`
+    const result = await db.run(`
       DELETE FROM files_metadata 
       WHERE device_id = ?
-    `);
-    
-    const result = stmt.run(deviceId);
+    `, [deviceId]);
     logFile('info', 'Device files metadata deleted', { deviceId, deletedCount: result.changes });
     
     return result.changes;
@@ -408,14 +423,12 @@ export function deleteDeviceFilesMetadata(deviceId) {
  * Получить статистику хранилища
  * @returns {Array} - Статистика по устройствам
  */
-export function getStorageStats() {
+export async function getStorageStats() {
   try {
     const db = getDatabase();
-    const stmt = db.prepare(`
+    return await db.query(`
       SELECT * FROM device_storage_stats
     `);
-    
-    return stmt.all();
   } catch (error) {
     logger.error('Failed to get storage stats', { error: error.message });
     return [];
@@ -426,14 +439,12 @@ export function getStorageStats() {
  * Получить список дубликатов файлов
  * @returns {Array} - Список файлов с дубликатами
  */
-export function getDuplicateFiles() {
+export async function getDuplicateFiles() {
   try {
     const db = getDatabase();
-    const stmt = db.prepare(`
+    return await db.query(`
       SELECT * FROM file_duplicates
     `);
-    
-    return stmt.all();
   } catch (error) {
     logger.error('Failed to get duplicate files', { error: error.message });
     return [];
@@ -448,8 +459,8 @@ export function getDuplicateFiles() {
  * @param {number} currentMtime - Текущий mtime файла
  * @returns {boolean}
  */
-export function needsMetadataUpdate(deviceId, safeName, currentMtime) {
-  const metadata = getFileMetadata(deviceId, safeName);
+export async function needsMetadataUpdate(deviceId, safeName, currentMtime) {
+  const metadata = await getFileMetadata(deviceId, safeName);
   if (!metadata) return true; // Нет метаданных - нужно создать
   
   return metadata.file_mtime !== currentMtime; // Файл изменился
@@ -460,18 +471,16 @@ export function needsMetadataUpdate(deviceId, safeName, currentMtime) {
  * @param {string} filePath - Путь к физическому файлу
  * @returns {number} Количество устройств использующих этот файл
  */
-export function countFileReferences(filePath) {
+export async function countFileReferences(filePath) {
   try {
     const db = getDatabase();
-    const stmt = db.prepare(`
+    const result = await db.get(`
       SELECT COUNT(*) as count FROM files_metadata 
       WHERE file_path = ?
-    `);
+    `, [filePath]);
+    const count = Number(result?.count) || 0;
     
-    const result = stmt.get(filePath);
-    const count = result?.count || 0;
-    
-    logFile('debug', 'File references counted', { filePath, count });
+    logFile('debug', 'File references counted', { filePath, count: Number(count) });
     return count;
   } catch (error) {
     logger.error('Failed to count file references', { error: error.message, filePath });
@@ -487,16 +496,14 @@ export function countFileReferences(filePath) {
  * @param {string} newOriginalName - Новое отображаемое имя
  * @returns {boolean} - true если обновлено успешно
  */
-export function updateFileOriginalName(deviceId, safeName, newOriginalName) {
+export async function updateFileOriginalName(deviceId, safeName, newOriginalName) {
   try {
     const db = getDatabase();
-    const stmt = db.prepare(`
+    const result = await db.run(`
       UPDATE files_metadata
       SET original_name = ?, updated_at = CURRENT_TIMESTAMP
       WHERE device_id = ? AND safe_name = ?
-    `);
-    
-    const result = stmt.run(newOriginalName, deviceId, safeName);
+    `, [newOriginalName, deviceId, safeName]);
     
     if (result.changes > 0) {
       logFile('info', 'File original_name updated', { deviceId, safeName, newOriginalName });
@@ -517,7 +524,7 @@ export function updateFileOriginalName(deviceId, safeName, newOriginalName) {
  * @param {string} newRoot - Новый корневой путь (например: /mnt/vc-content)
  * @returns {number} - Количество обновленных записей
  */
-export function migrateFilePaths(oldRoot, newRoot) {
+export async function migrateFilePaths(oldRoot, newRoot) {
   try {
     const db = getDatabase();
     
@@ -531,12 +538,11 @@ export function migrateFilePaths(oldRoot, newRoot) {
     }
     
     // Логируем количество путей которые будут мигрированы
-    const checkStmt = db.prepare(`
+    const checkResult = await db.get(`
       SELECT COUNT(*) as count FROM files_metadata
       WHERE file_path LIKE ? || '/%' OR file_path = ?
-    `);
-    const checkResult = checkStmt.get(normalizedOldRoot, normalizedOldRoot);
-    const pathsToMigrate = checkResult?.count || 0;
+    `, [normalizedOldRoot, normalizedOldRoot]);
+    const pathsToMigrate = Number(checkResult?.count) || 0;
     
     logFile('info', 'Starting file paths migration', {
       oldRoot: normalizedOldRoot,
@@ -555,26 +561,20 @@ export function migrateFilePaths(oldRoot, newRoot) {
     // Заменяем старый путь на новый в начале file_path
     // Формат: /old/root/file.mp4 -> /new/root/file.mp4
     // SUBSTR(file_path, oldRootLength + 2) вернет "/file.mp4" (включая слэш после старого корня)
-    const stmt = db.prepare(`
+    const oldRootLength = normalizedOldRoot.length;
+    const substrStart = oldRootLength + 1; // +1 для слэша после старого корня
+    
+    const result = await db.run(`
       UPDATE files_metadata
       SET file_path = ? || SUBSTR(file_path, ?),
           updated_at = CURRENT_TIMESTAMP
       WHERE file_path LIKE ? || '/%' OR file_path = ?
-    `);
-    
-    // Вычисляем позицию начала остатка пути (после старого корня + слэш)
-    // Например: "/var/lib/mmrc/public/content/video.mp4"
-    // oldRoot = "/var/lib/mmrc/public/content" (28 символов)
-    // SUBSTR начиная с позиции 33 вернет "/video.mp4"
-    const oldRootLength = normalizedOldRoot.length;
-    const substrStart = oldRootLength + 1; // +1 для слэша после старого корня
-    
-    const result = stmt.run(
+    `, [
       normalizedNewRoot,
       substrStart,
       normalizedOldRoot,
       normalizedOldRoot // Для случая когда путь равен старому корню (не должно быть, но на всякий случай)
-    );
+    ]);
     
     if (result.changes > 0) {
       logFile('info', '✅ File paths migrated in database', {
@@ -621,7 +621,7 @@ function extractRelativePathFromContent(filePath) {
  * @param {string} options.devicesPath - Текущий путь к contentRoot/content
  * @returns {{checked:number,repaired:number,unresolved:number,skipped:number,errors:number,samples:Array}}
  */
-export function repairImportedFilePaths({ devicesPath }) {
+export async function repairImportedFilePaths({ devicesPath }) {
   const result = {
     checked: 0,
     repaired: 0,
@@ -641,19 +641,12 @@ export function repairImportedFilePaths({ devicesPath }) {
     }
 
     const db = getDatabase();
-    const records = db.prepare(`
+    const records = await db.query(`
       SELECT device_id, safe_name, file_path, content_type
       FROM files_metadata
       WHERE content_type != 'streaming'
         AND file_path IS NOT NULL
         AND file_path != ''
-    `).all();
-
-    const updateStmt = db.prepare(`
-      UPDATE files_metadata
-      SET file_path = ?,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE device_id = ? AND safe_name = ?
     `);
 
     const seenSample = new Set();
@@ -702,7 +695,12 @@ export function repairImportedFilePaths({ devicesPath }) {
         }
 
         if (fixedPath !== originalPath) {
-          updateStmt.run(fixedPath, record.device_id, record.safe_name);
+          await db.run(`
+            UPDATE files_metadata
+            SET file_path = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE device_id = ? AND safe_name = ?
+          `, [fixedPath, record.device_id, record.safe_name]);
           result.repaired += 1;
 
           if (result.samples.length < 20) {
@@ -750,7 +748,7 @@ export function repairImportedFilePaths({ devicesPath }) {
   }
 }
 
-export function createStreamingEntry({ deviceId, safeName, originalName, streamUrl, protocol = 'auto' }) {
+export async function createStreamingEntry({ deviceId, safeName, originalName, streamUrl, protocol = 'auto' }) {
   if (!deviceId || !safeName || !streamUrl) {
     throw new Error('Invalid streaming params');
   }
@@ -763,7 +761,7 @@ export function createStreamingEntry({ deviceId, safeName, originalName, streamU
     mimeType = 'application/x-mpegURL';
   }
   
-  saveFileMetadata({
+  await saveFileMetadata({
     deviceId,
     safeName,
     originalName: originalName || safeName,
@@ -790,12 +788,12 @@ export function createStreamingEntry({ deviceId, safeName, originalName, streamU
  * @param {string} newProtocol - Новый протокол
  * @returns {boolean} - true если обновлено успешно
  */
-export function updateStreamMetadata(deviceId, safeName, newOriginalName, newStreamUrl, newProtocol = 'auto') {
+export async function updateStreamMetadata(deviceId, safeName, newOriginalName, newStreamUrl, newProtocol = 'auto') {
   try {
     const db = getDatabase();
     
     // Проверяем существование записи
-    const existing = getFileMetadata(deviceId, safeName);
+    const existing = await getFileMetadata(deviceId, safeName);
     if (!existing || existing.content_type !== 'streaming') {
       logger.warn('No streaming entry found to update', { deviceId, safeName });
       return false;
@@ -814,8 +812,8 @@ export function updateStreamMetadata(deviceId, safeName, newOriginalName, newStr
     }
     
     // КРИТИЧНО: Используем retry для критических операций обновления
-    return withRetrySync(() => {
-      const stmt = db.prepare(`
+    return await withRetryAsync(async () => {
+      const result = await db.run(`
         UPDATE files_metadata
         SET original_name = ?,
             stream_url = ?,
@@ -825,9 +823,7 @@ export function updateStreamMetadata(deviceId, safeName, newOriginalName, newStr
           md5_hash = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE device_id = ? AND safe_name = ?
-    `);
-    
-      const result = stmt.run(
+    `, [
         newOriginalName,
         newStreamUrl,
         normalizedProtocol,
@@ -836,7 +832,7 @@ export function updateStreamMetadata(deviceId, safeName, newOriginalName, newStr
         md5Hash,
         deviceId,
         safeName
-      );
+      ]);
       
       if (result.changes > 0) {
         logFile('info', 'Stream metadata updated', { deviceId, safeName, newOriginalName, newStreamUrl, newProtocol: normalizedProtocol });
@@ -873,23 +869,21 @@ export function updateStreamMetadata(deviceId, safeName, newOriginalName, newStr
   }
 }
 
-export function deleteStreamingEntry(deviceId, safeName) {
-  deleteFileMetadata(deviceId, safeName);
+export async function deleteStreamingEntry(deviceId, safeName) {
+  await deleteFileMetadata(deviceId, safeName);
 }
 
 /**
  * Получить уникальные пути из базы данных для проверки миграции
  * @returns {Array<string>} - Массив уникальных путей
  */
-export function getAllFilePaths() {
+export async function getAllFilePaths() {
   try {
     const db = getDatabase();
-    const stmt = db.prepare(`
+    const rows = await db.query(`
       SELECT DISTINCT file_path FROM files_metadata
       ORDER BY file_path
     `);
-    
-    const rows = stmt.all();
     return rows.map(row => row.file_path);
   } catch (error) {
     logger.error('Failed to get all file paths', { error: error.message, stack: error.stack });
@@ -922,8 +916,7 @@ export async function cleanupMissingFiles({ deviceId = null, dryRun = false } = 
       params.push(deviceId);
     }
     
-    const stmt = db.prepare(query);
-    const allRecords = stmt.all(...params);
+    const allRecords = await db.query(query, params);
     
     logger.info('[Cleanup] Starting file existence check', {
       deviceId: deviceId || 'all',
@@ -975,7 +968,7 @@ export async function cleanupMissingFiles({ deviceId = null, dryRun = false } = 
           // Удаляем запись из БД, если не dryRun
           if (!dryRun) {
             try {
-              deleteFileMetadata(record.device_id, record.safe_name);
+              await deleteFileMetadata(record.device_id, record.safe_name);
               deleted++;
               
               logger.info('[Cleanup] Deleted metadata for missing file', {
