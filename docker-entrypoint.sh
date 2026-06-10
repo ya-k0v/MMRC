@@ -6,9 +6,33 @@ ROLE="${MMRC_ROLE:-${ROLE:-server}}"
 export ROLE
 
 echo "🚀 Starting MMRC ${ROLE}..."
-echo "📦 Version: 3.2.1"
+echo "📦 Version: 3.2.0"
 echo "🔧 Node: $(node --version)"
 echo "🎬 FFmpeg: $(ffmpeg -version 2>/dev/null | head -1 || echo 'not found')"
+
+# Database type
+DB_TYPE="${DB_TYPE:-sqlite}"
+export DB_TYPE
+echo "🗄️ Database type: ${DB_TYPE}"
+
+# Wait for PostgreSQL if needed
+if [ "$DB_TYPE" = "postgres" ]; then
+    DB_HOST="${DB_HOST:-mmrc-postgres}"
+    DB_PORT="${DB_PORT:-5432}"
+    echo "⏳ Waiting for PostgreSQL at ${DB_HOST}:${DB_PORT}..."
+    i=0
+    while [ "$i" -lt 30 ]; do
+        i=$((i + 1))
+        if nc -z "$DB_HOST" "$DB_PORT" 2>/dev/null; then
+            echo "✅ PostgreSQL is ready"
+            break
+        fi
+        if [ "$i" -ge 30 ]; then
+            echo "⚠️ PostgreSQL not reachable, continuing anyway..."
+        fi
+        sleep 2
+    done
+fi
 
 # Apply database migrations
 echo "🔄 Checking for database migrations..."

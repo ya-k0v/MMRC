@@ -15,6 +15,7 @@ COMPOSE_FILE="$APP_DIR/docker-compose.yml"
 ENV_FILE="$APP_DIR/.env"
 MMRC_REPO="https://github.com/ya-k0v/MMRC"
 MMRC_SCRIPTS_REPO="https://github.com/ya-k0v/MMRC"
+MMRC_BRANCH="v330"
 DOCKER_ORG="pingwin1900"
 DOCKER_IMAGE="${DOCKER_ORG}/mmrc"
 
@@ -129,6 +130,68 @@ cmd_install() {
     detect_compose
     success "Docker Compose found"
 
+    # Select database type
+    DB_TYPE="${DB_TYPE:-}"
+    echo ""
+    colorized_echo yellow "🗄️ Select database type:"
+    echo "  [1] SQLite (built-in, no setup required)"
+    echo "  [2] PostgreSQL (via Docker, separate container)"
+    while [ -z "$DB_TYPE" ]; do
+        read -p "  Choose [1-2]: " db_choice < /dev/tty
+        echo ""
+        case "$db_choice" in
+            2) DB_TYPE="postgres" ;;
+            1) DB_TYPE="sqlite" ;;
+            *) echo "  Invalid choice, try again." ;;
+        esac
+    done
+
+    # PostgreSQL defaults
+    DB_POSTGRES_HOST="${DB_POSTGRES_HOST:-mmrc-postgres}"
+    DB_POSTGRES_PORT="${DB_POSTGRES_PORT:-5432}"
+    DB_POSTGRES_USER="${DB_POSTGRES_USER:-mmrc}"
+    DB_POSTGRES_PASSWORD="${DB_POSTGRES_PASSWORD:-}"
+    DB_POSTGRES_DB="${DB_POSTGRES_DB:-mmrc}"
+
+    if [ "$DB_TYPE" = "postgres" ]; then
+        echo ""
+        colorized_echo blue "PostgreSQL setup..."
+        POSTGRES_SOURCE="${POSTGRES_SOURCE:-}"
+        if [ -z "$POSTGRES_SOURCE" ]; then
+            echo ""
+            echo "  Select PostgreSQL setup method:"
+            echo "    [1] Create new Docker container (recommended)"
+            echo "    [2] Use existing PostgreSQL database"
+            read -p "  Choose [1-2]: " pg_choice < /dev/tty
+            echo ""
+            case "$pg_choice" in
+                2) POSTGRES_SOURCE="existing" ;;
+                *) POSTGRES_SOURCE="docker" ;;
+            esac
+        fi
+        if [ "$POSTGRES_SOURCE" = "existing" ]; then
+            echo "  Using existing PostgreSQL database..."
+            read -p "  PostgreSQL host [$DB_POSTGRES_HOST]: " pg_host_input < /dev/tty
+            DB_POSTGRES_HOST="${pg_host_input:-$DB_POSTGRES_HOST}"
+            read -p "  PostgreSQL port [$DB_POSTGRES_PORT]: " pg_port_input < /dev/tty
+            DB_POSTGRES_PORT="${pg_port_input:-$DB_POSTGRES_PORT}"
+            read -p "  PostgreSQL database name [$DB_POSTGRES_DB]: " pg_db_input < /dev/tty
+            DB_POSTGRES_DB="${pg_db_input:-$DB_POSTGRES_DB}"
+            read -p "  PostgreSQL user [$DB_POSTGRES_USER]: " pg_user_input < /dev/tty
+            DB_POSTGRES_USER="${pg_user_input:-$DB_POSTGRES_USER}"
+            while [ -z "$DB_POSTGRES_PASSWORD" ]; do
+                read -s -p "  PostgreSQL password (required): " pg_pass_input < /dev/tty
+                echo ""
+                DB_POSTGRES_PASSWORD="${pg_pass_input:-}"
+            done
+        else
+            if [ -z "$DB_POSTGRES_PASSWORD" ]; then
+                DB_POSTGRES_PASSWORD="mmrc"
+                warn "Using default password: mmrc"
+            fi
+        fi
+    fi
+
     # Create directories
     mkdir -p "$APP_DIR" "$DATA_DIR"
     success "Directories created"
@@ -136,7 +199,7 @@ cmd_install() {
     # Download docker-compose.yml
     info "Downloading docker-compose.yml..."
     curl -fsSL -o "$COMPOSE_FILE" \
-        "${MMRC_SCRIPTS_REPO}/raw/feature/v3.2.1/docker-compose.deploy.yml" || {
+        "${MMRC_SCRIPTS_REPO}/raw/${MMRC_BRANCH}/docker-compose.deploy.yml" || {
         error "Failed to download docker-compose.yml"
         exit 1
     }
@@ -146,7 +209,7 @@ cmd_install() {
     info "Downloading nginx configuration..."
     mkdir -p "$APP_DIR/docker/nginx"
     curl -fsSL -o "$APP_DIR/docker/nginx/nginx.conf" \
-        "${MMRC_SCRIPTS_REPO}/raw/feature/v3.2.1/docker/nginx/nginx.conf" || {
+        "${MMRC_SCRIPTS_REPO}/raw/${MMRC_BRANCH}/docker/nginx/nginx.conf" || {
         warn "Failed to download nginx.conf (optional)"
     }
     success "nginx.conf downloaded"
@@ -166,6 +229,9 @@ SILENT_CONSOLE=false
 JWT_SECRET=${JWT_SECRET}
 JWT_ACCESS_EXPIRES_IN=12h
 JWT_REFRESH_EXPIRES_IN=30d
+
+# Database type: sqlite | postgres
+DB_TYPE=${DB_TYPE}
 
 # Server
 SERVER_PORT=3000
@@ -198,6 +264,19 @@ LDAP_URL=
 LDAP_BIND_DN=
 LDAP_SEARCH_BASE=
 ENVEOF
+
+    # Append PostgreSQL config if needed
+    if [ "$DB_TYPE" = "postgres" ]; then
+        cat >> "$ENV_FILE" << ENVEOF3
+
+# PostgreSQL connection
+DB_HOST=$DB_POSTGRES_HOST
+DB_PORT=$DB_POSTGRES_PORT
+DB_NAME=$DB_POSTGRES_DB
+DB_USER=$DB_POSTGRES_USER
+DB_PASSWORD=$DB_POSTGRES_PASSWORD
+ENVEOF3
+    fi
     success "Configuration generated"
 
     # Ask about content directory
@@ -236,9 +315,13 @@ ENVEOF
     $COMPOSE pull
     success "Images pulled"
 
-    # Start services
+    # Start services with postgres profile if needed
     info "Starting MMRC services..."
-    $COMPOSE up -d
+    PROFILES=""
+    if [ "$DB_TYPE" = "postgres" ] && [ "$POSTGRES_SOURCE" = "docker" ]; then
+        PROFILES="--profile postgres"
+    fi
+    $COMPOSE $PROFILES up -d
     success "Services started"
 
     # Wait for health
@@ -276,12 +359,19 @@ ENVEOF
     echo ""
 }
 
+get_compose_profiles() {
+    if grep -q "^DB_TYPE=postgres" "$ENV_FILE" 2>/dev/null; then
+        echo "--profile postgres"
+    fi
+}
+
 cmd_start() {
     require_installed
     detect_compose
     cd "$APP_DIR"
     info "Starting MMRC services..."
-    $COMPOSE up -d
+    PROFILES=$(get_compose_profiles)
+    $COMPOSE $PROFILES up -d
     success "Services started"
 }
 
@@ -290,7 +380,8 @@ cmd_stop() {
     detect_compose
     cd "$APP_DIR"
     info "Stopping MMRC services..."
-    $COMPOSE down
+    PROFILES=$(get_compose_profiles)
+    $COMPOSE $PROFILES down
     success "Services stopped"
 }
 
@@ -299,7 +390,8 @@ cmd_restart() {
     detect_compose
     cd "$APP_DIR"
     info "Restarting MMRC services..."
-    $COMPOSE restart
+    PROFILES=$(get_compose_profiles)
+    $COMPOSE $PROFILES restart
     success "Services restarted"
 }
 
@@ -321,6 +413,23 @@ cmd_status() {
         success "Server is healthy"
     else
         warn "Server is not responding (port ${SERVER_PORT})"
+    fi
+
+    # Database info
+    DB_TYPE_VAL=$(grep "^DB_TYPE=" "$ENV_FILE" | cut -d= -f2)
+    if [ "$DB_TYPE_VAL" = "postgres" ]; then
+        info "Database: PostgreSQL"
+        if docker ps --format '{{.Names}}' | grep -q '^mmrc-postgres$'; then
+            if docker exec mmrc-postgres pg_isready -U mmrc >/dev/null 2>&1; then
+                success "PostgreSQL is healthy"
+            else
+                warn "PostgreSQL container exists but not ready"
+            fi
+        else
+            warn "PostgreSQL container not running"
+        fi
+    else
+        info "Database: SQLite"
     fi
 
     # Disk usage
@@ -360,10 +469,15 @@ cmd_update() {
 "
 
     cd "$APP_DIR"
+    PROFILES=$(get_compose_profiles)
 
     # Backup
     info "Creating backup..."
-    if [ -f "$APP_DIR/config/main.db" ]; then
+    DB_TYPE_VAL=$(grep "^DB_TYPE=" "$ENV_FILE" | cut -d= -f2)
+    if [ "$DB_TYPE_VAL" = "postgres" ]; then
+        info "PostgreSQL backup requires pg_dump - skipping automatic backup"
+        warn "Use pg_dump manually to backup the database"
+    elif [ -f "$APP_DIR/config/main.db" ]; then
         cp "$APP_DIR/config/main.db" "$APP_DIR/config/main.db.backup.$(date +%F)"
         success "Database backed up"
     fi
@@ -375,7 +489,7 @@ cmd_update() {
 
     # Restart services
     info "Restarting services..."
-    $COMPOSE up -d
+    $COMPOSE $PROFILES up -d
     success "Services restarted"
 
     # Wait for health
@@ -414,16 +528,40 @@ cmd_backup() {
     info "Backing up databases..."
     cd "$APP_DIR"
 
-    if [ -f "config/main.db" ]; then
-        docker compose exec -T mmrc sqlite3 /app/config/main.db ".backup /app/config/main.db.backup"
-        cp "config/main.db.backup" "$BACKUP_DIR/main-${TIMESTAMP}.db"
-        success "Main database backed up"
-    fi
+    DB_TYPE_VAL=$(grep "^DB_TYPE=" "$ENV_FILE" | cut -d= -f2)
+    if [ "$DB_TYPE_VAL" = "postgres" ]; then
+        # PostgreSQL backup via pg_dump
+        DB_HOST=$(grep "^DB_HOST=" "$ENV_FILE" | cut -d= -f2)
+        DB_PORT=$(grep "^DB_PORT=" "$ENV_FILE" | cut -d= -f2)
+        DB_NAME=$(grep "^DB_NAME=" "$ENV_FILE" | cut -d= -f2)
+        DB_USER=$(grep "^DB_USER=" "$ENV_FILE" | cut -d= -f2)
+        DB_PASSWORD=$(grep "^DB_PASSWORD=" "$ENV_FILE" | cut -d= -f2)
 
-    if [ -f "config/hero/heroes.db" ]; then
-        docker compose exec -T mmrc sqlite3 /app/config/hero/heroes.db ".backup /app/config/hero/heroes.db.backup"
-        cp "config/hero/heroes.db.backup" "$BACKUP_DIR/heroes-${TIMESTAMP}.db"
-        success "Heroes database backed up"
+        if command -v pg_dump >/dev/null 2>&1; then
+            PGPASSWORD="$DB_PASSWORD" pg_dump -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" \
+                -F c -f "$BACKUP_DIR/mmrc-${TIMESTAMP}.dump"
+            success "PostgreSQL database backed up: mmrc-${TIMESTAMP}.dump"
+        else
+            warn "pg_dump not found. Install postgresql-client to enable backup."
+            info "Creating Docker-based backup..."
+            docker exec mmrc-postgres pg_dump -U "$DB_USER" -d "$DB_NAME" \
+                -F c -f /tmp/mmrc-backup.dump 2>/dev/null && \
+            docker cp mmrc-postgres:/tmp/mmrc-backup.dump "$BACKUP_DIR/mmrc-${TIMESTAMP}.dump" && \
+            docker exec mmrc-postgres rm /tmp/mmrc-backup.dump && \
+            success "PostgreSQL database backed up via Docker: mmrc-${TIMESTAMP}.dump"
+        fi
+    else
+        if [ -f "config/main.db" ]; then
+            docker compose exec -T mmrc sqlite3 /app/config/main.db ".backup /app/config/main.db.backup"
+            cp "config/main.db.backup" "$BACKUP_DIR/main-${TIMESTAMP}.db"
+            success "Main database backed up"
+        fi
+
+        if [ -f "config/hero/heroes.db" ]; then
+            docker compose exec -T mmrc sqlite3 /app/config/hero/heroes.db ".backup /app/config/hero/heroes.db.backup"
+            cp "config/hero/heroes.db.backup" "$BACKUP_DIR/heroes-${TIMESTAMP}.db"
+            success "Heroes database backed up"
+        fi
     fi
 
     # Backup config

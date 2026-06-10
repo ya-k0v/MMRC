@@ -28,6 +28,12 @@ services:
       - LDAP_URL=${LDAP_URL:-}
       - LDAP_BIND_DN=${LDAP_BIND_DN:-}
       - LDAP_SEARCH_BASE=${LDAP_SEARCH_BASE:-}
+      - DB_TYPE=${DB_TYPE:-sqlite}
+      - DB_HOST=${DB_HOST:-mmrc-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-mmrc}
+      - DB_USER=${DB_USER:-mmrc}
+      - DB_PASSWORD=${DB_PASSWORD:-mmrc}
     ports:
       - "${NGINX_HTTP_PORT:-80}:80"
       - "${NGINX_HTTPS_PORT:-443}:443"
@@ -47,12 +53,36 @@ services:
         aliases:
           - mmrc-server
 
+  postgres:
+    image: postgres:16-alpine
+    profiles: [postgres]
+    container_name: mmrc-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${DB_NAME:-mmrc}
+      - POSTGRES_USER=${DB_USER:-mmrc}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-mmrc}
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    volumes:
+      - mmrc-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-mmrc}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - mmrc-network
+
 volumes:
   mmrc-data:
     driver: local
   mmrc-config:
     driver: local
   mmrc-temp:
+    driver: local
+  mmrc-pgdata:
     driver: local
 
 networks:

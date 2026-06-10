@@ -8,7 +8,7 @@ set -e
 # Configuration
 # ========================
 MMRC_REPO="https://github.com/ya-k0v/MMRC"
-MMRC_RAW="https://raw.githubusercontent.com/ya-k0v/MMRC/docker"
+MMRC_RAW="https://raw.githubusercontent.com/ya-k0v/MMRC/v330"
 INSTALL_DIR="/opt/mmrc"
 DATA_DIR="/var/lib/mmrc"
 BIN_DIR="/usr/local/bin"
@@ -113,6 +113,82 @@ check_docker() {
 }
 
 # ========================
+# Database Selection
+# ========================
+
+select_database() {
+    DB_TYPE="${DB_TYPE:-}"
+
+    if [ -z "$DB_TYPE" ]; then
+        echo ""
+        colorized_echo yellow "🗄️ Select database type:"
+        echo "  [1] SQLite (built-in, no setup required)"
+        echo "  [2] PostgreSQL (via Docker, separate container)"
+        read -p "  Choose [1-2]: " db_choice < /dev/tty
+        echo ""
+        case "$db_choice" in
+            2) DB_TYPE="postgres" ;;
+            *) DB_TYPE="sqlite" ;;
+        esac
+    fi
+
+    # PostgreSQL connection defaults
+    DB_POSTGRES_HOST="${DB_POSTGRES_HOST:-mmrc-postgres}"
+    DB_POSTGRES_PORT="${DB_POSTGRES_PORT:-5432}"
+    DB_POSTGRES_USER="${DB_POSTGRES_USER:-mmrc}"
+    DB_POSTGRES_PASSWORD="${DB_POSTGRES_PASSWORD:-}"
+    DB_POSTGRES_DB="${DB_POSTGRES_DB:-mmrc}"
+
+    if [ "$DB_TYPE" = "postgres" ]; then
+        echo ""
+        colorized_echo blue "PostgreSQL setup..."
+
+        POSTGRES_SOURCE="${POSTGRES_SOURCE:-}"
+
+        if [ -z "$POSTGRES_SOURCE" ]; then
+            echo ""
+            echo "  Select PostgreSQL setup method:"
+            echo "    [1] Create new Docker container (recommended)"
+            echo "    [2] Use existing PostgreSQL database"
+            read -p "  Choose [1-2]: " pg_choice < /dev/tty
+            echo ""
+            case "$pg_choice" in
+                2) POSTGRES_SOURCE="existing" ;;
+                *) POSTGRES_SOURCE="docker" ;;
+            esac
+        fi
+
+        if [ "$POSTGRES_SOURCE" = "existing" ]; then
+            echo "  Using existing PostgreSQL database..."
+            read -p "  PostgreSQL host [$DB_POSTGRES_HOST]: " pg_host_input
+            DB_POSTGRES_HOST="${pg_host_input:-$DB_POSTGRES_HOST}"
+            read -p "  PostgreSQL port [$DB_POSTGRES_PORT]: " pg_port_input
+            DB_POSTGRES_PORT="${pg_port_input:-$DB_POSTGRES_PORT}"
+            read -p "  PostgreSQL database name [$DB_POSTGRES_DB]: " pg_db_input
+            DB_POSTGRES_DB="${pg_db_input:-$DB_POSTGRES_DB}"
+            read -p "  PostgreSQL user [$DB_POSTGRES_USER]: " pg_user_input
+            DB_POSTGRES_USER="${pg_user_input:-$DB_POSTGRES_USER}"
+            while [ -z "$DB_POSTGRES_PASSWORD" ]; do
+                read -s -p "  PostgreSQL password (required): " pg_pass_input
+                echo ""
+                DB_POSTGRES_PASSWORD="${pg_pass_input:-}"
+                if [ -z "$DB_POSTGRES_PASSWORD" ]; then
+                    echo "  Password cannot be empty!"
+                fi
+            done
+            success "Using existing PostgreSQL at ${DB_POSTGRES_HOST}:${DB_POSTGRES_PORT}/${DB_POSTGRES_DB}"
+        else
+            echo "  Setting up PostgreSQL via Docker..."
+            if [ -z "$DB_POSTGRES_PASSWORD" ]; then
+                DB_POSTGRES_PASSWORD="mmrc"
+                warn "Using default password: mmrc"
+            fi
+            success "PostgreSQL will be started as Docker container mmrc-postgres"
+        fi
+    fi
+}
+
+# ========================
 # Installation
 # ========================
 
@@ -124,9 +200,12 @@ install_mmrc() {
 ╔══════════════════════════════════════════╗
 ║          📺 MMRC Installer               ║
 ║     Media Management & Remote Control    ║
-║           Version 3.2.1                  ║
+║           Version 3.2.0                  ║
 ╚══════════════════════════════════════════╝
 "
+
+    # Select database type first
+    select_database
 
     # Create directories
     mkdir -p "$INSTALL_DIR" "$DATA_DIR"
@@ -152,6 +231,9 @@ SILENT_CONSOLE=false
 # JWT_SECRET is written separately below to ensure it works with curl|bash
 JWT_ACCESS_EXPIRES_IN=12h
 JWT_REFRESH_EXPIRES_IN=30d
+
+# Database type: sqlite | postgres
+DB_TYPE=$DB_TYPE
 ENVEOF
     # Write JWT_SECRET separately to ensure it's set (fix for curl|bash pipe)
     echo "JWT_SECRET=$JWT_SECRET" >> "$ENV_FILE"
@@ -187,6 +269,19 @@ LDAP_URL=
 LDAP_BIND_DN=
 LDAP_SEARCH_BASE=
 ENVEOF2
+
+    # Append PostgreSQL config if needed
+    if [ "$DB_TYPE" = "postgres" ]; then
+        cat >> "$ENV_FILE" << ENVEOF3
+
+# PostgreSQL connection
+DB_HOST=$DB_POSTGRES_HOST
+DB_PORT=$DB_POSTGRES_PORT
+DB_NAME=$DB_POSTGRES_DB
+DB_USER=$DB_POSTGRES_USER
+DB_PASSWORD=$DB_POSTGRES_PASSWORD
+ENVEOF3
+    fi
     success "Configuration generated"
 
     # Ask for content directory (reads from terminal, not stdin pipe)
@@ -219,7 +314,11 @@ ENVEOF2
 
     # Start services with progress
     info "Starting MMRC services..."
-    $COMPOSE up -d
+    PROFILES=""
+    if [ "$DB_TYPE" = "postgres" ] && [ "$POSTGRES_SOURCE" = "docker" ]; then
+        PROFILES="--profile postgres"
+    fi
+    $COMPOSE $PROFILES up -d
     success "Services started"
 
     # Wait for health with progress

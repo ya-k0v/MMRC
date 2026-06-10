@@ -9,14 +9,11 @@ build: ## Build all Docker images
 build-no-cache: ## Build without cache
 	docker compose build --no-cache
 
-up: ## Start all services
+up: ## Start all services (with PostgreSQL if DB_TYPE=postgres)
 	docker compose up -d
 
-up-nginx: ## Start with Nginx
-	docker compose --profile nginx up -d
-
-up-all: ## Start all services including Nginx
-	docker compose --profile nginx up -d
+up-pg: ## Start all services with PostgreSQL
+	docker compose --profile postgres up -d
 
 down: ## Stop all services
 	docker compose down

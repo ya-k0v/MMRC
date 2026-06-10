@@ -2,7 +2,7 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches: [ docker, main ]
+    branches: [ v330, main ]
   workflow_dispatch:
 
 jobs:
@@ -11,8 +11,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          ref: docker
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -23,11 +21,21 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Derive Docker tag
+        id: tags
+        run: |
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          if [ "$BRANCH" = "main" ]; then
+            echo "tags=pingwin1900/mmrc:latest,pingwin1900/mmrc:${{ github.sha }}" >> $GITHUB_OUTPUT
+          else
+            echo "tags=pingwin1900/mmrc:$BRANCH,pingwin1900/mmrc:${{ github.sha }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build and push Server image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
           push: true
-          tags: pingwin1900/mmrc:latest
+          tags: ${{ steps.tags.outputs.tags }}
           platforms: linux/amd64
