@@ -62,8 +62,15 @@ export class SqliteDriver extends DatabaseDriver {
   }
 
   async transaction(fn) {
-    const txn = this._db.transaction(fn);
-    return txn();
+    this._db.exec('BEGIN');
+    try {
+      const result = await fn(this);
+      this._db.exec('COMMIT');
+      return result;
+    } catch (err) {
+      try { this._db.exec('ROLLBACK'); } catch {}
+      throw err;
+    }
   }
 
   async insert(table, data) {

@@ -17,7 +17,7 @@ async function ensureSchemaMigrationsTable(driver) {
       CREATE TABLE IF NOT EXISTS schema_migrations (
         id TEXT PRIMARY KEY,
         description TEXT,
-        executed_at ${driverType === 'postgres' ? 'TIMESTAMP' : 'DATETIME'} DEFAULT CURRENT_TIMESTAMP
+        executed_at ${driver.dialect === 'postgres' ? 'TIMESTAMP' : 'DATETIME'} DEFAULT CURRENT_TIMESTAMP
       )
     `);
   }
@@ -43,7 +43,7 @@ const MIGRATIONS = [
     description: 'Ensure refresh_tokens.last_used column and index',
     async up(driver) {
       if (!(await hasColumn(driver, 'refresh_tokens', 'last_used'))) {
-        await driver.exec(`ALTER TABLE refresh_tokens ADD COLUMN last_used ${driverType === 'postgres' ? 'TIMESTAMP' : 'DATETIME'}`);
+        await driver.exec(`ALTER TABLE refresh_tokens ADD COLUMN last_used ${driver.dialect === 'postgres' ? 'TIMESTAMP' : 'DATETIME'}`);
       }
       await driver.exec('CREATE INDEX IF NOT EXISTS idx_refresh_tokens_last_used ON refresh_tokens(last_used)');
     }
@@ -61,7 +61,7 @@ async function runRegisteredMigrations(driver) {
 
     logger.info('[migrate] Applying migration', { id: migration.id, description: migration.description });
 
-    const ph = (i) => driverType === 'postgres' ? `$${i}` : '?';
+    const ph = (i) => driver.dialect === 'postgres' ? `$${i}` : '?';
     await driver.transaction(async (tx) => {
       await migration.up(tx || driver);
       await (tx || driver).run(
@@ -74,13 +74,13 @@ async function runRegisteredMigrations(driver) {
   }
 }
 
-export function runMigrations(dbPath) {
+export async function runMigrations(dbPath) {
   const DATA_DIR = process.env.MMRC_DATA_DIR || path.join(ROOT, 'data');
   const finalPath = dbPath || path.join(DATA_DIR, 'db', 'main.db');
   logger.info('[migrate] Running database initialization/migration', { dbPath: finalPath });
-  initDatabase(finalPath);
+  await initDatabase(finalPath);
   const db = getDatabase();
-  runRegisteredMigrations(db);
+  await runRegisteredMigrations(db);
   logger.info('[migrate] Database initialization/migration completed');
 }
 

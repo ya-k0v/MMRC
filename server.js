@@ -135,7 +135,7 @@ const DB_PATH = path.join(DATA_DIR, 'db', 'main.db');
 logger.info('[Server] Database path', { dbPath: DB_PATH, dataDir: DATA_DIR });
 try {
   // Run migrations / ensure schema before continuing startup
-  runMigrations(DB_PATH);
+  await runMigrations(DB_PATH);
 } catch (err) {
   logger.error('[Server] Database migration failed, aborting startup', { error: err?.message || String(err) });
   throw err;
