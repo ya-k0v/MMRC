@@ -1,6 +1,6 @@
 services:
   mmrc:
-    image: ${DOCKER_IMAGE:-pingwin1900/mmrc}:latest
+    image: ${DOCKER_IMAGE:-pingwin1900/mmrc}:${DOCKER_IMAGE_TAG:-v330}
     container_name: mmrc
     restart: unless-stopped
     environment:

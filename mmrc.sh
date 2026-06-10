@@ -18,6 +18,8 @@ MMRC_SCRIPTS_REPO="https://github.com/ya-k0v/MMRC"
 MMRC_BRANCH="v330"
 DOCKER_ORG="pingwin1900"
 DOCKER_IMAGE="${DOCKER_ORG}/mmrc"
+DOCKER_IMAGE_TAG="v330"
+export DOCKER_IMAGE DOCKER_IMAGE_TAG
 
 # ========================
 # Colors
