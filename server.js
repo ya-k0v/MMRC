@@ -232,7 +232,9 @@ function ensureVolumeState(deviceId) {
   if (!deviceVolumeState[deviceId]) {
     const now = new Date().toISOString();
     deviceVolumeState[deviceId] = { level: 50, muted: false, updatedAt: now };
-    saveDeviceVolumeState(deviceId, { volumeLevel: 50, isMuted: false });
+    saveDeviceVolumeState(deviceId, { volumeLevel: 50, isMuted: false }).catch(err => {
+      logger.warn('[Volume] Initial state save failed', { deviceId, error: err.message });
+    });
   }
   return deviceVolumeState[deviceId];
 }
@@ -269,6 +271,8 @@ function persistVolumeState(deviceId, nextState = {}, options = {}) {
   saveDeviceVolumeState(deviceId, {
     volumeLevel: normalizedLevel,
     isMuted: normalizedMuted
+  }).catch(err => {
+    logger.warn('[Volume] State persist failed', { deviceId, error: err.message });
   });
   
   if (options.broadcast !== false) {

@@ -543,6 +543,13 @@ export async function getDeviceVolumeState(deviceId) {
 }
 
 export async function saveDeviceVolumeState(deviceId, { volumeLevel, isMuted }) {
+  const safeDeviceId = String(deviceId ?? '');
+  const safeLevel = Number(volumeLevel);
+  const safeMuted = isMuted === true;
+  if (!safeDeviceId || Number.isNaN(safeLevel)) {
+    logger.warn('[DB] Invalid volume state params', { deviceId, volumeLevel, isMuted });
+    return;
+  }
   try {
     return await withRetrySync(async () => {
       await driver.run(
@@ -551,7 +558,7 @@ export async function saveDeviceVolumeState(deviceId, { volumeLevel, isMuted }) 
            volume_level = excluded.volume_level,
            is_muted = excluded.is_muted,
            updated_at = CURRENT_TIMESTAMP`,
-        [deviceId, Number(volumeLevel), isMuted ? true : false]
+        [safeDeviceId, safeLevel, safeMuted]
       );
     }, {
       maxRetries: 3, delay: 100, shouldRetry: isRetryableDatabaseError,
