@@ -7,8 +7,8 @@ import logger from '../../utils/logger.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Use system-wide data directory
-const DATA_DIR = process.env.MMRC_DATA_DIR || '/var/lib/mmrc-data';
+// Use system-wide data directory (same fallback as server.js)
+const DATA_DIR = process.env.MMRC_DATA_DIR || path.join(process.cwd(), 'data');
 const DB_PATH = path.join(DATA_DIR, 'db', 'heroes.db');
 const LEGACY_DB_PATH = path.join(process.cwd(), 'config', 'heroes.db');
 const LEGACY_DB_PATH2 = path.join(process.cwd(), 'config', 'hero', 'heroes.db');

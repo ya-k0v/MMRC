@@ -11,10 +11,13 @@ HEALTH_JSON="$TMP_DIR/ci-health.json"
 mkdir -p "$TMP_DIR"
 rm -f "$SERVER_LOG" "$HEALTH_JSON"
 
-# Ensure CONTENT_ROOT is writable for CI/local runs. Prefer explicit env, else use repo .tmp/data
+# Ensure CONTENT_ROOT and MMRC_DATA_DIR are writable for CI/local runs
 if [[ -z "${CONTENT_ROOT:-}" ]]; then
   export CONTENT_ROOT="$TMP_DIR/data"
   mkdir -p "$CONTENT_ROOT"
+fi
+if [[ -z "${MMRC_DATA_DIR:-}" ]]; then
+  export MMRC_DATA_DIR="$TMP_DIR/data"
 fi
 
 # Keep CI behavior deterministic (avoid production-only exits in middleware)
