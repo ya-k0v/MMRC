@@ -6,7 +6,7 @@ ROLE="${MMRC_ROLE:-${ROLE:-server}}"
 export ROLE
 
 echo "🚀 Starting MMRC ${ROLE}..."
-echo "📦 Version: 3.2.0"
+echo "📦 Version: 3.3.0"
 echo "🔧 Node: $(node --version)"
 echo "🎬 FFmpeg: $(ffmpeg -version 2>/dev/null | head -1 || echo 'not found')"
 

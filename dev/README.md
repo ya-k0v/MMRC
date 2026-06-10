@@ -1,8 +1,8 @@
-# 📺 MMRC 3.2.1
+# 📺 MMRC 3.3.0
 
 **Система управления медиаконтентом для цифровых дисплеев**
 
-![Version](https://img.shields.io/badge/version-3.2.1-blue)
+![Version](https://img.shields.io/badge/version-3.3.0-blue)
 ![Node](https://img.shields.io/badge/node-20.x-green)
 ![License](https://img.shields.io/badge/license-Personal_Use_Only-red)
 
@@ -298,7 +298,7 @@ sudo systemctl start videocontrol
 
 **ya-k0v** - [GitHub](https://github.com/ya-k0v/MMRC)
 
-**Версия:** 3.2.1
+**Версия:** 3.3.0
 
 ---
 

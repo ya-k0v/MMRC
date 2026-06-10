@@ -31,7 +31,7 @@ ENV ROLE=${MMRC_ROLE}
 
 LABEL maintainer="ya-k0v"
 LABEL description="MMRC - Media Management and Remote Control"
-LABEL version="3.2.1"
+LABEL version="3.3.0"
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \

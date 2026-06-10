@@ -1,6 +1,6 @@
 #!/bin/bash
 # ========================================
-# VideoControl v3.2.0 - Quick Installation Script
+# VideoControl v3.3.0 - Quick Installation Script
 # ========================================
 # Полная установка системы на чистый Ubuntu/Debian сервер
 #
@@ -59,7 +59,7 @@
 #   - Hero Panel: http://YOUR_SERVER_IP/hero/index.html
 #   - По умолчанию: admin / admin123 (ОБЯЗАТЕЛЬНО СМЕНИТЬ!)
 #
-# НОВОЕ В v3.2.0:
+# НОВОЕ В v3.3.0:
 #   - Динамические пути данных через config/app-settings.json
 #   - Автоматические миграции heroes.db
 #   - Дедупликация стримов (один FFmpeg на URL)
@@ -80,7 +80,7 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${BLUE}============================================${NC}"
-echo -e "${BLUE}  VideoControl v3.2.0 - Quick Install${NC}"
+echo -e "${BLUE}  VideoControl v3.3.0 - Quick Install${NC}"
 echo -e "${BLUE}============================================${NC}"
 echo ""
 
@@ -696,7 +696,7 @@ if [ ! -f config/app-settings.json ]; then
     cat > config/app-settings.json << EOF
 {
   "contentRoot": "$CONTENT_ROOT",
-    "version": "3.2.0"
+    "version": "3.3.0"
 }
 EOF
     # Права будут установлены на vcuser в PHASE 7
@@ -853,7 +853,7 @@ fi
 # Создаем systemd unit файл
 cat > /etc/systemd/system/videocontrol.service << EOF
 [Unit]
-Description=VideoControl Server v3.2.0
+Description=VideoControl Server v3.3.0
 After=network.target$([ "$DB_TYPE" = "postgres" ] && echo " docker.target")
 Wants=$([ "$DB_TYPE" = "postgres" ] && echo "docker.target")
 
@@ -919,7 +919,7 @@ echo -e "${GREEN}============================================${NC}"
 echo -e "${GREEN}  ✅ Installation Complete!${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo ""
-echo "🎉 VideoControl v3.2.0 successfully installed!"
+echo "🎉 VideoControl v3.3.0 successfully installed!"
 echo ""
 echo "📂 Installation directory: $INSTALL_DIR"
 echo "👤 Service user: $SERVICE_USER ($SERVICE_GROUP)"

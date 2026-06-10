@@ -32,7 +32,7 @@ const previewStreamUrl = url.searchParams.get('stream_url'); // Прямой URL
 const previewTrailerUrl = url.searchParams.get('trailerUrl');
 const previewClientVersionParam = url.searchParams.get('clientVersion');
 
-const APP_VERSION = '3.2.0';
+const APP_VERSION = '3.3.0';
 const badgeDeviceId = device_id || (preview ? 'preview' : 'unknown');
 const playerBadge = document.getElementById('playerBadge');
 
