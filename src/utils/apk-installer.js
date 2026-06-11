@@ -69,7 +69,8 @@ function resolveAndValidateApkPath(apkPath) {
 }
 
 async function runAdb(args, options = {}) {
-  return execFileAsync('adb', args, { ...options, encoding: 'utf-8' });
+  const { stdout } = await execFileAsync('adb', args, { ...options, encoding: 'utf-8' });
+  return stdout;
 }
 
 function escapeXml(value) {
