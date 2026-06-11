@@ -386,6 +386,16 @@ class DockerUpdateManager {
           throw new Error('Образ уже обновлен до актуальной версии');
         }
 
+        notificationsManager.upsert({
+          type: 'docker_update_apply',
+          severity: 'info',
+          title: 'Обновление Docker образа',
+          message: 'Загрузка нового образа...',
+          key: UPDATE_APPLY_STATUS_KEY,
+          source: 'docker-update-manager',
+          details: { requestedBy, startedAt: this.state.lastUpdateStartedAt, step: 'pull' }
+        });
+
         logger.info('[DockerUpdateManager] Pulling image', { image: this.imageName });
         await execFileAsync('docker', ['pull', this.imageName], {
           timeout: this.pullTimeoutMs,
@@ -393,9 +403,29 @@ class DockerUpdateManager {
         });
         logger.info('[DockerUpdateManager] Image pulled successfully', { image: this.imageName });
 
+        // Remove old container to avoid name conflict
+        try {
+          await execFileAsync('docker', ['rm', '-f', 'mmrc'], { timeout: 10000 });
+          logger.info('[DockerUpdateManager] Old container removed');
+        } catch (rmErr) {
+          logger.debug('[DockerUpdateManager] No old container to remove', {
+            error: normalizeErrorMessage(rmErr)
+          });
+        }
+
         const composeArgs = fs.existsSync(this.composeFile)
-          ? ['-f', this.composeFile, 'up', '-d']
-          : ['up', '-d'];
+          ? ['-f', this.composeFile, '-p', 'mmrc', 'up', '-d', '--force-recreate', '--remove-orphans']
+          : ['-p', 'mmrc', 'up', '-d', '--force-recreate', '--remove-orphans'];
+
+        notificationsManager.upsert({
+          type: 'docker_update_apply',
+          severity: 'info',
+          title: 'Обновление Docker образа',
+          message: 'Образ загружен, перезапуск контейнера...',
+          key: UPDATE_APPLY_STATUS_KEY,
+          source: 'docker-update-manager',
+          details: { requestedBy, startedAt: this.state.lastUpdateStartedAt, step: 'restart' }
+        });
 
         let composeRan = false;
 

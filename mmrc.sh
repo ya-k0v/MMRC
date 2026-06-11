@@ -49,6 +49,21 @@ colorized_echo() {
     esac
 }
 
+# Print a line within a 100-char-wide box with proper right-border alignment
+box_line() {
+    local content="$1"
+    local box_width=100
+    # Remove zero-width variation selectors (U+FE0F) for accurate counting
+    local clean=$(printf '%s' "$content" | tr -d '\357\270\217')
+    local char_count=${#clean}
+    local byte_count=$(printf '%s' "$clean" | wc -c)
+    local four_byte=$(( (byte_count - char_count) / 3 ))
+    local display_width=$(( char_count + four_byte ))
+    local pad=$((box_width - display_width))
+    [ "$pad" -lt 0 ] && pad=0
+    printf "${CYAN}║ %s%${pad}s║${NC}\n" "$content" ""
+}
+
 info() { colorized_echo blue "  $1"; }
 success() { colorized_echo green "✔ $1"; }
 warn() { colorized_echo yellow "⚠ $1"; }
@@ -342,23 +357,23 @@ ENVEOF3
     SERVER_IP=$(curl -4 -fsS --max-time 5 https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
 
     echo ""
-    colorized_echo cyan "╔══════════════════════════════════════════════════╗"
-    colorized_echo cyan "║           🎉 MMRC Installed Successfully!        ║"
-    colorized_echo cyan "╠══════════════════════════════════════════════════╣"
-    colorized_echo cyan "║                                                  ║"
-    colorized_echo cyan "║  📺 Admin Panel: http://${SERVER_IP}:3000/admin.html      ║"
-    colorized_echo cyan "║  🎤 Speaker Panel: http://${SERVER_IP}:3000/speaker.html  ║"
-    colorized_echo cyan "║  🎖️  Hero Module:   http://${SERVER_IP}:3000/hero/         ║"
-    colorized_echo cyan "║  ❤️  Health Check:  http://${SERVER_IP}:3000/health        ║"
-    colorized_echo cyan "║                                                  ║"
-    colorized_echo cyan "║  👤 Default login: admin / admin123              ║"
-    colorized_echo cyan "║  ⚠️  CHANGE PASSWORD after first login!          ║"
-    colorized_echo cyan "║                                                  ║"
-    colorized_echo cyan "║  📁 Config: $APP_DIR/.env                ║"
-    colorized_echo cyan "║  💾 Data:   $DATA_DIR                  ║"
-    colorized_echo cyan "║  📦 Media:  $content_dir               ║"
-    colorized_echo cyan "║                                                  ║"
-    colorized_echo cyan "╚══════════════════════════════════════════════════╝"
+    colorized_echo cyan "╔════════════════════════════════════════════════════════════════════════════════════════════════════╗"
+    box_line "                                                  🎉 MMRC Installed Successfully!                                                  "
+    colorized_echo cyan "╠════════════════════════════════════════════════════════════════════════════════════════════════════╣"
+    box_line ""
+    box_line "  📺 Admin Panel:                         http://${SERVER_IP}:3000/admin.html"
+    box_line "  🎤 Speaker Panel:                       http://${SERVER_IP}:3000/speaker.html"
+    box_line "  🎖️  Hero Module:                         http://${SERVER_IP}:3000/hero/"
+    box_line "  ❤️  Health Check:                        http://${SERVER_IP}:3000/health"
+    box_line ""
+    box_line "  👤 Default login:                       admin / admin123"
+    box_line "  ⚠️  CHANGE PASSWORD after first login!"
+    box_line ""
+    box_line "  📁 Config:                              $APP_DIR/.env"
+    box_line "  💾 Data:                                $DATA_DIR"
+    box_line "  📦 Media:                               $content_dir"
+    box_line ""
+    colorized_echo cyan "╚════════════════════════════════════════════════════════════════════════════════════════════════════╝"
     echo ""
     info "Useful commands:"
     echo "   mmrc status    - Check services status"

@@ -15,7 +15,7 @@
 Для production-серверов используйте one-command установку:
 
 ```bash
-sudo curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/v330/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/v330/install.sh | sudo bash
 ```
 
 Скрипт автоматически:

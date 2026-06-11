@@ -38,6 +38,21 @@ colorized_echo() {
     esac
 }
 
+# Print a line within a 100-char-wide box with proper right-border alignment
+box_line() {
+    local content="$1"
+    local box_width=100
+    # Remove zero-width variation selectors (U+FE0F) for accurate counting
+    local clean=$(printf '%s' "$content" | tr -d '\357\270\217')
+    local char_count=${#clean}
+    local byte_count=$(printf '%s' "$clean" | wc -c)
+    local four_byte=$(( (byte_count - char_count) / 3 ))
+    local display_width=$(( char_count + four_byte ))
+    local pad=$((box_width - display_width))
+    [ "$pad" -lt 0 ] && pad=0
+    printf "${CYAN}║ %s%${pad}s║${NC}\n" "$content" ""
+}
+
 info() { colorized_echo blue "  $1"; }
 success() { colorized_echo green "✔ $1"; }
 warn() { colorized_echo yellow "⚠ $1"; }
@@ -364,25 +379,25 @@ ENVEOF3
     success "CLI installed: mmrc"
 
     echo ""
-    colorized_echo cyan "╔══════════════════════════════════════════════════╗"
-    colorized_echo cyan "║           🎉 MMRC Installed Successfully!        ║"
-    colorized_echo cyan "╠══════════════════════════════════════════════════╣"
-    colorized_echo cyan "║                                                  ║"
-    colorized_echo cyan "║  📺 Admin Panel:    http://localhost:80/admin.html       ║"
-    colorized_echo cyan "║  🎤 Speaker Panel:  http://localhost:80/speaker.html   ║"
-    colorized_echo cyan "║  🎖️  Hero Module:    http://localhost:80/hero/          ║"
-    colorized_echo cyan "║  ❤️  Health Check:   http://localhost:80/health         ║"
-    colorized_echo cyan "║                                                  ║"
-    colorized_echo cyan "║  🌐 From network:  http://${SERVER_IP}:80/                ║"
-    colorized_echo cyan "║                                                  ║"
-    colorized_echo cyan "║  👤 Default login: admin / admin123              ║"
-    colorized_echo cyan "║  ⚠️  CHANGE PASSWORD after first login!          ║"
-    colorized_echo cyan "║                                                  ║"
-    colorized_echo cyan "║  📁 Config: $INSTALL_DIR/.env             ║"
-    colorized_echo cyan "║  💾 Data:   $DATA_DIR                   ║"
-    colorized_echo cyan "║  📦 Media:  $content_dir               ║"
-    colorized_echo cyan "║                                                  ║"
-    colorized_echo cyan "╚══════════════════════════════════════════════════╝"
+    colorized_echo cyan "╔════════════════════════════════════════════════════════════════════════════════════════════════════╗"
+    box_line "                                                  🎉 MMRC Installed Successfully!                                                  "
+    colorized_echo cyan "╠════════════════════════════════════════════════════════════════════════════════════════════════════╣"
+    box_line ""
+    box_line "  📺 Admin Panel:                         http://localhost:80/admin.html"
+    box_line "  🎤 Speaker Panel:                       http://localhost:80/speaker.html"
+    box_line "  🎖️  Hero Module:                         http://localhost:80/hero/"
+    box_line "  ❤️  Health Check:                        http://localhost:80/health"
+    box_line ""
+    box_line "  🌐 From network:                        http://${SERVER_IP}:80/"
+    box_line ""
+    box_line "  👤 Default login:                       admin / admin123"
+    box_line "  ⚠️  CHANGE PASSWORD after first login!"
+    box_line ""
+    box_line "  📁 Config:                              $INSTALL_DIR/.env"
+    box_line "  💾 Data:                                $DATA_DIR"
+    box_line "  📦 Media:                               $content_dir"
+    box_line ""
+    colorized_echo cyan "╚════════════════════════════════════════════════════════════════════════════════════════════════════╝"
     echo ""
     info "Useful commands:"
     echo "   mmrc status    - Check services status"
