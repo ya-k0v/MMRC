@@ -44,10 +44,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     wget \
     ca-certificates \
-    fonts-noto-cjk \
     nginx \
     imagemagick \
-    libreoffice-impress \
     tini \
     netcat-openbsd \
     && if [ "$INCLUDE_DOCKER_CLI" = "true" ]; then \

@@ -355,19 +355,19 @@ export async function convertPptxToImages(pptxPath, outputDir, onProgress = null
   const pdfPath = path.join(safeOutputDir, `${fileNameWithoutExt}.pdf`);
   
   try {
-    // Конвертируем PPTX в PDF через LibreOffice
-    await execFileAsync('soffice', ['--headless', '--convert-to', 'pdf', '--outdir', safeOutputDir, safePptxPath]);
-    if (onProgress) onProgress(5); // Начальная стадия конвертации PPTX -> PDF
+    if (process.env.MMRC_DOCKER === '1') {
+      await convertPptxToPdfViaDocker(safePptxPath, safeOutputDir);
+    } else {
+      await execFileAsync('soffice', ['--headless', '--convert-to', 'pdf', '--outdir', safeOutputDir, safePptxPath]);
+    }
+    if (onProgress) onProgress(5);
     
-    // Проверяем что PDF создан
     if (!fs.existsSync(pdfPath)) {
       throw new Error(`PDF не создан: ${pdfPath}`);
     }
     
-    // Конвертируем PDF в изображения
     const numPages = await convertPdfToImages(pdfPath, safeOutputDir, onProgress);
     
-    // Удаляем временный PDF
     fs.unlinkSync(pdfPath);
     
     return numPages;
@@ -375,6 +375,25 @@ export async function convertPptxToImages(pptxPath, outputDir, onProgress = null
     logger.error(`[Converter] ❌ PPTX конвертация failed`, { error: error.message, stack: error.stack, pptxPath });
     throw error;
   }
+}
+
+async function convertPptxToPdfViaDocker(pptxPath, outputDir) {
+  const hostDataDir = process.env.HOST_DATA_DIR || '/opt/mmrc/data';
+  const converterImage = process.env.CONVERTER_IMAGE || 'pingwin1900/mmrc-converter';
+  const imageTag = process.env.DOCKER_IMAGE_TAG || 'v330';
+
+  const dataRoot = getDataRoot();
+  const converterPptxPath = pptxPath.replace(dataRoot, '/data');
+  const converterOutputDir = outputDir.replace(dataRoot, '/data');
+
+  await execFileAsync('docker', [
+    'run', '--rm',
+    '-v', `${hostDataDir}:/data:rw`,
+    `${converterImage}:${imageTag}`,
+    '--convert-to', 'pdf',
+    '--outdir', converterOutputDir,
+    converterPptxPath,
+  ]);
 }
 
 /**

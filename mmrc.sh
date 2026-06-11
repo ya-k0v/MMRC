@@ -19,7 +19,8 @@ MMRC_BRANCH="v330"
 DOCKER_ORG="pingwin1900"
 DOCKER_IMAGE="${DOCKER_ORG}/mmrc"
 DOCKER_IMAGE_TAG="v330"
-export DOCKER_IMAGE DOCKER_IMAGE_TAG
+CONVERTER_IMAGE="${DOCKER_ORG}/mmrc-converter"
+export DOCKER_IMAGE DOCKER_IMAGE_TAG CONVERTER_IMAGE
 
 # ========================
 # Colors
@@ -258,10 +259,13 @@ STREAM_IDLE_TIMEOUT_MS=180000
 NGINX_HTTP_PORT=80
 NGINX_HTTPS_PORT=443
 
-# Content Storage (project dir by default)
+    # Content Storage (project dir by default)
 CONTENT_DIR=$APP_DIR/data
 
-# LDAP (optional)
+# Host data dir (for converter container volume mount)
+HOST_DATA_DIR=$APP_DIR/data
+
+    # LDAP (optional)
 LDAP_URL=
 LDAP_BIND_DN=
 LDAP_SEARCH_BASE=
@@ -293,6 +297,7 @@ ENVEOF3
         fi
     done
     replace_or_append_env "CONTENT_DIR" "$content_dir"
+    replace_or_append_env "HOST_DATA_DIR" "$content_dir"
 
     # Create content directory structure
     mkdir -p "$content_dir"/{db,content,streams,converted/trailers,logs,temp,hero}
@@ -315,6 +320,7 @@ ENVEOF3
     info "Pulling Docker images..."
     cd "$APP_DIR"
     $COMPOSE pull
+    docker pull "${CONVERTER_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "Converter image not available (non-critical)"
     success "Images pulled"
 
     # Start services with postgres profile if needed
@@ -487,6 +493,7 @@ cmd_update() {
     # Pull new images
     info "Pulling latest Docker images..."
     $COMPOSE pull
+    docker pull "${CONVERTER_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "Converter image not available (non-critical)"
     success "Images updated"
 
     # Restart services

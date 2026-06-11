@@ -264,6 +264,9 @@ STREAM_IDLE_TIMEOUT_MS=180000
 # Content Storage (project dir by default)
 CONTENT_DIR=/opt/mmrc/data
 
+# Host data dir (for converter container volume mount)
+HOST_DATA_DIR=/opt/mmrc/data
+
 # LDAP (optional)
 LDAP_URL=
 LDAP_BIND_DN=
@@ -301,6 +304,7 @@ ENVEOF3
     done
 
     sed -i "s|^CONTENT_DIR=.*|CONTENT_DIR=${content_dir}|" "$ENV_FILE"
+    sed -i "s|^HOST_DATA_DIR=.*|HOST_DATA_DIR=${content_dir}|" "$ENV_FILE"
     mkdir -p "$content_dir"/{db,content,streams,converted/trailers,logs,temp,hero}
     chown -R 1001:1001 "$content_dir" 2>/dev/null || true
     success "Content directory: $content_dir"
@@ -310,6 +314,7 @@ ENVEOF3
     info "Pulling Docker images..."
     cd "$INSTALL_DIR"
     $COMPOSE pull
+    docker pull "pingwin1900/mmrc-converter:v330" 2>/dev/null || warn "Converter image not available (non-critical)"
     success "Images pulled"
 
     # Start services with progress
