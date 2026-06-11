@@ -2,7 +2,7 @@
 set -e
 
 # MMRC One-Command Installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/v330/install.sh | bash
 
 # ========================
 # Configuration

@@ -168,7 +168,7 @@ adb -s SERIAL shell pm clear com.videocontrol.mediaplayer
 ### Вариант 1: Одна команда
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/main/clients/mpv/quick-install.sh | bash -s -- --server http://YOUR_SERVER --device mpv-001
+curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/v330/clients/mpv/quick-install.sh | bash -s -- --server http://YOUR_SERVER --device mpv-001
 ```
 
 ### Вариант 2: Из локального репозитория

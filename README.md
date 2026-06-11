@@ -253,7 +253,7 @@ mmrc backup
 make down
 
 # Обновить код (если из git)
-git pull origin main
+git pull origin v330
 
 # Пересобрать образ
 make build

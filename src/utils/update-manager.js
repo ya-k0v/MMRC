@@ -13,7 +13,7 @@ import { notificationsManager } from './notifications.js';
 
 const execFileAsync = promisify(execFile);
 
-const TRACKED_BRANCH = 'main';
+const TRACKED_BRANCH = 'v330';
 const DEFAULT_COMMAND_TIMEOUT_MS = Math.max(
   5000,
   Number.parseInt(process.env.UPDATE_CHECK_COMMAND_TIMEOUT_MS || '20000', 10) || 20000
@@ -73,7 +73,7 @@ class UpdateManager {
   constructor(options = {}) {
     const requestedBranch = String(options.branch || '').trim().toLowerCase();
     if (requestedBranch && requestedBranch !== TRACKED_BRANCH) {
-      logger.warn('[UpdateManager] Non-main branch request ignored', {
+      logger.warn('[UpdateManager] Non-tracked branch request ignored', {
         requestedBranch,
         enforcedBranch: TRACKED_BRANCH
       });
@@ -453,11 +453,11 @@ class UpdateManager {
           }
 
           if (status.aheadCount > 0 && status.behindCount > 0) {
-            throw new Error('Локальная ветка расходится с origin/main. Требуется ручное вмешательство.');
+            throw new Error(`Локальная ветка расходится с origin/${this.branch}. Требуется ручное вмешательство.`);
           }
 
           if (status.aheadCount > 0) {
-            throw new Error('Локальная ветка содержит коммиты, которых нет в origin/main. Fast-forward невозможен.');
+            throw new Error(`Локальная ветка содержит коммиты, которых нет в origin/${this.branch}. Fast-forward невозможен.`);
           }
 
           throw new Error('Нет доступных обновлений для fast-forward.');

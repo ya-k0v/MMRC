@@ -3,7 +3,7 @@
 # Быстрая установка без клонирования всего репозитория
 #
 # Использование:
-#   curl -fsSL https://raw.githubusercontent.com/ya-k0v/VideoControl/main/clients/mpv/quick-install.sh | bash -s -- --server http://SERVER_IP --device mpv-001
+#   curl -fsSL https://raw.githubusercontent.com/ya-k0v/VideoControl/v330/clients/mpv/quick-install.sh | bash -s -- --server http://SERVER_IP --device mpv-001
 #
 # Или локально:
 #   ./quick-install.sh --server http://192.168.1.100 --device mpv-001
@@ -12,7 +12,7 @@ set -e
 
 VERSION="1.0"
 INSTALL_DIR="$HOME/videocontrol-mpv"
-REPO_URL="https://raw.githubusercontent.com/ya-k0v/VideoControl/main/clients/mpv"
+REPO_URL="https://raw.githubusercontent.com/ya-k0v/VideoControl/v330/clients/mpv"
 
 echo "=========================================="
 echo "VideoControl MPV Client - Quick Install"
@@ -58,7 +58,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Примеры:"
             echo "  # Через curl:"
-            echo "  curl -fsSL https://raw.githubusercontent.com/ya-k0v/VideoControl/main/clients/mpv/quick-install.sh | bash -s -- --server http://192.168.1.100 --device mpv-001"
+            echo "  curl -fsSL https://raw.githubusercontent.com/ya-k0v/VideoControl/v330/clients/mpv/quick-install.sh | bash -s -- --server http://192.168.1.100 --device mpv-001"
             echo ""
             echo "  # Локально:"
             echo "  ./quick-install.sh --server http://192.168.1.100 --device mpv-001"
