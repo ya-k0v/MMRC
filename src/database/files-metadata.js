@@ -6,7 +6,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getDatabase } from './database.js';
+import { getDatabase, getDriverType } from './database.js';
 import logger, { logFile } from '../utils/logger.js';
 import { isRetryableDatabaseError } from '../utils/retry.js';
 import { STATIC_CONTENT_TYPES } from '../config/file-types.js';
@@ -115,8 +115,9 @@ export async function saveFileMetadata({
         'video_codec', 'video_profile', 'video_bitrate', 'audio_codec', 'audio_bitrate',
         'audio_channels', 'file_mtime', 'content_type', 'stream_url', 'stream_protocol', 'pages_count'
       ];
-      const ph = cols.map((_, i) => driverType === 'postgres' ? `$${i + 1}` : '?').join(', ');
-      const insertSql = driverType === 'postgres'
+      const dt = getDriverType();
+      const ph = cols.map((_, i) => dt === 'postgres' ? `$${i + 1}` : '?').join(', ');
+      const insertSql = dt === 'postgres'
         ? `INSERT INTO files_metadata (${cols.join(', ')})
            VALUES (${ph})
            ON CONFLICT (device_id, safe_name) DO UPDATE SET
