@@ -586,6 +586,7 @@ cmd_backup() {
 }
 
 cmd_ssl() {
+    check_root
     require_installed
     detect_compose
 
@@ -603,17 +604,21 @@ cmd_ssl() {
         exit 1
     fi
 
-    # Check if port 80 is available
-    if ss -ltn | grep -q ':80 '; then
-        warn "Port 80 is in use. Stopping nginx temporarily..."
-        $COMPOSE stop mmrc-nginx 2>/dev/null || true
-    fi
+    # In Docker mode, stop MMRC to free port 80 for acme.sh standalone
+    info "Stopping MMRC to free port 80..."
+    $COMPOSE down
 
-    # Install acme.sh
+    # Install acme.sh as root
     if ! command -v acme.sh >/dev/null 2>&1; then
         info "Installing acme.sh..."
+        cd /root
         curl -s https://get.acme.sh | sh
-        export PATH="$HOME/.acme.sh:$PATH"
+        export PATH="/root/.acme.sh:$PATH"
+    fi
+
+    if ! command -v acme.sh >/dev/null 2>&1; then
+        error "acme.sh installation failed. Install manually: curl -s https://get.acme.sh | sh"
+        exit 1
     fi
 
     # Issue certificate
@@ -628,17 +633,26 @@ cmd_ssl() {
         acme.sh --install-cert -d "$domain" \
             --key-file "$DATA_DIR/certs/$domain/privkey.pem" \
             --fullchain-file "$DATA_DIR/certs/$domain/fullchain.pem" \
-            --reloadcmd "$COMPOSE -f $COMPOSE_FILE restart mmrc-nginx"
+            --reloadcmd "cp \$CERT_KEY \$CERT_FULLCHAIN $DATA_DIR/certs/$domain/"
 
         success "SSL certificate installed!"
         info "Certificate: $DATA_DIR/certs/$domain/fullchain.pem"
         info "Key: $DATA_DIR/certs/$domain/privkey.pem"
 
-        # Update compose for SSL
-        warn "Manual step: Update nginx.conf to enable SSL"
-        warn "Then run: mmrc restart"
+        # Write SSL config to .env
+        replace_or_append_env "SSL_DOMAIN" "$domain"
+        replace_or_append_env "SSL_CERT" "$DATA_DIR/certs/$domain/fullchain.pem"
+        replace_or_append_env "SSL_KEY" "$DATA_DIR/certs/$domain/privkey.pem"
+
+        info "Starting MMRC back..."
+        $COMPOSE up -d
+
+        info "SSL certificate will be used after you configure nginx for HTTPS."
+        info "See: https://github.com/ya-k0v/MMRC/wiki/SSL"
     else
         error "Failed to issue certificate"
+        info "Starting MMRC back..."
+        $COMPOSE up -d
         exit 1
     fi
 }
