@@ -545,7 +545,7 @@ export async function getDeviceVolumeState(deviceId) {
 export async function saveDeviceVolumeState(deviceId, { volumeLevel, isMuted }) {
   const safeDeviceId = String(deviceId ?? '');
   const safeLevel = Number(volumeLevel);
-  const safeMuted = isMuted === true;
+  const safeMuted = isMuted === true ? 1 : 0;
   if (!safeDeviceId || Number.isNaN(safeLevel)) {
     logger.warn('[DB] Invalid volume state params', { deviceId, volumeLevel, isMuted });
     return;

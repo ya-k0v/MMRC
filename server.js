@@ -211,7 +211,9 @@ const streamManager = initStreamManager({
     if (!deviceVolumeState[deviceId]) {
       const now = new Date().toISOString();
       deviceVolumeState[deviceId] = { level: 50, muted: false, updatedAt: now };
-      await saveDeviceVolumeState(deviceId, { volumeLevel: 50, isMuted: false });
+      saveDeviceVolumeState(deviceId, { volumeLevel: 50, isMuted: false }).catch(err => {
+        logger.warn('[Volume] Initial volume state save failed', { deviceId, error: err.message });
+      });
     }
   }
 }
