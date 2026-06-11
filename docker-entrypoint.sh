@@ -37,7 +37,7 @@ fi
 # Apply database migrations
 echo "🔄 Checking for database migrations..."
 if [ -f "/app/scripts/post-pull-sync.sh" ]; then
-    SKIP_SERVICE_RESTART=1 SKIP_MIGRATION=0 bash /app/scripts/post-pull-sync.sh 2>/dev/null || true
+    SKIP_NPM_INSTALL=1 SKIP_SERVICE_RESTART=1 SKIP_MIGRATION=0 bash /app/scripts/post-pull-sync.sh 2>/dev/null || true
 fi
 
 # Start Nginx as reverse proxy

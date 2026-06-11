@@ -29,6 +29,9 @@ FROM node:20-slim
 ARG MMRC_ROLE=server
 ENV ROLE=${MMRC_ROLE}
 
+ARG INCLUDE_DOCKER_CLI=false
+ENV MMRC_DOCKER_CLI=${INCLUDE_DOCKER_CLI}
+
 LABEL maintainer="ya-k0v"
 LABEL description="MMRC - Media Management and Remote Control"
 LABEL version="3.3.0"
@@ -45,11 +48,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     imagemagick \
     libreoffice-impress \
-    libreoffice-impress \
     tini \
     netcat-openbsd \
-    docker.io \
-    docker-compose \
+    && if [ "$INCLUDE_DOCKER_CLI" = "true" ]; then \
+         apt-get install -y --no-install-recommends docker.io docker-compose; \
+       fi \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
     && mkdir -p /var/log/nginx /run/nginx /etc/nginx/ssl /etc/nginx/ssl-certs
 

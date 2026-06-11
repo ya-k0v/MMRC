@@ -142,6 +142,15 @@ class DockerUpdateManager {
     }
   }
 
+  async checkDockerCli() {
+    try {
+      await execFileAsync('docker', ['--version'], { timeout: 5000 });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async fetchLatestCommitSha() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.commandTimeoutMs);
@@ -322,6 +331,14 @@ class DockerUpdateManager {
         ok: false,
         status: 'in_progress',
         error: 'Обновление уже выполняется'
+      };
+    }
+
+    if (!(await this.checkDockerCli())) {
+      return {
+        ok: false,
+        status: 'no_docker_cli',
+        error: 'Docker CLI не установлен в образе. Соберите образ с INCLUDE_DOCKER_CLI=true или выполните обновление на хосте: mmrc update'
       };
     }
 

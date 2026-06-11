@@ -32,6 +32,7 @@ services:
       - DB_NAME=${DB_NAME:-mmrc}
       - DB_USER=${DB_USER:-mmrc}
       - DB_PASSWORD=${DB_PASSWORD:-mmrc}
+      # Docker update manager (вкл in-app проверку обновлений)
       - MMRC_DOCKER=1
       - MMRC_COMPOSE_DIR=/host
       - DOCKER_IMAGE=${DOCKER_IMAGE:-pingwin1900/mmrc}
@@ -44,7 +45,9 @@ services:
       - mmrc-config:/app/config
       - mmrc-temp:/app/.tmp
       - mmrc-certs:/etc/nginx/ssl-certs:ro
+      # Docker socket — для авто-обновления из админки. Удалите, если не нужно.
       - /var/run/docker.sock:/var/run/docker.sock
+      # Project dir — для доступа к compose-файлу при обновлении.
       - .:/host:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:80/health"]
