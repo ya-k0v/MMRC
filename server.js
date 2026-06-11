@@ -67,6 +67,7 @@ import { validatePath } from './src/utils/path-validator.js';
 import { getMetrics } from './src/utils/metrics.js';
 import { timerRegistry } from './src/utils/timer-registry.js';
 import { createUpdateManager } from './src/utils/update-manager.js';
+import { createDockerUpdateManager } from './src/utils/docker-update-manager.js';
 import adminRouter from './src/routes/admin.js';
 import { createModulesRouter } from './src/routes/modules.js';
 import { initEnabledModules, getEnabledModules } from './src/modules/index.js';
@@ -485,10 +486,18 @@ const UPDATE_CHECK_ENABLED = process.env.UPDATE_CHECK_ENABLED !== '0';
 const UPDATE_CHECK_INTERVAL_MS = Math.max(60 * 1000, Number.parseInt(process.env.UPDATE_CHECK_INTERVAL_MS || '900000', 10) || 900000);
 const UPDATE_CHECK_INITIAL_DELAY_MS = Math.max(5000, Number.parseInt(process.env.UPDATE_CHECK_INITIAL_DELAY_MS || '20000', 10) || 20000);
 
-const updateManager = createUpdateManager({
-  repoRoot: ROOT,
-  syncScriptPath: path.join(ROOT, 'scripts', 'post-pull-sync.sh')
-});
+const MMRC_DOCKER = process.env.MMRC_DOCKER === '1';
+
+const updateManager = MMRC_DOCKER
+  ? createDockerUpdateManager({
+      branch: process.env.DOCKER_IMAGE_TAG || 'v330',
+      image: process.env.DOCKER_IMAGE ? `${process.env.DOCKER_IMAGE}:${process.env.DOCKER_IMAGE_TAG || 'v330'}` : undefined,
+      composeDir: process.env.MMRC_COMPOSE_DIR
+    })
+  : createUpdateManager({
+      repoRoot: ROOT,
+      syncScriptPath: path.join(ROOT, 'scripts', 'post-pull-sync.sh')
+    });
 
 let isServiceRestartScheduled = false;
 
