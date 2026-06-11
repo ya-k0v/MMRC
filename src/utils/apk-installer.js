@@ -7,6 +7,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { validatePath } from './path-validator.js';
+import logger from './logger.js';
 
 const execFileAsync = promisify(execFile);
 const APK_UPLOAD_DIR = path.resolve(process.env.MMRC_APK_UPLOAD_DIR || '/tmp/mmrc-apk-upload');
@@ -164,7 +165,19 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
     input: xmlSettings,
     stdio: ['pipe', 'ignore', 'pipe']
   });
-  await runAdb(['-s', adbTarget, 'shell', 'run-as', 'com.videocontrol.mediaplayer', 'cp', tmpDevicePath, prefsPath], { stdio: 'inherit' });
+
+  // Копируем XML в shared_prefs (используем cat через sh, т.к. cp не всегда доступен в run-as)
+  try {
+    await runAdb(['-s', adbTarget, 'shell', 'run-as', 'com.videocontrol.mediaplayer', 'sh', '-c', `cat ${tmpDevicePath} > ${prefsPath}`], { stdio: 'inherit' });
+  } catch (runAsError) {
+    // Fallback: если run-as не сработал (production APK на Android 10+), пробуем через root shell
+    logger.warn('[ADB] run-as failed, trying fallback copy', { error: runAsError.message });
+    try {
+      await runAdb(['-s', adbTarget, 'shell', 'su', '-c', `cp ${tmpDevicePath} ${prefsPath}`], { stdio: 'inherit' });
+    } catch {
+      logger.warn('[ADB] fallback copy also failed, config not uploaded', { tmpDevicePath, prefsPath });
+    }
+  }
   await runAdb(['-s', adbTarget, 'shell', 'rm', '-f', tmpDevicePath], { stdio: 'ignore' });
 
   // Снова запускаем приложение с новыми настройками
