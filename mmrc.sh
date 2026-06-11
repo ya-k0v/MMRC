@@ -20,7 +20,8 @@ DOCKER_ORG="pingwin1900"
 DOCKER_IMAGE="${DOCKER_ORG}/mmrc"
 DOCKER_IMAGE_TAG="v330"
 CONVERTER_IMAGE="${DOCKER_ORG}/mmrc-converter"
-export DOCKER_IMAGE DOCKER_IMAGE_TAG CONVERTER_IMAGE
+FFMPEG_IMAGE="${DOCKER_ORG}/mmrc-ffmpeg"
+export DOCKER_IMAGE DOCKER_IMAGE_TAG CONVERTER_IMAGE FFMPEG_IMAGE
 
 # ========================
 # Colors
@@ -321,6 +322,7 @@ ENVEOF3
     cd "$APP_DIR"
     $COMPOSE pull
     docker pull "${CONVERTER_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "Converter image not available (non-critical)"
+    docker pull "${FFMPEG_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "FFmpeg image not available (non-critical)"
     success "Images pulled"
 
     # Start services with postgres profile if needed
@@ -494,6 +496,7 @@ cmd_update() {
     info "Pulling latest Docker images..."
     $COMPOSE pull
     docker pull "${CONVERTER_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "Converter image not available (non-critical)"
+    docker pull "${FFMPEG_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "FFmpeg image not available (non-critical)"
     success "Images updated"
 
     # Restart services

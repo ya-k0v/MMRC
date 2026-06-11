@@ -38,7 +38,6 @@ LABEL version="3.3.0"
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
     sqlite3 \
     curl \
     bash \

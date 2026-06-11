@@ -7,6 +7,7 @@ import https from 'node:https';
 import http from 'node:http';
 import logger from '../utils/logger.js';
 import { getStreamsOutputDir } from '../config/settings-manager.js';
+import { spawnFfmpeg, spawnFfprobe } from '../utils/docker-ffmpeg.js';
 import { 
   notificationsManager,
   notifyDiskFull, 
@@ -619,7 +620,7 @@ class StreamManager extends EventEmitter {
       ffprobeArgs.push(streamUrl);
 
       const { stdout } = await new Promise((resolve, reject) => {
-        const proc = spawn('ffprobe', ffprobeArgs, {
+        const proc = spawnFfprobe(ffprobeArgs, {
           stdio: ['ignore', 'pipe', 'pipe'],
           timeout
         });
@@ -1417,9 +1418,16 @@ class StreamManager extends EventEmitter {
 
     let child;
     try {
-      child = spawn(this.options.ffmpegPath, args, {
-        stdio: ['ignore', 'ignore', 'pipe']
-      });
+      const isStdBinary = this.options.ffmpegPath === 'ffmpeg' || this.options.ffmpegPath === 'ffprobe';
+      if (isStdBinary) {
+        child = (this.options.ffmpegPath === 'ffmpeg' ? spawnFfmpeg : spawnFfprobe)(args, {
+          stdio: ['ignore', 'ignore', 'pipe']
+        });
+      } else {
+        child = spawn(this.options.ffmpegPath, args, {
+          stdio: ['ignore', 'ignore', 'pipe']
+        });
+      }
     } catch (spawnError) {
       releaseStreamResources('spawn_throw');
       logger.error('[StreamManager] FFmpeg spawn threw synchronously', {
@@ -3788,7 +3796,7 @@ class StreamManager extends EventEmitter {
       });
       
       const { stdout } = await new Promise((resolve, reject) => {
-        const proc = spawn('ffprobe', [
+        const proc = spawnFfprobe([
           '-v', 'error',
           '-show_entries', 'format=duration',
           '-of', 'json',

@@ -12,7 +12,7 @@ import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { validatePath } from '../utils/path-validator.js';
 import { getDataRoot } from '../config/settings-manager.js';
 import logger from '../utils/logger.js';
-import { spawn } from 'node:child_process';
+import { spawnFfmpeg } from '../utils/docker-ffmpeg.js';
 
 const router = express.Router();
 
@@ -394,7 +394,7 @@ router.get('/preview/:deviceId/*fileName', async (req, res) => {
     'pipe:1'
   ];
   
-  const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const ff = spawnFfmpeg(args, { stdio: ['ignore', 'pipe', 'pipe'] });
   
   // КРИТИЧНО: Обрабатываем закрытие соединения клиентом
   let isAborted = false;

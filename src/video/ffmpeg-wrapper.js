@@ -3,11 +3,8 @@
  * @module video/ffmpeg-wrapper
  */
 
-import { execFile } from 'node:child_process';
-import util from 'node:util';
 import logger from '../utils/logger.js';
-
-const execFileAsync = util.promisify(execFile);
+import { execFfprobe } from '../utils/docker-ffmpeg.js';
 
 /**
  * Проверка параметров видео через ffprobe
@@ -17,7 +14,7 @@ const execFileAsync = util.promisify(execFile);
 export async function checkVideoParameters(filePath) {
   try {
     // ИСПРАВЛЕНО: Добавлен timeout 30 секунд для предотвращения зависания
-    const { stdout } = await execFileAsync('ffprobe', [
+    const { stdout } = await execFfprobe([
       '-v', 'error',
       '-show_entries', 'stream=codec_type,codec_name,width,height,r_frame_rate,bit_rate,profile,level,pix_fmt,channels,sample_rate',
       '-show_entries', 'format=duration,bit_rate',

@@ -12,6 +12,7 @@ import archiver from 'archiver';
 import sanitizeFilename from 'sanitize-filename';
 import { spawn } from 'node:child_process';
 import { getDevicesPath, getDataRoot } from '../config/settings-manager.js';
+import { spawnFfprobe } from '../utils/docker-ffmpeg.js';
 import { ROOT } from '../config/constants.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { extractZipToFolder, getFolderImagesCount } from '../converters/folder-converter.js';
@@ -331,7 +332,7 @@ async function probeMediaInfo(filePath, timeoutMs = 30000) {
       filePath
     ];
 
-    const ffprobe = spawn('ffprobe', args, {
+    const ffprobe = spawnFfprobe(args, {
       stdio: ['ignore', 'pipe', 'pipe']
     });
 

@@ -30,10 +30,10 @@
  * что позволяет ExoPlayer сразу получить всю необходимую информацию для перемотки.
  */
 
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import logger from '../utils/logger.js';
+import { spawnFfmpeg } from '../utils/docker-ffmpeg.js';
 
 /**
  * Проверяет, нужна ли обработка faststart для файла
@@ -322,7 +322,7 @@ export async function applyFaststart(filePath, options = {}) {
     ];
 
     await new Promise((resolve, reject) => {
-      const ffmpeg = spawn('ffmpeg', args, {
+      const ffmpeg = spawnFfmpeg(args, {
         stdio: ['ignore', 'ignore', 'pipe'] // stderr для логирования
       });
 

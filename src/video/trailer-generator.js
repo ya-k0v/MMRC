@@ -3,8 +3,8 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import { getConvertedCache } from '../config/settings-manager.js';
+import { spawnFfmpeg } from '../utils/docker-ffmpeg.js';
 
 // TRAILERS_DIR вычисляется динамически из настроек БД
 function getTrailersDir() {
@@ -69,7 +69,7 @@ export async function ensureTrailerForFile(md5Hash, filePath, options = {}) {
     ];
     
     await new Promise((resolve, reject) => {
-      const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      const ff = spawnFfmpeg(args, { stdio: ['ignore', 'ignore', 'pipe'] });
       let errBuf = '';
       ff.stderr.on('data', d => { errBuf += d.toString(); });
       ff.on('error', reject);

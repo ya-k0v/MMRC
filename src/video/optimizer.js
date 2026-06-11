@@ -13,6 +13,7 @@ import { setFileStatus, deleteFileStatus, getFileStatus } from './file-status.js
 import { needsFaststart } from './mp4-faststart.js';
 import logger from '../utils/logger.js';
 import { jobResourceManager } from '../utils/job-resource-manager.js';
+import { spawnFfmpeg, spawnFfprobe } from '../utils/docker-ffmpeg.js';
 
 function parseNonNegativeInt(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -63,10 +64,13 @@ function parseFrameRate(rawValue = '') {
 }
 
 function spawnManagedProcess(command, args = []) {
-  return spawn(command, args, {
+  const options = {
     detached: process.platform !== 'win32',
     stdio: ['ignore', 'pipe', 'pipe']
-  });
+  };
+  if (command === 'ffmpeg') return spawnFfmpeg(args, options);
+  if (command === 'ffprobe') return spawnFfprobe(args, options);
+  return spawn(command, args, options);
 }
 
 function killManagedProcess(childProcess, signal = 'SIGKILL') {
