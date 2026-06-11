@@ -28,14 +28,13 @@ const LDAP_DEFAULTS = {
   tlsRejectUnauthorized: true,
   groupRoleMap: {
     admin: [],
-    speaker: [],
-    hero_admin: []
+    speaker: []
   },
-  rolePriority: ['admin', 'hero_admin', 'speaker']
+  rolePriority: ['admin', 'speaker']
 };
 
 const ALLOWED_SEARCH_SCOPES = new Set(['base', 'one', 'sub']);
-const ALLOWED_USER_ROLES = new Set(['admin', 'speaker', 'hero_admin']);
+const ALLOWED_USER_ROLES = new Set(['admin', 'speaker']);
 const PROJECT_ROOT = path.resolve(ROOT);
 const MOUNT_ROOT = path.resolve('/mnt');
 
@@ -176,8 +175,7 @@ function normalizeGroupRoleMap(sourceMap = {}, baseMap = LDAP_DEFAULTS.groupRole
 
   return {
     admin: normalizeUniqueCaseInsensitive(splitList(source.admin ?? base.admin ?? [])),
-    speaker: normalizeUniqueCaseInsensitive(splitList(source.speaker ?? base.speaker ?? [])),
-    hero_admin: normalizeUniqueCaseInsensitive(splitList(source.hero_admin ?? base.hero_admin ?? []))
+    speaker: normalizeUniqueCaseInsensitive(splitList(source.speaker ?? base.speaker ?? []))
   };
 }
 
@@ -206,8 +204,7 @@ function normalizeLdapAuthSettings(raw = {}, current = LDAP_DEFAULTS) {
     ? source.groupRoleMap
     : {
         admin: source.groupsAdmin ?? source.groupAdmin,
-        speaker: source.groupsSpeaker ?? source.groupSpeaker,
-        hero_admin: source.groupsHeroAdmin ?? source.groupHeroAdmin
+        speaker: source.groupsSpeaker ?? source.groupSpeaker
       };
   const baseMap = base.groupRoleMap && typeof base.groupRoleMap === 'object'
     ? base.groupRoleMap
@@ -361,8 +358,7 @@ function readLdapAuthSettingsFromEnv() {
     tlsRejectUnauthorized: process.env.LDAP_TLS_REJECT_UNAUTHORIZED,
     groupRoleMap: {
       admin: process.env.LDAP_GROUPS_ADMIN || process.env.LDAP_GROUP_ADMIN || '',
-      speaker: process.env.LDAP_GROUPS_SPEAKER || process.env.LDAP_GROUP_SPEAKER || '',
-      hero_admin: process.env.LDAP_GROUPS_HERO_ADMIN || process.env.LDAP_GROUP_HERO_ADMIN || ''
+      speaker: process.env.LDAP_GROUPS_SPEAKER || process.env.LDAP_GROUP_SPEAKER || ''
     },
     rolePriority: process.env.LDAP_ROLE_PRIORITY || LDAP_DEFAULTS.rolePriority.join(',')
   };

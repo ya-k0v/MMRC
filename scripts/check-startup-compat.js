@@ -95,7 +95,6 @@ function main() {
 
   const requiredDirs = [
     path.join(ROOT, 'config'),
-    path.join(ROOT, 'config', 'hero'),
     contentRoot,
     path.join(contentRoot, 'content'),
     path.join(contentRoot, 'streams'),

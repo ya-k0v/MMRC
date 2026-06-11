@@ -46,13 +46,12 @@ import { createSystemInfoRouter } from './src/routes/system-info.js';
 import { createFoldersRouter } from './src/routes/folders.js';
 import { createAuthRouter } from './src/routes/auth.js';
 import { createDeduplicationRouter } from './src/routes/deduplication.js';
-import { createHeroRouter } from './src/hero/index.js';
 import { createVolumeRouter } from './src/routes/volume.js';
 import fileResolverRouter from './src/routes/file-resolver.js';
 import { createNotificationsRouter } from './src/routes/notifications.js';
 import multer from 'multer';
 import { createUploadMiddleware, validateUploadSize } from './src/middleware/multer-config.js';
-import { requireAuth, requireAdmin, requireHeroAdmin, requireSpeaker } from './src/middleware/auth.js';
+import { requireAuth, requireAdmin, requireSpeaker } from './src/middleware/auth.js';
 import { globalLimiter, apiSpeedLimiter } from './src/middleware/rate-limit.js';
 import { setupExpressMiddleware, setupStaticFiles } from './src/middleware/express-config.js';
 import { setupSocketHandlers } from './src/socket/index.js';
@@ -427,7 +426,6 @@ const deduplicationRouter = createDeduplicationRouter({
   updateDeviceFilesFromDB
 });
 
-const heroRouter = enabledModules.includes('hero') ? createHeroRouter({ requireHeroAdmin }) : null;
 const volumeRouter = createVolumeRouter({
   devices,
   getVolumeState,
@@ -442,9 +440,6 @@ app.use('/api/devices', conversionRouter);
 app.use('/api/devices', foldersRouter);
 app.use('/api/devices', deduplicationRouter);  // Дедупликация (check-duplicate, copy-from-duplicate)
 app.use('/api/devices', volumeRouter);
-if (heroRouter) {
-  app.use('/api/hero', heroRouter);
-}
 app.use('/api/notifications', notificationsRouter);  // Роутер уведомлений
 
 // ВАЖНО: devicesRouter, placeholderRouter, filesRouter, videoInfoRouter

@@ -84,12 +84,7 @@ export function createDevicesRouter(deps) {
   // Фильтрует устройства по доступу пользователя:
   // - admin: видит все устройства
   // - speaker: только назначенные устройства
-  // - hero_admin: не имеет доступа к устройствам (своя панель)
   router.get('/', requireAuth, (req, res) => {
-    // HERO ADMIN не имеет доступа к устройствам
-    if (req.user.role === 'hero_admin') {
-      return res.json([]);
-    }
 
     let devicesList = Object.entries(devices).map(([id, d]) => ({
       device_id: id, 

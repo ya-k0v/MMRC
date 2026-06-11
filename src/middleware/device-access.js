@@ -11,38 +11,11 @@ import logger from '../utils/logger.js';
  * Middleware: Проверяет доступ пользователя к устройству
  * Admin имеет доступ ко всем устройствам
  * Speaker - только к назначенным устройствам
- * Hero Admin - не имеет доступа к устройствам (своя панель)
  */
 export async function checkDeviceAccess(req, res, next) {
   // Если пользователь не аутентифицирован, requireAuth уже вернул ошибку
   if (!req.user) {
     return res.status(401).json({ error: 'Не аутентифицирован' });
-  }
-
-  // Hero Admin не имеет доступа к устройствам
-  if (req.user.role === 'hero_admin') {
-    auditLog({
-      userId: req.user.userId,
-      action: AuditAction.ACCESS_DENIED,
-      resource: `device:${req.params.id || req.params.device_id || 'unknown'}`,
-      details: {
-        username: req.user.username,
-        role: req.user.role,
-        reason: 'hero_admin_no_device_access',
-        path: req.path,
-        method: req.method
-      },
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent'),
-      status: 'failure'
-    }).catch(err => {
-      logger.error('Failed to log access denied', { error: err.message });
-    });
-
-    return res.status(403).json({ 
-      error: 'Доступ к устройствам недоступен для Hero Admin',
-      reason: 'hero_admin_has_separate_panel'
-    });
   }
 
   // Admin имеет доступ ко всем устройствам
@@ -149,11 +122,6 @@ export async function getUserDevices(userId) {
  * @returns {boolean}
  */
 export async function hasDeviceAccess(userId, deviceId, userRole) {
-  // Hero Admin не имеет доступа к устройствам
-  if (userRole === 'hero_admin') {
-    return false;
-  }
-
   // Admin имеет доступ ко всем устройствам
   if (userRole === 'admin') {
     return true;

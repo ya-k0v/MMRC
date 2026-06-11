@@ -762,7 +762,6 @@ export async function showUsersModal(adminFetch) {
             <select id="modalRole" class="input">
               <option value="speaker">Speaker (управление контентом)</option>
               <option value="admin">Admin (полный доступ)</option>
-              <option value="hero_admin">Hero Admin (управление карточками героев)</option>
             </select>
             <div id="modalUserError" style="color:var(--danger); font-size:0.875rem; display:none;"></div>
             <button id="modalCreateUser" class="primary">Создать пользователя</button>
@@ -1120,7 +1119,6 @@ function filterAndRenderUsers(adminFetch) {
             ${isLdapUser ? '<span style="background:var(--warning); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">LDAP</span>' : '<span style="background:var(--panel-2); color:var(--text-secondary); padding:2px 6px; border-radius:4px; font-size:0.7rem;">LOCAL</span>'}
             ${u.role === 'admin' ? '<span style="background:var(--brand); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">ADMIN</span>' : ''}
             ${u.role === 'speaker' ? '<span style="background:var(--success); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">SPEAKER</span>' : ''}
-            ${u.role === 'hero_admin' ? '<span style="background:var(--warning); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">HERO ADMIN</span>' : ''}
             ${!u.is_active ? '<span style="background:var(--danger); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">OFF</span>' : ''}
           </div>
           <div class="meta">${safeFullName}</div>
@@ -1128,7 +1126,7 @@ function filterAndRenderUsers(adminFetch) {
         </div>
         <div style="display:flex; gap:4px; flex-shrink:0;">
           ${u.role === 'speaker' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})" title="Управление устройствами">${getSettingsIcon(16)}</button>` : ''}
-          ${u.role === 'admin' || u.role === 'hero_admin' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})" title="Информация об устройствах">${getSettingsIcon(16)}</button>` : ''}
+          ${u.role === 'admin' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})" title="Информация об устройствах">${getSettingsIcon(16)}</button>` : ''}
           ${isLdapUser
             ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center; opacity:0.6;" disabled title="Пароль LDAP меняется в AD">${getKeyIcon(16)}</button>`
             : `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); resetUserPasswordInModal(${safeUserId}, ${usernameArg})" title="Сбросить пароль">${getKeyIcon(16)}</button>`}
@@ -1332,15 +1330,6 @@ function renderSelectedUserDevicesPanel() {
     return;
   }
 
-  if (selectedUser.role === 'hero_admin') {
-    if (countEl) countEl.textContent = 'Без устройств';
-    panel.innerHTML = `
-      <div style="font-weight:600; margin-bottom:4px;">${safeUsername}</div>
-      <div class="meta" style="color:var(--text-secondary);">Роль <strong>HERO ADMIN</strong> работает в своей панели и не использует назначения устройств.</div>
-    `;
-    return;
-  }
-
   const deviceIds = Array.isArray(selectedUser.deviceIds) ? selectedUser.deviceIds : [];
   if (countEl) countEl.textContent = `${deviceIds.length} шт.`;
 
@@ -1390,22 +1379,6 @@ window.showUserDevicesModalInModal = async function(userId, username, userRole) 
         </div>
         <div class="meta" style="color:var(--text-secondary);">
           Администраторам доступны все устройства автоматически
-        </div>
-        <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-md);">OK</button>
-      </div>
-    `);
-    return;
-  }
-  
-  // Если hero_admin, показываем сообщение что у него своя панель
-  if (userRole === 'hero_admin') {
-    showModal(`${getSettingsIcon(18)} Управление устройствами`, `
-      <div style="text-align:center; padding:var(--space-lg);">
-        <div class="meta" style="margin-bottom:var(--space-md);">
-          Пользователь <strong>${safeUsername}</strong> имеет роль <strong>HERO ADMIN</strong>
-        </div>
-        <div class="meta" style="color:var(--text-secondary);">
-          Hero Admin имеет свою панель управления и не имеет доступа к устройствам
         </div>
         <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-md);">OK</button>
       </div>

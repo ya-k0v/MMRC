@@ -54,11 +54,11 @@ function resolveRoleFromLdapGroups(groups = [], ldapSettings = {}) {
   const roleMap = ldapSettings?.groupRoleMap && typeof ldapSettings.groupRoleMap === 'object'
     ? ldapSettings.groupRoleMap : {};
   const priority = Array.isArray(ldapSettings?.rolePriority) && ldapSettings.rolePriority.length
-    ? ldapSettings.rolePriority : ['admin', 'hero_admin', 'speaker'];
+    ? ldapSettings.rolePriority : ['admin', 'speaker'];
   const groupTokens = collectLdapGroupTokens(groups);
   if (!groupTokens.size) return null;
   for (const role of priority) {
-    if (!['admin', 'speaker', 'hero_admin'].includes(role)) continue;
+    if (!['admin', 'speaker'].includes(role)) continue;
     const mappedGroups = Array.isArray(roleMap[role]) ? roleMap[role] : [];
     for (const mappedGroup of mappedGroups) {
       const mappedToken = normalizeGroupToken(mappedGroup);
@@ -179,7 +179,7 @@ router.post('/login',
           }
           const generatedPassword = crypto.randomBytes(32).toString('hex');
           const passwordHash = await bcrypt.hash(generatedPassword, 10);
-          const defaultRole = ['admin', 'speaker', 'hero_admin'].includes(ldapSettings.defaultRole)
+          const defaultRole = ['admin', 'speaker'].includes(ldapSettings.defaultRole)
             ? ldapSettings.defaultRole : 'speaker';
           const effectiveRole = mappedRoleFromGroups || defaultRole;
 
@@ -317,7 +317,7 @@ router.post('/register',
   body('username').trim().isLength({ min: 3, max: 50 }),
   body('full_name').trim().isLength({ min: 1, max: 100 }),
   body('password').isLength({ min: 8 }),
-  body('role').isIn(['admin', 'speaker', 'hero_admin']),
+  body('role').isIn(['admin', 'speaker']),
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });

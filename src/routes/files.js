@@ -1585,7 +1585,7 @@ export function createFilesRouter(deps) {
   }
 
   // GET /api/devices/all/files - агрегированный список файлов по всем устройствам
-  // Доступен только для авторизованных ролей (requireSpeaker: speaker/admin/hero_admin)
+  // Доступен только для авторизованных ролей (requireSpeaker: speaker/admin)
   router.get('/all/files', requireSpeaker[0], requireSpeaker[1], async (req, res) => {
     const readyOnly = req.query.readyOnly === '1' || req.query.readyOnly === 'true';
     const q = (req.query.q || '').toString().trim();

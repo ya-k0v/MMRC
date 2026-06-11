@@ -27,7 +27,7 @@ export async function ensureAuth() {
       return false;
     }
   
-    if (!['admin', 'hero_admin'].includes(user.role)) {
+    if (user.role !== 'admin') {
       localStorage.clear();
       window.location.href = '/index.html';
       return false;

@@ -222,10 +222,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     user = await ensureAuth();
     if (!user) return;
-    if (user.role === 'hero_admin') {
-      window.location.href = '/hero/admin.html';
-      return;
-    }
   } catch (err) {
     return;
   }
@@ -317,7 +313,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await initSelectionFromUrl();
   
   // Инициализируем систему уведомлений (только для админов)
-  if (user.role === 'admin' || user.role === 'hero_admin') {
+  if (user.role === 'admin') {
     window.user = user; // Сохраняем user в window для доступа из notifications.js
     initNotifications(socket);
   }
