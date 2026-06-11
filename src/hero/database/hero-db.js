@@ -69,14 +69,18 @@ const ensureHeroesDb = () => {
   initDb.close();
 };
 
-migrateLegacyDb();
+const isPostgres = process.env.DB_TYPE === 'postgres';
 
-if (!fs.existsSync(DB_PATH)) {
-  logger.info('[Hero DB] Creating heroes database...');
-  ensureHeroesDb();
-} else {
-  logger.info('[Hero DB] Syncing schema for heroes database...');
-  ensureHeroesDb();
+if (!isPostgres) {
+  migrateLegacyDb();
+
+  if (!fs.existsSync(DB_PATH)) {
+    logger.info('[Hero DB] Creating heroes database...');
+    ensureHeroesDb();
+  } else {
+    logger.info('[Hero DB] Syncing schema for heroes database...');
+    ensureHeroesDb();
+  }
 }
 
 const applyHeroDbPragmas = (db) => {

@@ -31,7 +31,8 @@ export async function initDatabase(initialDbPath) {
     return driver;
   }
 
-  const resolvedConfig = initialDbPath
+  const dbType = process.env.DB_TYPE || 'sqlite';
+  const resolvedConfig = (initialDbPath && dbType !== 'postgres')
     ? { type: 'sqlite', path: initialDbPath }
     : resolveDriverConfig();
   driverType = resolvedConfig.type || 'sqlite';

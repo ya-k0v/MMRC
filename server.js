@@ -134,23 +134,23 @@ if (process.env.MMRC_DATA_DIR && fs.existsSync(process.env.MMRC_DATA_DIR)) {
 }
 const DB_PATH = path.join(DATA_DIR, 'db', 'main.db');
 logger.info('[Server] Database path', { dbPath: DB_PATH, dataDir: DATA_DIR });
+const isPostgres = process.env.DB_TYPE === 'postgres';
 try {
-  // Run migrations / ensure schema before continuing startup
-  await runMigrations(DB_PATH);
+  await runMigrations(isPostgres ? undefined : DB_PATH);
 } catch (err) {
   logger.error('[Server] Database migration failed, aborting startup', { error: err?.message || String(err) });
   throw err;
 }
 
-// Запускаем периодический WAL checkpoint для стабильности БД
-// Проверяет размер WAL файла каждую минуту и выполняет checkpoint если > 100MB
-const WAL_CHECKPOINT_INTERVAL_MS = parseInt(process.env.WAL_CHECKPOINT_INTERVAL_MS || '60000', 10); // 60 секунд по умолчанию
-startWalCheckpointInterval(WAL_CHECKPOINT_INTERVAL_MS);
-logger.info('[Server] WAL checkpoint interval started', {
-  intervalMs: WAL_CHECKPOINT_INTERVAL_MS,
-  intervalMinutes: WAL_CHECKPOINT_INTERVAL_MS / 60000,
-  thresholdMB: process.env.WAL_CHECKPOINT_THRESHOLD_MB || '100'
-});
+const WAL_CHECKPOINT_INTERVAL_MS = parseInt(process.env.WAL_CHECKPOINT_INTERVAL_MS || '60000', 10);
+if (!isPostgres) {
+  startWalCheckpointInterval(WAL_CHECKPOINT_INTERVAL_MS);
+  logger.info('[Server] WAL checkpoint interval started', {
+    intervalMs: WAL_CHECKPOINT_INTERVAL_MS,
+    intervalMinutes: WAL_CHECKPOINT_INTERVAL_MS / 60000,
+    thresholdMB: process.env.WAL_CHECKPOINT_THRESHOLD_MB || '100'
+  });
+}
 
 // КРИТИЧНО: Завершаем инициализацию настроек с миграцией путей после инициализации БД
 import('./src/config/settings-manager.js').then(module => {
@@ -165,21 +165,22 @@ let fileNamesMap = {};
 const deviceVolumeState = {};
 
 async function startupDatabase() {
-  const DB_PATH = path.join(ROOT, 'config', 'main.db');
-  try {
-    await runMigrations(DB_PATH);
-  } catch (err) {
-    logger.error('[Server] Database migration failed, aborting startup', { error: err?.message || String(err) });
-    throw err;
-  }
+  if (!isPostgres) {
+    const DB_PATH = path.join(ROOT, 'config', 'main.db');
+    try {
+      await runMigrations(DB_PATH);
+    } catch (err) {
+      logger.error('[Server] Database migration failed, aborting startup', { error: err?.message || String(err) });
+      throw err;
+    }
 
-  const WAL_CHECKPOINT_INTERVAL_MS = parseInt(process.env.WAL_CHECKPOINT_INTERVAL_MS || '60000', 10);
-  startWalCheckpointInterval(WAL_CHECKPOINT_INTERVAL_MS);
-  logger.info('[Server] WAL checkpoint interval started', {
-    intervalMs: WAL_CHECKPOINT_INTERVAL_MS,
-    intervalMinutes: WAL_CHECKPOINT_INTERVAL_MS / 60000,
-    thresholdMB: process.env.WAL_CHECKPOINT_THRESHOLD_MB || '100'
-  });
+    startWalCheckpointInterval(WAL_CHECKPOINT_INTERVAL_MS);
+    logger.info('[Server] WAL checkpoint interval started', {
+      intervalMs: WAL_CHECKPOINT_INTERVAL_MS,
+      intervalMinutes: WAL_CHECKPOINT_INTERVAL_MS / 60000,
+      thresholdMB: process.env.WAL_CHECKPOINT_THRESHOLD_MB || '100'
+    });
+  }
 
   devices = await loadDevicesFromDB();
   fileNamesMap = await loadFileNamesFromDB();
@@ -899,6 +900,9 @@ app.get('/api/admin/service-logs', requireAuth, requireAdmin, (req, res) => {
 
 // Экспорт базы данных (только для админов)
 app.get('/api/admin/export-database', requireAuth, requireAdmin, (req, res) => {
+  if (process.env.DB_TYPE === 'postgres') {
+    return res.status(400).json({ error: 'Export is not available in PostgreSQL mode. Use pg_dump instead.' });
+  }
   try {
     const dbFilePath = path.join(ROOT, 'config', 'main.db');
     
@@ -925,6 +929,9 @@ app.get('/api/admin/export-database', requireAuth, requireAdmin, (req, res) => {
 
 // Импорт базы данных (замена текущей БД). Принимает FormData с полем `file` (.db).
 app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUploadSize, async (req, res) => {
+  if (process.env.DB_TYPE === 'postgres') {
+    return res.status(400).json({ error: 'Import is not available in PostgreSQL mode. Use pg_restore instead.' });
+  }
   try {
     const tempUploadDir = ADMIN_DB_IMPORT_DIR;
     if (!fs.existsSync(tempUploadDir)) fs.mkdirSync(tempUploadDir, { recursive: true });
