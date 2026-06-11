@@ -459,8 +459,8 @@ cmd_logs() {
 
     if [ -n "$1" ]; then
         case $1 in
-            server) $COMPOSE logs -f mmrc ;;
-            nginx) $COMPOSE logs -f mmrc-nginx ;;
+            server|mmrc) $COMPOSE logs -f mmrc ;;
+            postgres) $COMPOSE logs -f mmrc-postgres ;;
             *) $COMPOSE logs -f "$1" ;;
         esac
     else
@@ -738,7 +738,7 @@ Commands:
   stop             Stop MMRC services
   restart          Restart MMRC services
   status           Check services status
-  logs [service]   View logs (server|optimizer|streamer)
+  logs [service]   View logs (server|postgres)
   update           Update to latest version
   backup           Create database backup
   ssl              Setup SSL certificate
@@ -749,7 +749,9 @@ Commands:
 Examples:
   mmrc install                  # Install MMRC
   mmrc status                   # Check status
+  mmrc logs                     # View all logs
   mmrc logs server              # View server logs
+  mmrc logs postgres            # View PostgreSQL logs
   mmrc update                   # Update to latest version
   mmrc backup                   # Create backup
   mmrc ssl                      # Setup SSL
