@@ -101,7 +101,10 @@
           localStorage.setItem('user', JSON.stringify(data.user));
           
           // Редирект в зависимости от роли
-          if (data.user.role === 'admin') {
+          if (data.user.role === 'hero_admin') {
+            redirected = true;
+            window.location.href = '/hero/admin.html';
+          } else if (data.user.role === 'admin') {
             redirected = true;
             window.location.href = '/admin.html';
           } else if (data.user.role === 'speaker') {
@@ -160,6 +163,8 @@
             // Токен валидный - редирект по роли
       if (user.role === 'speaker') {
               window.location.replace('/speaker.html');
+            } else if (user.role === 'hero_admin') {
+              window.location.replace('/hero/admin.html');
             } else if (user.role === 'admin') {
               window.location.replace('/admin.html');
             } else {

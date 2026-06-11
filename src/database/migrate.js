@@ -77,15 +77,10 @@ async function runRegisteredMigrations(driver) {
 export async function runMigrations(dbPath) {
   const DATA_DIR = process.env.MMRC_DATA_DIR || path.join(ROOT, 'data');
   const finalPath = dbPath || path.join(DATA_DIR, 'db', 'main.db');
-  logger.info('[migrate] Running database initialization/migration', { dbPath: finalPath, dbType: process.env.DB_TYPE });
+  logger.info('[migrate] Running database initialization/migration', { dbPath: finalPath });
   await initDatabase(finalPath);
   const db = getDatabase();
-  try {
-    await runRegisteredMigrations(db);
-  } catch (migErr) {
-    logger.error('[migrate] Registered migrations failed', { error: migErr?.message || String(migErr), dialect: db.dialect });
-    throw migErr;
-  }
+  await runRegisteredMigrations(db);
   logger.info('[migrate] Database initialization/migration completed');
 }
 

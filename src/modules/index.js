@@ -1,7 +1,55 @@
 import { getDatabase, driverType } from '../database/database.js';
 import logger from '../utils/logger.js';
 
-const MODULES = {};
+const MODULES = {
+  hero: {
+    id: 'hero',
+    name: 'Картотека',
+    description: 'Учёт героев и медиа-материалов',
+    getSchema() {
+      const isPg = driverType === 'postgres';
+      const idCol = isPg ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT';
+      const tsCol = isPg ? 'TIMESTAMP' : 'DATETIME';
+      return `
+        CREATE TABLE IF NOT EXISTS heroes (
+          id ${idCol},
+          full_name TEXT NOT NULL,
+          birth_year INTEGER,
+          death_year INTEGER,
+          rank TEXT,
+          photo_base64 TEXT,
+          biography TEXT,
+          created_at ${tsCol} DEFAULT CURRENT_TIMESTAMP,
+          updated_at ${tsCol} DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS hero_media (
+          id ${idCol},
+          hero_id INTEGER NOT NULL REFERENCES heroes(id) ON DELETE CASCADE,
+          type TEXT CHECK(type IN ('photo','video')),
+          media_base64 TEXT NOT NULL,
+          caption TEXT,
+          order_index INTEGER DEFAULT 0,
+          created_at ${tsCol} DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_hero_full_name ON heroes(full_name);
+        CREATE INDEX IF NOT EXISTS idx_hero_media ON hero_media(hero_id);
+      `;
+    },
+    getIndexes() {
+      if (driverType !== 'sqlite') return '';
+      return `
+        CREATE TRIGGER IF NOT EXISTS trg_heroes_updated
+        AFTER UPDATE ON heroes
+        FOR EACH ROW
+        BEGIN
+          UPDATE heroes SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+        END;
+      `;
+    }
+  }
+};
 
 export function getModuleInfo(id) {
   return MODULES[id] || null;

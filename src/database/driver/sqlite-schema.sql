@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   auth_source TEXT NOT NULL DEFAULT 'local' CHECK(auth_source IN ('local', 'ldap')),
   ldap_dn TEXT,
-  role TEXT DEFAULT 'speaker' CHECK(role IN ('admin', 'speaker')),
+  role TEXT DEFAULT 'speaker' CHECK(role IN ('admin', 'speaker', 'hero_admin')),
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_login DATETIME,
@@ -245,7 +245,7 @@ CREATE TABLE IF NOT EXISTS modules (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-
+INSERT OR IGNORE INTO modules (id, enabled) VALUES ('hero', 0);
 
 CREATE VIEW IF NOT EXISTS device_storage_stats AS
 SELECT

@@ -35,7 +35,7 @@ export function setupNotificationsHandler(io) {
   io.on('connection', (socket) => {
     // Подписка на уведомления (только для админов)
     socket.on('notifications:subscribe', ({ userRole }) => {
-      if (userRole === 'admin') {
+      if (userRole === 'admin' || userRole === 'hero_admin') {
         socket.join('admins');
         
         // Отправляем текущие активные уведомления
