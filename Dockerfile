@@ -46,6 +46,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     nginx \
     imagemagick \
+    ghostscript \
     tini \
     netcat-openbsd \
     && if [ "$INCLUDE_DOCKER_CLI" = "true" ]; then \
