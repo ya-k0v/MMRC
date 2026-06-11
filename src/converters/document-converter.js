@@ -129,6 +129,8 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
         args: [
           'convert',
           '-density', '200',
+          '-background', 'white',
+          '+matte',
           `${pdfPath}[${pageNum - 1}]`,
           '-resize', `${targetWidth}x${targetHeight}>`,
           outputPath
@@ -144,6 +146,9 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
         command: 'convert',
         args: [
           '-density', '200',
+          '-background', 'white',
+          '-alpha', 'remove',
+          '-alpha', 'off',
           `${pdfPath}[${pageNum - 1}]`,
           '-resize', `${targetWidth}x${targetHeight}>`,
           outputPath
