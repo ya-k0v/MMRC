@@ -48,6 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ghostscript \
     tini \
     netcat-openbsd \
+    adb \
     && if [ "$INCLUDE_DOCKER_CLI" = "true" ]; then \
          apt-get install -y --no-install-recommends docker.io docker-compose; \
        fi \
