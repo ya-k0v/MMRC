@@ -1841,7 +1841,7 @@ if (!device_id || !device_id.trim()) {
       if (apiRes.ok) {
         const data = await apiRes.json();
         if (data.placeholder) {
-          let url = `/content/${encodeURIComponent(device_id)}/${data.placeholder}`;
+          let url = `/api/files/resolve/${encodeURIComponent(device_id)}/${encodeURIComponent(data.placeholder)}`;
           
           // КРИТИЧНО: НЕ проверяем доступность файла через HEAD запрос - это блокирует загрузку
           // Если API вернул заглушку - сразу возвращаем URL
