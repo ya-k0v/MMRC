@@ -61,7 +61,7 @@ WORKDIR /app
 COPY --from=builder /app/node_modules ./node_modules
 
 # Copy application files
-COPY package.json ./
+COPY package.json package-lock.json ./
 COPY server.js ./
 COPY src ./src
 COPY public ./public
