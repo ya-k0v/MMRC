@@ -175,16 +175,16 @@ select_database() {
 
         if [ "$POSTGRES_SOURCE" = "existing" ]; then
             echo "  Using existing PostgreSQL database..."
-            read -p "  PostgreSQL host [$DB_POSTGRES_HOST]: " pg_host_input
+            read -p "  PostgreSQL host [$DB_POSTGRES_HOST]: " pg_host_input < /dev/tty
             DB_POSTGRES_HOST="${pg_host_input:-$DB_POSTGRES_HOST}"
-            read -p "  PostgreSQL port [$DB_POSTGRES_PORT]: " pg_port_input
+            read -p "  PostgreSQL port [$DB_POSTGRES_PORT]: " pg_port_input < /dev/tty
             DB_POSTGRES_PORT="${pg_port_input:-$DB_POSTGRES_PORT}"
-            read -p "  PostgreSQL database name [$DB_POSTGRES_DB]: " pg_db_input
+            read -p "  PostgreSQL database name [$DB_POSTGRES_DB]: " pg_db_input < /dev/tty
             DB_POSTGRES_DB="${pg_db_input:-$DB_POSTGRES_DB}"
-            read -p "  PostgreSQL user [$DB_POSTGRES_USER]: " pg_user_input
+            read -p "  PostgreSQL user [$DB_POSTGRES_USER]: " pg_user_input < /dev/tty
             DB_POSTGRES_USER="${pg_user_input:-$DB_POSTGRES_USER}"
             while [ -z "$DB_POSTGRES_PASSWORD" ]; do
-                read -s -p "  PostgreSQL password (required): " pg_pass_input
+                read -s -p "  PostgreSQL password (required): " pg_pass_input < /dev/tty
                 echo ""
                 DB_POSTGRES_PASSWORD="${pg_pass_input:-}"
                 if [ -z "$DB_POSTGRES_PASSWORD" ]; then
