@@ -132,14 +132,7 @@ export function setupStaticFiles(app) {
         res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=3600');
       }
       
-      const fileName = path.basename(filePath);
-      if (/^default\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp)$/i.test(fileName)) {
-        // КРИТИЧНО: НЕ кэшируем default.* файлы (могут меняться через админ панель)
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-        res.setHeader('Accept-Ranges', 'bytes');
-      } else if (!isVideo) {
+      if (!isVideo) {
         res.setHeader('Cache-Control', 'public, max-age=86400');
       }
       

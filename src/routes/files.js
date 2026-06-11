@@ -422,6 +422,19 @@ function setSafeDownloadFileNameHeader(res, fileName = '') {
   res.setHeader('X-Download-Filename', encodeURIComponent(normalized));
 }
 
+function findFileOnDisk(metadataPath, deviceSubdirPath, rootPath) {
+  if (metadataPath && fs.existsSync(metadataPath)) {
+    return metadataPath;
+  }
+  if (fs.existsSync(deviceSubdirPath)) {
+    return deviceSubdirPath;
+  }
+  if (fs.existsSync(rootPath)) {
+    return rootPath;
+  }
+  return null;
+}
+
 const router = express.Router();
 
 /**
@@ -5114,13 +5127,17 @@ export function createFilesRouter(deps) {
       // КРИТИЧНО: Проверяем существование файла/папки перед добавлением в список
       // Для статического контента (папки/PDF/PPTX) проверяем существование папки
       if (STATIC_CONTENT_TYPES.has(contentType)) {
-        const checkPath = metadata?.file_path || path.join(getDevicesPath(), devices[id]?.folder || id, safeName);
-        if (!fs.existsSync(checkPath)) {
+        const checkPath = findFileOnDisk(
+          metadata?.file_path,
+          path.join(getDevicesPath(), devices[id]?.folder || id, safeName),
+          path.join(getDevicesPath(), safeName)
+        );
+        if (!checkPath) {
           logger.warn('[files-with-status] Статический контент не найден на диске, пропускаем', {
             deviceId: id,
             safeName,
             contentType,
-            filePath: checkPath
+            filePath: metadata?.file_path || path.join(getDevicesPath(), devices[id]?.folder || id, safeName)
           });
           continue; // Пропускаем этот файл
         }
@@ -5149,13 +5166,17 @@ export function createFilesRouter(deps) {
         }
       } else if (contentType !== 'streaming') {
         // Для обычных файлов проверяем существование
-        const checkPath = metadata?.file_path || path.join(getDevicesPath(), devices[id]?.folder || id, safeName);
-        if (!fs.existsSync(checkPath)) {
+        const checkPath = findFileOnDisk(
+          metadata?.file_path,
+          path.join(getDevicesPath(), devices[id]?.folder || id, safeName),
+          path.join(getDevicesPath(), safeName)
+        );
+        if (!checkPath) {
           logger.warn('[files-with-status] Файл не найден на диске, пропускаем', {
             deviceId: id,
             safeName,
             contentType,
-            filePath: checkPath
+            filePath: metadata?.file_path || path.join(getDevicesPath(), devices[id]?.folder || id, safeName)
           });
           continue; // Пропускаем этот файл
         }

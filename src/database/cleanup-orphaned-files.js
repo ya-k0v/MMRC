@@ -58,67 +58,78 @@ export async function cleanupOrphanedFiles({ dryRun = false, excludeExtensions =
       };
     }
     
-    // Сканируем только корневую директорию /content/, не рекурсивно
-    const rootFiles = fs.readdirSync(devicesPath);
-    
-    for (const fileName of rootFiles) {
-      const filePath = path.join(devicesPath, fileName);
-      
+    // Сканируем корневую директорию и device subdirectories
+    const scanDir = (dirPath, context = 'root') => {
+      let entries;
       try {
-        const stat = fs.statSync(filePath);
-        
-        // Пропускаем директории (папки устройств)
-        if (stat.isDirectory()) {
-          continue;
-        }
-        
-        // КРИТИЧНО: Временные файлы оптимизации всегда считаются осиротевшими
-        // Они не должны быть в БД и должны удаляться
-        if (fileName.startsWith('.optimizing_')) {
-          orphanedFiles.push({
-            fileName,
-            filePath,
-            size: stat.size,
-            mtime: stat.mtimeMs,
-            isTemporary: true
-          });
-          totalSize += stat.size;
-          continue;
-        }
-        
-        // Пропускаем другие скрытые файлы (кроме .optimizing_)
-        if (fileName.startsWith('.')) {
-          continue;
-        }
-        
-        // Пропускаем файлы с исключенными расширениями
-        const ext = path.extname(fileName).toLowerCase();
-        if (excludeExtensions.includes(ext)) {
-          continue;
-        }
-        
-        checked++;
-        
-        // Проверяем, есть ли этот файл в БД
-        const normalizedPath = path.resolve(filePath);
-        if (!dbFilePaths.has(normalizedPath)) {
-          // Файл не найден в БД - это осиротевший файл
-          orphanedFiles.push({
-            fileName,
-            filePath,
-            size: stat.size,
-            mtime: stat.mtimeMs,
-            isTemporary: false
-          });
-          totalSize += stat.size;
-        }
-      } catch (err) {
-        logger.warn('[CleanupOrphaned] Error checking file', {
-          fileName,
-          error: err.message
-        });
+        entries = fs.readdirSync(dirPath);
+      } catch {
+        return;
       }
-    }
+      
+      for (const fileName of entries) {
+        const filePath = path.join(dirPath, fileName);
+        
+        try {
+          const stat = fs.statSync(filePath);
+          
+          // Рекурсивно сканируем device subdirectories
+          if (stat.isDirectory()) {
+            if (context === 'root') {
+              scanDir(filePath, fileName); // fileName = deviceId
+            }
+            continue;
+          }
+          
+          // КРИТИЧНО: Временные файлы оптимизации всегда считаются осиротевшими
+          if (fileName.startsWith('.optimizing_')) {
+            orphanedFiles.push({
+              fileName,
+              filePath,
+              size: stat.size,
+              mtime: stat.mtimeMs,
+              isTemporary: true
+            });
+            totalSize += stat.size;
+            continue;
+          }
+          
+          // Пропускаем другие скрытые файлы (кроме .optimizing_)
+          if (fileName.startsWith('.')) {
+            continue;
+          }
+          
+          // Пропускаем файлы с исключенными расширениями
+          const ext = path.extname(fileName).toLowerCase();
+          if (excludeExtensions.includes(ext)) {
+            continue;
+          }
+          
+          checked++;
+          
+          // Проверяем, есть ли этот файл в БД
+          const normalizedPath = path.resolve(filePath);
+          if (!dbFilePaths.has(normalizedPath)) {
+            orphanedFiles.push({
+              fileName,
+              filePath,
+              size: stat.size,
+              mtime: stat.mtimeMs,
+              isTemporary: false
+            });
+            totalSize += stat.size;
+          }
+        } catch (err) {
+          logger.warn('[CleanupOrphaned] Error checking file', {
+            fileName,
+            filePath,
+            error: err.message
+          });
+        }
+      }
+    };
+    
+    scanDir(devicesPath, 'root');
     
     // Разделяем на временные и обычные осиротевшие файлы
     const temporaryFiles = orphanedFiles.filter(f => f.isTemporary);

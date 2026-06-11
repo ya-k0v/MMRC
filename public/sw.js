@@ -1,9 +1,8 @@
 // Service Worker для MMRC - Production Ready
-// Версия 7.0 - File permissions fix, cache invalidation
+// Версия 16 - Migrated from /content/ to /api/files/resolve/ caching
 
-const VERSION = 'v15';
+const VERSION = 'v16';
 const CACHE_NAME = `mmrc-static-${VERSION}`;
-const PLACEHOLDER_CACHE_NAME = `mmrc-placeholder-${VERSION}`;
 const CONTENT_CACHE_NAME = `mmrc-content-${VERSION}`;
 
 // Лимиты кэша
@@ -125,22 +124,6 @@ async function limitCacheSizeBytes(cacheName, maxBytes) {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   
-  // НЕ КЭШИРУЕМ заглушку (default.* файлы) - всегда Network-Only
-  // Причина: Заглушка может меняться через админ панель, нужна всегда свежая версия
-  // Без кэша плееры сразу видят новую заглушку после смены через админ панель
-  if (url.pathname.match(/\/content\/[^\/]+\/default\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp)$/i)) {
-    event.respondWith(
-      fetch(event.request).catch(() => {
-        // При ошибке сети - показываем fallback
-        return new Response('Network error: default placeholder not available', { 
-          status: 503,
-          headers: { 'Content-Type': 'text/plain' }
-        });
-      })
-    );
-    return;
-  }
-
   // Иконки и логотипы - всегда берём свежие версии (без кэша)
   if (url.pathname.match(/\/(audio-logo\.svg|icon\.svg|favicon-\d+\.png|icon-\d+\.png|apple-touch-icon\.png)$/i)) {
     const noCacheRequest = new Request(event.request.url, { cache: 'reload' });
@@ -222,9 +205,9 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   
-  // Контент (картинки кроме default.*) - кэшируем
-  if (url.pathname.match(/\/content\/.*\.(png|jpg|jpeg|gif|webp)$/i) &&
-      !url.pathname.match(/default\./i)) {
+  // Контент (изображения) через API resolver - кэшируем
+  // Player использует /api/files/resolve/{device}/{file} вместо /content/{device}/{file}
+  if (url.pathname.match(/\/api\/files\/resolve\/.*\.(png|jpg|jpeg|gif|webp)$/i)) {
     event.respondWith(
       caches.open(CONTENT_CACHE_NAME).then(async (cache) => {
         const cached = await cache.match(event.request);
@@ -246,16 +229,33 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   
-  // ВИДЕО (mp4, webm и т.д.) - НЕ перехватываем, пропускаем к серверу!
-  // Nginx правильно обрабатывает Range requests для seek
+  // ВИДЕО через API resolver - НЕ перехватываем для поддержки Range requests
   // SW не может корректно обработать Range requests из кэша
-  if (url.pathname.match(/\/content\/.*\.(mp4|webm|ogg|mkv|mov|avi)$/i)) {
-    // Пропускаем к серверу напрямую, без перехвата
+  if (url.pathname.match(/\/api\/files\/resolve\/.*\.(mp4|webm|ogg|mkv|mov|avi)$/i)) {
     return;
   }
   
-  // Для всех остальных запросов (API, WebSocket, и т.д.) - без кэширования
-  // Пропускаем к серверу напрямую
+  // Контент через /content/ (легаси, для обратной совместимости) - только изображения
+  if (url.pathname.match(/\/content\/.*\.(png|jpg|jpeg|gif|webp)$/i)) {
+    event.respondWith(
+      caches.open(CONTENT_CACHE_NAME).then(async (cache) => {
+        const cached = await cache.match(event.request);
+        const fetchPromise = fetch(event.request).then(async (response) => {
+          if (response.ok) {
+            cache.put(event.request, response.clone());
+            limitCacheSize(CONTENT_CACHE_NAME, MAX_CONTENT_ITEMS).catch(err => {
+              console.warn('[SW] Content cache limit failed:', err);
+            });
+          }
+          return response;
+        });
+        return cached || fetchPromise;
+      })
+    );
+    return;
+  }
+  
+  // Для всех остальных запросов (API, WebSocket, легаси /content/ видео, и т.д.) - без кэширования
 });
 
 // Предзагрузка контента в кэш (только картинки, видео не кэшируются из-за Range requests)
