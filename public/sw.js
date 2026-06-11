@@ -1,7 +1,7 @@
 // Service Worker для MMRC - Production Ready
 // Версия 7.0 - File permissions fix, cache invalidation
 
-const VERSION = 'v14';
+const VERSION = 'v15';
 const CACHE_NAME = `mmrc-static-${VERSION}`;
 const PLACEHOLDER_CACHE_NAME = `mmrc-placeholder-${VERSION}`;
 const CONTENT_CACHE_NAME = `mmrc-content-${VERSION}`;
