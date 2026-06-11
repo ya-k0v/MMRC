@@ -196,6 +196,9 @@ install_mmrc() {
     check_root
     check_docker
 
+    # Ensure consistent working directory (fixes 'getcwd' errors with curl|sudo bash)
+    cd /
+
     colorized_echo cyan "
 ╔══════════════════════════════════════════╗
 ║          📺 MMRC Installer               ║
@@ -267,6 +270,11 @@ CONTENT_DIR=/opt/mmrc/data
 # Host data dir (for converter container volume mount)
 HOST_DATA_DIR=/opt/mmrc/data
 
+# Docker sibling containers
+MMRC_DOCKER=1
+CONVERTER_IMAGE=pingwin1900/mmrc-converter
+FFMPEG_IMAGE=pingwin1900/mmrc-ffmpeg
+
 # LDAP (optional)
 LDAP_URL=
 LDAP_BIND_DN=
@@ -315,6 +323,7 @@ ENVEOF3
     cd "$INSTALL_DIR"
     $COMPOSE pull
     docker pull "pingwin1900/mmrc-converter:v330" 2>/dev/null || warn "Converter image not available (non-critical)"
+    docker pull "pingwin1900/mmrc-ffmpeg:v330" 2>/dev/null || warn "FFmpeg image not available (non-critical)"
     success "Images pulled"
 
     # Start services with progress
