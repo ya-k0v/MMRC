@@ -115,6 +115,7 @@ export class PostgresDriver extends DatabaseDriver {
         return q;
       };
       const result = await fn({
+        dialect: this.dialect,
         query: (sql, params) => { const q = conv(sql, params); return client.query(q.sql, q.params); },
         get: async (sql, params) => {
           const q = conv(sql, params);
