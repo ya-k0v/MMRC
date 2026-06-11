@@ -17,6 +17,7 @@ services:
       - STREAMS_OUTPUT_DIR=/app/data/streams
       - HOST_DATA_DIR=${HOST_DATA_DIR:-/opt/mmrc/data}
       - CONVERTER_IMAGE=${CONVERTER_IMAGE:-pingwin1900/mmrc-converter}
+      - FFMPEG_IMAGE=${FFMPEG_IMAGE:-pingwin1900/mmrc-ffmpeg}
       - LOGS_DIR=/app/data/logs
       - WAL_CHECKPOINT_INTERVAL_MS=${WAL_CHECKPOINT_INTERVAL_MS:-300000}
       - NIGHT_OPT_START_HOUR=${NIGHT_OPT_START_HOUR:-1}

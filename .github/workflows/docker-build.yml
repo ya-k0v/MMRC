@@ -42,3 +42,5 @@ jobs:
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           platforms: linux/amd64
+          build-args: |
+            INCLUDE_DOCKER_CLI=true
