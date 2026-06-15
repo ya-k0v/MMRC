@@ -1786,7 +1786,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Инициализация загрузчика файлов (admin/manager)
   if (user.role === 'admin' || user.role === 'manager') {
     import('./speaker/upload-modal.js').then(mod => {
-      mod.setupUploadModal(user);
+      mod.setupUploadModal(() => currentDevice);
     }).catch(e => console.warn('[Speaker] Upload modal init error:', e));
   }
   

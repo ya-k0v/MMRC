@@ -1,12 +1,11 @@
-import { speakerFetch, setXhrAuth } from './auth.js';
+import { setXhrAuth } from './auth.js';
 
 const ALLOWED = /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp|pdf|pptx|zip)$/i;
 
-export function setupUploadModal(user) {
+export function setupUploadModal(getDeviceId) {
   const modal = document.getElementById('uploadModal');
   const closeBtn = document.getElementById('uploadModalClose');
   const openBtn = document.getElementById('uploadBtn');
-  const deviceSelect = document.getElementById('uploadDeviceSelect');
   const dropZone = document.getElementById('uploadDropZone');
   const fileInput = document.getElementById('uploadFileInput');
   const queue = document.getElementById('uploadQueue');
@@ -21,13 +20,16 @@ export function setupUploadModal(user) {
   if (!modal || !openBtn) return;
 
   let pendingFiles = [];
-  let devicesCache = [];
 
   function show() { modal.style.display = 'flex'; }
   function hide() { modal.style.display = 'none'; }
 
   function open() {
-    loadDevices();
+    const deviceId = getDeviceId();
+    if (!deviceId) {
+      status.textContent = 'Сначала выберите устройство';
+      return;
+    }
     show();
   }
 
@@ -36,18 +38,6 @@ export function setupUploadModal(user) {
 
   openBtn.style.display = 'inline-flex';
   openBtn.onclick = open;
-
-  async function loadDevices() {
-    try {
-      const res = await speakerFetch('/api/devices');
-      const data = await res.json();
-      devicesCache = data.devices || data || [];
-      deviceSelect.innerHTML = `<option value="">— Выберите устройство —</option>` +
-        devicesCache.map(d => `<option value="${d.device_id}">${d.name || d.device_id}</option>`).join('');
-    } catch (e) {
-      status.textContent = 'Ошибка загрузки устройств';
-    }
-  }
 
   function addFiles(files) {
     for (const f of files) {
@@ -122,9 +112,9 @@ export function setupUploadModal(user) {
   };
 
   submitBtn.onclick = async () => {
-    const deviceId = deviceSelect.value;
+    const deviceId = getDeviceId();
     if (!deviceId) {
-      status.textContent = 'Выберите устройство';
+      status.textContent = 'Устройство не выбрано';
       return;
     }
     if (pendingFiles.length === 0) return;
@@ -140,6 +130,7 @@ export function setupUploadModal(user) {
     }
 
     const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api/devices/${encodeURIComponent(deviceId)}/upload`);
     setXhrAuth(xhr);
 
     xhr.upload.onprogress = (e) => {
@@ -157,7 +148,7 @@ export function setupUploadModal(user) {
       progressText.textContent = 'Обработка...';
 
       if (xhr.status === 200 || xhr.status === 201) {
-        status.textContent = '✅ Файлы успешно загружены';
+        status.textContent = 'Файлы успешно загружены';
         status.style.color = '#4caf50';
         pendingFiles = [];
         renderQueue();
@@ -168,7 +159,7 @@ export function setupUploadModal(user) {
           const err = JSON.parse(xhr.responseText);
           msg = err.error || err.message || msg;
         } catch {}
-        status.textContent = `❌ ${msg}`;
+        status.textContent = `${msg}`;
         status.style.color = '#ef5350';
         submitBtn.disabled = false;
         clearBtn.disabled = false;
@@ -176,13 +167,12 @@ export function setupUploadModal(user) {
     };
 
     xhr.onerror = () => {
-      status.textContent = '❌ Ошибка сети';
+      status.textContent = 'Ошибка сети';
       status.style.color = '#ef5350';
       submitBtn.disabled = false;
       clearBtn.disabled = false;
     };
 
-    xhr.open('POST', `/api/devices/${encodeURIComponent(deviceId)}/upload`);
     xhr.send(formData);
   };
 
