@@ -2336,6 +2336,7 @@ async function loadFiles(stabilizeAttempt = 0) {
   }
   if (!currentDevice) return;
 
+  const user = JSON.parse(localStorage.getItem('user') || '{}');
   const renderDeviceId = currentDevice;
   
   const device = devices.find(d => d.device_id === currentDevice);
@@ -2939,6 +2940,7 @@ async function loadFiles(stabilizeAttempt = 0) {
 
 /* Агрегированный список файлов по всем устройствам с запуском на выбранные устройства */
 async function loadAllFilesAggregated(stabilizeAttempt = 0) {
+  const user = JSON.parse(localStorage.getItem('user') || '{}');
   const title = document.getElementById('filesPaneTitle');
   const meta = document.getElementById('filesPaneMeta');
 
