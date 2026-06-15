@@ -314,7 +314,7 @@ router.get('/me', requireAuth, async (req, res) => {
 });
 
 router.post('/register',
-  requireAuth, requireAdmin, createLimiter,
+  requireAuth, requireManager, createLimiter,
   body('username').trim().isLength({ min: 3, max: 50 }),
   body('full_name').trim().isLength({ min: 1, max: 100 }),
   body('password').isLength({ min: 8 }),
@@ -354,7 +354,7 @@ router.post('/register',
   }
 );
 
-router.get('/users', requireAuth, requireAdmin, async (req, res) => {
+router.get('/users', requireAuth, requireManager, async (req, res) => {
   const db = getDatabase();
 
   try {
@@ -369,7 +369,7 @@ router.get('/users', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-router.post('/users/:id/toggle', requireAuth, requireAdmin, async (req, res) => {
+router.post('/users/:id/toggle', requireAuth, requireManager, async (req, res) => {
   const userId = parseInt(req.params.id);
   const { is_active } = req.body;
   const db = getDatabase();
@@ -461,7 +461,7 @@ router.post('/users/:id/reset-password',
   }
 );
 
-router.get('/users/:id/devices', requireAuth, requireAdmin, async (req, res) => {
+router.get('/users/:id/devices', requireAuth, requireManager, async (req, res) => {
   const userId = parseInt(req.params.id);
   const db = getDatabase();
 
@@ -475,7 +475,7 @@ router.get('/users/:id/devices', requireAuth, requireAdmin, async (req, res) => 
 });
 
 router.post('/users/:id/devices',
-  requireAuth, requireAdmin,
+  requireAuth, requireManager,
   body('deviceIds').isArray(),
   async (req, res) => {
     const errors = validationResult(req);
