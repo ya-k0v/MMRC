@@ -703,7 +703,8 @@ export async function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
       streamUrl: f.stream_url || null,
       streamProxyUrl: directUrl,
       restreamStatus: null,
-      streamProtocol
+      streamProtocol,
+      uploadedBy: f.uploaded_by || null
     };
   });
 
@@ -1609,7 +1610,7 @@ export function createFilesRouter(deps) {
     const excludeDevice = sanitizeDeviceId(req.query.excludeDevice); // Исключить файлы выбранного устройства
     const limit = Math.min(Math.max(parseInt(req.query.limit || '200', 10) || 200, 1), 500);
     const offset = Math.max(parseInt(req.query.offset || '0', 10) || 0, 0);
-    const isSpeaker = req.user?.role === 'speaker';
+    const isSpeaker = req.user?.role === 'speaker' || req.user?.role === 'manager';
     const allowedDevices = isSpeaker ? await getUserDevices(req.user.userId) : [];
     const allowedDevicesSet = new Set(allowedDevices);
 
@@ -1683,7 +1684,8 @@ export function createFilesRouter(deps) {
           video_width,
           video_height,
           pages_count,
-          is_placeholder
+          is_placeholder,
+          uploaded_by
         FROM files_metadata
         ${whereSql}
         ORDER BY file_mtime DESC, created_at DESC
@@ -1718,7 +1720,8 @@ export function createFilesRouter(deps) {
             duration: r.video_duration,
             width: r.video_width,
             height: r.video_height
-          } : null
+          } : null,
+          uploadedBy: r.uploaded_by || null
         };
       });
 
@@ -1752,7 +1755,8 @@ export function createFilesRouter(deps) {
             streamProtocol: null,
             mtime: null,
             md5: null,
-            video: null
+            video: null,
+            uploadedBy: null
           });
           itemsMap.set(key, true);
         });
@@ -1788,7 +1792,7 @@ export function createFilesRouter(deps) {
       return res.status(400).json({ error: 'sourceDeviceId, targetDeviceId и safeName обязательны' });
     }
 
-    if (req.user?.role === 'speaker') {
+    if (req.user?.role === 'speaker' || req.user?.role === 'manager') {
       const hasSourceAccess = await hasDeviceAccess(req.user.userId, sourceDeviceId, req.user.role);
       const hasTargetAccess = await hasDeviceAccess(req.user.userId, targetDeviceId, req.user.role);
 

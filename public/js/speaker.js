@@ -2483,7 +2483,6 @@ async function loadFiles(stabilizeAttempt = 0) {
     const typeBadgeLabel = metaBadges.length ? `${typeLabel} · ${metaBadges.join(' · ')}` : typeLabel;
     
     const canDelete = user.role === 'manager' && uploadedBy && uploadedBy === user.id;
-    const gridCols = canDelete ? '3fr 1fr auto' : '3fr 1fr';
     
     return `
       <li class="file-item ${active ? 'active' : ''}" 
@@ -2495,7 +2494,7 @@ async function loadFiles(stabilizeAttempt = 0) {
           data-trailer-url="${trailerUrl || ''}"
           style="
             display:grid; 
-            grid-template-columns:${gridCols}; 
+            grid-template-columns:3fr 1fr;
             gap:0;
             cursor:pointer; 
             padding:0; 
@@ -2547,6 +2546,25 @@ async function loadFiles(stabilizeAttempt = 0) {
                 line-height:1.1;
               ">${resolutionLabel}</span>
             ` : ''}
+            ${canDelete ? `
+              <span class="deleteBtn" 
+                    data-safe="${encodeURIComponent(safeName)}"
+                    style="
+                      display:inline-block;
+                      padding:0 5px;
+                      font-size:0.7rem;
+                      background:var(--danger);
+                      color:white;
+                      border-radius:3px;
+                      cursor:pointer;
+                      user-select:none;
+                      line-height:1.4;
+                      white-space:nowrap;
+                    "
+                    role="button"
+                    tabindex="0"
+                    aria-label="Удалить ${displayName}">🗑</span>
+            ` : ''}
           </div>
         </div>
         
@@ -2574,31 +2592,6 @@ async function loadFiles(stabilizeAttempt = 0) {
               aria-label="Воспроизвести ${displayName}">
           ▶
         </div>
-        ${canDelete ? `
-          <div class="deleteBtn" 
-               data-safe="${encodeURIComponent(safeName)}"
-               style="
-                 display:flex;
-                 align-items:center;
-                 justify-content:center;
-                 gap:4px;
-                 font-size:0.8rem;
-                 background:var(--danger);
-                 color:white;
-                 min-width:72px;
-                 cursor:pointer;
-                 transition:background 0.2s;
-                 user-select:none;
-                 padding:0 8px;
-               "
-               onmouseover="this.style.background='#c0392b'"
-               onmouseout="this.style.background='var(--danger)'"
-               role="button"
-               tabindex="0"
-               aria-label="Удалить ${displayName}">
-            <span style="font-size:1rem;">🗑</span> Удалить
-          </div>
-        ` : ''}
       </li>
     `;
   }).join('');
@@ -3077,7 +3070,6 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
       const typeBadgeLabel = metaBadges.length ? `${typeLabel} · ${metaBadges.join(' · ')}` : typeLabel;
 
       const canDelete = user.role === 'manager' && uploadedBy && uploadedBy === user.id;
-      const gridCols = canDelete ? '3fr 1fr auto' : '3fr 1fr';
 
       return `
         <li class="file-item ${active ? 'active' : ''}" 
@@ -3088,7 +3080,7 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
             data-source-device="${encodeURIComponent(sourceDeviceId || '')}"
             style="
               display:grid; 
-              grid-template-columns:${gridCols};
+              grid-template-columns:3fr 1fr;
               gap:0;
               cursor:pointer; 
               padding:0; 
@@ -3151,6 +3143,26 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
                 white-space:nowrap;
                 line-height:1.1;
               ">${sourceDeviceName || sourceDeviceId}</span>
+              ${canDelete ? `
+                <span class="deleteBtn" 
+                      data-safe="${encodeURIComponent(safeName)}"
+                      data-source-device="${encodeURIComponent(sourceDeviceId || '')}"
+                      style="
+                        display:inline-block;
+                        padding:0 5px;
+                        font-size:0.7rem;
+                        background:var(--danger);
+                        color:white;
+                        border-radius:3px;
+                        cursor:pointer;
+                        user-select:none;
+                        line-height:1.4;
+                        white-space:nowrap;
+                      "
+                      role="button"
+                      tabindex="0"
+                      aria-label="Удалить ${displayName}">🗑</span>
+              ` : ''}
             </div>
           </div>
           
@@ -3179,32 +3191,6 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
                aria-label="Воспроизвести ${displayName}">
             ▶
           </div>
-          ${canDelete ? `
-            <div class="deleteBtn" 
-                 data-safe="${encodeURIComponent(safeName)}"
-                 data-source-device="${encodeURIComponent(sourceDeviceId || '')}"
-                 style="
-                   display:flex;
-                   align-items:center;
-                   justify-content:center;
-                   gap:4px;
-                   font-size:0.8rem;
-                   background:var(--danger);
-                   color:white;
-                   min-width:72px;
-                   cursor:pointer;
-                   transition:background 0.2s;
-                   user-select:none;
-                   padding:0 8px;
-                 "
-                 onmouseover="this.style.background='#c0392b'"
-                 onmouseout="this.style.background='var(--danger)'"
-                 role="button"
-                 tabindex="0"
-                 aria-label="Удалить ${displayName}">
-              <span style="font-size:1rem;">🗑</span> Удалить
-            </div>
-          ` : ''}
         </li>
       `;
     }).join('');
