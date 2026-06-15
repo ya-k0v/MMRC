@@ -7,7 +7,8 @@ import { getDatabase } from './database.js';
 import { getDevicesPath } from '../config/settings-manager.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('file');
 
 /**
  * Найти и удалить осиротевшие файлы в корне /content/

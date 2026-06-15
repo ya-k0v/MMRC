@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
 import { execFile } from 'node:child_process';
 import util from 'node:util';
-import logger from './logger.js';
+import { createModuleLogger } from './logger.js';
+const logger = createModuleLogger('video');
 
 const execFileAsync = util.promisify(execFile);
 

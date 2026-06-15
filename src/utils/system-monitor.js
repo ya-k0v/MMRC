@@ -3,7 +3,8 @@
  * @module utils/system-monitor
  */
 
-import logger from './logger.js';
+import { createModuleLogger } from './logger.js';
+const logger = createModuleLogger('system');
 import { 
   notifyDiskUsageHigh, 
   notifyDbError,

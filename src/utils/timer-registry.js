@@ -4,7 +4,8 @@
  * @module utils/timer-registry
  */
 
-import logger from './logger.js';
+import { createModuleLogger } from './logger.js';
+const logger = createModuleLogger('system');
 
 class TimerRegistry {
   constructor() {

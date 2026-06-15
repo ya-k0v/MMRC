@@ -6,7 +6,8 @@
 import express from 'express';
 import { notificationsManager } from '../utils/notifications.js';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('api');
 
 export function createNotificationsRouter() {
   const router = express.Router();

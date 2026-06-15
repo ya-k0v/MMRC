@@ -1,5 +1,6 @@
 import { Client } from 'ldapts';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('auth');
 
 const SEARCH_SCOPES = new Set(['base', 'one', 'sub']);
 const DEFAULT_TIMEOUT_MS = 5000;

@@ -6,7 +6,8 @@
 import { getActiveConnections, getDeviceSockets } from './connection-manager.js';
 import { getFileMetadata } from '../database/files-metadata.js';
 import { saveDevice } from '../database/database.js';
-import logger, { logSocket } from '../utils/logger.js';
+import { createModuleLogger, logSocket } from '../utils/logger.js';
+const logger = createModuleLogger('socket');
 import { recordSocketEvent } from '../utils/metrics.js';
 
 /**

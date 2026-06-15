@@ -3,7 +3,8 @@
  * @module video/ffmpeg-wrapper
  */
 
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('video');
 import { execFfprobe } from '../utils/docker-ffmpeg.js';
 
 /**

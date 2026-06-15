@@ -80,6 +80,7 @@ bin/yt-dlp.tmp-*
 # IDE / tooling
 .vscode/
 .idea/
+opencode.json
 
 # Android project build output
 clients/android-mediaplayer/app/build/

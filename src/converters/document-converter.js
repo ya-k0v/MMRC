@@ -11,7 +11,8 @@ import { fromPath } from 'pdf2pic';
 import { PDFDocument } from 'pdf-lib';
 import { getDataRoot, getDevicesPath } from '../config/settings-manager.js';
 import { setFileStatus } from '../video/file-status.js';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('convert');
 import { validatePath } from '../utils/path-validator.js';
 
 const execFileAsync = util.promisify(execFile);

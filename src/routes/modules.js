@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getAvailableModules, getEnabledModules, setModuleEnabled } from '../modules/index.js';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('api');
 
 export function createModulesRouter() {
   const router = Router();

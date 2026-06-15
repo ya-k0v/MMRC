@@ -8,7 +8,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('api');
 import { getSettings } from '../config/settings-manager.js';
 
 const execFileAsync = promisify(execFile);

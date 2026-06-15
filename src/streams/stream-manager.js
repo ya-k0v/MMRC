@@ -5,7 +5,8 @@ import path from 'node:path';
 import EventEmitter from 'node:events';
 import https from 'node:https';
 import http from 'node:http';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('stream');
 import { getStreamsOutputDir } from '../config/settings-manager.js';
 import { spawnFfmpeg, spawnFfprobe } from '../utils/docker-ffmpeg.js';
 import { 

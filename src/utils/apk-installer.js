@@ -7,7 +7,8 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { validatePath } from './path-validator.js';
-import logger from './logger.js';
+import { createModuleLogger } from './logger.js';
+const logger = createModuleLogger('device');
 
 const execFileAsync = promisify(execFile);
 const APK_UPLOAD_DIR = path.resolve(process.env.MMRC_APK_UPLOAD_DIR || '/tmp/mmrc-apk-upload');
@@ -156,24 +157,45 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
   const urlForXml = normalizeServerUrlForXml(serverUrl);
   const xmlSettings = `<?xml version="1.0" encoding="utf-8"?>\n<map>\n    <string name="server_url">${escapeXml(urlForXml)}</string>\n    <string name="device_id">${escapeXml(safeDeviceId)}</string>\n    <boolean name="show_status" value="false" />\n</map>`;
 
-  // Пишем XML напрямую в shared_prefs через run-as, без временных файлов
-  // КРИТИЧНО: весь shell-скрипт — один строковый аргумент, иначе device shell ломает && и кавычки
-  // Разбиваем на 2 вызова: mkdir (без stdin) и cat (с stdin), чтобы stdin гарантированно дошёл до cat
+  // Пишем XML через base64 + временный файл — это надёжнее, чем пайпить stdin через adb shell
+  const b64 = Buffer.from(xmlSettings).toString('base64');
+  const pkg = 'com.videocontrol.mediaplayer';
+  const tmpFile = '/data/local/tmp/VCMediaPlayerSettings.xml';
+  const targetDir = `/data/data/${pkg}/shared_prefs`;
+  const targetFile = `${targetDir}/VCMediaPlayerSettings.xml`;
+
+  logger.info('[APK] Writing config XML to device', { tmpFile, targetFile });
+
+  // Пишем base64 → декодируем → во временный файл, делаем world-readable
+  await runAdb(['-s', adbTarget, 'shell', `echo -n ${b64} | base64 -d > ${tmpFile} && chmod 644 ${tmpFile}`], {
+    stdio: ['pipe', 'ignore', 'pipe']
+  });
+
   try {
-    await runAdb(['-s', adbTarget, 'shell', `run-as com.videocontrol.mediaplayer sh -c 'mkdir -p shared_prefs'`], {
-      stdio: ['ignore', 'ignore', 'pipe']
-    });
-    await runAdb(['-s', adbTarget, 'shell', `run-as com.videocontrol.mediaplayer sh -c 'cat > shared_prefs/VCMediaPlayerSettings.xml'`], {
-      input: xmlSettings,
+    await runAdb(['-s', adbTarget, 'shell', `run-as ${pkg} sh -c 'mkdir -p shared_prefs && cp ${tmpFile} ${targetFile}'`], {
       stdio: ['pipe', 'ignore', 'pipe']
     });
+    logger.info('[APK] Config written via run-as');
   } catch (runAsErr) {
     logger.warn('[APK] run-as failed, trying su fallback', { error: runAsErr.message });
-    // fallback через su (требуются root-права на устройстве)
-    const escaped = xmlSettings.replace(/'/g, "'\\''");
-    await runAdb(['-s', adbTarget, 'shell', `su -c "mkdir -p /data/data/com.videocontrol.mediaplayer/shared_prefs && echo '${escaped}' > /data/data/com.videocontrol.mediaplayer/shared_prefs/VCMediaPlayerSettings.xml"`], {
+    try {
+      await runAdb(['-s', adbTarget, 'shell',
+        `su -c "mkdir -p ${targetDir} && cp ${tmpFile} ${targetFile} && chown $(stat -c %u:%g /data/data/${pkg}) ${targetFile}"`
+      ], { stdio: ['pipe', 'ignore', 'pipe'] });
+      logger.info('[APK] Config written via su');
+    } catch (suErr) {
+      logger.error('[APK] su fallback also failed', { error: suErr.message });
+      throw suErr;
+    }
+  }
+
+  // Чистим temp-файл (не fatal если не удалится)
+  try {
+    await runAdb(['-s', adbTarget, 'shell', `rm ${tmpFile}`], {
       stdio: ['pipe', 'ignore', 'pipe']
     });
+  } catch (rmErr) {
+    logger.warn('[APK] Failed to remove temp file', { error: rmErr.message });
   }
 
   // Снова запускаем приложение с новыми настройками

@@ -10,7 +10,8 @@ import { ALLOWED_EXT } from '../config/constants.js';
 import { sanitizeDeviceId, isSystemFile } from '../utils/sanitize.js';
 import { scanDeviceFiles } from '../utils/file-scanner.js';
 import { getDatabase } from '../database/database.js';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('api');
 
 const router = express.Router();
 

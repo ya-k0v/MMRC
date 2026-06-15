@@ -6,7 +6,8 @@
 import { getOnlineDevices, startConnectionCleanup } from './connection-manager.js';
 import { setupDeviceHandlers, handleDisconnect } from './device-handlers.js';
 import { setupControlHandlers } from './control-handlers.js';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('socket');
 
 let cleanupStarted = false;
 

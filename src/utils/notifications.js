@@ -3,7 +3,8 @@
  * @module utils/notifications
  */
 
-import logger from './logger.js';
+import { createModuleLogger } from './logger.js';
+const logger = createModuleLogger('system');
 
 class NotificationsManager {
   constructor() {

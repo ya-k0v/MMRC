@@ -5,7 +5,8 @@
 
 import { getDatabase } from '../database/database.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('device');
 
 /**
  * Middleware: Проверяет доступ пользователя к устройству

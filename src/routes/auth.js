@@ -10,7 +10,8 @@ import {
 } from '../middleware/auth.js';
 import { authLimiter, createLimiter, deleteLimiter } from '../middleware/rate-limit.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
-import logger, { logAuth, logSecurity } from '../utils/logger.js';
+import { createModuleLogger, logAuth, logSecurity } from '../utils/logger.js';
+const logger = createModuleLogger('auth');
 
 const router = express.Router();
 

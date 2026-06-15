@@ -1,5 +1,6 @@
 import { getDatabase, driverType } from '../database/database.js';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('system');
 
 const MODULES = {
   hero: {

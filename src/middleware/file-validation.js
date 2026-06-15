@@ -5,7 +5,8 @@
 
 import { fileTypeFromFile } from 'file-type';
 import fs from 'node:fs';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('file');
 
 /**
  * Разрешенные MIME types по категориям

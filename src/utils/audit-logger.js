@@ -1,5 +1,6 @@
 import { getDatabase } from '../database/database.js';
-import logger from './logger.js';
+import { createModuleLogger } from './logger.js';
+const logger = createModuleLogger('security');
 import { withRetrySync, isRetryableDatabaseError } from './retry.js';
 
 export const AuditAction = {

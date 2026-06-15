@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { DatabaseDriver } from './DatabaseDriver.js';
-import logger from '../../utils/logger.js';
+import { createModuleLogger } from '../../utils/logger.js';
+const logger = createModuleLogger('db');
 
 export class PostgresDriver extends DatabaseDriver {
   constructor() {

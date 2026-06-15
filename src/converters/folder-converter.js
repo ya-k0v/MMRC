@@ -10,7 +10,8 @@ import util from 'node:util';
 import { getDevicesPath, getConvertedCache } from '../config/settings-manager.js';
 import { getAnyFileMetadataBySafeName } from '../database/files-metadata.js';
 import { makeSafeFolderName } from '../utils/transliterate.js';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('convert');
 
 const execFileAsync = util.promisify(execFileCallback);
 

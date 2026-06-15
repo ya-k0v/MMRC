@@ -3,7 +3,8 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { SqliteDriver } from './SqliteDriver.js';
 import { PostgresDriver } from './PostgresDriver.js';
-import logger from '../../utils/logger.js';
+import { createModuleLogger } from '../../utils/logger.js';
+const logger = createModuleLogger('db');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 

@@ -32,7 +32,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('video');
 import { spawnFfmpeg } from '../utils/docker-ffmpeg.js';
 
 /**

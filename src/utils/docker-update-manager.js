@@ -3,7 +3,8 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { ROOT } from '../config/constants.js';
-import logger from './logger.js';
+import { createModuleLogger } from './logger.js';
+const logger = createModuleLogger('system');
 import { notificationsManager } from './notifications.js';
 
 const execFileAsync = promisify(execFile);

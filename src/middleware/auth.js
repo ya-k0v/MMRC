@@ -5,7 +5,8 @@
 
 import jwt from 'jsonwebtoken';
 import crypto from 'node:crypto';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('auth');
 
 // Генерируем JWT_SECRET при запуске если не задан в env
 let JWT_SECRET = process.env.JWT_SECRET;

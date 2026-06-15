@@ -8,7 +8,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { withRetrySync, isRetryableDatabaseError } from '../utils/retry.js';
 import { circuitBreakers } from '../utils/circuit-breaker.js';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('db');
 import { notifyDbError } from '../utils/notifications.js';
 import { timerRegistry } from '../utils/timer-registry.js';
 import {

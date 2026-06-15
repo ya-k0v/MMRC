@@ -15,7 +15,8 @@ import {
 } from '../database/database.js';
 import { getDevicesPath } from '../config/settings-manager.js';
 import { scanDeviceFiles } from '../utils/file-scanner.js';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('device');
 
 export async function loadDevicesFromDB() {
   logger.info('[DB] Loading devices from database...');

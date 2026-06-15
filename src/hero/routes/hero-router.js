@@ -5,7 +5,8 @@ import { HERO_DB_PATH, LEGACY_HERO_DB_PATH, reloadHeroDb } from '../database/her
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import logger from '../../utils/logger.js';
+import { createModuleLogger } from '../../utils/logger.js';
+const logger = createModuleLogger('hero');
 import { createLimiter, deleteLimiter } from '../../middleware/rate-limit.js';
 import { validatePath } from '../../utils/path-validator.js';
 import { getHeroDb } from '../database/hero-db.js';

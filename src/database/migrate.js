@@ -3,7 +3,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { initDatabase, getDatabase } from './database.js';
 import { ROOT } from '../config/constants.js';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('db');
 
 async function hasColumn(driver, tableName, columnName) {
   const cols = await driver.columns(tableName);

@@ -10,7 +10,8 @@ import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { findDuplicateFile, saveFileMetadata, getFileMetadata } from '../database/files-metadata.js';
 import { getDatabase } from '../database/database.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
-import logger, { logFile } from '../utils/logger.js';
+import { createModuleLogger, logFile } from '../utils/logger.js';
+const logger = createModuleLogger('file');
 import { VIDEO_EXTENSIONS } from '../config/file-types.js';
 
 const router = express.Router();

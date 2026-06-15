@@ -7,7 +7,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getDatabase, getDriverType } from './database.js';
-import logger, { logFile } from '../utils/logger.js';
+import { createModuleLogger, logFile } from '../utils/logger.js';
+const logger = createModuleLogger('file');
 import { isRetryableDatabaseError } from '../utils/retry.js';
 import { STATIC_CONTENT_TYPES } from '../config/file-types.js';
 

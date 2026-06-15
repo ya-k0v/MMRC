@@ -2,7 +2,8 @@ import Database from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import logger from '../../utils/logger.js';
+import { createModuleLogger } from '../../utils/logger.js';
+const logger = createModuleLogger('hero');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

@@ -11,7 +11,8 @@ import { getDevicesPath } from '../config/settings-manager.js';
 import { checkVideoParameters } from './ffmpeg-wrapper.js';
 import { setFileStatus, deleteFileStatus, getFileStatus } from './file-status.js';
 import { needsFaststart } from './mp4-faststart.js';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('video');
 import { jobResourceManager } from '../utils/job-resource-manager.js';
 import { spawnFfmpeg, spawnFfprobe } from '../utils/docker-ffmpeg.js';
 

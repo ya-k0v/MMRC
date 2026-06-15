@@ -2,7 +2,8 @@
  * Управление Socket.IO соединениями
  * @module socket/connection-manager
  */
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('socket');
 import { timerRegistry } from '../utils/timer-registry.js';
 
 // Глобальные хранилища соединений

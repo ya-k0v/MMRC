@@ -11,7 +11,8 @@ import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { validatePath } from '../utils/path-validator.js';
 import { getDataRoot } from '../config/settings-manager.js';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('resolver');
 import { spawnFfmpeg } from '../utils/docker-ffmpeg.js';
 
 const router = express.Router();

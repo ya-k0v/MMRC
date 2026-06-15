@@ -4,7 +4,8 @@
  */
 
 import os from 'node:os';
-import logger from './logger.js';
+import { createModuleLogger } from './logger.js';
+const logger = createModuleLogger('system');
 
 function toPositiveInt(value, fallback) {
   const parsed = Number.parseInt(value, 10);

@@ -485,6 +485,8 @@ const SERVICE_LOGS_MAX_LINES = Math.max(50, Number(process.env.SERVICE_LOGS_MAX_
 const SERVICE_LOGS_DEFAULT_LINES = Math.max(20, Number(process.env.SERVICE_LOGS_DEFAULT_LINES || 200));
 const SERVICE_LOGS_MAX_CHUNK_BYTES = Math.max(64 * 1024, Number(process.env.SERVICE_LOGS_MAX_CHUNK_BYTES || 512 * 1024));
 const ADMIN_SERVICE_LOGS_FALLBACK_DIR = path.join(ROOT, '.tmp', 'logs');
+const SERVICE_LOG_LEVELS = ['combined', 'error', 'warn', 'info', 'debug'];
+const SERVICE_LOG_MODULES = ['auth', 'device', 'file', 'socket', 'security', 'api', 'stream', 'system', 'db'];
 const ADMIN_DB_IMPORT_DIR = path.join(ROOT, '.tmp', 'db-import');
 const UPDATE_CHECK_ENABLED = process.env.UPDATE_CHECK_ENABLED !== '0';
 const UPDATE_CHECK_INTERVAL_MS = Math.max(60 * 1000, Number.parseInt(process.env.UPDATE_CHECK_INTERVAL_MS || '900000', 10) || 900000);
@@ -567,28 +569,30 @@ function validateServiceLogFilePath(filePath) {
   for (const baseDir of getServiceLogsCandidateDirs()) {
     try {
       const safeFilePath = validatePath(resolvedFilePath, baseDir);
-      const isAllowedLogFileName = /^combined-\d{4}-\d{2}-\d{2}\.log$/.test(path.basename(safeFilePath));
-      if (isAllowedLogFileName) {
-        return safeFilePath;
-      }
-    } catch {
-      // Try next candidate dir.
-    }
+      const fileName = path.basename(safeFilePath);
+      const isAllowed = SERVICE_LOG_LEVELS.some(l =>
+        l === 'combined'
+          ? /^combined-\d{4}-\d{2}-\d{2}\.log$/.test(fileName)
+          : new RegExp(`^${l}-\\d{4}-\\d{2}-\\d{2}\\.log$`).test(fileName)
+      );
+      if (isAllowed) return safeFilePath;
+    } catch { }
   }
 
   throw new Error('Invalid service log path');
 }
 
-function resolveLatestServiceLogFilePath() {
+function resolveLatestServiceLogFilePath(level = 'combined') {
+  const pattern = level === 'combined'
+    ? /^combined-\d{4}-\d{2}-\d{2}\.log$/
+    : new RegExp(`^${level}-\\d{4}-\\d{2}-\\d{2}\\.log$`);
+
   for (const dirPath of getServiceLogsCandidateDirs()) {
     try {
       const safeDirPath = validatePath(dirPath, dirPath);
       if (!fs.existsSync(safeDirPath)) continue;
 
-      const files = fs.readdirSync(safeDirPath)
-        .filter((name) => /^combined-\d{4}-\d{2}-\d{2}\.log$/.test(name))
-        .sort();
-
+      const files = fs.readdirSync(safeDirPath).filter((name) => pattern.test(name)).sort();
       if (!files.length) continue;
       return path.join(safeDirPath, files[files.length - 1]);
     } catch (error) {
@@ -833,69 +837,64 @@ app.get('/api/admin/service-logs', requireAuth, requireAdmin, (req, res) => {
     );
     const requestedOffset = parsePositiveInt(req.query.offset, -1);
     const requestedFileName = typeof req.query.fileName === 'string' ? req.query.fileName : '';
+    const level = SERVICE_LOG_LEVELS.includes(req.query.level) ? req.query.level : 'combined';
+    const moduleFilter = typeof req.query.module === 'string' ? req.query.module.trim() : '';
 
-    const logFilePath = resolveLatestServiceLogFilePath();
+    const logFilePath = resolveLatestServiceLogFilePath(level);
     if (!logFilePath) {
       return res.json({
-        ok: true,
-        lines: [],
-        nextOffset: 0,
-        fileName: null,
-        reset: true,
-        truncated: false,
-        source: 'combined'
+        ok: true, lines: [], nextOffset: 0, fileName: null, reset: true, truncated: false,
+        source: level, availableLevels: SERVICE_LOG_LEVELS, availableModules: SERVICE_LOG_MODULES
       });
     }
 
     const fileName = path.basename(logFilePath);
 
-    // Первый запрос (без offset) - отдаем хвост последних N строк
+    function readAndFilter(readFn, ...args) {
+      const snapshot = readFn(...args);
+      let lines = snapshot.lines;
+      if (moduleFilter) {
+        lines = lines.filter(line => {
+          try {
+            const parsed = JSON.parse(line);
+            return parsed.module === moduleFilter;
+          } catch { return true; }
+        });
+      }
+      return { ...snapshot, lines };
+    }
+
     if (requestedOffset < 0) {
-      const snapshot = readLastLinesFromFile(logFilePath, requestedLines);
+      const snapshot = readAndFilter(readLastLinesFromFile, logFilePath, requestedLines);
       return res.json({
-        ok: true,
-        lines: snapshot.lines,
-        nextOffset: snapshot.size,
-        fileName,
-        reset: true,
-        truncated: snapshot.truncated,
-        source: 'combined'
+        ok: true, lines: snapshot.lines, nextOffset: snapshot.size,
+        fileName, reset: true, truncated: snapshot.truncated,
+        source: level, availableLevels: SERVICE_LOG_LEVELS, availableModules: SERVICE_LOG_MODULES
       });
     }
 
-    const chunkProbe = readLinesFromOffset(logFilePath, requestedOffset);
+    const chunkProbe = readAndFilter(readLinesFromOffset, logFilePath, requestedOffset);
     const fileChanged = Boolean(requestedFileName) && requestedFileName !== fileName;
     const offsetOutOfRange = requestedOffset > chunkProbe.size;
 
     if (fileChanged || offsetOutOfRange) {
-      const snapshot = readLastLinesFromFile(logFilePath, requestedLines);
+      const snapshot = readAndFilter(readLastLinesFromFile, logFilePath, requestedLines);
       return res.json({
-        ok: true,
-        lines: snapshot.lines,
-        nextOffset: snapshot.size,
-        fileName,
-        reset: true,
-        truncated: snapshot.truncated,
-        source: 'combined'
+        ok: true, lines: snapshot.lines, nextOffset: snapshot.size,
+        fileName, reset: true, truncated: snapshot.truncated,
+        source: level, availableLevels: SERVICE_LOG_LEVELS, availableModules: SERVICE_LOG_MODULES
       });
     }
 
     const chunk = chunkProbe;
     return res.json({
-      ok: true,
-      lines: chunk.lines,
-      nextOffset: chunk.size,
-      fileName,
-      reset: chunk.reset,
-      truncated: chunk.truncated,
-      source: 'combined'
+      ok: true, lines: chunk.lines, nextOffset: chunk.size,
+      fileName, reset: chunk.reset, truncated: chunk.truncated,
+      source: level, availableLevels: SERVICE_LOG_LEVELS, availableModules: SERVICE_LOG_MODULES
     });
   } catch (error) {
     logger.error('[Admin] Failed to read service logs', { error: error?.message || String(error) });
-    return res.status(500).json({
-      ok: false,
-      error: 'Не удалось получить логи сервиса'
-    });
+    return res.status(500).json({ ok: false, error: 'Не удалось получить логи сервиса' });
   }
 });
 

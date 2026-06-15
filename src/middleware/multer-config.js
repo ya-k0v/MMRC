@@ -12,7 +12,8 @@ import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { fixEncoding } from '../utils/encoding.js';
 import { makeSafeFilename } from '../utils/transliterate.js';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('file');
 
 /**
  * Создает настроенный Multer middleware для загрузки файлов

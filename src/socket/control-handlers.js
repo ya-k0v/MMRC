@@ -4,7 +4,8 @@
  */
 
 import { getFolderImagesCount } from '../converters/folder-converter.js';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('socket');
 import { getFileMetadata } from '../database/files-metadata.js';
 import { removeStreamJob } from '../streams/stream-manager.js';
 

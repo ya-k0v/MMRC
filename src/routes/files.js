@@ -19,7 +19,8 @@ import { extractZipToFolder, getFolderImagesCount } from '../converters/folder-c
 import { makeSafeFolderName, makeSafeFilename } from '../utils/transliterate.js';
 import { uploadLimiter, deleteLimiter, readLimiter } from '../middleware/rate-limit.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
-import logger, { logFile, logSecurity } from '../utils/logger.js';
+import { createModuleLogger, logFile, logSecurity } from '../utils/logger.js';
+const logger = createModuleLogger('file');
 import { validatePath } from '../utils/path-validator.js';
 import { getCachedResolution, clearResolutionCache } from '../video/resolution-cache.js';
 import { processUploadedFilesAsync, processUploadedStaticContent } from '../utils/file-metadata-processor.js';

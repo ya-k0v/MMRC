@@ -2,7 +2,8 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 import { DatabaseDriver } from './DatabaseDriver.js';
-import logger from '../../utils/logger.js';
+import { createModuleLogger } from '../../utils/logger.js';
+const logger = createModuleLogger('db');
 
 export class SqliteDriver extends DatabaseDriver {
   constructor() {

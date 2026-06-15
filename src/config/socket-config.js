@@ -4,7 +4,8 @@
  */
 
 import { Server } from 'socket.io';
-import logger from '../utils/logger.js';
+import { createModuleLogger } from '../utils/logger.js';
+const logger = createModuleLogger('socket');
 
 /**
  * Создает и настраивает Socket.IO сервер
