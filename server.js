@@ -52,7 +52,7 @@ import fileResolverRouter from './src/routes/file-resolver.js';
 import { createNotificationsRouter } from './src/routes/notifications.js';
 import multer from 'multer';
 import { createUploadMiddleware, validateUploadSize } from './src/middleware/multer-config.js';
-import { requireAuth, requireAdmin, requireHeroAdmin, requireSpeaker } from './src/middleware/auth.js';
+import { requireAuth, requireAdmin, requireManager, requireHeroAdmin, requireSpeaker } from './src/middleware/auth.js';
 import { globalLimiter, apiSpeedLimiter } from './src/middleware/rate-limit.js';
 import { setupExpressMiddleware, setupStaticFiles } from './src/middleware/express-config.js';
 import { setupSocketHandlers } from './src/socket/index.js';
@@ -394,7 +394,8 @@ const filesRouter = createFilesRouter({
   autoOptimizeVideoWrapper,
   checkVideoParameters,
   getFileStatus,
-  requireAdmin
+  requireAdmin,
+  requireManager
 });
 
 const videoInfoRouter = createVideoInfoRouter({

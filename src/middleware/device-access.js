@@ -10,7 +10,7 @@ import logger from '../utils/logger.js';
 /**
  * Middleware: Проверяет доступ пользователя к устройству
  * Admin имеет доступ ко всем устройствам
- * Speaker - только к назначенным устройствам
+ * Speaker, Manager - только к назначенным устройствам
  * Hero Admin - не имеет доступа к устройствам (своя панель)
  */
 export async function checkDeviceAccess(req, res, next) {
@@ -50,7 +50,7 @@ export async function checkDeviceAccess(req, res, next) {
     return next();
   }
 
-  // Для speaker проверяем назначенные устройства
+  // Для speaker/manager проверяем назначенные устройства
   const deviceId = req.params.id || req.params.device_id || req.body.device_id;
   
   if (!deviceId) {

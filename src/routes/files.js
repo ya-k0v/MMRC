@@ -28,7 +28,7 @@ import { setFileStatus as setGlobalFileStatus } from '../video/file-status.js';
 import { removeStreamJob } from '../streams/stream-manager.js';
 import { getTrailerPath } from '../video/trailer-generator.js';
 import { requireSpeaker } from '../middleware/auth.js';
-import { getUserDevices, hasDeviceAccess } from '../middleware/device-access.js';
+import { getUserDevices, hasDeviceAccess, checkDeviceAccess } from '../middleware/device-access.js';
 import { validateUploadSize } from '../middleware/multer-config.js';
 import { validateFilesAsync } from '../middleware/file-validation.js';
 import { getDatabase } from '../database/database.js';
@@ -995,7 +995,8 @@ export function createFilesRouter(deps) {
     autoOptimizeVideoWrapper,
     checkVideoParameters,
     getFileStatus,
-    requireAdmin = (_req, _res, next) => next()
+    requireAdmin = (_req, _res, next) => next(),
+    requireManager = requireAdmin
   } = deps;
 
   function isFileReadyForSpeaker(deviceId, safeName) {
@@ -2796,7 +2797,7 @@ export function createFilesRouter(deps) {
 
   
   // POST /api/devices/:id/upload - Загрузка файлов
-  router.post('/:id/upload', uploadLimiter, validateUploadSize, async (req, res, next) => {
+  router.post('/:id/upload', requireManager, checkDeviceAccess, uploadLimiter, validateUploadSize, async (req, res, next) => {
     logger.debug('[UPLOAD ROUTE] Upload request received', {
       url: req.url,
       method: req.method,

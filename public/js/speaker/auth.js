@@ -16,7 +16,7 @@ export async function ensureAuth() {
   // Speaker и Admin могут на speaker панель
   try {
     const user = JSON.parse(localStorage.getItem('user') || '{}');
-    if (!user.role || (user.role !== 'admin' && user.role !== 'speaker')) {
+    if (!user.role || (user.role !== 'admin' && user.role !== 'speaker' && user.role !== 'manager')) {
       localStorage.clear(); // Очищаем невалидные данные
       window.location.href = '/index.html';
       return false;
@@ -88,6 +88,13 @@ export async function speakerFetch(url, opts = {}) {
   }
   
   return res;
+}
+
+export function setXhrAuth(xhr) {
+  const token = localStorage.getItem('accessToken');
+  if (token) {
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+  }
 }
 
 export async function logout() {

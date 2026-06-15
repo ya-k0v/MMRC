@@ -1782,6 +1782,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   } else if (userFullName && user.username) {
     userFullName.textContent = user.username; // Fallback на username
   }
+
+  // Инициализация загрузчика файлов (admin/manager)
+  if (user.role === 'admin' || user.role === 'manager') {
+    import('./speaker/upload-modal.js').then(mod => {
+      mod.setupUploadModal(user);
+    }).catch(e => console.warn('[Speaker] Upload modal init error:', e));
+  }
   
   // Обработчик выхода (теперь это span)
   const logoutBtn = document.getElementById('logoutBtn');
