@@ -32,6 +32,13 @@
       "args": ["mcp"],
       "description": "Docker Buildx MCP server for advanced build operations, multi-platform builds, and build cache management",
       "enabled": true
+    },
+    "mmrc": {
+      "type": "local",
+      "command": "sh",
+      "args": ["-c", "SILENT_CONSOLE=true node src/mcp-server.js"],
+      "description": "MMRC MCP server — database schema, API routes, modules, project structure, logs",
+      "enabled": true
     }
   }
 }

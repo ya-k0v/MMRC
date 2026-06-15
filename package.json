@@ -10,6 +10,7 @@
     "test:ci": "bash ./scripts/ci-test.sh",
     "doctor:start": "node scripts/check-startup-compat.js",
     "migrate-db": "node src/database/migrate.js",
+    "mcp": "SILENT_CONSOLE=true node src/mcp-server.js",
     "post-pull:sync": "bash ./scripts/post-pull-sync.sh",
     "setup-hooks": "bash ./scripts/setup-git-hooks.sh",
     "install-git-hooks": "npm run setup-hooks --silent",
