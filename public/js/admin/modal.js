@@ -1546,18 +1546,24 @@ window.showUserDevicesModalInModal = async function(userId, username, userRole) 
 
 async function loadUserDevicesModalData(adminFetch, userId) {
   try {
-    // Загружаем все устройства
     const devicesRes = await adminFetch('/api/devices');
+    if (!devicesRes.ok) {
+      const err = await devicesRes.json().catch(() => ({ error: 'Ошибка загрузки устройств' }));
+      throw new Error(err.error || 'Ошибка загрузки устройств');
+    }
     const allDevices = await devicesRes.json();
-    
-    // Загружаем назначенные устройства пользователя
+    if (!Array.isArray(allDevices)) throw new Error('Некорректный ответ сервера');
+
     const userDevicesRes = await adminFetch(`/api/auth/users/${userId}/devices`);
+    if (!userDevicesRes.ok) {
+      const err = await userDevicesRes.json().catch(() => ({ error: 'Ошибка загрузки устройств пользователя' }));
+      throw new Error(err.error || 'Ошибка загрузки устройств пользователя');
+    }
     const userDeviceIds = await userDevicesRes.json();
     
     window.userDevicesModalState.allDevices = allDevices;
     window.userDevicesModalState.userDeviceIds = Array.isArray(userDeviceIds) ? userDeviceIds : [];
     
-    // Применяем фильтрацию и рендеринг
     filterAndRenderDevices();
   } catch (err) {
     const container = document.getElementById('modalDevicesList');
@@ -1679,6 +1685,11 @@ function filterAndRenderDevices() {
   const nextBtn = document.getElementById('modalDevicesNextPage');
   
   if (!container) return;
+  
+  if (!Array.isArray(state.allDevices)) {
+    container.innerHTML = '<div class="meta" style="color:var(--danger); text-align:center; grid-column:1/-1;">Ошибка загрузки</div>';
+    return;
+  }
   
   // Фильтрация устройств
   if (state.searchQuery) {

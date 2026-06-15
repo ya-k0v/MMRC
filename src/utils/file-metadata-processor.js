@@ -24,7 +24,7 @@ import { IMAGE_EXTENSIONS } from '../config/file-types.js';
  * @param {string} filePath
  * @param {string} folder - Папка устройства
  */
-export async function processUploadedFile(deviceId, safeName, originalName, filePath, folder) {
+export async function processUploadedFile(deviceId, safeName, originalName, filePath, folder, uploadedBy = null) {
   try {
     // Проверяем существование файла
     if (!fs.existsSync(filePath)) {
@@ -261,7 +261,8 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
         mimeType,
         videoParams,
         audioParams,
-        fileMtime
+        fileMtime,
+        uploadedBy
       });
       
       logger.warn('[FileMetadata] ✅ File metadata saved successfully', { 
@@ -369,7 +370,7 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
  * @param {string} devicesPath - Корневой путь к хранилищу файлов (getDevicesPath())
  * @param {Object} fileNamesMap - Маппинг имен
  */
-export async function processUploadedFilesAsync(deviceId, files, devicesPath, fileNamesMap) {
+export async function processUploadedFilesAsync(deviceId, files, devicesPath, fileNamesMap, uploadedBy = null) {
   
   logger.info('[FileMetadata] 📦 Starting batch metadata processing', {
     deviceId,
@@ -424,7 +425,7 @@ export async function processUploadedFilesAsync(deviceId, files, devicesPath, fi
       });
     }
     
-    return processUploadedFile(deviceId, safeName, originalName, filePath, devicesPath);
+    return processUploadedFile(deviceId, safeName, originalName, filePath, devicesPath, uploadedBy);
   });
   
   // Обрабатываем все файлы параллельно

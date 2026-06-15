@@ -3766,7 +3766,7 @@ export function createFilesRouter(deps) {
               }))
             });
             
-            processUploadedFilesAsync(id, filesToProcess, devicesPath, fileNamesMap)
+            processUploadedFilesAsync(id, filesToProcess, devicesPath, fileNamesMap, req.user?.userId)
               .then(() => {
                 logger.warn('[Upload] ✅ File metadata processed successfully', { 
                   deviceId: id, 
@@ -4550,7 +4550,7 @@ export function createFilesRouter(deps) {
     }
   });
 
-  router.delete('/:id/files/:name', deleteLimiter, async (req, res) => {
+  router.delete('/:id/files/:name', deleteLimiter, requireManager, checkDeviceAccess, async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
@@ -4562,6 +4562,14 @@ export function createFilesRouter(deps) {
     
     if (!d) {
       return res.status(404).json({ error: 'Устройство не найдено' });
+    }
+    
+    // Менеджер может удалять только свои файлы
+    if (req.user.role === 'manager') {
+      const metadata = await getFileMetadata(id, name);
+      if (!metadata || !metadata.uploaded_by || metadata.uploaded_by !== req.user.userId) {
+        return res.status(403).json({ error: 'Вы можете удалять только свои файлы' });
+      }
     }
     
     // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
@@ -4955,7 +4963,8 @@ export function createFilesRouter(deps) {
             restreamStatus: null,
             streamProtocol,
             hasTrailer: false,
-            trailerUrl: null
+            trailerUrl: null,
+            uploadedBy: metadata?.uploaded_by || null
           });
           continue;
         }
@@ -5197,7 +5206,7 @@ export function createFilesRouter(deps) {
         canPlay: fileStatus.canPlay !== false,
         error: fileStatus.error || null,
         resolution,
-        isPlaceholder,  // НОВОЕ: Флаг заглушки
+        isPlaceholder,
         durationSeconds,
         folderImageCount,
         contentType,
@@ -5207,7 +5216,8 @@ export function createFilesRouter(deps) {
         restreamStatus,
         streamProtocol,
         hasTrailer,
-        trailerUrl
+        trailerUrl,
+        uploadedBy: metadata?.uploaded_by || null
       });
     }
     

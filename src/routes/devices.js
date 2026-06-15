@@ -86,7 +86,7 @@ export function createDevicesRouter(deps) {
   // - admin: видит все устройства
   // - speaker: только назначенные устройства
   // - hero_admin: не имеет доступа к устройствам (своя панель)
-  router.get('/', requireAuth, (req, res) => {
+  router.get('/', requireAuth, async (req, res) => {
     // HERO ADMIN не имеет доступа к устройствам
     if (req.user.role === 'hero_admin') {
       return res.json([]);
@@ -117,7 +117,7 @@ export function createDevicesRouter(deps) {
 
     // Если пользователь не admin, фильтруем по назначенным устройствам
     if (req.user.role !== 'admin') {
-      const allowedDevices = getUserDevices(req.user.userId);
+      const allowedDevices = await getUserDevices(req.user.userId);
       const allowedDevicesSet = new Set(allowedDevices);
       devicesList = devicesList.filter(d => allowedDevicesSet.has(d.device_id));
     }

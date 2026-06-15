@@ -2414,7 +2414,7 @@ async function loadFiles(stabilizeAttempt = 0) {
   const end = Math.min(start + pageSize, allFiles.length);
   const files = allFiles.slice(start, end);
 
-  fileList.innerHTML = files.map(({ safeName, originalName, resolution, durationSeconds, folderImageCount, contentType, streamProtocol, hasTrailer, trailerUrl }) => {
+    fileList.innerHTML = files.map(({ safeName, originalName, resolution, durationSeconds, folderImageCount, contentType, streamProtocol, hasTrailer, trailerUrl, uploadedBy }) => {
     // КРИТИЧНО: Используем resolveFileDisplayData для получения правильного оригинального имени
     // Это гарантирует, что будет использовано оригинальное имя из всех доступных источников
     const { displayName: resolvedDisplayName } = resolveFileDisplayData(currentDevice, safeName);
@@ -2480,6 +2480,9 @@ async function loadFiles(stabilizeAttempt = 0) {
     }
     const typeBadgeLabel = metaBadges.length ? `${typeLabel} · ${metaBadges.join(' · ')}` : typeLabel;
     
+    const canDelete = user.role === 'manager' && uploadedBy && uploadedBy === user.id;
+    const gridCols = canDelete ? '3fr 1fr auto' : '3fr 1fr';
+    
     return `
       <li class="file-item ${active ? 'active' : ''}" 
           data-safe="${encodeURIComponent(safeName)}" 
@@ -2490,7 +2493,7 @@ async function loadFiles(stabilizeAttempt = 0) {
           data-trailer-url="${trailerUrl || ''}"
           style="
             display:grid; 
-            grid-template-columns:3fr 1fr; 
+            grid-template-columns:${gridCols}; 
             gap:0;
             cursor:pointer; 
             padding:0; 
@@ -2566,9 +2569,32 @@ async function loadFiles(stabilizeAttempt = 0) {
              onmouseout="this.style.background='var(--brand)'"
              role="button"
              tabindex="0"
-             aria-label="Воспроизвести ${displayName}">
+              aria-label="Воспроизвести ${displayName}">
           ▶
         </div>
+        ${canDelete ? `
+          <div class="deleteBtn" 
+               data-safe="${encodeURIComponent(safeName)}"
+               style="
+                 display:flex;
+                 align-items:center;
+                 justify-content:center;
+                 font-size:1.2rem;
+                 background:var(--danger);
+                 color:white;
+                 min-width:36px;
+                 cursor:pointer;
+                 transition:background 0.2s;
+                 user-select:none;
+               "
+               onmouseover="this.style.background='#c0392b'"
+               onmouseout="this.style.background='var(--danger)'"
+               role="button"
+               tabindex="0"
+               aria-label="Удалить ${displayName}">
+            ✕
+          </div>
+        ` : ''}
       </li>
     `;
   }).join('');
@@ -2603,9 +2629,29 @@ async function loadFiles(stabilizeAttempt = 0) {
 
   // Клик по карточке файла (кроме кнопки) - показать превью
   fileList.querySelectorAll('.file-item').forEach(item => {
-    item.onclick = (e) => {
+    item.onclick = async (e) => {
       // Если кликнули по кнопке "Воспроизвести" - не обрабатываем (у кнопки свой обработчик)
       if (e.target.closest('.playBtn')) return;
+      
+      // Если кликнули по кнопке "Удалить"
+      if (e.target.closest('.deleteBtn')) {
+        const safeName = decodeURIComponent(e.target.closest('.deleteBtn').getAttribute('data-safe'));
+        const deviceId = currentDevice;
+        if (!safeName || !deviceId) return;
+        if (!confirm('Удалить этот файл?')) return;
+        try {
+          const res = await speakerFetch(`/api/devices/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(safeName)}`, { method: 'DELETE' });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({ error: 'Ошибка удаления' }));
+            alert(err.error || 'Ошибка удаления');
+            return;
+          }
+          loadFiles();
+        } catch (err) {
+          alert('Ошибка удаления: ' + err.message);
+        }
+        return;
+      }
       
       const safeName = decodeURIComponent(item.getAttribute('data-safe'));
       const contentType = item.getAttribute('data-content-type') || null;
@@ -2978,7 +3024,7 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
     const end = Math.min(start + pageSize, allFiles.length);
     const files = allFiles.slice(start, end);
 
-    fileList.innerHTML = files.map(({ safeName, originalName, resolution, durationSeconds, folderImageCount, contentType, streamProtocol, sourceDeviceName, sourceDeviceId }) => {
+    fileList.innerHTML = files.map(({ safeName, originalName, resolution, durationSeconds, folderImageCount, contentType, streamProtocol, sourceDeviceName, sourceDeviceId, uploadedBy }) => {
       // КРИТИЧНО: Используем resolveFileDisplayData для получения правильного оригинального имени
       // Это гарантирует, что будет использовано оригинальное имя из всех доступных источников
       const { displayName: resolvedDisplayName } = resolveFileDisplayData(sourceDeviceId, safeName);
@@ -3024,6 +3070,9 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
       if (type === 'STREAM') metaBadges.push(streamProtocol ? streamProtocol.toUpperCase() : 'онлайн');
       const typeBadgeLabel = metaBadges.length ? `${typeLabel} · ${metaBadges.join(' · ')}` : typeLabel;
 
+      const canDelete = user.role === 'manager' && uploadedBy && uploadedBy === user.id;
+      const gridCols = canDelete ? '3fr 1fr auto' : '3fr 1fr';
+
       return `
         <li class="file-item ${active ? 'active' : ''}" 
             data-safe="${encodeURIComponent(safeName)}" 
@@ -3033,7 +3082,7 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
             data-source-device="${encodeURIComponent(sourceDeviceId || '')}"
             style="
               display:grid; 
-              grid-template-columns:3fr 1fr; 
+              grid-template-columns:${gridCols};
               gap:0;
               cursor:pointer; 
               padding:0; 
@@ -3124,6 +3173,30 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
                aria-label="Воспроизвести ${displayName}">
             ▶
           </div>
+          ${canDelete ? `
+            <div class="deleteBtn" 
+                 data-safe="${encodeURIComponent(safeName)}"
+                 data-source-device="${encodeURIComponent(sourceDeviceId || '')}"
+                 style="
+                   display:flex;
+                   align-items:center;
+                   justify-content:center;
+                   font-size:1.2rem;
+                   background:var(--danger);
+                   color:white;
+                   min-width:36px;
+                   cursor:pointer;
+                   transition:background 0.2s;
+                   user-select:none;
+                 "
+                 onmouseover="this.style.background='#c0392b'"
+                 onmouseout="this.style.background='var(--danger)'"
+                 role="button"
+                 tabindex="0"
+                 aria-label="Удалить ${displayName}">
+              ✕
+            </div>
+          ` : ''}
         </li>
       `;
     }).join('');
@@ -3147,8 +3220,28 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
 
     // Клик по карточке: просто выделить, без превью
     fileList.querySelectorAll('.file-item').forEach(item => {
-      item.onclick = (e) => {
+      item.onclick = async (e) => {
         if (e.target.closest('.playBtn')) return;
+        
+        if (e.target.closest('.deleteBtn')) {
+          const safeName = decodeURIComponent(e.target.closest('.deleteBtn').getAttribute('data-safe'));
+          const sourceDeviceId = decodeURIComponent(e.target.closest('.deleteBtn').getAttribute('data-source-device') || '') || null;
+          if (!safeName || !sourceDeviceId) return;
+          if (!confirm('Удалить этот файл?')) return;
+          try {
+            const res = await speakerFetch(`/api/devices/${encodeURIComponent(sourceDeviceId)}/files/${encodeURIComponent(safeName)}`, { method: 'DELETE' });
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({ error: 'Ошибка удаления' }));
+              alert(err.error || 'Ошибка удаления');
+              return;
+            }
+            loadAllFilesAggregated();
+          } catch (err) {
+            alert('Ошибка удаления: ' + err.message);
+          }
+          return;
+        }
+        
         const safeName = decodeURIComponent(item.getAttribute('data-safe'));
         const sourceDeviceId = decodeURIComponent(item.getAttribute('data-source-device') || '') || null;
         const contentType = item.getAttribute('data-content-type') || null;
