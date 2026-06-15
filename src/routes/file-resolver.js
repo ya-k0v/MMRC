@@ -198,19 +198,33 @@ router.get('/resolve/:deviceId/*fileName', async (req, res) => {
       metadata = await getAnyFileMetadataBySafeName(fileName);
       if (!metadata || !metadata.file_path || !fs.existsSync(metadata.file_path)) {
         const devicesPath = getDevicesPath();
-        // Fallback: сначала проверяем поддиректорию устройства, потом корень
+        logger.debug('[Resolver] Filesystem fallback', { devicesPath, deviceId, fileName });
+        // Fallback: сначала проверяем поддиректорию устройства, потом корень,
+        // затем все поддиректории (как в resolve-all)
         const candidatePaths = [
           path.join(devicesPath, deviceId, fileName),
           path.join(devicesPath, fileName)
         ];
+        try {
+          const entries = fs.readdirSync(devicesPath, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.isDirectory() && entry.name !== deviceId) {
+              candidatePaths.push(path.join(devicesPath, entry.name, fileName));
+            }
+          }
+        } catch {
+          // ignore readdir errors
+        }
         let foundPath = null;
         for (const p of candidatePaths) {
+          logger.debug('[Resolver] Checking candidate', { candidate: p, exists: fs.existsSync(p) });
           if (fs.existsSync(p)) {
             foundPath = p;
             break;
           }
         }
         if (foundPath) {
+          logger.info('[Resolver] Fallback found file', { fileName, path: foundPath });
           const stat = fs.statSync(foundPath);
           metadata = {
             device_id: 'shared',
@@ -221,6 +235,7 @@ router.get('/resolve/:deviceId/*fileName', async (req, res) => {
             md5_hash: null
           };
         } else {
+          logger.warn('[Resolver] File not found in DB or filesystem', { deviceId, fileName, devicesPath });
           return res.status(404).send('File not found');
         }
       }
