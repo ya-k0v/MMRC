@@ -4662,7 +4662,7 @@ export function createFilesRouter(deps) {
       return res.json({ ok: true });
     }
 
-    const folderName = name.replace(/\.(pdf|pptx)$/i, '');
+    const folderName = name.replace(/\.(pdf|pptx|zip)$/i, '');
     const possibleFolder = path.join(deviceFolder, folderName);
     
     let deletedFileName = name;
