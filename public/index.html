@@ -110,6 +110,9 @@
           } else if (data.user.role === 'speaker') {
             redirected = true;
             window.location.href = '/speaker.html';
+          } else if (data.user.role === 'manager') {
+            redirected = true;
+            window.location.href = '/speaker.html';
           } else {
             redirected = true;
             window.location.href = '/admin.html'; // Fallback
@@ -162,6 +165,8 @@
           if (response.ok) {
             // Токен валидный - редирект по роли
       if (user.role === 'speaker') {
+              window.location.replace('/speaker.html');
+            } else if (user.role === 'manager') {
               window.location.replace('/speaker.html');
             } else if (user.role === 'hero_admin') {
               window.location.replace('/hero/admin.html');
