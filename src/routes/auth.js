@@ -6,7 +6,7 @@ import { getDatabase } from '../database/database.js';
 import { getLdapAuthSettings } from '../config/settings-manager.js';
 import { authenticateAgainstLdap } from '../auth/ldap-auth.js';
 import {
-  generateAccessToken, generateRefreshToken, requireAuth, requireAdmin
+  generateAccessToken, generateRefreshToken, requireAuth, requireAdmin, requireManager
 } from '../middleware/auth.js';
 import { authLimiter, createLimiter, deleteLimiter } from '../middleware/rate-limit.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
