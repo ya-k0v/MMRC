@@ -230,40 +230,60 @@ async function ensureHeroAdminMigration() {
 
 async function ensureManagerRoleMigration() {
   try {
-    if (driverType !== 'sqlite') return;
+    if (driverType !== 'sqlite' && driverType !== 'postgres') return;
 
-    const tableDef = await driver.get(
-      "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
-    );
-    if (tableDef && tableDef.sql && !tableDef.sql.includes("'manager'")) {
-      logger.info('[DB] Migrating users table to support manager role...');
-      const usersData = await driver.query('SELECT * FROM users');
-      await driver.exec('ALTER TABLE users RENAME TO users_old');
-      await driver.exec(`
-        CREATE TABLE users (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          username TEXT UNIQUE NOT NULL,
-          full_name TEXT NOT NULL,
-          password_hash TEXT NOT NULL,
-          auth_source TEXT NOT NULL DEFAULT 'local' CHECK(auth_source IN ('local', 'ldap')),
-          ldap_dn TEXT,
-          role TEXT DEFAULT 'speaker' CHECK(role IN ('admin', 'speaker', 'hero_admin', 'manager')),
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          last_login DATETIME,
-          is_active INTEGER DEFAULT 1
-        )
-      `);
-      for (const u of usersData) {
-        await driver.run(
-          `INSERT INTO users (id, username, full_name, password_hash, auth_source, ldap_dn, role, created_at, updated_at, last_login, is_active)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [u.id, u.username, u.full_name, u.password_hash, u.auth_source || 'local',
-           u.ldap_dn || null, u.role, u.created_at, u.updated_at, u.last_login, u.is_active]
-        );
+    if (driverType === 'sqlite') {
+      const tableDef = await driver.get(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+      );
+      if (tableDef && tableDef.sql && !tableDef.sql.includes("'manager'")) {
+        logger.info('[DB] Migrating users table to support manager role...');
+        const usersData = await driver.query('SELECT * FROM users');
+        await driver.exec('ALTER TABLE users RENAME TO users_old');
+        await driver.exec(`
+          CREATE TABLE users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            full_name TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            auth_source TEXT NOT NULL DEFAULT 'local' CHECK(auth_source IN ('local', 'ldap')),
+            ldap_dn TEXT,
+            role TEXT DEFAULT 'speaker' CHECK(role IN ('admin', 'speaker', 'hero_admin', 'manager')),
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_login DATETIME,
+            is_active INTEGER DEFAULT 1
+          )
+        `);
+        for (const u of usersData) {
+          await driver.run(
+            `INSERT INTO users (id, username, full_name, password_hash, auth_source, ldap_dn, role, created_at, updated_at, last_login, is_active)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [u.id, u.username, u.full_name, u.password_hash, u.auth_source || 'local',
+             u.ldap_dn || null, u.role, u.created_at, u.updated_at, u.last_login, u.is_active]
+          );
+        }
+        await driver.exec('DROP TABLE users_old');
+        logger.info('[DB] Manager role migration completed');
       }
-      await driver.exec('DROP TABLE users_old');
-      logger.info('[DB] Manager role migration completed');
+    } else if (driverType === 'postgres') {
+      // PostgreSQL: check if constraint already includes 'manager'
+      const constraint = await driver.get(`
+        SELECT pg_get_constraintdef(c.oid) AS def, c.conname AS name
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(c.conkey)
+        WHERE t.relname = 'users' AND c.contype = 'c' AND a.attname = 'role'
+        LIMIT 1
+      `);
+      if (constraint && constraint.def && !constraint.def.includes("'manager'")) {
+        logger.info('[DB] Updating PostgreSQL users role CHECK constraint...');
+        await driver.exec(`ALTER TABLE users DROP CONSTRAINT "${constraint.name}"`);
+        await driver.exec(
+          `ALTER TABLE users ADD CONSTRAINT "${constraint.name}" CHECK(role IN ('admin', 'speaker', 'hero_admin', 'manager'))`
+        );
+        logger.info('[DB] PostgreSQL manager role migration completed');
+      }
     }
   } catch (err) {
     logger.warn('[DB] Manager role migration skipped (non-critical):', err.message);
