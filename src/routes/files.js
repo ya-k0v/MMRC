@@ -4706,51 +4706,81 @@ export function createFilesRouter(deps) {
       // 1. Получаем метаданные из БД
       const metadata = existingMetadata || await getFileMetadata(id, name);
       
-      if (!metadata) {
-        logFile('warn', 'File not found in DB', { deviceId: id, fileName: name });
-        return res.status(404).json({ error: 'Файл не найден' });
-      }
+      let physicalPath = null;
       
-      const physicalPath = metadata.file_path;
-      
-      // 2. Удаляем запись из БД
-      await deleteFileMetadata(id, name);
-      
-      // 3. Подсчитываем сколько еще устройств используют этот файл
-      const refCount = await countFileReferences(physicalPath);
-      
-      logFile('info', 'File reference removed', {
-        deviceId: id,
-        fileName: name,
-        physicalPath,
-        remainingReferences: refCount
-      });
-      
-      // 4. Если никто не использует - удаляем физический файл
-      if (refCount === 0) {
-        try {
-          if (fs.existsSync(physicalPath)) {
-            fs.unlinkSync(physicalPath);
-            logFile('info', '🗑️ Physical file deleted (no references)', {
-              filePath: physicalPath,
-              sizeMB: (metadata.file_size / 1024 / 1024).toFixed(2)
+      if (metadata) {
+        physicalPath = metadata.file_path;
+        
+        // 2. Удаляем запись из БД
+        await deleteFileMetadata(id, name);
+        
+        // 3. Подсчитываем сколько еще устройств используют этот файл
+        const refCount = await countFileReferences(physicalPath);
+        
+        logFile('info', 'File reference removed', {
+          deviceId: id,
+          fileName: name,
+          physicalPath,
+          remainingReferences: refCount
+        });
+        
+        // 4. Если никто не использует - удаляем физический файл
+        if (refCount === 0) {
+          try {
+            if (fs.existsSync(physicalPath)) {
+              fs.unlinkSync(physicalPath);
+              logFile('info', '🗑️ Physical file deleted (no references)', {
+                filePath: physicalPath,
+                sizeMB: (metadata.file_size / 1024 / 1024).toFixed(2)
+              });
+            }
+          } catch (e) {
+            logger.error('Failed to delete physical file', {
+              error: e.message,
+              filePath: physicalPath
             });
           }
-        } catch (e) {
-          logger.error('Failed to delete physical file', {
-            error: e.message,
-            filePath: physicalPath
+        } else {
+          logFile('info', '✅ Physical file kept (still used)', {
+            filePath: physicalPath,
+            usedByDevices: refCount
           });
         }
+        
+        // Очищаем кэш разрешения
+        clearResolutionCache(physicalPath);
       } else {
-        logFile('info', '✅ Physical file kept (still used)', {
-          filePath: physicalPath,
-          usedByDevices: refCount
-        });
+        // Нет записи в БД (файл на диске) — ищем файл на диске и удаляем
+        const devicesPath = getDevicesPath();
+        const candidatePaths = [
+          path.join(devicesPath, d.folder, name),
+          path.join(devicesPath, name),
+          path.join(devicesPath, d.folder, folderName),
+          path.join(devicesPath, folderName)
+        ];
+        let deletedFile = false;
+        for (const candidatePath of candidatePaths) {
+          try {
+            if (fs.existsSync(candidatePath)) {
+              fs.rmSync(candidatePath, { recursive: true, force: true });
+              logFile('info', '🗑️ File deleted from disk (no DB record)', {
+                filePath: candidatePath,
+                deviceId: id
+              });
+              deletedFile = true;
+              break;
+            }
+          } catch (e) {
+            logger.warn('Failed to delete file from disk', {
+              error: e.message,
+              filePath: candidatePath
+            });
+          }
+        }
+        if (!deletedFile) {
+          logFile('warn', 'File not found in DB or on disk', { deviceId: id, fileName: name });
+        }
       }
-      
-      // Очищаем кэш разрешения
-      clearResolutionCache(physicalPath);
     }
     
     // Удаляем из маппинга
