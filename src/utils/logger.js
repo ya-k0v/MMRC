@@ -220,16 +220,12 @@ export const httpLoggerMiddleware = (req, res, next) => {
     const isAdminWrite = isAdminApi && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
     const isServiceLogsPoll = urlPath === '/api/admin/service-logs';
 
-    let level = 'info';
+    let level = 'debug';
     if (res.statusCode >= 500) {
       level = 'error';
     } else if (res.statusCode >= 400) {
       level = 'warn';
-    } else if (isServiceLogsPoll) {
-      // Polling-эндпоинт viewer'а не должен засорять логи.
-      level = 'debug';
     } else if (isAdminWrite) {
-      // Админские изменяющие операции оставляем заметными.
       level = 'warn';
     }
 
