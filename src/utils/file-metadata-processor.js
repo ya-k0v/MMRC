@@ -613,7 +613,8 @@ export async function processUploadedStaticContent(
         contentType, // 'pdf' или 'pptx' (не 'folder' пока)
         streamUrl: null,
         streamProtocol: 'auto',
-        pagesCount: 0 // Пока неизвестно, будет обновлено после конвертации
+        pagesCount: 0, // Пока неизвестно, будет обновлено после конвертации
+        uploadedBy: options.uploadedBy || null
       });
 
       // КРИТИЧНО: Обновляем список файлов устройства из БД сразу после сохранения метаданных
@@ -709,7 +710,8 @@ export async function processUploadedStaticContent(
               contentType: 'folder', // После конвертации это папка
               streamUrl: null,
               streamProtocol: 'auto',
-              pagesCount: convertedCount
+              pagesCount: convertedCount,
+              uploadedBy: options.uploadedBy || null
             });
 
             logger.info('[FileMetadata] ✅ PDF/PPTX конвертирован, метаданные обновлены на папку', {
@@ -807,7 +809,8 @@ export async function processUploadedStaticContent(
         contentType, // 'folder'
         streamUrl: null,
         streamProtocol: 'auto',
-        pagesCount
+        pagesCount,
+        uploadedBy: options.uploadedBy || null
       });
 
       logger.info('[FileMetadata] ✅ Static content metadata saved to database', {

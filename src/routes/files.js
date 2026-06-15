@@ -3185,9 +3185,10 @@ export function createFilesRouter(deps) {
                     folderPath,
                     'folder',
                     {
-                      updateDeviceFilesFromDB, // КРИТИЧНО: Передаем функцию для обновления списка файлов
+                      updateDeviceFilesFromDB,
                       devices,
-                      fileNamesMap
+                      fileNamesMap,
+                      uploadedBy: req.user?.userId || null
                     }
                   );
                   
@@ -3290,8 +3291,9 @@ export function createFilesRouter(deps) {
                   devices,
                   fileNamesMap,
                   saveFileNamesMapFn: saveFileNamesMap,
-                  updateDeviceFilesFromDB, // КРИТИЧНО: Передаем функцию для обновления списка файлов
-                  io
+                  updateDeviceFilesFromDB,
+                  io,
+                  uploadedBy: req.user?.userId || null
                 }
               );
               
@@ -3554,7 +3556,10 @@ export function createFilesRouter(deps) {
               safeFolderName,
               folderName,
               targetFolder,
-              'folder'
+              'folder',
+              {
+                uploadedBy: req.user?.userId || null
+              }
             );
 
             if (processResult.success) {
@@ -3662,7 +3667,10 @@ export function createFilesRouter(deps) {
                   result.folderName,
                   originalFolderName,
                   folderPath,
-                  'folder'
+                  'folder',
+                  {
+                    uploadedBy: req.user?.userId || null
+                  }
                 );
                 
                 if (processResult.success) {
