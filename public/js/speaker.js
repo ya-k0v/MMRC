@@ -1783,6 +1783,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     userFullName.textContent = user.username; // Fallback на username
   }
 
+  // Бейдж роли
+  const roleBadge = document.getElementById('userRoleBadge');
+  if (roleBadge && user.role) {
+    const roleLabels = { admin: 'Админ', manager: 'Менеджер', speaker: 'Спикер', hero_admin: 'Герой' };
+    const roleColors = { admin: '#e74c3c', manager: '#f39c12', speaker: '#3498db', hero_admin: '#9b59b6' };
+    const label = roleLabels[user.role] || user.role;
+    roleBadge.textContent = label;
+    roleBadge.style.display = 'inline';
+    roleBadge.style.background = roleColors[user.role] || '#555';
+  }
+
   // Инициализация загрузчика файлов (admin/manager)
   if (user.role === 'admin' || user.role === 'manager') {
     import('./speaker/upload-modal.js').then(mod => {
