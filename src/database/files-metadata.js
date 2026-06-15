@@ -753,7 +753,7 @@ export async function repairImportedFilePaths({ devicesPath }) {
   }
 }
 
-export async function createStreamingEntry({ deviceId, safeName, originalName, streamUrl, protocol = 'auto' }) {
+export async function createStreamingEntry({ deviceId, safeName, originalName, streamUrl, protocol = 'auto', uploadedBy = null }) {
   if (!deviceId || !safeName || !streamUrl) {
     throw new Error('Invalid streaming params');
   }
@@ -780,7 +780,8 @@ export async function createStreamingEntry({ deviceId, safeName, originalName, s
     fileMtime: Date.now(),
     contentType: 'streaming',
     streamUrl,
-    streamProtocol: normalizedProtocol
+    streamProtocol: normalizedProtocol,
+    uploadedBy
   });
 }
 

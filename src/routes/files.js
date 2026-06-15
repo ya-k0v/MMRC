@@ -442,11 +442,11 @@ const router = express.Router();
  * Копировать папку физически (асинхронно через streams)
  * Для PPTX/PDF/изображений которые должны оставаться в /content/{device}/
  */
-async function copyFolderPhysically(sourceId, targetId, folderName, move, devices, fileNamesMap, saveFileNamesMap, io, res) {
+async function copyFolderPhysically(sourceId, targetId, folderName, move, devices, fileNamesMap, saveFileNamesMap, io, res, uploadedBy = null) {
   // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
   const devicesPath = getDevicesPath();
-  const sourceFolder = path.join(devicesPath, devices[sourceId].folder);
-  const targetFolder = path.join(devicesPath, devices[targetId].folder);
+  const sourceFolder = path.join(devicesPath, devices[sourceId]?.folder || sourceId);
+  const targetFolder = path.join(devicesPath, devices[targetId]?.folder || targetId);
   
   const sourcePath = path.join(sourceFolder, folderName);
   let targetSafeName = folderName;
@@ -501,7 +501,8 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
         contentType: 'folder',
         streamUrl: null,
         streamProtocol: 'auto',
-        pagesCount
+        pagesCount,
+        uploadedBy
       });
     } catch (err) {
       logger.warn('[copy-folder] Failed to save metadata for copied folder', { error: err.message, targetId, targetSafeName });
@@ -863,7 +864,8 @@ export async function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
                 contentType: 'folder',
                 streamUrl: null,
                 streamProtocol: 'auto',
-                pagesCount
+                pagesCount,
+                uploadedBy: f.uploaded_by || null
               });
               
               logger.info('[updateDeviceFilesFromDB] ✅ Метаданные обновлены для конвертированного файла', {
@@ -1949,7 +1951,7 @@ export function createFilesRouter(deps) {
         safeName: targetSafeName,
         originalName,
         filePath: targetFilePath,
-        fileSize: sourceMeta.file_size ?? 0, // КРИТИЧНО: file_size обязателен (NOT NULL), используем 0 по умолчанию
+        fileSize: sourceMeta.file_size ?? 0,
         md5Hash: sourceMeta.md5_hash,
         partialMd5: sourceMeta.partial_md5,
         mimeType: sourceMeta.mime_type,
@@ -1969,7 +1971,8 @@ export function createFilesRouter(deps) {
         contentType: sourceMeta.content_type,
         streamUrl: sourceMeta.stream_url,
         streamProtocol: sourceMeta.stream_protocol,
-        pagesCount
+        pagesCount,
+        uploadedBy: req.user?.userId || null
       });
 
       if (!fileNamesMap[targetDeviceId]) fileNamesMap[targetDeviceId] = {};
@@ -2077,7 +2080,8 @@ export function createFilesRouter(deps) {
         safeName,
         originalName: name,
         streamUrl: parsedUrl.toString(),
-        protocol: normalizedProtocol
+        protocol: normalizedProtocol,
+        uploadedBy: req.user?.userId || null
       });
       if (!fileNamesMap[id]) fileNamesMap[id] = {};
       fileNamesMap[id][safeName] = name;
@@ -3635,77 +3639,8 @@ export function createFilesRouter(deps) {
         isAborted = false;
       }
       
-      // Обрабатываем файлы ТОЛЬКО если это не прямая загрузка папки
-      if (!folderName) {
-        for (const fileName of uploaded) {
-          const ext = path.extname(fileName).toLowerCase();
-          if (ext === '.pdf' || ext === '.pptx') {
-            autoConvertFileWrapper(id, fileName).catch(() => {});
-          }
-        // Автоматическая обработка ZIP архивов с изображениями
-        else if (ext === '.zip') {
-          // ZIP файл должен быть в папке устройства
-          const devicesPath = getDevicesPath();
-          const deviceFolder = path.join(devicesPath, devices[id].folder);
-          const zipPath = path.join(deviceFolder, fileName);
-          
-          if (!fs.existsSync(zipPath)) {
-            logger.warn(`[upload] ⚠️ ZIP файл не найден в папке устройства: ${zipPath}`, { deviceId: id, fileName });
-            continue;
-          }
-          
-          extractZipToFolder(id, fileName, devices[id].folder).then(async (result) => {
-            if (result.success) {
-              logFile('info', `📦 ZIP распакован: ${fileName} -> ${result.folderName}/ (${result.imagesCount} изображений)`, { fileName, deviceId: id, folderName: result.folderName, imagesCount: result.imagesCount });
-              
-              // Обрабатываем папку через processUploadedStaticContent
-              const folderPath = path.join(deviceFolder, result.folderName);
-              if (fs.existsSync(folderPath)) {
-                const originalFolderName = result.originalFolderName || result.folderName;
-                const processResult = await processUploadedStaticContent(
-                  id,
-                  result.folderName,
-                  originalFolderName,
-                  folderPath,
-                  'folder',
-                  {
-                    uploadedBy: req.user?.userId || null
-                  }
-                );
-                
-                if (processResult.success) {
-                  // Сохраняем маппинг
-                  if (!fileNamesMap[id]) fileNamesMap[id] = {};
-                  fileNamesMap[id][result.folderName] = originalFolderName;
-                  saveFileNamesMap(fileNamesMap);
-                  
-                  logFile('info', `✅ Папка обработана и сохранена в БД: ${result.folderName} (${processResult.pagesCount} изображений)`, {
-                    deviceId: id,
-                    folderName: result.folderName,
-                    pagesCount: processResult.pagesCount
-                  });
-                } else {
-                  logger.error(`[upload] ❌ Ошибка обработки папки ${result.folderName}`, {
-                    deviceId: id,
-                    folderName: result.folderName,
-                    error: processResult.error
-                  });
-                }
-              }
-              
-              // Обновляем список файлов после распаковки
-              updateDeviceFilesFromDB(id, devices, fileNamesMap);
-              io.emit('devices/updated');
-            } else {
-              logger.error(`[upload] ❌ Ошибка распаковки ZIP ${fileName}`, { fileName, deviceId: id, error: result.error });
-            }
-          }).catch(err => {
-            logger.error(`[upload] ❌ Ошибка обработки ZIP ${fileName}`, { fileName, deviceId: id, error: err.message, stack: err.stack });
-          });
-        }
-          // УДАЛЕНО: Автоматическая оптимизация переносится ПОСЛЕ сохранения метаданных
-        }
-      }
+      // Удалено: статический контент (PDF/PPTX/ZIP) обрабатывается выше в первом обработчике
+      // Второй идентичный обработчик был удален (дублировал логику из строк ~3118-3385)
       
       // ИСПРАВЛЕНО: Отправляем ответ СРАЗУ, обработку метаданных и audit log запускаем в фоне
       // НЕ прерываем обработку если файлы уже сохранены
@@ -3873,7 +3808,7 @@ export function createFilesRouter(deps) {
       
       // Если это папка (PPTX/PDF/изображения) - используем физическое копирование
       if (fs.existsSync(sourcePath) && fs.statSync(sourcePath).isDirectory()) {
-        return await copyFolderPhysically(sourceId, targetId, fileName, move, devices, fileNamesMap, saveFileNamesMap, io, res);
+        return await copyFolderPhysically(sourceId, targetId, fileName, move, devices, fileNamesMap, saveFileNamesMap, io, res, req.user?.userId || null);
     } 
       
       // 1. Получаем метаданные файла из источника (обычный файл)
@@ -3906,7 +3841,8 @@ export function createFilesRouter(deps) {
           safeName: targetSafeNameStreaming,
           originalName: targetOriginalNameStreaming,
           streamUrl,
-          protocol: sourceProtocol
+          protocol: sourceProtocol,
+          uploadedBy: req.user?.userId || null
         });
 
         if (!fileNamesMap[targetId]) fileNamesMap[targetId] = {};
@@ -4000,7 +3936,8 @@ export function createFilesRouter(deps) {
           bitrate: sourceMetadata.audio_bitrate,
           channels: sourceMetadata.audio_channels
         },
-        fileMtime: sourceMetadata.file_mtime
+        fileMtime: sourceMetadata.file_mtime,
+        uploadedBy: sourceMetadata.uploaded_by || null
       });
       
       // 4. КРИТИЧНО: Обновляем fileNamesMap для нового устройства, чтобы отображение работало правильно
@@ -4085,7 +4022,7 @@ export function createFilesRouter(deps) {
     
     // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
     const devicesPath = getDevicesPath();
-    const deviceFolder = path.join(devicesPath, d.folder);
+    const deviceFolder = path.join(devicesPath, d.folder || id);
     
     // НОВОЕ: Проверяем, это медиафайл с metadata в БД?
     const metadata = await getFileMetadata(id, oldName);
@@ -4592,7 +4529,7 @@ export function createFilesRouter(deps) {
     
     // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
     const devicesPath = getDevicesPath();
-    const deviceFolder = path.join(devicesPath, d.folder);
+    const deviceFolder = path.join(devicesPath, d.folder || id);
     
     // ЗАЩИТА: проверка path traversal через нормализацию пути
     const resolvedPath = path.resolve(deviceFolder, name);
@@ -4766,10 +4703,11 @@ export function createFilesRouter(deps) {
       } else {
         // Нет записи в БД (файл на диске) — ищем файл на диске и удаляем
         const devicesPath = getDevicesPath();
+        const deviceFolderName = d.folder || id;
         const candidatePaths = [
-          path.join(devicesPath, d.folder, name),
+          path.join(devicesPath, deviceFolderName, name),
           path.join(devicesPath, name),
-          path.join(devicesPath, d.folder, folderName),
+          path.join(devicesPath, deviceFolderName, folderName),
           path.join(devicesPath, folderName)
         ];
         let deletedFile = false;
@@ -5125,7 +5063,8 @@ export function createFilesRouter(deps) {
                   contentType: 'folder',
                   streamUrl: null,
                   streamProtocol: 'auto',
-                  pagesCount
+                  pagesCount,
+                  uploadedBy: metadata?.uploaded_by || null
                 });
                 
                 logger.info('[files-with-status] ✅ Метаданные обновлены для конвертированного файла', {

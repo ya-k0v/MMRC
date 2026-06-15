@@ -183,7 +183,8 @@ export function createDeduplicationRouter(deps) {
           bitrate: sourceMetadata.audio_bitrate,
           channels: sourceMetadata.audio_channels
         },
-        fileMtime: stats.mtimeMs
+        fileMtime: stats.mtimeMs,
+        uploadedBy: sourceMetadata.uploaded_by || null
       });
       
       logFile('info', '✅ Instant copy completed (0 bytes transferred)', {

@@ -925,7 +925,8 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
           bitrate: finalParams.audioBitrate || metadata.audio_bitrate,
           channels: finalParams.audioChannels || metadata.audio_channels
         },
-        fileMtime: finalStats.mtimeMs
+        fileMtime: finalStats.mtimeMs,
+        uploadedBy: metadata.uploaded_by || null
       });
 
       logger.info('[VideoOpt] 📊 Метаданные обновлены в БД', {
