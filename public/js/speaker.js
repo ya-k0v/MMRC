@@ -2482,7 +2482,7 @@ async function loadFiles(stabilizeAttempt = 0) {
     }
     const typeBadgeLabel = metaBadges.length ? `${typeLabel} · ${metaBadges.join(' · ')}` : typeLabel;
     
-    const canDelete = user.role === 'manager' && uploadedBy && uploadedBy === user.id;
+    const canDelete = user.role === 'admin' || (user.role === 'manager' && uploadedBy && uploadedBy === user.id);
     
     return `
       <li class="file-item ${active ? 'active' : ''}" 
@@ -3069,7 +3069,7 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
       if (type === 'STREAM') metaBadges.push(streamProtocol ? streamProtocol.toUpperCase() : 'онлайн');
       const typeBadgeLabel = metaBadges.length ? `${typeLabel} · ${metaBadges.join(' · ')}` : typeLabel;
 
-      const canDelete = user.role === 'manager' && uploadedBy && uploadedBy === user.id;
+      const canDelete = user.role === 'admin' || (user.role === 'manager' && uploadedBy && uploadedBy === user.id);
 
       return `
         <li class="file-item ${active ? 'active' : ''}" 
