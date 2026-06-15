@@ -1783,17 +1783,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     userFullName.textContent = user.username; // Fallback на username
   }
 
-  // Бейдж роли
-  const roleBadge = document.getElementById('userRoleBadge');
-  if (roleBadge && user.role) {
-    const roleLabels = { admin: 'Админ', manager: 'Менеджер', speaker: 'Спикер', hero_admin: 'Герой' };
-    const roleColors = { admin: '#e74c3c', manager: '#f39c12', speaker: '#3498db', hero_admin: '#9b59b6' };
-    const label = roleLabels[user.role] || user.role;
-    roleBadge.textContent = label;
-    roleBadge.style.display = 'inline';
-    roleBadge.style.background = roleColors[user.role] || '#555';
-  }
-
   // Инициализация загрузчика файлов (admin/manager)
   if (user.role === 'admin' || user.role === 'manager') {
     import('./speaker/upload-modal.js').then(mod => {
@@ -2390,7 +2379,8 @@ async function loadFiles(stabilizeAttempt = 0) {
           hasTrailer: item.hasTrailer || false,
           trailerUrl: item.trailerUrl || null,
           sourceDeviceId: currentDevice,
-          isPlaceholder: !!item.isPlaceholder
+          isPlaceholder: !!item.isPlaceholder,
+          uploadedBy: item.uploadedBy || null
         };
       });
 
@@ -2591,20 +2581,22 @@ async function loadFiles(stabilizeAttempt = 0) {
                  display:flex;
                  align-items:center;
                  justify-content:center;
-                 font-size:1.2rem;
+                 gap:4px;
+                 font-size:0.8rem;
                  background:var(--danger);
                  color:white;
-                 min-width:36px;
+                 min-width:72px;
                  cursor:pointer;
                  transition:background 0.2s;
                  user-select:none;
+                 padding:0 8px;
                "
                onmouseover="this.style.background='#c0392b'"
                onmouseout="this.style.background='var(--danger)'"
                role="button"
                tabindex="0"
                aria-label="Удалить ${displayName}">
-            ✕
+            <span style="font-size:1rem;">🗑</span> Удалить
           </div>
         ` : ''}
       </li>
@@ -3003,7 +2995,8 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
         trailerUrl: null,
         sourceDeviceId: item.deviceId,
         sourceDeviceName: getDeviceDisplayName(item.deviceId),
-        isPlaceholder: !!item.isPlaceholder
+        isPlaceholder: !!item.isPlaceholder,
+        uploadedBy: item.uploadedBy || null
       };
     });
 
@@ -3194,20 +3187,22 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
                    display:flex;
                    align-items:center;
                    justify-content:center;
-                   font-size:1.2rem;
+                   gap:4px;
+                   font-size:0.8rem;
                    background:var(--danger);
                    color:white;
-                   min-width:36px;
+                   min-width:72px;
                    cursor:pointer;
                    transition:background 0.2s;
                    user-select:none;
+                   padding:0 8px;
                  "
                  onmouseover="this.style.background='#c0392b'"
                  onmouseout="this.style.background='var(--danger)'"
                  role="button"
                  tabindex="0"
                  aria-label="Удалить ${displayName}">
-              ✕
+              <span style="font-size:1rem;">🗑</span> Удалить
             </div>
           ` : ''}
         </li>
