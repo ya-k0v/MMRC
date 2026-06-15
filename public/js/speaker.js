@@ -579,7 +579,15 @@ let previewManuallyClosed = false;
 let readyDevices = new Set();
 let devices = [];
 let currentDevice = null;  // device_id
-let currentFile = null;    // имя файла из /api/devices/:id/files
+let currentFile = null;
+
+function getStartTimeForFile(deviceId, fileName) {
+  const dev = devices.find(d => d.device_id === deviceId);
+  if (dev && dev.current && dev.current.file === fileName && typeof dev.current.currentTime === 'number') {
+    return dev.current.currentTime > 0 ? dev.current.currentTime : undefined;
+  }
+  return undefined;
+}    // имя файла из /api/devices/:id/files
 let tvPage = 0;
 let filePage = 0;
 let nodeNames = {}; // { device_id: name }
@@ -2224,13 +2232,32 @@ function showLivePreviewForTV(deviceId, force = false) {
       }
     }
   }
+
+  function buildDevicePreviewUrl(deviceId, device) {
+    let url = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&muted=1`;
+    const cur = device && device.current;
+    if (cur && cur.file) {
+      url += `&file=${encodeURIComponent(cur.file)}`;
+      if (cur.type) url += `&type=${encodeURIComponent(cur.type)}`;
+      if (typeof cur.currentTime === 'number' && cur.currentTime > 0) {
+        url += `&startTime=${encodeURIComponent(cur.currentTime)}`;
+      }
+      if (typeof cur.page === 'number' && cur.page > 0) {
+        url += `&page=${encodeURIComponent(cur.page)}`;
+      }
+    }
+    return url;
+  }
+  
+  const device = devices.find(d => d.device_id === deviceId);
+  const previewUrl = buildDevicePreviewUrl(deviceId, device);
   
   // ИСПРАВЛЕНО: Если force=true - принудительно очищаем превью
   // Это используется при явном переключении устройства
   if (force) {
     resetPreviewHighlightState();
-    currentPreviewContext = { deviceId, file: null, page: null };
-    filePreview.innerHTML = `<iframe src="/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&muted=1" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
+    currentPreviewContext = { deviceId, file: device && device.current ? device.current.file : null, page: null };
+    filePreview.innerHTML = `<iframe src="${previewUrl}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
     updatePreviewControlButtons();
     return;
   }
@@ -2241,28 +2268,22 @@ function showLivePreviewForTV(deviceId, force = false) {
     return;
   }
   
-  // Показываем превью с живым состоянием устройства (всегда без звука)
-  const device = devices.find(d => d.device_id === deviceId);
   if (!device) {
     resetPreviewHighlightState();
-    filePreview.innerHTML = `<iframe src="/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&muted=1" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
+    filePreview.innerHTML = `<iframe src="${previewUrl}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
     updatePreviewControlButtons();
     return;
   }
   
-  // ВСЕГДА показываем заглушку в live preview (не контент устройства)
-  // Логика: Preview используется только для предпросмотра файлов (кнопка "Превью")
-  // Когда устройство воспроизводит контент - показываем заглушку, избегая двойной загрузки
-  const placeholderUrl = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&muted=1`;
   const frame = filePreview.querySelector('iframe');
-  if (frame && !frame.src.includes(placeholderUrl)) {
-    frame.src = placeholderUrl;
+  if (frame && !frame.src.includes(previewUrl.split('&t=')[0])) {
+    frame.src = previewUrl;
     resetPreviewHighlightState();
-    currentPreviewContext = { deviceId, file: null, page: null };
+    currentPreviewContext = { deviceId, file: device.current ? device.current.file : null, page: null };
   } else if (!frame) {
     resetPreviewHighlightState();
-    currentPreviewContext = { deviceId, file: null, page: null };
-    filePreview.innerHTML = `<iframe src="${placeholderUrl}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
+    currentPreviewContext = { deviceId, file: device.current ? device.current.file : null, page: null };
+    filePreview.innerHTML = `<iframe src="${previewUrl}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
   }
 }
 
@@ -2718,10 +2739,11 @@ async function loadFiles(stabilizeAttempt = 0) {
         currentPreviewContext = { deviceId: currentDevice, file: safeName, page: null };
         
         // Универсальная функция формирования src для превью
-        function buildPreviewSrc({ deviceId, fileName, type, trailerUrl, page }) {
+        function buildPreviewSrc({ deviceId, fileName, type, trailerUrl, page, startTime }) {
           let src = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&file=${encodeURIComponent(fileName)}&preview=1&muted=1`;
           if (type) src += `&type=${encodeURIComponent(type)}`;
           if (typeof page !== 'undefined') src += `&page=${encodeURIComponent(page)}`;
+          if (typeof startTime !== 'undefined' && startTime !== null) src += `&startTime=${encodeURIComponent(startTime)}`;
           if (trailerUrl) src += `&trailerUrl=${encodeURIComponent(trailerUrl)}`;
           src += `&t=${Date.now()}`;
           return src;
@@ -2744,12 +2766,14 @@ async function loadFiles(stabilizeAttempt = 0) {
         } else if (STATIC_CONTENT_TYPES.has(normalizedType)) {
           type = normalizedType;
         }
+        const startTime = getStartTimeForFile(currentDevice, safeName);
         const src = buildPreviewSrc({
           deviceId: currentDevice,
           fileName: safeName,
           type,
           trailerUrl,
-          page
+          page,
+          startTime
         });
         const frame = filePreview.querySelector('iframe');
         if (frame) {
@@ -2879,10 +2903,11 @@ async function loadFiles(stabilizeAttempt = 0) {
       // Видео/изображения — показываем корректное превью выбранного файла (или трейлера)
       setTimeout(() => {
         // Универсальная функция формирования src для превью (дублирует buildPreviewSrc выше)
-        function buildPreviewSrc({ deviceId, fileName, type, trailerUrl, page }) {
+        function buildPreviewSrc({ deviceId, fileName, type, trailerUrl, page, startTime }) {
           let src = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&file=${encodeURIComponent(fileName)}&preview=1&muted=1`;
           if (type) src += `&type=${encodeURIComponent(type)}`;
           if (typeof page !== 'undefined') src += `&page=${encodeURIComponent(page)}`;
+          if (typeof startTime !== 'undefined' && startTime !== null) src += `&startTime=${encodeURIComponent(startTime)}`;
           if (trailerUrl) src += `&trailerUrl=${encodeURIComponent(trailerUrl)}`;
           src += `&t=${Date.now()}`;
           return src;
@@ -2900,12 +2925,14 @@ async function loadFiles(stabilizeAttempt = 0) {
           if (!(hasTrailer && trailerUrl)) trailerUrl = null;
           type = 'video';
         }
+        const startTime = getStartTimeForFile(targetDeviceId, safeName);
         const src = buildPreviewSrc({
           deviceId: targetDeviceId,
           fileName: safeName,
           type,
           trailerUrl,
-          page
+          page,
+          startTime
         });
         const frame = filePreview.querySelector('iframe');
         if (frame) {

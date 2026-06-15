@@ -31,6 +31,7 @@ const previewStreamProtocol = url.searchParams.get('protocol');
 const previewStreamUrl = url.searchParams.get('stream_url'); // Прямой URL стрима для превью
 const previewTrailerUrl = url.searchParams.get('trailerUrl');
 const previewClientVersionParam = url.searchParams.get('clientVersion');
+const previewStartTime = url.searchParams.get('startTime');
 
 const APP_VERSION = '3.3.0';
 const badgeDeviceId = device_id || (preview ? 'preview' : 'unknown');
@@ -911,8 +912,9 @@ if (!device_id || !device_id.trim()) {
                 console.log('[Player] 📊 Preview PPTX:', imageUrl);
                 showImagePreview(imageUrl);
               } else if (resolvedPreviewType === 'folder') {
-                // Папка превью: показываем первый кадр
-                const imageUrl = `/api/devices/${encodeURIComponent(device_id)}/folder/${encodeURIComponent(previewFile)}/image/1`;
+                // Папка превью: показываем первый кадр (или переданную страницу)
+                const folderPage = previewPage || 1;
+                const imageUrl = `/api/devices/${encodeURIComponent(device_id)}/folder/${encodeURIComponent(previewFile)}/image/${folderPage}`;
                 console.log('[Player] 📁 Preview папки:', imageUrl);
                 showImagePreview(imageUrl);
               } else if (resolvedPreviewType === 'image' || IMAGE_EXTENSIONS.includes(ext)) {
@@ -1077,6 +1079,11 @@ if (!device_id || !device_id.trim()) {
                   videoContainer.style.display = 'block';
                   videoContainer.style.visibility = 'visible';
                 }
+                if (previewStartTime) {
+                  vjsPlayer.one('loadedmetadata', () => {
+                    vjsPlayer.currentTime(parseFloat(previewStartTime));
+                  });
+                }
                 vjsPlayer.src({ src: previewVideoUrl, type: 'video/mp4' });
                 vjsPlayer.load();
                 showOnly(videoContainer);
@@ -1109,6 +1116,11 @@ if (!device_id || !device_id.trim()) {
                 vjsPlayer.loop(true);
                 vjsPlayer.muted(true);
                 vjsPlayer.volume(0);
+                if (previewStartTime) {
+                  vjsPlayer.one('loadedmetadata', () => {
+                    vjsPlayer.currentTime(parseFloat(previewStartTime));
+                  });
+                }
                 vjsPlayer.src({ src: content(previewFile), type: 'audio/mp3' });
                 // Для аудио-превью показываем только логотип музыки и сам контейнер (без видео)
                 if (musicLogo && videoContainer && musicLogo.parentNode !== videoContainer.parentNode) {

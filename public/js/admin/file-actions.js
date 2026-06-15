@@ -3,10 +3,11 @@
 import { adminFetch } from './auth.js';
 
 // Универсальная функция формирования src для превью
-export function buildPreviewSrc({ deviceId, fileName, type, trailerUrl, page }) {
+export function buildPreviewSrc({ deviceId, fileName, type, trailerUrl, page, startTime }) {
   let src = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&file=${encodeURIComponent(fileName)}&preview=1&muted=1`;
   if (type) src += `&type=${encodeURIComponent(type)}`;
   if (typeof page !== 'undefined') src += `&page=${encodeURIComponent(page)}`;
+  if (typeof startTime !== 'undefined' && startTime !== null) src += `&startTime=${encodeURIComponent(startTime)}`;
   if (trailerUrl) src += `&trailerUrl=${encodeURIComponent(trailerUrl)}`;
   src += `&t=${Date.now()}`;
   return src;
@@ -19,7 +20,8 @@ export async function previewFile(deviceId, fileName, opts = {}) {
     fileName,
     type: opts.type,
     trailerUrl: opts.trailerUrl,
-    page: opts.page
+    page: opts.page,
+    startTime: opts.startTime
   });
   window.open(src, '_blank');
 }

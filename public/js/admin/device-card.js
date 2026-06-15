@@ -206,6 +206,22 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   
   card.appendChild(metaDiv);
   
+  function buildDevicePreviewUrl(device) {
+    let url = `/player-videojs.html?device_id=${did}&preview=1&muted=1`;
+    const cur = device.current;
+    if (cur && cur.file) {
+      url += `&file=${encodeURIComponent(cur.file)}`;
+      if (cur.type) url += `&type=${encodeURIComponent(cur.type)}`;
+      if (typeof cur.currentTime === 'number' && cur.currentTime > 0) {
+        url += `&startTime=${encodeURIComponent(cur.currentTime)}`;
+      }
+      if (typeof cur.page === 'number' && cur.page > 0) {
+        url += `&page=${encodeURIComponent(cur.page)}`;
+      }
+    }
+    return url;
+  }
+
   // Превью контейнер
   const previewContainer = document.createElement('div');
   previewContainer.className = 'preview-container';
@@ -218,7 +234,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   previewHolderCompact.className = 'previewHolder';
   previewHolderCompact.style.cssText = 'width:100%; height:100%; border-radius:var(--radius-md); overflow:hidden;';
   const iframeCompact = document.createElement('iframe');
-  iframeCompact.src = `/player-videojs.html?device_id=${did}&preview=1&muted=1`;
+  iframeCompact.src = buildDevicePreviewUrl(d);
   iframeCompact.style.cssText = 'width:100%; height:100%; border:0;';
   previewHolderCompact.appendChild(iframeCompact);
   previewCompact.appendChild(previewHolderCompact);
@@ -230,7 +246,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   previewHolderExpanded.className = 'previewHolder';
   previewHolderExpanded.style.cssText = 'width:100%; height:100%; border-radius:var(--radius-md); overflow:hidden';
   const iframeExpanded = document.createElement('iframe');
-  iframeExpanded.src = `/player-videojs.html?device_id=${did}&preview=1&muted=1`;
+  iframeExpanded.src = buildDevicePreviewUrl(d);
   iframeExpanded.style.cssText = 'width:100%; height:100%; border:0';
   previewHolderExpanded.appendChild(iframeExpanded);
   previewExpanded.appendChild(previewHolderExpanded);
@@ -667,7 +683,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
         // Обновляем iframe в развернутом превью
         const expandedIframe = previewExpanded.querySelector('iframe');
         if (expandedIframe) {
-          expandedIframe.src = `/player-videojs.html?device_id=${did}&preview=1&muted=1&t=${Date.now()}`;
+          expandedIframe.src = buildDevicePreviewUrl(d) + `&t=${Date.now()}`;
         }
       } else {
         // Сворачиваем превью - возвращаем в одну колонку
