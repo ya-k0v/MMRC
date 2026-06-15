@@ -31,9 +31,9 @@ jobs:
         run: |
           BRANCH="${GITHUB_REF#refs/heads/}"
           if [ "$BRANCH" = "main" ]; then
-            echo "tags=pingwin1900/mmrc-converter:latest,pingwin1900/mmrc-converter:${{ github.sha }}" >> $GITHUB_OUTPUT
+            echo "tags=pingwin1900/mmrc-converter:latest" >> $GITHUB_OUTPUT
           else
-            echo "tags=pingwin1900/mmrc-converter:$BRANCH,pingwin1900/mmrc-converter:${{ github.sha }}" >> $GITHUB_OUTPUT
+            echo "tags=pingwin1900/mmrc-converter:$BRANCH" >> $GITHUB_OUTPUT
           fi
 
       - name: Build and push Converter image

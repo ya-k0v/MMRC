@@ -29,9 +29,9 @@ jobs:
         run: |
           BRANCH="${GITHUB_REF#refs/heads/}"
           if [ "$BRANCH" = "main" ]; then
-            echo "tags=pingwin1900/mmrc:latest,pingwin1900/mmrc:${{ github.sha }}" >> $GITHUB_OUTPUT
+            echo "tags=pingwin1900/mmrc:latest" >> $GITHUB_OUTPUT
           else
-            echo "tags=pingwin1900/mmrc:$BRANCH,pingwin1900/mmrc:${{ github.sha }}" >> $GITHUB_OUTPUT
+            echo "tags=pingwin1900/mmrc:$BRANCH" >> $GITHUB_OUTPUT
           fi
 
       - name: Build and push Server image

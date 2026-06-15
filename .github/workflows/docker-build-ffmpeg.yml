@@ -31,9 +31,9 @@ jobs:
         run: |
           BRANCH="${GITHUB_REF#refs/heads/}"
           if [ "$BRANCH" = "main" ]; then
-            echo "tags=pingwin1900/mmrc-ffmpeg:latest,pingwin1900/mmrc-ffmpeg:${{ github.sha }}" >> $GITHUB_OUTPUT
+            echo "tags=pingwin1900/mmrc-ffmpeg:latest" >> $GITHUB_OUTPUT
           else
-            echo "tags=pingwin1900/mmrc-ffmpeg:$BRANCH,pingwin1900/mmrc-ffmpeg:${{ github.sha }}" >> $GITHUB_OUTPUT
+            echo "tags=pingwin1900/mmrc-ffmpeg:$BRANCH" >> $GITHUB_OUTPUT
           fi
 
       - name: Build and push FFmpeg image
