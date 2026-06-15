@@ -3018,6 +3018,11 @@ export function createFilesRouter(deps) {
         return f.filename;
       });
 
+      const needsProcessing = req.files ? req.files.some(f => {
+        const ext = path.extname(f.filename).toLowerCase();
+        return ext === '.pdf' || ext === '.pptx' || ext === '.zip' || VIDEO_PROCESSING_EXTENSIONS.has(ext);
+      }) : false;
+
       for (const safeName of uploaded) {
         markFileAsPreProcessing(id, safeName);
       }
@@ -3028,6 +3033,7 @@ export function createFilesRouter(deps) {
         deviceId: id,
         filesCount: uploaded.length,
         uploaded,
+        needsProcessing,
         folderName: folderName || null
       });
 
@@ -3038,7 +3044,7 @@ export function createFilesRouter(deps) {
       // Отправляем ответ СРАЗУ (не ждём обработки)
       if (!res.headersSent) {
         try {
-          res.json({ ok: true, files: [], uploaded });
+          res.json({ ok: true, files: [], uploaded, needsProcessing });
           logger.debug('[Upload] Response sent immediately after file save (all processing in background)', { 
             deviceId: id, 
             filesCount: uploaded.length 
