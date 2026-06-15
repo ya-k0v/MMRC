@@ -1161,15 +1161,16 @@ function filterAndRenderUsers(adminFetch) {
             <strong>${safeUsername}</strong>
             ${isLdapUser ? '<span style="background:var(--warning); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">LDAP</span>' : '<span style="background:var(--panel-2); color:var(--text-secondary); padding:2px 6px; border-radius:4px; font-size:0.7rem;">LOCAL</span>'}
             ${u.role === 'admin' ? '<span style="background:var(--brand); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">ADMIN</span>' : ''}
+            ${u.role === 'manager' ? '<span style="background:var(--accent); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">MANAGER</span>' : ''}
             ${u.role === 'speaker' ? '<span style="background:var(--success); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">SPEAKER</span>' : ''}
             ${u.role === 'hero_admin' ? '<span style="background:var(--warning); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">HERO ADMIN</span>' : ''}
             ${!u.is_active ? '<span style="background:var(--danger); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">OFF</span>' : ''}
           </div>
           <div class="meta">${safeFullName}</div>
-          ${u.role === 'speaker' ? `<div class="meta" style="font-size:0.75rem; color:var(--text-secondary);">Устройств: ${deviceCountLabel}</div>` : ''}
+          ${u.role === 'speaker' || u.role === 'manager' ? `<div class="meta" style="font-size:0.75rem; color:var(--text-secondary);">Устройств: ${deviceCountLabel}</div>` : ''}
         </div>
         <div style="display:flex; gap:4px; flex-shrink:0;">
-          ${u.role === 'speaker' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})" title="Управление устройствами">${getSettingsIcon(16)}</button>` : ''}
+          ${u.role === 'speaker' || u.role === 'manager' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})" title="Управление устройствами">${getSettingsIcon(16)}</button>` : ''}
           ${u.role === 'admin' || u.role === 'hero_admin' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})" title="Информация об устройствах">${getSettingsIcon(16)}</button>` : ''}
           ${isLdapUser
             ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center; opacity:0.6;" disabled title="Пароль LDAP меняется в AD">${getKeyIcon(16)}</button>`
