@@ -105,6 +105,6 @@ export function requireRole(...roles) {
 // Aliases для удобства
 export const requireAdmin = requireRole('admin');
 export const requireHeroAdmin = requireRole('admin', 'hero_admin');
-export const requireSpeaker = requireRole('admin', 'speaker');
+export const requireSpeaker = requireRole('admin', 'speaker', 'manager');
 export const requireManager = requireRole('admin', 'manager');
 
