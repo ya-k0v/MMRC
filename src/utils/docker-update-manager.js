@@ -81,6 +81,7 @@ class DockerUpdateManager {
 
   getDefaultState() {
     return {
+      deployedSha: null,
       dismissedRemoteSha: null,
       lastCheckedAt: null,
       lastKnownRemoteSha: null,
@@ -111,9 +112,15 @@ class DockerUpdateManager {
         ...(parsed && typeof parsed === 'object' ? parsed : {})
       };
 
+      this.state.deployedSha = sanitizeSha(this.state.deployedSha) || null;
       this.state.dismissedRemoteSha = sanitizeSha(this.state.dismissedRemoteSha) || null;
       this.state.lastKnownRemoteSha = sanitizeSha(this.state.lastKnownRemoteSha) || null;
       this.state.updating = Boolean(this.state.updating);
+
+      // first init: deployedSha = last known remote (best guess for current image)
+      if (!this.state.deployedSha && this.state.lastKnownRemoteSha) {
+        this.state.deployedSha = this.state.lastKnownRemoteSha;
+      }
     } catch (error) {
       logger.warn('[DockerUpdateManager] Failed to load state file', {
         stateFile: this.stateFile,
@@ -191,7 +198,7 @@ class DockerUpdateManager {
       }
     }
 
-    const localSha = this.state.lastKnownRemoteSha;
+    const localSha = this.state.deployedSha;
     const updateAvailable = Boolean(
       localSha && remoteSha && remoteSha !== localSha
     );
@@ -233,8 +240,8 @@ class DockerUpdateManager {
     return {
       type: 'docker_update_available',
       severity: 'info',
-      title: 'Доступно обновление Docker образа',
-      message: `Образ ${this.imageName} устарел: ${localLabel} -> ${remoteLabel} (${behindLabel}). Обновить сейчас?`,
+      title: 'Доступно обновление',
+      message: `Новая версия: ${localLabel} -> ${remoteLabel} (${behindLabel}). Для обновления выполните в консоли:\nsudo docker compose pull && sudo docker compose up -d`,
       key: UPDATE_NOTIFICATION_KEY,
       source: 'docker-update-manager',
       details: {
@@ -248,20 +255,8 @@ class DockerUpdateManager {
       },
       actions: [
         {
-          id: 'apply_docker_update',
-          label: 'Да, обновить',
-          method: 'POST',
-          url: '/api/admin/update/apply',
-          body: {
-            remoteSha: status.remoteSha,
-            branch: status.branch
-          },
-          confirm: 'Будет выполнен docker pull и перезапуск сервиса. Продолжить?',
-          variant: 'primary'
-        },
-        {
           id: 'dismiss_update',
-          label: 'Нет, позже',
+          label: 'Ок',
           method: 'POST',
           url: '/api/admin/update/dismiss',
           body: {

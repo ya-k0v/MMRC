@@ -312,7 +312,7 @@ function renderNotification(notification) {
             <span style="font-size:18px;">${severityIcon}</span>
             <div style="font-weight:bold; color:var(--text);">${escapeHtml(notification.title)}</div>
           </div>
-          <div style="color:var(--text-secondary); font-size:0.875rem; margin-bottom:8px; line-height:1.5;">
+          <div style="color:var(--text-secondary); font-size:0.875rem; margin-bottom:8px; line-height:1.5; white-space:pre-wrap;">
             ${escapeHtml(notification.message)}
           </div>
           ${detailsHtml}
