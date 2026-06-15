@@ -265,6 +265,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (user.role === 'admin') {
       // Загружаем статус модулей
       adminFetch('/api/admin/modules').then(r => r.json()).then(data => {
+        window.__modulesData = data.modules || [];
         const heroModule = (data.modules || []).find(m => m.id === 'hero');
         if (heroModule && heroModule.enabled) {
           heroBtn.style.display = '';

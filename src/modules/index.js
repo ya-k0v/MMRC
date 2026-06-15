@@ -6,6 +6,8 @@ const MODULES = {
     id: 'hero',
     name: 'Картотека',
     description: 'Учёт героев и медиа-материалов',
+    roles: ['hero_admin'],
+    roleLabels: { hero_admin: 'Hero Admin (управление карточками героев)' },
     getSchema() {
       const isPg = driverType === 'postgres';
       const idCol = isPg ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT';
@@ -59,7 +61,9 @@ export function getAvailableModules() {
   return Object.values(MODULES).map(m => ({
     id: m.id,
     name: m.name,
-    description: m.description
+    description: m.description,
+    roles: m.roles || [],
+    roleLabels: m.roleLabels || {}
   }));
 }
 

@@ -692,6 +692,19 @@ export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevi
   }, 100);
 }
 
+function renderModuleRoles() {
+  const modules = window.__modulesData || [];
+  let html = '';
+  for (const mod of modules) {
+    if (!mod.enabled) continue;
+    for (const role of (mod.roles || [])) {
+      const label = mod.roleLabels?.[role] || role;
+      html += `<option value="${role}">${label}</option>\n`;
+    }
+  }
+  return html;
+}
+
 export async function showUsersModal(adminFetch) {
   // Сохраняем adminFetch в window для использования в inline onclick
   window.adminFetch = adminFetch;
@@ -761,8 +774,9 @@ export async function showUsersModal(adminFetch) {
             <input id="modalPassword" class="input" type="password" placeholder="Пароль (мин. 8 символов)" />
             <select id="modalRole" class="input">
               <option value="speaker">Speaker (управление контентом)</option>
+              <option value="manager">Manager (загрузка/удаление своих файлов)</option>
               <option value="admin">Admin (полный доступ)</option>
-              <option value="hero_admin">Hero Admin (управление карточками героев)</option>
+              ${renderModuleRoles()}
             </select>
             <div id="modalUserError" style="color:var(--danger); font-size:0.875rem; display:none;"></div>
             <button id="modalCreateUser" class="primary">Создать пользователя</button>

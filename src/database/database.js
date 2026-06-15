@@ -61,6 +61,8 @@ export async function initDatabase(initialDbPath) {
     await ensureUserDevicesTable();
     await ensureDefaultAdminUser();
     await ensureHeroAdminMigration();
+    await ensureManagerRoleMigration();
+    await ensureFileUploadedByColumn();
 
     logger.info(`[DB] Database initialized (${driverType})`);
     return driver;
@@ -223,6 +225,76 @@ async function ensureHeroAdminMigration() {
     }
   } catch (err) {
     logger.warn('[DB] Hero admin migration skipped (non-critical):', err.message);
+  }
+}
+
+async function ensureManagerRoleMigration() {
+  try {
+    if (driverType !== 'sqlite') return;
+
+    const tableDef = await driver.get(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+    );
+    if (tableDef && tableDef.sql && !tableDef.sql.includes("'manager'")) {
+      logger.info('[DB] Migrating users table to support manager role...');
+      const usersData = await driver.query('SELECT * FROM users');
+      await driver.exec('ALTER TABLE users RENAME TO users_old');
+      await driver.exec(`
+        CREATE TABLE users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT UNIQUE NOT NULL,
+          full_name TEXT NOT NULL,
+          password_hash TEXT NOT NULL,
+          auth_source TEXT NOT NULL DEFAULT 'local' CHECK(auth_source IN ('local', 'ldap')),
+          ldap_dn TEXT,
+          role TEXT DEFAULT 'speaker' CHECK(role IN ('admin', 'speaker', 'hero_admin', 'manager')),
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          last_login DATETIME,
+          is_active INTEGER DEFAULT 1
+        )
+      `);
+      for (const u of usersData) {
+        await driver.run(
+          `INSERT INTO users (id, username, full_name, password_hash, auth_source, ldap_dn, role, created_at, updated_at, last_login, is_active)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [u.id, u.username, u.full_name, u.password_hash, u.auth_source || 'local',
+           u.ldap_dn || null, u.role, u.created_at, u.updated_at, u.last_login, u.is_active]
+        );
+      }
+      await driver.exec('DROP TABLE users_old');
+      logger.info('[DB] Manager role migration completed');
+    }
+  } catch (err) {
+    logger.warn('[DB] Manager role migration skipped (non-critical):', err.message);
+  }
+}
+
+async function ensureFileUploadedByColumn() {
+  try {
+    const hasTable = await driver.tableExists('files_metadata');
+    if (!hasTable) return;
+
+    const cols = await driver.columns('files_metadata');
+    const names = new Set(cols.map(c => c.name));
+
+    if (!names.has('uploaded_by')) {
+      const colDef = driverType === 'postgres'
+        ? 'uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL'
+        : 'uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL';
+      await driver.exec(`ALTER TABLE files_metadata ADD COLUMN ${colDef}`);
+      logger.info('[DB] Added column files_metadata.uploaded_by');
+
+      if (driverType === 'sqlite') {
+        try {
+          await driver.exec(
+            "CREATE INDEX IF NOT EXISTS idx_files_uploaded_by ON files_metadata(uploaded_by)"
+          );
+        } catch { }
+      }
+    }
+  } catch (err) {
+    logger.warn('[DB] Failed to ensure uploaded_by column (non-critical):', { error: err.message });
   }
 }
 

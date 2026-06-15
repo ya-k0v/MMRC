@@ -96,7 +96,8 @@ export async function saveFileMetadata({
   contentType = 'file',
   streamUrl = null,
   streamProtocol = 'auto',
-  pagesCount = null  // Количество слайдов/страниц/изображений для папок/PDF/PPTX
+  pagesCount = null,
+  uploadedBy = null
 }) {
   try {
     const db = getDatabase();
@@ -113,7 +114,8 @@ export async function saveFileMetadata({
         'device_id', 'safe_name', 'original_name', 'file_path', 'file_size', 'md5_hash',
         'partial_md5', 'mime_type', 'video_width', 'video_height', 'video_duration',
         'video_codec', 'video_profile', 'video_bitrate', 'audio_codec', 'audio_bitrate',
-        'audio_channels', 'file_mtime', 'content_type', 'stream_url', 'stream_protocol', 'pages_count'
+        'audio_channels', 'file_mtime', 'content_type', 'stream_url', 'stream_protocol',
+        'pages_count', 'uploaded_by'
       ];
       const dt = getDriverType();
       const ph = cols.map((_, i) => dt === 'postgres' ? `$${i + 1}` : '?').join(', ');
@@ -147,7 +149,8 @@ export async function saveFileMetadata({
         contentType,
         streamUrl,
         streamProtocol,
-        pagesCount
+        pagesCount,
+        uploadedBy
       ]);
       
       // Проверяем, что запись действительно в БД

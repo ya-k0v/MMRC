@@ -21,7 +21,19 @@ export function setupUploadModal(getDeviceId) {
 
   let pendingFiles = [];
 
-  function show() { modal.style.display = 'flex'; }
+  function resetProgress() {
+    progress.style.display = 'none';
+    progressBar.style.width = '0%';
+    progressPercent.textContent = '0%';
+    progressText.textContent = '';
+    submitBtn.disabled = false;
+    clearBtn.disabled = false;
+  }
+
+  function show() {
+    resetProgress();
+    modal.style.display = 'flex';
+  }
   function hide() { modal.style.display = 'none'; }
 
   function open() {
@@ -107,7 +119,7 @@ export function setupUploadModal(getDeviceId) {
   clearBtn.onclick = () => {
     pendingFiles = [];
     renderQueue();
-    progress.style.display = 'none';
+    resetProgress();
     status.textContent = '';
   };
 
