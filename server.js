@@ -460,6 +460,9 @@ app.use('/api/devices', videoInfoRouter);  // GET открыт для устро
 const systemInfoRouter = createSystemInfoRouter();
 app.use('/api/system', requireAuth, systemInfoRouter);
 
+// Admin API (установка APK и др.)
+app.use('/api/admin', adminRouter);
+
 // ========================================
 // FAVICON HANDLING
 // ========================================
@@ -1515,6 +1518,23 @@ async function hydrateDevicesFromDatabase() {
   }
 }
 
+// ========================================
+// EXPRESS ERROR HANDLER
+// ========================================
+// КРИТИЧНО: Возвращаем JSON вместо HTML по умолчанию
+app.use((err, req, res, next) => {
+  logger.error('[Express] Unhandled error', {
+    error: err.message,
+    stack: err.stack,
+    url: req.originalUrl,
+    method: req.method,
+    ip: req.ip
+  });
+  res.status(err.status || err.statusCode || 500).json({
+    error: err.message || 'Внутренняя ошибка сервера'
+  });
+});
+
 // Запуск сервера
 server.listen(PORT, HOST, () => {
   logger.info(`Server started on ${HOST}:${PORT} (accessible only through Nginx)`, { 
@@ -1788,8 +1808,5 @@ process.on('unhandledRejection', (reason, promise) => {
   // НЕ завершаем процесс - сервис должен продолжать работать
   // В production больше не завершаем процесс автоматически
 });
-
-// Admin API (установка APK и др.)
-app.use('/api/admin', adminRouter);
 
 

@@ -482,10 +482,10 @@ router.post('/users/:id/devices',
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
     const userId = parseInt(req.params.id);
-    const { deviceIds } = req.body;
-    const db = getDatabase();
-
     try {
+      const { deviceIds } = req.body;
+      const db = getDatabase();
+
       const user = await db.get('SELECT id, username FROM users WHERE id = ?', [userId]);
       if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
 
