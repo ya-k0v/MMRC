@@ -220,11 +220,13 @@ export const httpLoggerMiddleware = (req, res, next) => {
     const isAdminWrite = isAdminApi && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
     const isServiceLogsPoll = urlPath === '/api/admin/service-logs';
 
-    let level = 'debug';
+    let level = 'info';
     if (res.statusCode >= 500) {
       level = 'error';
     } else if (res.statusCode >= 400) {
       level = 'warn';
+    } else if (isServiceLogsPoll) {
+      level = 'debug';
     } else if (isAdminWrite) {
       level = 'warn';
     }

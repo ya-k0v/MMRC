@@ -7,7 +7,6 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { validatePath } from './path-validator.js';
-import logger from './logger.js';
 
 const execFileAsync = promisify(execFile);
 const APK_UPLOAD_DIR = path.resolve(process.env.MMRC_APK_UPLOAD_DIR || '/tmp/mmrc-apk-upload');
@@ -156,33 +155,11 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
   const urlForXml = normalizeServerUrlForXml(serverUrl);
   const xmlSettings = `<?xml version="1.0" encoding="utf-8"?>\n<map>\n    <string name="server_url">${escapeXml(urlForXml)}</string>\n    <string name="device_id">${escapeXml(safeDeviceId)}</string>\n    <boolean name="show_status" value="false" />\n</map>`;
 
-  // Копируем XML на устройство и в shared_prefs
-  const tmpDevicePath = '/data/local/tmp/VCMediaPlayerSettings.xml';
-  const prefsPath = `/data/data/com.videocontrol.mediaplayer/shared_prefs/VCMediaPlayerSettings.xml`;
-
-  // Передаем XML напрямую через stdin в файл на устройстве, не создавая временный файл на сервере.
-  await runAdb(['-s', adbTarget, 'shell', 'sh', '-c', `cat > ${tmpDevicePath}`], {
+  // Пишем XML напрямую в shared_prefs через run-as, без временных файлов
+  await runAdb(['-s', adbTarget, 'shell', 'run-as', 'com.videocontrol.mediaplayer', 'sh', '-c', 'mkdir -p shared_prefs && cat > shared_prefs/VCMediaPlayerSettings.xml'], {
     input: xmlSettings,
     stdio: ['pipe', 'ignore', 'pipe']
   });
-
-  // Копируем XML в shared_prefs (пробуем run-as cp, затем sh -c cat, затем su -c cp)
-  try {
-    await runAdb(['-s', adbTarget, 'shell', 'run-as', 'com.videocontrol.mediaplayer', 'cp', tmpDevicePath, prefsPath], { stdio: 'inherit' });
-  } catch (cpError) {
-    logger.warn('[ADB] run-as cp failed, trying sh -c cat', { error: cpError.message });
-    try {
-      await runAdb(['-s', adbTarget, 'shell', 'run-as', 'com.videocontrol.mediaplayer', 'sh', '-c', `cat ${tmpDevicePath} > ${prefsPath}`], { stdio: 'inherit' });
-    } catch (runAsError) {
-      logger.warn('[ADB] run-as cat failed, trying su fallback', { error: runAsError.message });
-      try {
-        await runAdb(['-s', adbTarget, 'shell', 'su', '-c', `cp ${tmpDevicePath} ${prefsPath}`], { stdio: 'inherit' });
-      } catch {
-        logger.warn('[ADB] all copy methods failed, config not uploaded', { tmpDevicePath, prefsPath });
-      }
-    }
-  }
-  await runAdb(['-s', adbTarget, 'shell', 'rm', '-f', tmpDevicePath], { stdio: 'ignore' });
 
   // Снова запускаем приложение с новыми настройками
   await runAdb(['-s', adbTarget, 'shell', 'monkey', '-p', 'com.videocontrol.mediaplayer', '-c', 'android.intent.category.LAUNCHER', '1'], { stdio: 'ignore' });
