@@ -7,6 +7,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { validatePath } from './path-validator.js';
+import logger from './logger.js';
 
 const execFileAsync = promisify(execFile);
 const APK_UPLOAD_DIR = path.resolve(process.env.MMRC_APK_UPLOAD_DIR || '/tmp/mmrc-apk-upload');
@@ -156,10 +157,24 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
   const xmlSettings = `<?xml version="1.0" encoding="utf-8"?>\n<map>\n    <string name="server_url">${escapeXml(urlForXml)}</string>\n    <string name="device_id">${escapeXml(safeDeviceId)}</string>\n    <boolean name="show_status" value="false" />\n</map>`;
 
   // Пишем XML напрямую в shared_prefs через run-as, без временных файлов
-  await runAdb(['-s', adbTarget, 'shell', 'run-as', 'com.videocontrol.mediaplayer', 'sh', '-c', 'mkdir -p shared_prefs && cat > shared_prefs/VCMediaPlayerSettings.xml'], {
-    input: xmlSettings,
-    stdio: ['pipe', 'ignore', 'pipe']
-  });
+  // КРИТИЧНО: весь shell-скрипт — один строковый аргумент, иначе device shell ломает && и кавычки
+  // Разбиваем на 2 вызова: mkdir (без stdin) и cat (с stdin), чтобы stdin гарантированно дошёл до cat
+  try {
+    await runAdb(['-s', adbTarget, 'shell', `run-as com.videocontrol.mediaplayer sh -c 'mkdir -p shared_prefs'`], {
+      stdio: ['ignore', 'ignore', 'pipe']
+    });
+    await runAdb(['-s', adbTarget, 'shell', `run-as com.videocontrol.mediaplayer sh -c 'cat > shared_prefs/VCMediaPlayerSettings.xml'`], {
+      input: xmlSettings,
+      stdio: ['pipe', 'ignore', 'pipe']
+    });
+  } catch (runAsErr) {
+    logger.warn('[APK] run-as failed, trying su fallback', { error: runAsErr.message });
+    // fallback через su (требуются root-права на устройстве)
+    const escaped = xmlSettings.replace(/'/g, "'\\''");
+    await runAdb(['-s', adbTarget, 'shell', `su -c "mkdir -p /data/data/com.videocontrol.mediaplayer/shared_prefs && echo '${escaped}' > /data/data/com.videocontrol.mediaplayer/shared_prefs/VCMediaPlayerSettings.xml"`], {
+      stdio: ['pipe', 'ignore', 'pipe']
+    });
+  }
 
   // Снова запускаем приложение с новыми настройками
   await runAdb(['-s', adbTarget, 'shell', 'monkey', '-p', 'com.videocontrol.mediaplayer', '-c', 'android.intent.category.LAUNCHER', '1'], { stdio: 'ignore' });
