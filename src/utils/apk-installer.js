@@ -166,16 +166,20 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
     stdio: ['pipe', 'ignore', 'pipe']
   });
 
-  // Копируем XML в shared_prefs (используем cat через sh, т.к. cp не всегда доступен в run-as)
+  // Копируем XML в shared_prefs (пробуем run-as cp, затем sh -c cat, затем su -c cp)
   try {
-    await runAdb(['-s', adbTarget, 'shell', 'run-as', 'com.videocontrol.mediaplayer', 'sh', '-c', `cat ${tmpDevicePath} > ${prefsPath}`], { stdio: 'inherit' });
-  } catch (runAsError) {
-    // Fallback: если run-as не сработал (production APK на Android 10+), пробуем через root shell
-    logger.warn('[ADB] run-as failed, trying fallback copy', { error: runAsError.message });
+    await runAdb(['-s', adbTarget, 'shell', 'run-as', 'com.videocontrol.mediaplayer', 'cp', tmpDevicePath, prefsPath], { stdio: 'inherit' });
+  } catch (cpError) {
+    logger.warn('[ADB] run-as cp failed, trying sh -c cat', { error: cpError.message });
     try {
-      await runAdb(['-s', adbTarget, 'shell', 'su', '-c', `cp ${tmpDevicePath} ${prefsPath}`], { stdio: 'inherit' });
-    } catch {
-      logger.warn('[ADB] fallback copy also failed, config not uploaded', { tmpDevicePath, prefsPath });
+      await runAdb(['-s', adbTarget, 'shell', 'run-as', 'com.videocontrol.mediaplayer', 'sh', '-c', `cat ${tmpDevicePath} > ${prefsPath}`], { stdio: 'inherit' });
+    } catch (runAsError) {
+      logger.warn('[ADB] run-as cat failed, trying su fallback', { error: runAsError.message });
+      try {
+        await runAdb(['-s', adbTarget, 'shell', 'su', '-c', `cp ${tmpDevicePath} ${prefsPath}`], { stdio: 'inherit' });
+      } catch {
+        logger.warn('[ADB] all copy methods failed, config not uploaded', { tmpDevicePath, prefsPath });
+      }
     }
   }
   await runAdb(['-s', adbTarget, 'shell', 'rm', '-f', tmpDevicePath], { stdio: 'ignore' });

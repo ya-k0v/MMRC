@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requireAdmin } from '../middleware/auth.js';
+import { longOperationTimeout } from '../middleware/timeout.js';
 import logger from '../utils/logger.js';
 import { installAndSetupApk } from '../utils/apk-installer.js';
 import { getSettings } from '../config/settings-manager.js';
@@ -294,7 +295,7 @@ async function listDevicesViaApi({ incomingAuthHeader }) {
 }
 
 // POST /api/admin/install-apk
-router.post('/install-apk', requireAdmin, upload.single('apk'), async (req, res) => {
+router.post('/install-apk', longOperationTimeout(), requireAdmin, upload.single('apk'), async (req, res) => {
   const ip = req.body.ip;
   const deviceId = req.body.deviceId;
   const deviceName = req.body.deviceName;
@@ -376,7 +377,7 @@ router.post('/install-apk', requireAdmin, upload.single('apk'), async (req, res)
 
 // POST /api/admin/install-apk-bound
 // Массовое обновление APK на Android-устройствах с привязанным IP.
-router.post('/install-apk-bound', requireAdmin, upload.single('apk'), async (req, res) => {
+router.post('/install-apk-bound', longOperationTimeout(), requireAdmin, upload.single('apk'), async (req, res) => {
   const settings = getSettings();
   const serverUrl = settings.serverUrl || process.env.SERVER_URL || `http://${req.headers.host || '127.0.0.1:3000'}`;
 
