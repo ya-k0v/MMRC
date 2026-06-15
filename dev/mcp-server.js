@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readFile, readdir } from 'node:fs/promises';
-import { ROOT } from './config/constants.js';
+import { ROOT } from '../src/config/constants.js';
 
 const log = (msg) => process.stderr.write(`[MCP] ${msg}\n`);
 

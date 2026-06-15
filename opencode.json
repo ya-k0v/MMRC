@@ -36,7 +36,7 @@
     "mmrc": {
       "type": "local",
       "command": "sh",
-      "args": ["-c", "SILENT_CONSOLE=true node src/mcp-server.js"],
+      "args": ["-c", "SILENT_CONSOLE=true node dev/mcp-server.js"],
       "description": "MMRC MCP server — database schema, API routes, modules, project structure, logs",
       "enabled": true
     }
