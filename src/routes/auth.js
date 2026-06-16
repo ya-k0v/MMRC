@@ -59,7 +59,7 @@ function resolveRoleFromLdapGroups(groups = [], ldapSettings = {}) {
   const groupTokens = collectLdapGroupTokens(groups);
   if (!groupTokens.size) return null;
   for (const role of priority) {
-    if (!['admin', 'speaker', 'hero_admin'].includes(role)) continue;
+    if (!['admin', 'manager', 'speaker', 'hero_admin'].includes(role)) continue;
     const mappedGroups = Array.isArray(roleMap[role]) ? roleMap[role] : [];
     for (const mappedGroup of mappedGroups) {
       const mappedToken = normalizeGroupToken(mappedGroup);
@@ -395,6 +395,42 @@ router.post('/users/:id/toggle', requireAuth, requireManager, async (req, res) =
     res.status(500).json({ error: 'Внутренняя ошибка сервера' });
   }
 });
+
+router.put('/users/:id/role',
+  requireAuth, requireAdmin,
+  body('role').isIn(['admin', 'manager', 'speaker', 'hero_admin']),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+    const userId = parseInt(req.params.id);
+    const { role } = req.body;
+    const db = getDatabase();
+
+    try {
+      if (userId === 1) return res.status(400).json({ error: 'Нельзя изменить роль администратора по умолчанию' });
+
+      const user = await db.get('SELECT id, username, role, auth_source FROM users WHERE id = ?', [userId]);
+      if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+
+      const oldRole = user.role;
+      await db.run('UPDATE users SET role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [role, userId]);
+
+      await auditLog({
+        userId: req.user.userId, action: 'user.role_change',
+        resource: `user:${userId}`,
+        details: { targetUsername: user.username, oldRole, newRole: role, changedBy: req.user.username },
+        ipAddress: req.ip, userAgent: req.get('user-agent'), status: 'success'
+      });
+      logAuth('info', 'User role changed', { userId, username: user.username, oldRole, newRole: role, changedBy: req.user.username });
+
+      res.json({ success: true });
+    } catch (err) {
+      logger.error('Change role error', { error: err.message, stack: err.stack, userId });
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+    }
+  }
+);
 
 router.delete('/users/:id', requireAuth, requireAdmin, deleteLimiter, async (req, res) => {
   const userId = parseInt(req.params.id);

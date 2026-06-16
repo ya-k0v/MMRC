@@ -28,14 +28,15 @@ const LDAP_DEFAULTS = {
   tlsRejectUnauthorized: true,
   groupRoleMap: {
     admin: [],
+    manager: [],
     speaker: [],
     hero_admin: []
   },
-  rolePriority: ['admin', 'hero_admin', 'speaker']
+  rolePriority: ['admin', 'manager', 'hero_admin', 'speaker']
 };
 
 const ALLOWED_SEARCH_SCOPES = new Set(['base', 'one', 'sub']);
-const ALLOWED_USER_ROLES = new Set(['admin', 'speaker', 'hero_admin']);
+const ALLOWED_USER_ROLES = new Set(['admin', 'manager', 'speaker', 'hero_admin']);
 const PROJECT_ROOT = path.resolve(ROOT);
 const MOUNT_ROOT = path.resolve('/mnt');
 

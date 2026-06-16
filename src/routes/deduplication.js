@@ -7,6 +7,7 @@ import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
+import { requireManager } from '../middleware/auth.js';
 import { findDuplicateFile, saveFileMetadata, getFileMetadata } from '../database/files-metadata.js';
 import { getDatabase } from '../database/database.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
@@ -28,7 +29,7 @@ export function createDeduplicationRouter(deps) {
    * Проверить есть ли файл с таким MD5/размером на других устройствах
    * Дедупликация применяется ТОЛЬКО для видео файлов
    */
-  router.post('/:id/check-duplicate', async (req, res) => {
+  router.post('/:id/check-duplicate', requireManager, async (req, res) => {
     const targetDeviceId = sanitizeDeviceId(req.params.id);
     const { md5, size, filename } = req.body;
     
@@ -102,7 +103,7 @@ export function createDeduplicationRouter(deps) {
    * Мгновенное копирование файла через дедупликацию (только запись в БД)
    * Дедупликация применяется ТОЛЬКО для видео файлов
    */
-  router.post('/:id/copy-from-duplicate', async (req, res) => {
+  router.post('/:id/copy-from-duplicate', requireManager, async (req, res) => {
     const targetDeviceId = sanitizeDeviceId(req.params.id);
     const { sourceDevice, sourceFile, targetFilename, originalName, md5, size } = req.body;
     

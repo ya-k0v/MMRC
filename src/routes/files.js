@@ -28,7 +28,7 @@ import { getFileMetadata, deleteFileMetadata, getDeviceFilesMetadata, deleteDevi
 import { setFileStatus as setGlobalFileStatus } from '../video/file-status.js';
 import { removeStreamJob } from '../streams/stream-manager.js';
 import { getTrailerPath } from '../video/trailer-generator.js';
-import { requireSpeaker } from '../middleware/auth.js';
+import { requireSpeaker, requireManager } from '../middleware/auth.js';
 import { getUserDevices, hasDeviceAccess, checkDeviceAccess } from '../middleware/device-access.js';
 import { validateUploadSize } from '../middleware/multer-config.js';
 import { validateFilesAsync } from '../middleware/file-validation.js';
@@ -3782,7 +3782,7 @@ export function createFilesRouter(deps) {
   
   // POST /api/devices/:targetId/copy-file - Копирование/перемещение файла между устройствами
   // НОВОЕ: Мгновенное копирование через БД для файлов, физическое для папок
-  router.post('/:targetId/copy-file', async (req, res) => {
+  router.post('/:targetId/copy-file', requireManager, async (req, res) => {
     const targetId = sanitizeDeviceId(req.params.targetId);
     const { sourceDeviceId, fileName, move } = req.body;
     const sourceId = sanitizeDeviceId(sourceDeviceId);
@@ -4001,7 +4001,7 @@ export function createFilesRouter(deps) {
   });
   
   // POST /api/devices/:id/files/:name/rename - Переименование файла или папки
-  router.post('/:id/files/:name/rename', express.json(), async (req, res) => {
+  router.post('/:id/files/:name/rename', requireManager, express.json(), async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
     
     if (!id) {
