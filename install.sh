@@ -216,6 +216,9 @@ install_mmrc() {
     check_root
     check_docker
 
+    # Unset Docker Compose env vars that could interfere
+    unset COMPOSE_FILE COMPOSE_PROJECT_NAME COMPOSE_PROFILES COMPOSE_PATH_SEPARATOR
+
     # Ensure consistent working directory (fixes 'getcwd' errors with curl|sudo bash)
     cd /
 
@@ -353,10 +356,31 @@ ENVEOF3
         STREAMER_ENABLED=false
     fi
 
+    # Validate compose config before pulling
+    echo ""
+    info "Validating Docker Compose configuration..."
+    cd "$INSTALL_DIR"
+    if ! $COMPOSE config > /dev/null 2>&1; then
+        echo ""
+        warn "Compose validation failed. Checking configuration..."
+        warn "Files in $INSTALL_DIR:"
+        ls -la "$INSTALL_DIR" 2>&1 | sed 's/^/  /'
+        echo ""
+        warn "Docker Compose env vars:"
+        env | grep -i compose 2>/dev/null | sed 's/^/  /' || echo "  (none)"
+        echo ""
+        # Try to get detailed error
+        $COMPOSE config 2>&1 || true
+        echo ""
+        error "Docker Compose configuration is invalid. Please check the files above."
+        error "If you have a docker-compose.override.yml file, remove it and try again."
+        exit 1
+    fi
+    success "Compose configuration valid"
+
     # Pull images with progress
     echo ""
     info "Pulling Docker images..."
-    cd "$INSTALL_DIR"
     $COMPOSE pull
     docker pull "pingwin1900/mmrc-converter:${MMRC_DOCKER_TAG}" 2>/dev/null || warn "Converter image not available (non-critical)"
     docker pull "pingwin1900/mmrc-ffmpeg:${MMRC_DOCKER_TAG}" 2>/dev/null || warn "FFmpeg image not available (non-critical)"
