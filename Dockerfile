@@ -26,6 +26,7 @@ RUN npm ci --omit=dev
 # ========================
 FROM node:22-slim
 
+ARG APP_VERSION=3.4.0
 ARG MMRC_ROLE=server
 ENV ROLE=${MMRC_ROLE}
 
@@ -34,7 +35,7 @@ ENV MMRC_DOCKER_CLI=${INCLUDE_DOCKER_CLI}
 
 LABEL maintainer="ya-k0v"
 LABEL description="MMRC - Media Management and Remote Control"
-LABEL version="3.3.0"
+LABEL version=${APP_VERSION}
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \

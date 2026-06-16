@@ -1,9 +1,9 @@
-# MMRC 3.3.0 — Media Management and Remote Control
+# MMRC 3.4.0 — Media Management and Remote Control
 
 **Система управления медиаконтентом для цифровых дисплеев**
 
-![Version](https://img.shields.io/badge/version-3.3.0-blue)
-![Node](https://img.shields.io/badge/node-20.x-green)
+![Version](https://img.shields.io/badge/version-3.4.0-blue)
+![Node](https://img.shields.io/badge/node-22.x-green)
 ![License](https://img.shields.io/badge/license-Personal_Use_Only-red)
 
 Единый Docker-контейнер (API + Nginx + FFmpeg + все воркеры), запускается одной командой. Опционально PostgreSQL вместо SQLite.
@@ -15,7 +15,7 @@
 Для production-серверов используйте one-command установку:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/v330/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/v340/install.sh | sudo bash
 ```
 
 Скрипт автоматически:
@@ -79,13 +79,20 @@ make clean-data    # Удалить только volumes (ВНИМАНИЕ: уд
 │  │  │  • FFmpeg обработка   │  │                           │
 │  │  │  • yt-dlp загрузка    │  │                           │
 │  │  │  • Ночной оптимизатор │  │                           │
+│  │  │  • Ghostscript + Sharp│  │   PDF → PNG              │
 │  │  └───────────────────────┘  │                           │
 │  └─────────────────────────────┘                           │
 │                                                            │
 │  ┌──────────────────────┐   ┌──────────────────────┐      │
-│  │   Shared Volumes     │   │  PostgreSQL (profile) │      │
-│  │   mmrc-data          │   │  postgres:16-alpine   │      │
-│  │   mmrc-config        │   │  mmrc-pgdata          │      │
+│  │  mmrc-streamer       │   │  PostgreSQL (profile) │      │
+│  │  ffmpeg + health     │   │  postgres:16-alpine   │      │
+│  │  :3001               │   │  mmrc-pgdata          │      │
+│  └──────────────────────┘   └──────────────────────┘      │
+│                                                            │
+│  ┌──────────────────────┐   ┌──────────────────────┐      │
+│  │   Shared Volumes     │   │  Redis (profile)     │      │
+│  │   mmrc-data          │   │  redis:7-alpine      │      │
+│  │   mmrc-config        │   │  mmrc-redis           │      │
 │  │   mmrc-temp          │   └──────────────────────┘      │
 │  └──────────────────────┘                                  │
 │                                                            │
@@ -100,7 +107,9 @@ make clean-data    # Удалить только volumes (ВНИМАНИЕ: уд
 | Сервис | Описание | Порты |
 |--------|----------|-------|
 | `mmrc` | Единый контейнер (API + Nginx + FFmpeg + воркеры) | 80, 443 |
+| `streamer` | FFmpeg streamer для remote-стриминга (profile) | 3001 |
 | `postgres` | PostgreSQL 16 (опционально, profile) | 5432 |
+| `redis` | Redis 7 (опционально, profile) | 6379 |
 
 ---
 
@@ -152,7 +161,9 @@ make health
 | Profile | Описание | Команда |
 |---------|----------|---------|
 | (default) | Только mmrc | `make up` |
+| `streamer` | mmrc + Streamer (remote FFmpeg) | `docker compose --profile streamer up -d` |
 | `postgres` | mmrc + PostgreSQL | `make up-pg` |
+| `redis` | mmrc + Redis | `docker compose --profile redis up -d` |
 
 ---
 
@@ -253,7 +264,7 @@ mmrc backup
 make down
 
 # Обновить код (если из git)
-git pull origin v330
+git pull origin v340
 
 # Пересобрать образ
 make build
@@ -378,7 +389,7 @@ mmrc-pgdata:/var/lib/postgresql/data  # (только с profile postgres)
 - **SQLite / PostgreSQL** — выбор БД при установке
 - **MD5 Deduplication** — экономия места на диске (частичный MD5 для файлов >100MB)
 - **FFmpeg** — автооптимизация видео, ночной оптимизатор и HLS/DASH стриминг
-- **PDF/PPTX → изображения** — автоконвертация презентаций
+- **PDF/PPTX → изображения** — Ghostscript + Sharp (без ImageMagick), высокое качество
 - **Трейлеры** — автогенерация ~10-сек превью для видеофайлов
 - **Drag & Drop загрузка** — поддержка файлов до 5GB
 - **MIME-валидация** — проверка типов файлов через `file-type`
@@ -386,6 +397,7 @@ mmrc-pgdata:/var/lib/postgresql/data  # (только с profile postgres)
 
 ### Стриминг
 - **HLS live streaming** — стриминг через ffmpeg → .m3u8 + .ts сегменты
+- **Remote Streamer** — вынос FFmpeg в отдельный контейнер (--profile streamer)
 - **DASH поддержка** — .mpd потоки
 - **Автотранскодинг** — для несовместимых кодеков
 - **Дедупликация стримов** — один стрим для нескольких устройств
@@ -432,11 +444,12 @@ mmrc-pgdata:/var/lib/postgresql/data  # (только с profile postgres)
 
 ### GitHub Actions
 
-При пуше в ветку `v330` или `main` автоматически запускается workflow `.github/workflows/docker-build.yml`:
+При пуше в ветку `v340` или `main` автоматически запускается workflow `.github/workflows/docker-build.yml`:
 
-1. Собирается Docker-образ
-2. Пушится в Docker Hub как `pingwin1900/mmrc:latest` (main) или `pingwin1900/mmrc:<branch>`
-3. Отправляется уведомление в Discord (если настроен webhook)
+1. Читается версия из `version.json`
+2. Собираются 4 Docker-образа: `server`, `converter`, `ffmpeg`, `streamer`
+3. Пушатся в Docker Hub как `pingwin1900/mmrc:<dockerTag>` (v340) + `:latest` (для main)
+4. Используется GitHub Actions cache (`type=gha`) для ускорения сборки
 
 ### Ручной запуск
 
@@ -465,14 +478,6 @@ docker compose -f docker-compose.deploy.yml up -d
 ## Документация
 
 - [`docker/README.md`](docker/README.md) — Docker deployment (полная версия)
-- [`dev/README.md`](dev/README.md) — полное описание проекта, архитектура и возможности
-- [`dev/INSTALL.md`](dev/INSTALL.md) — подробная инструкция по установке на новую ОС
-- [`dev/COMMANDS.md`](dev/COMMANDS.md) — шпаргалка по командам для управления и обслуживания
-- [`dev/CLIENTS.md`](dev/CLIENTS.md) — установка и настройка клиентов (Android, MPV, браузер)
-- [`dev/GITHUB_ACTIONS_CICD.md`](dev/GITHUB_ACTIONS_CICD.md) — полный CI/CD для GitHub Actions
-- [`dev/ADMIN_PANEL_README.md`](dev/ADMIN_PANEL_README.md) — описание работы админ-панели
-- [`dev/SPEAKER_PANEL_README.md`](dev/SPEAKER_PANEL_README.md) — описание работы спикер-панели
-- [`dev/HERO_README.md`](dev/HERO_README.md) — описание работы панели героев
 
 ---
 
@@ -515,4 +520,4 @@ docker compose -f docker-compose.deploy.yml up -d
 
 **ya-k0v** — [GitHub](https://github.com/ya-k0v/)
 
-**Версия:** 3.3.0
+**Версия:** 3.4.0

@@ -5,6 +5,14 @@
   "dockerImages": {
     "server": "pingwin1900/mmrc",
     "converter": "pingwin1900/mmrc-converter",
-    "ffmpeg": "pingwin1900/mmrc-ffmpeg"
+    "ffmpeg": "pingwin1900/mmrc-ffmpeg",
+    "streamer": "pingwin1900/mmrc-streamer"
+  },
+  "apps": {
+    "server": "3.4.0",
+    "jsPlayer": "3.3.0",
+    "hub": "3.3.0",
+    "android": "3.2.0",
+    "mcp": "0.2.0"
   }
 }

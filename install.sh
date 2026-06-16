@@ -2,13 +2,18 @@
 set -e
 
 # MMRC One-Command Installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/v330/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/v340/install.sh | bash
 
 # ========================
 # Configuration
 # ========================
+MMRC_VERSION_INFO=$(curl -fsSL "https://raw.githubusercontent.com/ya-k0v/MMRC/v340/version.json" 2>/dev/null || echo '{"version":"3.4.0","branch":"v340","dockerTag":"v340","dockerImages":{"server":"pingwin1900/mmrc","converter":"pingwin1900/mmrc-converter","ffmpeg":"pingwin1900/mmrc-ffmpeg","streamer":"pingwin1900/mmrc-streamer"}}')
+MMRC_VERSION=$(echo "$MMRC_VERSION_INFO" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
+MMRC_BRANCH=$(echo "$MMRC_VERSION_INFO" | grep -o '"branch":"[^"]*"' | cut -d'"' -f4)
+MMRC_DOCKER_TAG=$(echo "$MMRC_VERSION_INFO" | grep -o '"dockerTag":"[^"]*"' | cut -d'"' -f4)
+MMRC_STREAMER_IMAGE="$(echo "$MMRC_VERSION_INFO" | grep -o '"streamer":"[^"]*"' | cut -d'"' -f4 || echo "pingwin1900/mmrc-streamer")"
 MMRC_REPO="https://github.com/ya-k0v/MMRC"
-MMRC_RAW="https://raw.githubusercontent.com/ya-k0v/MMRC/v330"
+MMRC_RAW="https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}"
 INSTALL_DIR="/opt/mmrc"
 DATA_DIR="/var/lib/mmrc"
 BIN_DIR="/usr/local/bin"
@@ -218,7 +223,7 @@ install_mmrc() {
 ╔══════════════════════════════════════════╗
 ║          📺 MMRC Installer               ║
 ║     Media Management & Remote Control    ║
-║           Version 3.3.0                  ║
+║           Version ${MMRC_VERSION:-3.4.0}                ║
 ╚══════════════════════════════════════════╝
 "
 
@@ -289,6 +294,8 @@ HOST_DATA_DIR=/opt/mmrc/data
 MMRC_DOCKER=1
 CONVERTER_IMAGE=pingwin1900/mmrc-converter
 FFMPEG_IMAGE=pingwin1900/mmrc-ffmpeg
+STREAMER_IMAGE=pingwin1900/mmrc-streamer
+MMRC_STREAMER_ENABLED=false
 
 # LDAP (optional)
 LDAP_URL=
@@ -332,13 +339,30 @@ ENVEOF3
     chown -R 1001:1001 "$content_dir" 2>/dev/null || true
     success "Content directory: $content_dir"
 
+    # Ask about Streamer (remote FFmpeg)
+    echo ""
+    colorized_echo yellow "🎥 Enable Streamer (remote FFmpeg for HLS streaming)?"
+    echo "  This runs FFmpeg in a separate container for better isolation."
+    echo "  Default: disabled"
+    read -p "  Enable Streamer? [y/N]: " streamer_choice < /dev/tty
+    if [[ "$streamer_choice" =~ ^[Yy]$ ]]; then
+        STREAMER_ENABLED=true
+        sed -i "s|^MMRC_STREAMER_ENABLED=.*|MMRC_STREAMER_ENABLED=true|" "$ENV_FILE"
+        success "Streamer enabled"
+    else
+        STREAMER_ENABLED=false
+    fi
+
     # Pull images with progress
     echo ""
     info "Pulling Docker images..."
     cd "$INSTALL_DIR"
     $COMPOSE pull
-    docker pull "pingwin1900/mmrc-converter:v330" 2>/dev/null || warn "Converter image not available (non-critical)"
-    docker pull "pingwin1900/mmrc-ffmpeg:v330" 2>/dev/null || warn "FFmpeg image not available (non-critical)"
+    docker pull "pingwin1900/mmrc-converter:${MMRC_DOCKER_TAG}" 2>/dev/null || warn "Converter image not available (non-critical)"
+    docker pull "pingwin1900/mmrc-ffmpeg:${MMRC_DOCKER_TAG}" 2>/dev/null || warn "FFmpeg image not available (non-critical)"
+    if [ "$STREAMER_ENABLED" = "true" ]; then
+        docker pull "${MMRC_STREAMER_IMAGE}:${MMRC_DOCKER_TAG}" 2>/dev/null || warn "Streamer image not available (non-critical)"
+    fi
     success "Images pulled"
 
     # Start services with progress
@@ -346,6 +370,9 @@ ENVEOF3
     PROFILES=""
     if [ "$DB_TYPE" = "postgres" ] && [ "$POSTGRES_SOURCE" = "docker" ]; then
         PROFILES="--profile postgres"
+    fi
+    if [ "$STREAMER_ENABLED" = "true" ]; then
+        PROFILES="$PROFILES --profile streamer"
     fi
     $COMPOSE $PROFILES up -d
     success "Services started"

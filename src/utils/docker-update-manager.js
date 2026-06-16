@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { ROOT } from '../config/constants.js';
+import { ROOT, DOCKER_TAG, DOCKER_IMAGES, APP_BRANCH } from '../config/constants.js';
 import { createModuleLogger } from './logger.js';
 const logger = createModuleLogger('system');
 import { notificationsManager } from './notifications.js';
@@ -11,8 +11,8 @@ const execFileAsync = promisify(execFile);
 
 const DEFAULT_REPO_OWNER = 'ya-k0v';
 const DEFAULT_REPO_NAME = 'MMRC';
-const DEFAULT_BRANCH = 'v330';
-const DEFAULT_IMAGE = 'pingwin1900/mmrc';
+const DEFAULT_BRANCH = APP_BRANCH;
+const DEFAULT_IMAGE = DOCKER_IMAGES.server || 'pingwin1900/mmrc';
 const DEFAULT_COMPOSE_FILE = 'docker-compose.yml';
 const DEFAULT_COMMAND_TIMEOUT_MS = Math.max(
   5000,

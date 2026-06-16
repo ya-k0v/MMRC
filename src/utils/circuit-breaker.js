@@ -95,6 +95,8 @@ export class CircuitBreaker {
 export const circuitBreakers = {
   database: new CircuitBreaker({ name: 'database', threshold: 5, timeout: 30000 }),
   fileSystem: new CircuitBreaker({ name: 'fileSystem', threshold: 10, timeout: 60000 }),
-  externalAPI: new CircuitBreaker({ name: 'externalAPI', threshold: 5, timeout: 60000 })
+  externalAPI: new CircuitBreaker({ name: 'externalAPI', threshold: 5, timeout: 60000 }),
+  converter: new CircuitBreaker({ name: 'converter', threshold: 5, timeout: 60000 }),
+  ffmpeg: new CircuitBreaker({ name: 'ffmpeg', threshold: 5, timeout: 60000 })
 };
 

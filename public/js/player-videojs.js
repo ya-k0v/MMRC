@@ -34,6 +34,7 @@ const previewClientVersionParam = url.searchParams.get('clientVersion');
 const previewStartTime = url.searchParams.get('startTime');
 
 const APP_VERSION = '3.3.0';
+fetch('/api/version').then(r => r.json()).then(v => { if (v.apps?.jsPlayer) setPlayerBadge(v.apps.jsPlayer); }).catch(() => {});
 const badgeDeviceId = device_id || (preview ? 'preview' : 'unknown');
 const playerBadge = document.getElementById('playerBadge');
 

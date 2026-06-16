@@ -7,14 +7,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { ROOT } from '../config/constants.js';
+import { ROOT, APP_BRANCH } from '../config/constants.js';
 import { createModuleLogger } from './logger.js';
 const logger = createModuleLogger('system');
 import { notificationsManager } from './notifications.js';
 
 const execFileAsync = promisify(execFile);
 
-const TRACKED_BRANCH = 'v330';
+const TRACKED_BRANCH = APP_BRANCH;
 const DEFAULT_COMMAND_TIMEOUT_MS = Math.max(
   5000,
   Number.parseInt(process.env.UPDATE_CHECK_COMMAND_TIMEOUT_MS || '20000', 10) || 20000

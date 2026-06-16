@@ -6,6 +6,20 @@
 import path from 'node:path';
 import fs from 'node:fs';
 
+const __dirname = path.dirname(new URL(import.meta.url).pathname);
+const ROOT_DIR = path.resolve(__dirname, '..', '..');
+let _versionCache = null;
+function getVersion() {
+  if (_versionCache) return _versionCache;
+  try {
+    const p = path.join(ROOT_DIR, 'version.json');
+    _versionCache = JSON.parse(fs.readFileSync(p, 'utf-8'));
+  } catch {
+    _versionCache = { version: '0.0.0', branch: 'main', dockerTag: 'latest', dockerImages: {} };
+  }
+  return _versionCache;
+}
+
 // Базовые пути
 export const ROOT = process.cwd();
 export const PUBLIC = path.join(ROOT, 'public');
@@ -85,4 +99,11 @@ export const ALLOWED_EXT = /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg
 // Сетевые настройки
 export const PORT = process.env.PORT || 3000;
 export const HOST = process.env.HOST || '127.0.0.1'; // 127.0.0.1 для server (Nginx в том же контейнере), 0.0.0.0 для воркеров
+
+// Версия проекта — единый источник из version.json
+export const APP_VERSION = getVersion().version;
+export const APP_BRANCH = getVersion().branch;
+export const DOCKER_TAG = getVersion().dockerTag;
+export const DOCKER_IMAGES = getVersion().dockerImages;
+export const APPS = getVersion().apps || {};
 

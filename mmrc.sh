@@ -15,13 +15,17 @@ COMPOSE_FILE="$APP_DIR/docker-compose.yml"
 ENV_FILE="$APP_DIR/.env"
 MMRC_REPO="https://github.com/ya-k0v/MMRC"
 MMRC_SCRIPTS_REPO="https://github.com/ya-k0v/MMRC"
-MMRC_BRANCH="v330"
+
+# Загружаем версию из version.json на GitHub
+__MMRC_VER=$(curl -fsSL "https://raw.githubusercontent.com/ya-k0v/MMRC/v340/version.json" 2>/dev/null || echo '{"branch":"v340","dockerTag":"v340","dockerImages":{"server":"pingwin1900/mmrc","converter":"pingwin1900/mmrc-converter","ffmpeg":"pingwin1900/mmrc-ffmpeg","streamer":"pingwin1900/mmrc-streamer"}}')
+MMRC_BRANCH=$(echo "$__MMRC_VER" | grep -o '"branch":"[^"]*"' | cut -d'"' -f4)
+DOCKER_IMAGE_TAG=$(echo "$__MMRC_VER" | grep -o '"dockerTag":"[^"]*"' | cut -d'"' -f4)
 DOCKER_ORG="pingwin1900"
 DOCKER_IMAGE="${DOCKER_ORG}/mmrc"
-DOCKER_IMAGE_TAG="v330"
 CONVERTER_IMAGE="${DOCKER_ORG}/mmrc-converter"
 FFMPEG_IMAGE="${DOCKER_ORG}/mmrc-ffmpeg"
-export DOCKER_IMAGE DOCKER_IMAGE_TAG CONVERTER_IMAGE FFMPEG_IMAGE
+STREAMER_IMAGE="${DOCKER_ORG}/mmrc-streamer"
+export DOCKER_IMAGE DOCKER_IMAGE_TAG CONVERTER_IMAGE FFMPEG_IMAGE STREAMER_IMAGE
 
 # ========================
 # Colors
@@ -338,6 +342,7 @@ ENVEOF3
     $COMPOSE pull
     docker pull "${CONVERTER_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "Converter image not available (non-critical)"
     docker pull "${FFMPEG_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "FFmpeg image not available (non-critical)"
+    docker pull "${STREAMER_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "Streamer image not available (non-critical)"
     success "Images pulled"
 
     # Start services with postgres profile if needed
@@ -385,9 +390,14 @@ ENVEOF3
 }
 
 get_compose_profiles() {
+    local profiles=""
     if grep -q "^DB_TYPE=postgres" "$ENV_FILE" 2>/dev/null; then
-        echo "--profile postgres"
+        profiles="--profile postgres"
     fi
+    if grep -q "^MMRC_STREAMER_ENABLED=true" "$ENV_FILE" 2>/dev/null; then
+        profiles="$profiles --profile streamer"
+    fi
+    echo "$profiles"
 }
 
 cmd_start() {
@@ -512,6 +522,7 @@ cmd_update() {
     $COMPOSE pull
     docker pull "${CONVERTER_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "Converter image not available (non-critical)"
     docker pull "${FFMPEG_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "FFmpeg image not available (non-critical)"
+    docker pull "${STREAMER_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "Streamer image not available (non-critical)"
     success "Images updated"
 
     # Restart services

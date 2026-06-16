@@ -22,6 +22,7 @@ import {
   stopWalCheckpointInterval,
   performWalCheckpoint
 } from './src/database/database.js';
+import { APP_VERSION, APP_BRANCH, DOCKER_TAG, DOCKER_IMAGES, APPS } from './src/config/constants.js';
 import { runMigrations } from './src/database/migrate.js';
 import { 
   loadDevicesFromDB, 
@@ -33,6 +34,10 @@ import { cleanupMissingFiles, repairImportedFilePaths } from './src/database/fil
 import { getFileStatus } from './src/video/file-status.js';
 import { checkVideoParameters } from './src/video/ffmpeg-wrapper.js';
 import { autoOptimizeVideo } from './src/video/optimizer.js';
+import { videoOptimizeQueue, queuesReady } from './src/queue/queue.js';
+import { createBullBoard } from '@bull-board/api';
+import { BullAdapter } from '@bull-board/api/bullAdapter.js';
+import { ExpressAdapter } from '@bull-board/express';
 import { 
   findFileFolder, getPageSlideCount, autoConvertFile 
 } from './src/converters/document-converter.js';
@@ -499,8 +504,8 @@ const MMRC_DOCKER = process.env.MMRC_DOCKER === '1';
 
 const updateManager = MMRC_DOCKER
   ? createDockerUpdateManager({
-      branch: process.env.DOCKER_IMAGE_TAG || 'v330',
-      image: process.env.DOCKER_IMAGE ? `${process.env.DOCKER_IMAGE}:${process.env.DOCKER_IMAGE_TAG || 'v330'}` : undefined,
+      branch: process.env.DOCKER_IMAGE_TAG || DOCKER_TAG,
+      image: process.env.DOCKER_IMAGE ? `${process.env.DOCKER_IMAGE}:${process.env.DOCKER_IMAGE_TAG || DOCKER_TAG}` : undefined,
       composeDir: process.env.MMRC_COMPOSE_DIR
     })
   : createUpdateManager({
@@ -1123,6 +1128,11 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
 const modulesRouter = createModulesRouter();
 app.use('/api/admin/modules', requireAuth, requireAdmin, modulesRouter);
 
+// Bull Board (мониторинг очередей)
+if (bullBoardRouter) {
+  app.use('/admin/queues', requireAuth, requireAdmin, bullBoardRouter);
+}
+
 // Настройки администратора
 app.get('/api/admin/settings', requireAuth, requireAdmin, async (req, res) => {
   try {
@@ -1304,6 +1314,19 @@ app.post('/api/admin/database/cleanup-orphaned-files', requireAuth, requireAdmin
 });
 
 // ========================================
+// VERSION ENDPOINT
+// ========================================
+app.get('/api/version', (req, res) => {
+  res.json({
+    version: APP_VERSION,
+    branch: APP_BRANCH,
+    dockerTag: DOCKER_TAG,
+    dockerImages: DOCKER_IMAGES,
+    apps: APPS
+  });
+});
+
+// ========================================
 // HEALTH CHECK ENDPOINT
 // ========================================
 app.get('/health', async (req, res) => {
@@ -1317,18 +1340,40 @@ app.get('/health', async (req, res) => {
       rss: Math.round(process.memoryUsage().rss / 1024 / 1024)
     },
     database: 'unknown',
+    disk: {},
     circuitBreakers: {}
   };
 
   // Проверка БД
   try {
     const db = getDatabase();
-    // Простой запрос для проверки соединения
     await db.get('SELECT 1');
     health.database = 'connected';
   } catch (e) {
     health.database = 'disconnected';
     health.status = 'degraded';
+  }
+
+  // Проверка диска
+  try {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const execFileAsync = promisify(execFile);
+    const { stdout } = await execFileAsync('df', ['-m', DEFAULT_DATA_DIR], { timeout: 5000 });
+    const lines = stdout.trim().split('\n');
+    if (lines.length >= 2) {
+      const parts = lines[1].split(/\s+/);
+      if (parts.length >= 4) {
+        health.disk = {
+          path: DEFAULT_DATA_DIR,
+          totalMB: parseInt(parts[1], 10) || 0,
+          usedMB: parseInt(parts[2], 10) || 0,
+          availableMB: parseInt(parts[3], 10) || 0
+        };
+      }
+    }
+  } catch {
+    health.disk = { path: DEFAULT_DATA_DIR, error: 'unable to check' };
   }
 
   // Состояние circuit breakers
@@ -1381,7 +1426,35 @@ app.use('/api/duplicates', requireAuth, deduplicationRouter);
 
 // Оберточные функции для совместимости с существующим кодом
 async function autoOptimizeVideoWrapper(deviceId, fileName) {
+  if (queuesReady && videoOptimizeQueue) {
+    const job = await videoOptimizeQueue.add({ deviceId, fileName });
+    return { success: true, status: 'queued', jobId: job.id };
+  }
   return await autoOptimizeVideo(deviceId, fileName, devices, io, fileNamesMap, (map) => saveFileNamesToDB(map));
+}
+
+if (queuesReady && videoOptimizeQueue) {
+  videoOptimizeQueue.process(async (job) => {
+    const { deviceId, fileName } = job.data;
+    logger.info(`[Queue] Processing optimize job ${job.id}: ${deviceId}/${fileName}`);
+    return autoOptimizeVideo(deviceId, fileName, devices, io, fileNamesMap, (map) => saveFileNamesToDB(map));
+  });
+}
+
+// Bull Board (UI для мониторинга очередей)
+let bullBoardRouter = null;
+if (queuesReady) {
+  try {
+    const serverAdapter = new ExpressAdapter();
+    serverAdapter.setBasePath('/admin/queues');
+    createBullBoard({
+      queues: [new BullAdapter(videoOptimizeQueue)],
+      serverAdapter,
+    });
+    bullBoardRouter = serverAdapter.getRouter();
+  } catch (err) {
+    logger.warn('[BullBoard] Failed to initialize', { error: err.message });
+  }
 }
 
 async function autoConvertFileWrapper(deviceId, fileName, devicesParam, fileNamesMapParam, saveFileNamesMapFnParam, ioParam) {
@@ -1616,50 +1689,67 @@ let isShuttingDown = false;
 async function gracefulShutdown(signal, exitCode = 0) {
   if (isShuttingDown) return;
   isShuttingDown = true;
-  
+
   logger.info(`🛑 Received ${signal}, starting graceful shutdown...`);
-  
+
+  const forceExit = setTimeout(() => {
+    logger.warn('⚠️ Force exit after shutdown timeout');
+    process.exit(exitCode);
+  }, 15000);
+
   try {
     // 1. Останавливаем прием новых запросов
-    server.close(() => {
-      logger.info('✅ HTTP server closed');
-    });
-    
+    await Promise.race([
+      new Promise(resolve => server.close(resolve)),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('HTTP server close timeout')), 5000))
+    ]);
+    logger.info('✅ HTTP server closed');
+
     // 2. Закрываем WebSocket соединения
     if (io) {
-      io.close(() => {
-        logger.info('✅ WebSocket connections closed');
-      });
+      await Promise.race([
+        new Promise(resolve => io.close(resolve)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Socket.IO close timeout')), 5000))
+      ]);
+      logger.info('✅ WebSocket connections closed');
     }
-    
+
     // 3. Останавливаем системный мониторинг
     stopSystemMonitor();
     logger.info('✅ System monitor stopped');
-    
+
     // 4. Очищаем все таймеры через реестр
     timerRegistry.clearAll('graceful_shutdown');
     logger.info('✅ All timers cleared');
-    
+
     // Останавливаем WAL checkpoint
     stopWalCheckpointInterval();
     logger.info('✅ WAL checkpoint interval stopped');
-    
+
     // 4. Останавливаем StreamManager
     if (streamManager && typeof streamManager.stop === 'function') {
       streamManager.stop();
       logger.info('✅ StreamManager stopped');
     }
-    
+
+    // 4b. Закрываем очереди Bull
+    if (queuesReady) {
+      await Promise.allSettled([
+        videoOptimizeQueue?.close().catch(() => {}),
+      ]);
+      logger.info('✅ Bull queues closed');
+    }
+
     // 5. Закрываем базу данных
-    closeDatabase();
-    
-    // 6. Ждем завершения активных запросов (макс 10 сек)
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
+    await closeDatabase();
+    logger.info('✅ Database closed');
+
+    clearTimeout(forceExit);
     logger.info('✅ Graceful shutdown completed');
     process.exit(exitCode);
   } catch (e) {
     logger.error('❌ Error during shutdown:', e);
+    clearTimeout(forceExit);
     process.exit(exitCode === 0 ? 1 : exitCode);
   }
 }

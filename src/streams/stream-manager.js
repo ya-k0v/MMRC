@@ -8,7 +8,7 @@ import http from 'node:http';
 import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('stream');
 import { getStreamsOutputDir } from '../config/settings-manager.js';
-import { spawnFfmpeg, spawnFfprobe } from '../utils/docker-ffmpeg.js';
+import { spawnFfmpeg, spawnFfprobe, spawnFfmpegRemote, spawnFfprobeRemote } from '../utils/docker-ffmpeg.js';
 import { 
   notificationsManager,
   notifyDiskFull, 
@@ -1421,9 +1421,16 @@ class StreamManager extends EventEmitter {
     try {
       const isStdBinary = this.options.ffmpegPath === 'ffmpeg' || this.options.ffmpegPath === 'ffprobe';
       if (isStdBinary) {
-        child = (this.options.ffmpegPath === 'ffmpeg' ? spawnFfmpeg : spawnFfprobe)(args, {
-          stdio: ['ignore', 'ignore', 'pipe']
-        });
+        const useRemote = process.env.MMRC_STREAMER_ENABLED === '1' || process.env.MMRC_STREAMER === '1';
+        if (useRemote) {
+          child = await (this.options.ffmpegPath === 'ffmpeg' ? spawnFfmpegRemote : spawnFfprobeRemote)(args, {
+            stdio: ['ignore', 'ignore', 'pipe']
+          });
+        } else {
+          child = (this.options.ffmpegPath === 'ffmpeg' ? spawnFfmpeg : spawnFfprobe)(args, {
+            stdio: ['ignore', 'ignore', 'pipe']
+          });
+        }
       } else {
         child = spawn(this.options.ffmpegPath, args, {
           stdio: ['ignore', 'ignore', 'pipe']
@@ -2024,6 +2031,10 @@ class StreamManager extends EventEmitter {
    */
   _checkProcessAlive(process) {
     if (!process || process.killed) {
+      return false;
+    }
+
+    if (process._exited) {
       return false;
     }
     

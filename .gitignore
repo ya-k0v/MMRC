@@ -2,6 +2,12 @@
 node_modules/
 dev/
 
+# Development / planning (not used in production)
+PLAN.md
+docker-build.sh
+src/queue/
+scripts/
+
 # Logs & runtime artifacts
 data/
 *.log
@@ -98,3 +104,6 @@ clients/android-mediaplayer/*.iml
 !clients/android-mediaplayer/build.gradle
 !clients/android-mediaplayer/app/build.gradle
 !clients/android-mediaplayer/settings.gradle
+
+# Random artifacts
+untitled.*

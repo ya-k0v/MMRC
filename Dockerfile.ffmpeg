@@ -2,9 +2,10 @@
 
 FROM debian:bookworm-slim
 
+ARG APP_VERSION=3.4.0
 LABEL maintainer="ya-k0v"
 LABEL description="MMRC FFmpeg/FFprobe helper container"
-LABEL version="3.3.0"
+LABEL version=${APP_VERSION}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \

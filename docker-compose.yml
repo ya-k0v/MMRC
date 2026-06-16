@@ -38,6 +38,7 @@ services:
       - HOST_DATA_DIR=${HOST_DATA_DIR:-/opt/mmrc/data}
       - CONVERTER_IMAGE=${CONVERTER_IMAGE:-pingwin1900/mmrc-converter}
       - FFMPEG_IMAGE=${FFMPEG_IMAGE:-pingwin1900/mmrc-ffmpeg}
+      - REDIS_URL=${REDIS_URL:-redis://mmrc-redis:6379}
     ports:
       - "${NGINX_HTTP_PORT:-80}:80"
       - "${NGINX_HTTPS_PORT:-443}:443"
@@ -80,6 +81,46 @@ services:
     networks:
       - mmrc-network
 
+  streamer:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamer
+    profiles: [streamer]
+    container_name: mmrc-streamer
+    restart: unless-stopped
+    environment:
+      - PORT=3001
+      - HOST_DATA_DIR=${HOST_DATA_DIR:-/opt/mmrc/data}
+    volumes:
+      - mmrc-data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3001/health', r => {process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      mmrc-network:
+        aliases:
+          - mmrc-streamer
+
+  redis:
+    image: redis:7-alpine
+    profiles: [redis]
+    container_name: mmrc-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - mmrc-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - mmrc-network
+
 volumes:
   mmrc-data:
     driver: local
@@ -88,6 +129,8 @@ volumes:
   mmrc-temp:
     driver: local
   mmrc-pgdata:
+    driver: local
+  mmrc-redis:
     driver: local
 
 networks:
