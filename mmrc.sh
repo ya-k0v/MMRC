@@ -121,7 +121,7 @@ cmd_install() {
 
     if is_mmrc_installed; then
         warn "MMRC is already installed at $APP_DIR"
-        info "Run 'mmrc update' to update."
+        info "Run 'mmrc update' to update, or 'mmrc reinstall' for a fresh install."
         exit 0
     fi
 
@@ -132,267 +132,96 @@ cmd_install() {
 ╚══════════════════════════════════════════╝
 "
 
-    # Detect OS
-    if [ -f /etc/os-release ]; then
-        OS=$(awk -F= '/^NAME/{print $2}' /etc/os-release | tr -d '"')
-    else
-        error "Unsupported OS"
-        exit 1
-    fi
-    info "Detected OS: $OS"
+    curl -fsSL "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/install.sh" | bash
+}
 
-    # Check Docker
-    if ! command -v docker >/dev/null 2>&1; then
-        info "Docker not found. Installing..."
-        curl -fsSL https://get.docker.com | sh
-        success "Docker installed"
-    else
-        success "Docker found: $(docker --version)"
+cmd_reinstall() {
+    check_root
+    require_installed
+
+    colorized_echo yellow "⚠️  This will reinstall MMRC. Configuration will be preserved."
+    read -p "  Continue? [y/N]: " confirm < /dev/tty
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        info "Aborted"
+        exit 0
     fi
 
+    curl -fsSL "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/install.sh" | bash
+}
+
+cmd_pull() {
+    require_installed
     detect_compose
-    success "Docker Compose found"
-
-    # Select database type
-    DB_TYPE="${DB_TYPE:-}"
-    echo ""
-    colorized_echo yellow "🗄️ Select database type:"
-    echo "  [1] SQLite (built-in, no setup required)"
-    echo "  [2] PostgreSQL (via Docker, separate container)"
-    while [ -z "$DB_TYPE" ]; do
-        read -p "  Choose [1-2]: " db_choice < /dev/tty
-        echo ""
-        case "$db_choice" in
-            2) DB_TYPE="postgres" ;;
-            1) DB_TYPE="sqlite" ;;
-            *) echo "  Invalid choice, try again." ;;
-        esac
-    done
-
-    # PostgreSQL defaults
-    DB_POSTGRES_HOST="${DB_POSTGRES_HOST:-mmrc-postgres}"
-    DB_POSTGRES_PORT="${DB_POSTGRES_PORT:-5432}"
-    DB_POSTGRES_USER="${DB_POSTGRES_USER:-mmrc}"
-    DB_POSTGRES_PASSWORD="${DB_POSTGRES_PASSWORD:-}"
-    DB_POSTGRES_DB="${DB_POSTGRES_DB:-mmrc}"
-
-    if [ "$DB_TYPE" = "postgres" ]; then
-        echo ""
-        colorized_echo blue "PostgreSQL setup..."
-        POSTGRES_SOURCE="${POSTGRES_SOURCE:-}"
-        if [ -z "$POSTGRES_SOURCE" ]; then
-            echo ""
-            echo "  Select PostgreSQL setup method:"
-            echo "    [1] Create new Docker container (recommended)"
-            echo "    [2] Use existing PostgreSQL database"
-            read -p "  Choose [1-2]: " pg_choice < /dev/tty
-            echo ""
-            case "$pg_choice" in
-                2) POSTGRES_SOURCE="existing" ;;
-                *) POSTGRES_SOURCE="docker" ;;
-            esac
-        fi
-        if [ "$POSTGRES_SOURCE" = "existing" ]; then
-            echo "  Using existing PostgreSQL database..."
-            read -p "  PostgreSQL host [$DB_POSTGRES_HOST]: " pg_host_input < /dev/tty
-            DB_POSTGRES_HOST="${pg_host_input:-$DB_POSTGRES_HOST}"
-            read -p "  PostgreSQL port [$DB_POSTGRES_PORT]: " pg_port_input < /dev/tty
-            DB_POSTGRES_PORT="${pg_port_input:-$DB_POSTGRES_PORT}"
-            read -p "  PostgreSQL database name [$DB_POSTGRES_DB]: " pg_db_input < /dev/tty
-            DB_POSTGRES_DB="${pg_db_input:-$DB_POSTGRES_DB}"
-            read -p "  PostgreSQL user [$DB_POSTGRES_USER]: " pg_user_input < /dev/tty
-            DB_POSTGRES_USER="${pg_user_input:-$DB_POSTGRES_USER}"
-            while [ -z "$DB_POSTGRES_PASSWORD" ]; do
-                read -s -p "  PostgreSQL password (required): " pg_pass_input < /dev/tty
-                echo ""
-                DB_POSTGRES_PASSWORD="${pg_pass_input:-}"
-            done
-        else
-            if [ -z "$DB_POSTGRES_PASSWORD" ]; then
-                DB_POSTGRES_PASSWORD="mmrc"
-                warn "Using default password: mmrc"
-            fi
-        fi
-    fi
-
-    # Create directories
-    mkdir -p "$APP_DIR" "$DATA_DIR"
-    success "Directories created"
-
-    # Download docker-compose.yml
-    info "Downloading docker-compose.yml..."
-    curl -fsSL -o "$COMPOSE_FILE" \
-        "${MMRC_SCRIPTS_REPO}/raw/${MMRC_BRANCH}/docker-compose.deploy.yml" || {
-        error "Failed to download docker-compose.yml"
-        exit 1
-    }
-    success "docker-compose.yml downloaded"
-
-    # Download nginx config
-    info "Downloading nginx configuration..."
-    mkdir -p "$APP_DIR/docker/nginx"
-    curl -fsSL -o "$APP_DIR/docker/nginx/nginx.conf" \
-        "${MMRC_SCRIPTS_REPO}/raw/${MMRC_BRANCH}/docker/nginx/nginx.conf" || {
-        warn "Failed to download nginx.conf (optional)"
-    }
-    success "nginx.conf downloaded"
-
-    # Generate .env
-    info "Generating configuration..."
-    JWT_SECRET=$(openssl rand -hex 64)
-    cat > "$ENV_FILE" << ENVEOF
-# MMRC Configuration
-# Generated on $(date)
-
-NODE_ENV=production
-LOG_LEVEL=info
-SILENT_CONSOLE=false
-
-# JWT Authentication
-JWT_SECRET=${JWT_SECRET}
-JWT_ACCESS_EXPIRES_IN=12h
-JWT_REFRESH_EXPIRES_IN=30d
-
-# Database type: sqlite | postgres
-DB_TYPE=${DB_TYPE}
-
-# Server
-SERVER_PORT=3000
-
-# Database
-WAL_CHECKPOINT_INTERVAL_MS=300000
-
-# Night Optimization
-NIGHT_OPT_START_HOUR=1
-NIGHT_OPT_END_HOUR=5
-
-# Resource Limits
-JOB_RESERVE_CPU_PERCENT=30
-JOB_RESERVE_MEMORY_MB=2048
-JOB_MAX_SINGLE_JOB_PERCENT=70
-
-
-STREAM_MAX_JOBS=100
-STREAM_IDLE_TIMEOUT_MS=180000
-
-# Nginx
-NGINX_HTTP_PORT=80
-NGINX_HTTPS_PORT=443
-
-    # Content Storage (project dir by default)
-CONTENT_DIR=$APP_DIR/data
-
-# Host data dir (for converter container volume mount)
-HOST_DATA_DIR=$APP_DIR/data
-
-    # LDAP (optional)
-LDAP_URL=
-LDAP_BIND_DN=
-LDAP_SEARCH_BASE=
-ENVEOF
-
-    # Append PostgreSQL config if needed
-    if [ "$DB_TYPE" = "postgres" ]; then
-        cat >> "$ENV_FILE" << ENVEOF3
-
-# PostgreSQL connection
-DB_HOST=$DB_POSTGRES_HOST
-DB_PORT=$DB_POSTGRES_PORT
-DB_NAME=$DB_POSTGRES_DB
-DB_USER=$DB_POSTGRES_USER
-DB_PASSWORD=$DB_POSTGRES_PASSWORD
-ENVEOF3
-    fi
-    success "Configuration generated"
-
-    # Ask about content directory
-    echo ""
-    colorized_echo yellow "📁 Where do you want to store media content?"
-    colorized_echo yellow "Default: $APP_DIR/data"
-    content_dir=""
-    while [ -z "$content_dir" ]; do
-        read -p "  Enter path [default: $APP_DIR/data]: " content_dir < /dev/tty
-        if [ -z "$content_dir" ]; then
-            content_dir="$APP_DIR/data"
-        fi
-    done
-    replace_or_append_env "CONTENT_DIR" "$content_dir"
-    replace_or_append_env "HOST_DATA_DIR" "$content_dir"
-
-    # Create content directory structure
-    mkdir -p "$content_dir"/{db,content,streams,converted/trailers,logs,temp,hero}
-    success "Content directory created: $content_dir"
-
-    # SSL Setup
-    echo ""
-    colorized_echo yellow "Enable SSL (Let's Encrypt)?"
-    read -p "  Enable SSL? [y/N]: " ssl_choice < /dev/tty
-    if [[ "$ssl_choice" =~ ^[Yy]$ ]]; then
-        read -p "  Enter domain: " ssl_domain < /dev/tty
-        if [ -n "$ssl_domain" ]; then
-            replace_or_append_env "SSL_DOMAIN" "$ssl_domain"
-            info "SSL will be configured after first start"
-        fi
-    fi
-
-    # Pull images
-    echo ""
-    info "Pulling Docker images..."
     cd "$APP_DIR"
-    $COMPOSE pull
+    info "Pulling latest Docker images..."
+    PROFILES=$(get_compose_profiles)
+    $COMPOSE $PROFILES pull
     docker pull "${CONVERTER_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "Converter image not available (non-critical)"
     docker pull "${FFMPEG_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "FFmpeg image not available (non-critical)"
     docker pull "${STREAMER_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "Streamer image not available (non-critical)"
     success "Images pulled"
+}
 
-    # Start services with postgres profile if needed
-    info "Starting MMRC services..."
-    PROFILES=""
-    if [ "$DB_TYPE" = "postgres" ] && [ "$POSTGRES_SOURCE" = "docker" ]; then
-        PROFILES="--profile postgres"
+cmd_down() {
+    require_installed
+    detect_compose
+    cd "$APP_DIR"
+    info "Stopping and removing containers..."
+    PROFILES=$(get_compose_profiles)
+    $COMPOSE $PROFILES down
+    success "Containers removed"
+}
+
+cmd_ps() {
+    require_installed
+    detect_compose
+    cd "$APP_DIR"
+    $COMPOSE ps
+}
+
+cmd_reset() {
+    check_root
+    require_installed
+
+    colorized_echo red "
+╔══════════════════════════════════════════╗
+║      ⚠️  MMRC Reset                      ║
+║   THIS WILL DELETE ALL DATA!             ║
+╚══════════════════════════════════════════╝
+"
+
+    read -p "Are you sure? Type 'reset' to confirm: " confirm < /dev/tty
+    if [ "$confirm" != "reset" ]; then
+        info "Aborted"
+        exit 0
     fi
-    $COMPOSE $PROFILES up -d
-    success "Services started"
 
-    # Wait for health
-    info "Waiting for server to be ready..."
-    sleep 10
+    detect_compose
+    cd "$APP_DIR"
 
-    # Get server IP
-    SERVER_IP=$(curl -4 -fsS --max-time 5 https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+    info "Stopping services and removing volumes..."
+    PROFILES=$(get_compose_profiles)
+    $COMPOSE $PROFILES down -v
+    success "Services stopped, volumes removed"
+
+    info "Cleaning content data..."
+    CONTENT_DIR=$(grep "^CONTENT_DIR=" "$ENV_FILE" | cut -d= -f2 || echo "$APP_DIR/data")
+    rm -rf "$CONTENT_DIR"/*
+    success "Content data cleaned"
 
     echo ""
-    colorized_echo cyan "╔════════════════════════════════════════════════════════════════════════════════════════════════════╗"
-    box_line "                                                  🎉 MMRC Installed Successfully!                                                  "
-    colorized_echo cyan "╠════════════════════════════════════════════════════════════════════════════════════════════════════╣"
-    box_line ""
-    box_line "  📺 Admin Panel:                         http://${SERVER_IP}:3000/admin.html"
-    box_line "  🎤 Speaker Panel:                       http://${SERVER_IP}:3000/speaker.html"
-    box_line "  🎖️  Hero Module:                         http://${SERVER_IP}:3000/hero/"
-    box_line "  ❤️  Health Check:                        http://${SERVER_IP}:3000/health"
-    box_line ""
-    box_line "  👤 Default login:                       admin / admin123"
-    box_line "  ⚠️  CHANGE PASSWORD after first login!"
-    box_line ""
-    box_line "  📁 Config:                              $APP_DIR/.env"
-    box_line "  💾 Data:                                $DATA_DIR"
-    box_line "  📦 Media:                               $content_dir"
-    box_line ""
-    colorized_echo cyan "╚════════════════════════════════════════════════════════════════════════════════════════════════════╝"
-    echo ""
-    info "Useful commands:"
-    echo "   mmrc status    - Check services status"
-    echo "   mmrc logs      - View logs"
-    echo "   mmrc stop      - Stop services"
-    echo "   mmrc update    - Update to latest version"
-    echo "   mmrc backup    - Create backup"
-    echo ""
+    success "MMRC has been reset to clean state."
+    info "Configuration preserved in $APP_DIR/.env"
+    info "Run 'mmrc pull && mmrc start' to start fresh."
 }
 
 get_compose_profiles() {
     local profiles=""
     if grep -q "^DB_TYPE=postgres" "$ENV_FILE" 2>/dev/null; then
         profiles="--profile postgres"
+    fi
+    if grep -q "^STORAGE_BACKEND=s3" "$ENV_FILE" 2>/dev/null; then
+        profiles="$profiles --profile s3"
     fi
     if grep -q "^MMRC_STREAMER_ENABLED=true" "$ENV_FILE" 2>/dev/null; then
         profiles="$profiles --profile streamer"
@@ -443,11 +272,10 @@ cmd_status() {
     echo ""
 
     # Health check
-    SERVER_PORT=$(grep "^SERVER_PORT=" "$ENV_FILE" | cut -d= -f2 || echo "3000")
-    if curl -fsS http://localhost:${SERVER_PORT}/health >/dev/null 2>&1; then
+    if curl -fsS http://localhost:80/health >/dev/null 2>&1; then
         success "Server is healthy"
     else
-        warn "Server is not responding (port ${SERVER_PORT})"
+        warn "Server is not responding on port 80"
     fi
 
     # Database info
@@ -483,13 +311,19 @@ cmd_logs() {
     cd "$APP_DIR"
 
     if [ -n "$1" ]; then
+        PROFILES=$(get_compose_profiles)
         case $1 in
-            server|mmrc) $COMPOSE logs -f mmrc ;;
-            postgres) $COMPOSE logs -f mmrc-postgres ;;
-            *) $COMPOSE logs -f "$1" ;;
+            server|mmrc) $COMPOSE $PROFILES logs -f mmrc ;;
+            postgres|db) $COMPOSE $PROFILES logs -f postgres ;;
+            redis) $COMPOSE logs -f redis ;;
+            minio|s3) $COMPOSE $PROFILES logs -f minio ;;
+            streamer) $COMPOSE $PROFILES logs -f streamer ;;
+            converter) $COMPOSE logs -f converter 2>/dev/null || warn "Converter service not running" ;;
+            *) $COMPOSE $PROFILES logs -f "$1" ;;
         esac
     else
-        $COMPOSE logs -f
+        PROFILES=$(get_compose_profiles)
+        $COMPOSE $PROFILES logs -f
     fi
 }
 
@@ -519,7 +353,7 @@ cmd_update() {
 
     # Pull new images
     info "Pulling latest Docker images..."
-    $COMPOSE pull
+    $COMPOSE $PROFILES pull
     docker pull "${CONVERTER_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "Converter image not available (non-critical)"
     docker pull "${FFMPEG_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "FFmpeg image not available (non-critical)"
     docker pull "${STREAMER_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "Streamer image not available (non-critical)"
@@ -534,8 +368,7 @@ cmd_update() {
     info "Waiting for server to be ready..."
     sleep 10
 
-    SERVER_PORT=$(grep "^SERVER_PORT=" "$ENV_FILE" | cut -d= -f2 || echo "3000")
-    if curl -fsS http://localhost:${SERVER_PORT}/health >/dev/null 2>&1; then
+    if curl -fsS http://localhost:80/health >/dev/null 2>&1; then
         success "Update completed successfully!"
     else
         warn "Server may still be starting. Check logs: mmrc logs"
@@ -589,17 +422,20 @@ cmd_backup() {
             success "PostgreSQL database backed up via Docker: mmrc-${TIMESTAMP}.dump"
         fi
     else
-        if [ -f "config/main.db" ]; then
-            docker compose exec -T mmrc sqlite3 /app/config/main.db ".backup /app/config/main.db.backup"
-            cp "config/main.db.backup" "$BACKUP_DIR/main-${TIMESTAMP}.db"
-            success "Main database backed up"
-        fi
+        PROFILES=$(get_compose_profiles)
+        $COMPOSE $PROFILES exec -T mmrc sqlite3 /app/config/main.db \
+            ".backup '/tmp/main-${TIMESTAMP}.db'" 2>/dev/null && \
+        $COMPOSE $PROFILES cp "mmrc:/tmp/main-${TIMESTAMP}.db" "$BACKUP_DIR/main-${TIMESTAMP}.db" && \
+        $COMPOSE $PROFILES exec -T mmrc rm "/tmp/main-${TIMESTAMP}.db" 2>/dev/null && \
+        success "Main database backed up" || \
+        warn "Main database backup failed"
 
-        if [ -f "config/hero/heroes.db" ]; then
-            docker compose exec -T mmrc sqlite3 /app/config/hero/heroes.db ".backup /app/config/hero/heroes.db.backup"
-            cp "config/hero/heroes.db.backup" "$BACKUP_DIR/heroes-${TIMESTAMP}.db"
-            success "Heroes database backed up"
-        fi
+        $COMPOSE $PROFILES exec -T mmrc sqlite3 /app/config/hero/heroes.db \
+            ".backup '/tmp/heroes-${TIMESTAMP}.db'" 2>/dev/null && \
+        $COMPOSE $PROFILES cp "mmrc:/tmp/heroes-${TIMESTAMP}.db" "$BACKUP_DIR/heroes-${TIMESTAMP}.db" && \
+        $COMPOSE $PROFILES exec -T mmrc rm "/tmp/heroes-${TIMESTAMP}.db" 2>/dev/null && \
+        success "Heroes database backed up" || \
+        warn "Heroes database backup failed"
     fi
 
     # Backup config
@@ -760,12 +596,17 @@ Usage: mmrc <command> [options]
 
 Commands:
   install          Install MMRC with Docker
+  reinstall        Reinstall MMRC (preserves config)
   start            Start MMRC services
   stop             Stop MMRC services
   restart          Restart MMRC services
   status           Check services status
-  logs [service]   View logs (server|postgres)
+  ps               List containers (docker compose ps)
+  logs [service]   View logs (server|postgres|redis|minio|streamer)
+  pull             Pull latest Docker images
   update           Update to latest version
+  down             Stop and remove containers
+  reset            Reset to clean state (removes all data, keeps config)
   backup           Create database backup
   ssl              Setup SSL certificate
   shell [service]  Open shell in container
@@ -773,14 +614,15 @@ Commands:
   uninstall        Remove MMRC
 
 Examples:
-  mmrc install                  # Install MMRC
-  mmrc status                   # Check status
-  mmrc logs                     # View all logs
+  mmrc install                  # Install MMRC interactively
+  mmrc status                   # Check services status
   mmrc logs server              # View server logs
-  mmrc logs postgres            # View PostgreSQL logs
+  mmrc pull                     # Pull latest images
   mmrc update                   # Update to latest version
-  mmrc backup                   # Create backup
-  mmrc ssl                      # Setup SSL
+  mmrc down                     # Stop and remove containers
+  mmrc reset                    # Reset to clean state
+  mmrc backup                   # Create database backup
+  mmrc ssl                      # Setup SSL certificate
   mmrc edit-env                 # Edit configuration
 "
 }
@@ -791,12 +633,17 @@ Examples:
 
 case "${1:-help}" in
     install) cmd_install "${@:2}" ;;
+    reinstall) cmd_reinstall ;;
     start) cmd_start ;;
     stop) cmd_stop ;;
     restart) cmd_restart ;;
     status) cmd_status ;;
+    ps) cmd_ps ;;
     logs) cmd_logs "${@:2}" ;;
+    pull) cmd_pull ;;
     update) cmd_update ;;
+    down) cmd_down ;;
+    reset) cmd_reset ;;
     backup) cmd_backup ;;
     ssl) cmd_ssl ;;
     shell) cmd_shell "${@:2}" ;;
