@@ -154,8 +154,9 @@ cmd_pull() {
     detect_compose
     cd "$APP_DIR"
     info "Pulling latest Docker images..."
+    COMPOSE_HA=$(get_compose_ha)
     PROFILES=$(get_compose_profiles)
-    $COMPOSE $PROFILES pull
+    $COMPOSE $COMPOSE_HA $PROFILES pull
     docker pull "${CONVERTER_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "Converter image not available (non-critical)"
     docker pull "${FFMPEG_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "FFmpeg image not available (non-critical)"
     docker pull "${STREAMER_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "Streamer image not available (non-critical)"
@@ -167,8 +168,9 @@ cmd_down() {
     detect_compose
     cd "$APP_DIR"
     info "Stopping and removing containers..."
+    COMPOSE_HA=$(get_compose_ha)
     PROFILES=$(get_compose_profiles)
-    $COMPOSE $PROFILES down
+    $COMPOSE $COMPOSE_HA $PROFILES down
     success "Containers removed"
 }
 
@@ -200,8 +202,9 @@ cmd_reset() {
     cd "$APP_DIR"
 
     info "Stopping services and removing volumes..."
+    COMPOSE_HA=$(get_compose_ha)
     PROFILES=$(get_compose_profiles)
-    $COMPOSE $PROFILES down -v
+    $COMPOSE $COMPOSE_HA $PROFILES down -v
     success "Services stopped, volumes removed"
 
     info "Cleaning content data..."
@@ -213,6 +216,18 @@ cmd_reset() {
     success "MMRC has been reset to clean state."
     info "Configuration preserved in $APP_DIR/.env"
     info "Run 'mmrc pull && mmrc start' to start fresh."
+}
+
+get_compose_ha() {
+    if [ -f "$APP_DIR/docker-compose.ha.yml" ]; then
+        echo "-f docker-compose.yml -f docker-compose.ha.yml"
+    else
+        echo ""
+    fi
+}
+
+get_ha_replicas() {
+    docker ps --filter "name=mmrc-replica" --format "{{.Names}}" 2>/dev/null | wc -l
 }
 
 get_compose_profiles() {
@@ -234,8 +249,12 @@ cmd_start() {
     detect_compose
     cd "$APP_DIR"
     info "Starting MMRC services..."
+    COMPOSE_HA=$(get_compose_ha)
     PROFILES=$(get_compose_profiles)
-    $COMPOSE $PROFILES up -d
+    HA_REPLICAS=$(get_ha_replicas)
+    HA_SCALE=""
+    [ "$HA_REPLICAS" -gt 0 ] 2>/dev/null && HA_SCALE="--scale mmrc-replica=$HA_REPLICAS"
+    $COMPOSE $COMPOSE_HA $PROFILES up -d $HA_SCALE
     success "Services started"
 }
 
@@ -244,8 +263,9 @@ cmd_stop() {
     detect_compose
     cd "$APP_DIR"
     info "Stopping MMRC services..."
+    COMPOSE_HA=$(get_compose_ha)
     PROFILES=$(get_compose_profiles)
-    $COMPOSE $PROFILES down
+    $COMPOSE $COMPOSE_HA $PROFILES down
     success "Services stopped"
 }
 
@@ -254,8 +274,9 @@ cmd_restart() {
     detect_compose
     cd "$APP_DIR"
     info "Restarting MMRC services..."
+    COMPOSE_HA=$(get_compose_ha)
     PROFILES=$(get_compose_profiles)
-    $COMPOSE $PROFILES restart
+    $COMPOSE $COMPOSE_HA $PROFILES restart
     success "Services restarted"
 }
 
@@ -268,8 +289,17 @@ cmd_status() {
     colorized_echo cyan "║         📊 MMRC Status               ║"
     colorized_echo cyan "╚══════════════════════════════════════╝"
     echo ""
-    $COMPOSE ps
+    COMPOSE_HA=$(get_compose_ha)
+    $COMPOSE $COMPOSE_HA ps
     echo ""
+
+    # HA info
+    HA_REPLICAS=$(get_ha_replicas)
+    if [ -f "$APP_DIR/docker-compose.ha.yml" ] && [ "$HA_REPLICAS" -gt 0 ] 2>/dev/null; then
+        info "HA mode: $HA_REPLICAS replica(s) running"
+    elif [ -f "$APP_DIR/docker-compose.ha.yml" ]; then
+        info "HA configured but no replicas running"
+    fi
 
     # Health check
     if curl -fsS http://localhost:80/health >/dev/null 2>&1; then
@@ -309,21 +339,23 @@ cmd_logs() {
     require_installed
     detect_compose
     cd "$APP_DIR"
+    COMPOSE_HA=$(get_compose_ha)
+    PROFILES=$(get_compose_profiles)
 
     if [ -n "$1" ]; then
-        PROFILES=$(get_compose_profiles)
         case $1 in
-            server|mmrc) $COMPOSE $PROFILES logs -f mmrc ;;
-            postgres|db) $COMPOSE $PROFILES logs -f postgres ;;
+            server|mmrc) $COMPOSE $COMPOSE_HA $PROFILES logs -f mmrc ;;
+            postgres|db) $COMPOSE $COMPOSE_HA $PROFILES logs -f postgres ;;
             redis) $COMPOSE logs -f redis ;;
-            minio|s3) $COMPOSE $PROFILES logs -f minio ;;
-            streamer) $COMPOSE $PROFILES logs -f streamer ;;
+            minio|s3) $COMPOSE $COMPOSE_HA $PROFILES logs -f minio ;;
+            streamer) $COMPOSE $COMPOSE_HA $PROFILES logs -f streamer ;;
             converter) $COMPOSE logs -f converter 2>/dev/null || warn "Converter service not running" ;;
-            *) $COMPOSE $PROFILES logs -f "$1" ;;
+            replica) $COMPOSE $COMPOSE_HA $PROFILES logs -f mmrc-replica ;;
+            ha-lb|nginx) $COMPOSE $COMPOSE_HA $PROFILES logs -f nginx-ha ;;
+            *) $COMPOSE $COMPOSE_HA $PROFILES logs -f "$1" ;;
         esac
     else
-        PROFILES=$(get_compose_profiles)
-        $COMPOSE $PROFILES logs -f
+        $COMPOSE $COMPOSE_HA $PROFILES logs -f
     fi
 }
 
@@ -338,22 +370,12 @@ cmd_update() {
 "
 
     cd "$APP_DIR"
+    COMPOSE_HA=$(get_compose_ha)
     PROFILES=$(get_compose_profiles)
-
-    # Backup
-    info "Creating backup..."
-    DB_TYPE_VAL=$(grep "^DB_TYPE=" "$ENV_FILE" | cut -d= -f2)
-    if [ "$DB_TYPE_VAL" = "postgres" ]; then
-        info "PostgreSQL backup requires pg_dump - skipping automatic backup"
-        warn "Use pg_dump manually to backup the database"
-    elif [ -f "$APP_DIR/config/main.db" ]; then
-        cp "$APP_DIR/config/main.db" "$APP_DIR/config/main.db.backup.$(date +%F)"
-        success "Database backed up"
-    fi
 
     # Pull new images
     info "Pulling latest Docker images..."
-    $COMPOSE $PROFILES pull
+    $COMPOSE $COMPOSE_HA $PROFILES pull
     docker pull "${CONVERTER_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "Converter image not available (non-critical)"
     docker pull "${FFMPEG_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "FFmpeg image not available (non-critical)"
     docker pull "${STREAMER_IMAGE}:${DOCKER_IMAGE_TAG}" 2>/dev/null || warn "Streamer image not available (non-critical)"
@@ -361,7 +383,10 @@ cmd_update() {
 
     # Restart services
     info "Restarting services..."
-    $COMPOSE $PROFILES up -d
+    HA_REPLICAS=$(get_ha_replicas)
+    HA_SCALE=""
+    [ "$HA_REPLICAS" -gt 0 ] 2>/dev/null && HA_SCALE="--scale mmrc-replica=$HA_REPLICAS"
+    $COMPOSE $COMPOSE_HA $PROFILES up -d $HA_SCALE
     success "Services restarted"
 
     # Wait for health
@@ -585,6 +610,133 @@ cmd_edit_env() {
     fi
 }
 
+cmd_ha() {
+    require_installed
+    detect_compose
+
+    case "${1:-status}" in
+        setup|init)
+            check_root
+            cd "$APP_DIR"
+
+            if [ -f "docker-compose.ha.yml" ]; then
+                warn "HA is already configured."
+                read -p "  Re-download and reconfigure? [y/N]: " confirm < /dev/tty
+                if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+                    info "Aborted"
+                    exit 0
+                fi
+            fi
+
+            HA_REPLICAS="${2:-2}"
+            if [ "$HA_REPLICAS" -lt 1 ] 2>/dev/null; then
+                error "Invalid replica count: $HA_REPLICAS"
+                exit 1
+            fi
+
+            info "Downloading HA configuration..."
+            curl -# -L -o "docker-compose.ha.yml" \
+                "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/docker-compose.ha.yml"
+            mkdir -p "docker/nginx"
+            curl -# -L -o "docker/nginx/ha-lb.conf" \
+                "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/docker/nginx/ha-lb.conf"
+            success "HA configuration downloaded"
+
+            COMPOSE_HA="-f docker-compose.yml -f docker-compose.ha.yml"
+            PROFILES=$(get_compose_profiles)
+
+            info "Starting with $HA_REPLICAS replicas..."
+            $COMPOSE $COMPOSE_HA $PROFILES up -d --scale "mmrc-replica=$HA_REPLICAS"
+            success "HA enabled with $HA_REPLICAS replica(s)"
+            ;;
+
+        scale)
+            check_root
+            if [ ! -f "$APP_DIR/docker-compose.ha.yml" ]; then
+                error "HA is not configured. Run 'mmrc ha setup' first."
+                exit 1
+            fi
+            cd "$APP_DIR"
+
+            HA_REPLICAS="${2:-}"
+            if [ -z "$HA_REPLICAS" ] || [ "$HA_REPLICAS" -lt 1 ] 2>/dev/null; then
+                error "Usage: mmrc ha scale <N> (N >= 1)"
+                exit 1
+            fi
+
+            COMPOSE_HA="-f docker-compose.yml -f docker-compose.ha.yml"
+            PROFILES=$(get_compose_profiles)
+
+            info "Scaling to $HA_REPLICAS replica(s)..."
+            $COMPOSE $COMPOSE_HA $PROFILES up -d --scale "mmrc-replica=$HA_REPLICAS"
+            success "Scaled to $HA_REPLICAS replica(s)"
+            ;;
+
+        remove|teardown)
+            check_root
+            if [ ! -f "$APP_DIR/docker-compose.ha.yml" ]; then
+                warn "HA is not configured."
+                exit 0
+            fi
+
+            read -p "Remove HA and return to single-node mode? [y/N]: " confirm < /dev/tty
+            if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+                info "Aborted"
+                exit 0
+            fi
+
+            cd "$APP_DIR"
+
+            info "Stopping HA services..."
+            PROFILES=$(get_compose_profiles)
+            $COMPOSE -f docker-compose.yml -f docker-compose.ha.yml $PROFILES stop mmrc-replica nginx-ha
+            $COMPOSE -f docker-compose.yml -f docker-compose.ha.yml $PROFILES rm -f mmrc-replica nginx-ha
+            success "HA services stopped"
+
+            info "Removing HA configuration files..."
+            rm -f docker-compose.ha.yml docker/nginx/ha-lb.conf
+            success "HA configuration removed"
+
+            info "Starting single-node mode..."
+            $COMPOSE $PROFILES up -d
+            success "Single-node mode restored"
+            ;;
+
+        status)
+            cd "$APP_DIR"
+            if [ ! -f "docker-compose.ha.yml" ]; then
+                info "HA is not configured."
+            else
+                info "HA is configured."
+                HA_REPLICAS=$(get_ha_replicas)
+                if [ "$HA_REPLICAS" -gt 0 ] 2>/dev/null; then
+                    success "$HA_REPLICAS replica(s) running"
+                    $COMPOSE ps 2>/dev/null | grep -E "mmrc-replica|nginx-ha" || true
+                else
+                    warn "No replicas running (run 'mmrc ha scale <N>')"
+                fi
+            fi
+            ;;
+
+        help|--help)
+            colorized_echo cyan "
+Usage: mmrc ha <command> [options]
+
+Commands:
+  setup [N]    Configure HA with N replicas (default: 2)
+  scale <N>    Scale replicas to N
+  remove       Remove HA, return to single-node mode
+  status       Show HA status
+"
+            ;;
+        *)
+            error "Unknown HA command: $1"
+            cmd_ha help
+            exit 1
+            ;;
+    esac
+}
+
 cmd_help() {
     colorized_echo cyan "
 ╔══════════════════════════════════════════════════════╗
@@ -602,11 +754,12 @@ Commands:
   restart          Restart MMRC services
   status           Check services status
   ps               List containers (docker compose ps)
-  logs [service]   View logs (server|postgres|redis|minio|streamer)
+  logs [service]   View logs (server|postgres|redis|minio|streamer|replica)
   pull             Pull latest Docker images
   update           Update to latest version
   down             Stop and remove containers
   reset            Reset to clean state (removes all data, keeps config)
+  ha <command>     Manage HA replicas (setup|scale|remove|status)
   backup           Create database backup
   ssl              Setup SSL certificate
   shell [service]  Open shell in container
@@ -618,6 +771,9 @@ Examples:
   mmrc status                   # Check services status
   mmrc logs server              # View server logs
   mmrc pull                     # Pull latest images
+  mmrc ha setup 3               # Configure HA with 3 replicas
+  mmrc ha scale 5               # Scale to 5 replicas
+  mmrc ha remove                # Remove HA, back to single-node
   mmrc update                   # Update to latest version
   mmrc down                     # Stop and remove containers
   mmrc reset                    # Reset to clean state
@@ -647,6 +803,7 @@ case "${1:-help}" in
     backup) cmd_backup ;;
     ssl) cmd_ssl ;;
     shell) cmd_shell "${@:2}" ;;
+    ha) cmd_ha "${@:2}" ;;
     edit-env) cmd_edit_env ;;
     uninstall) cmd_uninstall ;;
     help|--help|-h) cmd_help ;;
