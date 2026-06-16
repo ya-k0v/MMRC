@@ -3,7 +3,7 @@
 # ========================
 # Build stage
 # ========================
-FROM node:22-slim AS builder
+FROM node:22-bullseye-slim AS builder
 
 WORKDIR /app
 
@@ -24,7 +24,7 @@ RUN npm ci --omit=dev
 # ========================
 # Production stage
 # ========================
-FROM node:22-slim
+FROM node:22-bullseye-slim
 
 ARG MMRC_ROLE=server
 ENV ROLE=${MMRC_ROLE}
