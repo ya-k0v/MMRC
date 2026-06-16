@@ -146,7 +146,7 @@ services:
     volumes:
       - mmrc-minio:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "http://localhost:9000"]
+      test: ["CMD", "sh", "-c", "mc alias set l http://localhost:9000 \"$MINIO_ROOT_USER\" \"$MINIO_ROOT_PASSWORD\" >/dev/null 2>&1 && mc ready l >/dev/null 2>&1"]
       interval: 10s
       timeout: 5s
       retries: 5
