@@ -7,8 +7,16 @@ on:
       - Dockerfile.ffmpeg
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
+  ci:
+    uses: ./.github/workflows/app-test.yml
+    secrets: inherit
+
   build:
+    needs: ci
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -37,10 +45,12 @@ jobs:
           fi
 
       - name: Build and push FFmpeg image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile.ffmpeg
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

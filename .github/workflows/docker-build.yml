@@ -21,6 +21,8 @@ jobs:
   build:
     needs: [ci, codeql]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -48,7 +50,7 @@ jobs:
           fi
 
       - name: Build and push Server image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
@@ -57,3 +59,5 @@ jobs:
           platforms: linux/amd64
           build-args: |
             INCLUDE_DOCKER_CLI=true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -16,9 +16,6 @@ jobs:
   dependency_review:
     name: Block high-risk dependency changes
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
 
     steps:
       - name: Checkout
