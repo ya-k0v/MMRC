@@ -406,6 +406,42 @@ ENVEOF3
     chown -R 1001:1001 "$content_dir" 2>/dev/null || true
     success "Content directory: $content_dir"
 
+    # Init HA vars
+    COMPOSE_HA=""
+    HA_SCALE=""
+
+    # Ask about HA (only with PostgreSQL + S3)
+    if [ "$DB_TYPE" = "postgres" ] && [ "$STORAGE_BACKEND" = "s3" ]; then
+        echo ""
+        colorized_echo yellow "🏗️ Enable High-Availability (multiple server replicas)?"
+        echo "  Runs 2+ server instances behind an nginx load balancer."
+        echo "  Requires PostgreSQL + S3 (already selected)."
+        read -p "  Enable HA? [y/N]: " ha_choice < /dev/tty
+        if [[ "$ha_choice" =~ ^[Yy]$ ]]; then
+            HA_ENABLED=true
+            HA_REPLICAS=""
+            while [ -z "$HA_REPLICAS" ] || [ "$HA_REPLICAS" -lt 1 ] 2>/dev/null; do
+                read -p "  Number of replicas [2]: " ha_replicas_input < /dev/tty
+                ha_replicas_input="${ha_replicas_input:-2}"
+                if [ "$ha_replicas_input" -ge 1 ] 2>/dev/null; then
+                    HA_REPLICAS=$ha_replicas_input
+                fi
+            done
+
+            info "Downloading HA configuration..."
+            curl -# -L -o "$INSTALL_DIR/docker-compose.ha.yml" \
+                "$MMRC_RAW/docker-compose.ha.yml"
+            mkdir -p "$INSTALL_DIR/docker/nginx"
+            curl -# -L -o "$INSTALL_DIR/docker/nginx/ha-lb.conf" \
+                "$MMRC_RAW/docker/nginx/ha-lb.conf"
+            success "HA configuration downloaded"
+
+            COMPOSE_HA="-f docker-compose.yml -f docker-compose.ha.yml"
+            HA_SCALE="--scale mmrc-replica=$HA_REPLICAS"
+            success "HA enabled with $HA_REPLICAS replicas"
+        fi
+    fi
+
     # Ask about Streamer (remote FFmpeg)
     echo ""
     colorized_echo yellow "🎥 Enable Streamer (remote FFmpeg for HLS streaming)?"
@@ -424,7 +460,7 @@ ENVEOF3
     echo ""
     info "Validating Docker Compose configuration..."
     cd "$INSTALL_DIR"
-    if ! $COMPOSE config > /dev/null 2>&1; then
+    if ! $COMPOSE $COMPOSE_HA config > /dev/null 2>&1; then
         echo ""
         warn "Compose validation failed. Checking configuration..."
         warn "Files in $INSTALL_DIR:"
@@ -434,7 +470,7 @@ ENVEOF3
         env | grep -i compose 2>/dev/null | sed 's/^/  /' || echo "  (none)"
         echo ""
         # Try to get detailed error
-        $COMPOSE config 2>&1 || true
+        $COMPOSE $COMPOSE_HA config 2>&1 || true
         echo ""
         error "Docker Compose configuration is invalid. Please check the files above."
         error "If you have a docker-compose.override.yml file, remove it and try again."
@@ -445,7 +481,7 @@ ENVEOF3
     # Pull images with progress
     echo ""
     info "Pulling Docker images..."
-    $COMPOSE pull
+    $COMPOSE $COMPOSE_HA pull
     docker pull "pingwin1900/mmrc-converter:${MMRC_DOCKER_TAG}" 2>/dev/null || warn "Converter image not available (non-critical)"
     docker pull "pingwin1900/mmrc-ffmpeg:${MMRC_DOCKER_TAG}" 2>/dev/null || warn "FFmpeg image not available (non-critical)"
     if [ "$STREAMER_ENABLED" = "true" ]; then
@@ -465,7 +501,7 @@ ENVEOF3
     if [ "$STREAMER_ENABLED" = "true" ]; then
         PROFILES="$PROFILES --profile streamer"
     fi
-    $COMPOSE $PROFILES up -d
+    $COMPOSE $COMPOSE_HA $PROFILES up -d $HA_SCALE
     success "Services started"
 
     # Wait for health with progress
