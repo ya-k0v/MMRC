@@ -217,7 +217,8 @@ install_mmrc() {
     check_docker
 
     # Unset Docker Compose env vars that could interfere
-    unset COMPOSE_FILE COMPOSE_PROJECT_NAME COMPOSE_PROFILES COMPOSE_PATH_SEPARATOR
+    # (COMPOSE_FILE is a script-local variable, not just an env var, so skip it)
+    unset COMPOSE_PROJECT_NAME COMPOSE_PROFILES COMPOSE_PATH_SEPARATOR 2>/dev/null || true
 
     # Ensure consistent working directory (fixes 'getcwd' errors with curl|sudo bash)
     cd /
