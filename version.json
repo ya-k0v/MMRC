@@ -1,0 +1,10 @@
+{
+  "version": "3.4.0",
+  "branch": "v340",
+  "dockerTag": "v340",
+  "dockerImages": {
+    "server": "pingwin1900/mmrc",
+    "converter": "pingwin1900/mmrc-converter",
+    "ffmpeg": "pingwin1900/mmrc-ffmpeg"
+  }
+}
