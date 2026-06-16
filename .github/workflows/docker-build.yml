@@ -87,7 +87,7 @@ jobs:
           tags: ${{ steps.meta-server.outputs.tags }}
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
-            INCLUDE_DOCKER_CLI=false
+            INCLUDE_DOCKER_CLI=true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
