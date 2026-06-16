@@ -1,6 +1,18 @@
 name: Security (CodeQL)
 
 on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+      - master
+      - develop
+      - 'v*'
   schedule:
     - cron: '20 2 * * 1'
   workflow_call:

@@ -1,6 +1,12 @@
 name: CI
 
 on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+      - 'v*'
   pull_request:
   workflow_dispatch:
   workflow_call:
