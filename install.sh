@@ -10,7 +10,9 @@ set -e
 MMRC_VERSION_INFO=$(curl -fsSL "https://raw.githubusercontent.com/ya-k0v/MMRC/v340/version.json" 2>/dev/null || echo '{"version":"3.4.0","branch":"v340","dockerTag":"v340","dockerImages":{"server":"pingwin1900/mmrc","converter":"pingwin1900/mmrc-converter","ffmpeg":"pingwin1900/mmrc-ffmpeg","streamer":"pingwin1900/mmrc-streamer"}}')
 MMRC_VERSION=$(echo "$MMRC_VERSION_INFO" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
 MMRC_BRANCH=$(echo "$MMRC_VERSION_INFO" | grep -o '"branch":"[^"]*"' | cut -d'"' -f4)
+: "${MMRC_BRANCH:=v340}"
 MMRC_DOCKER_TAG=$(echo "$MMRC_VERSION_INFO" | grep -o '"dockerTag":"[^"]*"' | cut -d'"' -f4)
+: "${MMRC_DOCKER_TAG:=v340}"
 MMRC_STREAMER_IMAGE="$(echo "$MMRC_VERSION_INFO" | grep -o '"streamer":"[^"]*"' | cut -d'"' -f4 || echo "pingwin1900/mmrc-streamer")"
 MMRC_REPO="https://github.com/ya-k0v/MMRC"
 MMRC_RAW="https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}"
@@ -240,8 +242,23 @@ install_mmrc() {
 
     # Download docker-compose.yml with progress
     info "Downloading docker-compose.yml..."
+    info "  URL: $MMRC_RAW/docker-compose.deploy.yml"
     curl -# -L -o "$COMPOSE_FILE" "$MMRC_RAW/docker-compose.deploy.yml"
-    success "docker-compose.yml downloaded"
+
+    # Validate the downloaded file
+    local compose_size
+    compose_size=$(stat -c%s "$COMPOSE_FILE" 2>/dev/null || stat -f%z "$COMPOSE_FILE" 2>/dev/null || wc -c < "$COMPOSE_FILE")
+    if [ "$compose_size" -lt 100 ]; then
+        echo ""
+        warn "Downloaded file is only $compose_size bytes (expected ~3KB)"
+        warn "Content: $(head -c 100 "$COMPOSE_FILE")"
+        warn "MMRC_BRANCH='${MMRC_BRANCH:-<empty>}' MMRC_RAW='$MMRC_RAW'"
+        warn "Check version.json at: https://raw.githubusercontent.com/ya-k0v/MMRC/v340/version.json"
+        warn "Expected compose URL: https://raw.githubusercontent.com/ya-k0v/MMRC/v340/docker-compose.deploy.yml"
+        error "Download failed. Check internet connection and try again."
+        exit 1
+    fi
+    success "docker-compose.yml downloaded ($compose_size bytes)"
 
     # Generate .env
     info "Generating configuration..."
