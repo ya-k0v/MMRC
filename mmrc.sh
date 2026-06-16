@@ -178,7 +178,9 @@ cmd_ps() {
     require_installed
     detect_compose
     cd "$APP_DIR"
-    $COMPOSE ps
+    COMPOSE_HA=$(get_compose_ha)
+    PROFILES=$(get_compose_profiles)
+    $COMPOSE $COMPOSE_HA $PROFILES ps
 }
 
 cmd_reset() {
@@ -493,9 +495,8 @@ cmd_ssl() {
 
     # In Docker mode, stop MMRC to free port 80 for acme.sh standalone
     info "Stopping MMRC to free port 80..."
-    $COMPOSE down
-
-    # Install acme.sh as root
+    PROFILES=$(get_compose_profiles)
+    $COMPOSE $PROFILES down
     if ! command -v acme.sh >/dev/null 2>&1; then
         info "Installing acme.sh..."
         cd /root
@@ -532,14 +533,14 @@ cmd_ssl() {
         replace_or_append_env "SSL_KEY" "$DATA_DIR/certs/$domain/privkey.pem"
 
         info "Starting MMRC back..."
-        $COMPOSE up -d
+        $COMPOSE $PROFILES up -d
 
         info "SSL certificate will be used after you configure nginx for HTTPS."
         info "See: https://github.com/ya-k0v/MMRC/wiki/SSL"
     else
         error "Failed to issue certificate"
         info "Starting MMRC back..."
-        $COMPOSE up -d
+        $COMPOSE $PROFILES up -d
         exit 1
     fi
 }
@@ -575,7 +576,8 @@ cmd_uninstall() {
     cd "$APP_DIR"
 
     info "Stopping services..."
-    $COMPOSE down -v
+    PROFILES=$(get_compose_profiles)
+    $COMPOSE $PROFILES down -v
     success "Services stopped"
 
     info "Removing installation..."
@@ -708,13 +710,15 @@ cmd_ha() {
                 info "HA is not configured."
             else
                 info "HA is configured."
+                COMPOSE_HA="-f docker-compose.yml -f docker-compose.ha.yml"
+                PROFILES=$(get_compose_profiles)
                 HA_REPLICAS=$(get_ha_replicas)
                 if [ "$HA_REPLICAS" -gt 0 ] 2>/dev/null; then
                     success "$HA_REPLICAS replica(s) running"
-                    $COMPOSE ps 2>/dev/null | grep -E "mmrc-replica|nginx-ha" || true
                 else
                     warn "No replicas running (run 'mmrc ha scale <N>')"
                 fi
+                $COMPOSE $COMPOSE_HA $PROFILES ps 2>/dev/null | grep -E "mmrc|nginx-ha|replica" || true
             fi
             ;;
 
