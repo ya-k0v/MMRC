@@ -1,7 +1,10 @@
 name: Docker Build
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
     branches: [v340, main]
   workflow_dispatch:
 
@@ -10,9 +13,12 @@ env:
 
 jobs:
   build:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - name: Read version.json
         id: version
@@ -21,39 +27,77 @@ jobs:
           echo "branch=$(node -p "require('./version.json').branch")" >> "$GITHUB_OUTPUT"
           echo "dockerTag=$(node -p "require('./version.json').dockerTag")" >> "$GITHUB_OUTPUT"
 
-      - name: Generate tags
-        id: tags
+      - name: Determine branch context
+        id: branch
         run: |
-          TAG="${{ steps.version.outputs.dockerTag }}"
-          ORG="${{ env.DOCKER_ORG }}"
-          IS_MAIN=${{ github.ref_name == 'main' }}
+          BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          if [ "$BRANCH" = "main" ]; then
+            echo "is_main=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_main=false" >> "$GITHUB_OUTPUT"
+          fi
 
-          tags_for() {
-            local image=$1
-            echo "${ORG}/${image}:${TAG}"
-            [ "$IS_MAIN" = "true" ] && echo "${ORG}/${image}:latest"
-          }
+      - name: Wait for CodeQL
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHA="${{ github.event.workflow_run.head_sha }}"
+          for i in $(seq 60); do
+            conclusions=$(gh api "/repos/${{ github.repository }}/commits/${SHA}/check-runs" \
+              --jq '[.check_runs[] | select(.name | startswith("Security")) | .conclusion]')
+            if [ "$conclusions" = "[]" ] || [ -z "$conclusions" ]; then
+              echo "CodeQL not yet finished, waiting... ($((i * 10))s)"
+              sleep 10
+              continue
+            fi
+            failed=$(echo "$conclusions" | jq -r '.[] | select(. != "success" and . != "neutral")')
+            if [ -n "$failed" ]; then
+              echo "CodeQL failed: $failed"
+              exit 1
+            fi
+            echo "CodeQL passed: $conclusions"
+            exit 0
+          done
+          echo "Timed out waiting for CodeQL"
+          exit 1
 
-          # Delimiter-based multiline output
-          delimiter_server="TAGS$(date +%s%N)"
-          echo "server<<${delimiter_server}" >> "$GITHUB_OUTPUT"
-          tags_for "mmrc" >> "$GITHUB_OUTPUT"
-          echo "${delimiter_server}" >> "$GITHUB_OUTPUT"
+      - name: Docker metadata (server)
+        id: meta-server
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_ORG }}/mmrc
+          tags: |
+            type=raw,value=${{ steps.version.outputs.dockerTag }}
+            type=raw,value=latest,enable=${{ steps.branch.outputs.is_main }}
 
-          delimiter_converter="TAGS$(date +%s%N)"
-          echo "converter<<${delimiter_converter}" >> "$GITHUB_OUTPUT"
-          tags_for "mmrc-converter" >> "$GITHUB_OUTPUT"
-          echo "${delimiter_converter}" >> "$GITHUB_OUTPUT"
+      - name: Docker metadata (converter)
+        id: meta-converter
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_ORG }}/mmrc-converter
+          tags: |
+            type=raw,value=${{ steps.version.outputs.dockerTag }}
+            type=raw,value=latest,enable=${{ steps.branch.outputs.is_main }}
 
-          delimiter_ffmpeg="TAGS$(date +%s%N)"
-          echo "ffmpeg<<${delimiter_ffmpeg}" >> "$GITHUB_OUTPUT"
-          tags_for "mmrc-ffmpeg" >> "$GITHUB_OUTPUT"
-          echo "${delimiter_ffmpeg}" >> "$GITHUB_OUTPUT"
+      - name: Docker metadata (ffmpeg)
+        id: meta-ffmpeg
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_ORG }}/mmrc-ffmpeg
+          tags: |
+            type=raw,value=${{ steps.version.outputs.dockerTag }}
+            type=raw,value=latest,enable=${{ steps.branch.outputs.is_main }}
 
-          delimiter_streamer="TAGS$(date +%s%N)"
-          echo "streamer<<${delimiter_streamer}" >> "$GITHUB_OUTPUT"
-          tags_for "mmrc-streamer" >> "$GITHUB_OUTPUT"
-          echo "${delimiter_streamer}" >> "$GITHUB_OUTPUT"
+      - name: Docker metadata (streamer)
+        id: meta-streamer
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_ORG }}/mmrc-streamer
+          tags: |
+            type=raw,value=${{ steps.version.outputs.dockerTag }}
+            type=raw,value=latest,enable=${{ steps.branch.outputs.is_main }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -70,7 +114,7 @@ jobs:
           context: .
           file: Dockerfile
           push: true
-          tags: ${{ steps.tags.outputs.server }}
+          tags: ${{ steps.meta-server.outputs.tags }}
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
             INCLUDE_DOCKER_CLI=false
@@ -83,7 +127,7 @@ jobs:
           context: .
           file: Dockerfile.converter
           push: true
-          tags: ${{ steps.tags.outputs.converter }}
+          tags: ${{ steps.meta-converter.outputs.tags }}
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
           cache-from: type=gha
@@ -95,7 +139,7 @@ jobs:
           context: .
           file: Dockerfile.ffmpeg
           push: true
-          tags: ${{ steps.tags.outputs.ffmpeg }}
+          tags: ${{ steps.meta-ffmpeg.outputs.tags }}
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
           cache-from: type=gha
@@ -107,7 +151,7 @@ jobs:
           context: .
           file: Dockerfile.streamer
           push: true
-          tags: ${{ steps.tags.outputs.streamer }}
+          tags: ${{ steps.meta-streamer.outputs.tags }}
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
           cache-from: type=gha
