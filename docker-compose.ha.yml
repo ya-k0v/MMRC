@@ -14,7 +14,6 @@ services:
 
   mmrc-replica:
     image: ${DOCKER_IMAGE:-pingwin1900/mmrc}:${DOCKER_IMAGE_TAG:-v340}
-    container_name: mmrc-replica
     restart: unless-stopped
     environment:
       - NODE_ENV=${NODE_ENV:-production}
