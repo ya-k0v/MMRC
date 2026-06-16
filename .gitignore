@@ -5,7 +5,6 @@ dev/
 # Development / planning (not used in production)
 PLAN.md
 docker-build.sh
-src/queue/
 scripts/
 
 # Logs & runtime artifacts
