@@ -13,6 +13,7 @@
     "test:ci": "bash ./scripts/ci-test.sh",
     "doctor:start": "node scripts/check-startup-compat.js",
     "migrate-db": "node src/database/migrate.js",
+    "storage:migrate": "node src/storage/migrate.js",
     "mcp": "SILENT_CONSOLE=true node dev/mcp-server.js",
     "post-pull:sync": "bash ./scripts/post-pull-sync.sh",
     "setup-hooks": "bash ./scripts/setup-git-hooks.sh",
@@ -23,6 +24,8 @@
     "ytdlp:version": "./bin/yt-dlp --version"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.700.0",
+    "@aws-sdk/lib-storage": "^3.1069.0",
     "@bull-board/api": "^8.0.0",
     "@bull-board/express": "^8.0.0",
     "@socket.io/redis-adapter": "^8.3.0",

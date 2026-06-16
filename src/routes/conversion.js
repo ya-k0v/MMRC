@@ -22,7 +22,7 @@ const router = express.Router();
  * @returns {express.Router} Настроенный роутер
  */
 export function createConversionRouter(deps) {
-  const { devices, getPageSlideCount, findFileFolder, autoConvertFileWrapper, requireAuth } = deps;
+  const { devices, getPageSlideCount, findFileFolder, autoConvertFileWrapper, requireAuth, storage } = deps;
   
   // GET /api/devices/:id/slides-count - Получить количество слайдов/страниц (требует auth)
   router.get('/:id/slides-count', requireAuth, async (req, res) => {
@@ -78,20 +78,20 @@ export function createConversionRouter(deps) {
         count = await getFolderImagesCount(id, folderName);
       } else if (ext === '.pdf' || ext === '.pptx') {
         // КРИТИЧНО: Пробуем получить количество слайдов по исходному имени файла
-        count = await getPageSlideCount(id, fileName);
+        count = await getPageSlideCount(id, fileName, storage);
         
         // Если не получилось (файл уже конвертирован и удален), пробуем по имени папки
         if (count === 0) {
           const folderName = fileName.replace(/\.(pdf|pptx)$/i, '');
-          count = await getFolderImagesCount(id, folderName);
+        count = await getFolderImagesCount(id, folderName, storage);
         }
       } else {
         // Для других типов файлов пробуем getPageSlideCount
-        count = await getPageSlideCount(id, fileName);
+        count = await getPageSlideCount(id, fileName, storage);
         
         // Если не получилось, пробуем как папку (возможно, файл уже конвертирован)
         if (count === 0) {
-          count = await getFolderImagesCount(id, fileName);
+          count = await getFolderImagesCount(id, fileName, storage);
         }
       }
       res.json({ count });
@@ -124,19 +124,14 @@ export function createConversionRouter(deps) {
     // КРИТИЧНО: Используем devices[id].folder для получения правильного пути
     // Это важно, так как folder может отличаться от deviceId (хотя обычно совпадает)
     const deviceFolder = devices[id]?.folder || id;
-    let convertedDir = findFileFolder(deviceFolder, fileName);
+    let convertedDir = findFileFolder(deviceFolder, fileName, storage);
     
     if (!convertedDir) {
-      // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
-      const devicesPath = getDevicesPath();
-      const filePath = path.join(devicesPath, deviceFolder, fileName);
-      if (fs.existsSync(filePath)) {
-        const count = await autoConvertFileWrapper(id, fileName);
-        if (count === 0) {
-          return res.status(500).json({ error: 'Конвертация не удалась или выполняется' });
-        }
-        convertedDir = findFileFolder(deviceFolder, fileName);
+      const count = await autoConvertFileWrapper(id, fileName);
+      if (count === 0) {
+        return res.status(500).json({ error: 'Конвертация не удалась или выполняется' });
       }
+      convertedDir = findFileFolder(deviceFolder, fileName, storage);
       if (!convertedDir) {
         return res.status(404).json({ error: 'Файл не найден' });
       }

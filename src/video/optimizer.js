@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { VIDEO_OPTIMIZATION_CONFIG_PATH } from '../config/constants.js';
-import { getDevicesPath } from '../config/settings-manager.js';
+import { getDevicesPath, getDataRoot } from '../config/settings-manager.js';
 import { checkVideoParameters } from './ffmpeg-wrapper.js';
 import { setFileStatus, deleteFileStatus, getFileStatus } from './file-status.js';
 import { needsFaststart } from './mp4-faststart.js';
@@ -40,6 +40,13 @@ function createOptimizationCancelError(message = 'Обработка отмен�
 
 function isOptimizationCancelError(error) {
   return error?.code === 'EOPT_CANCELLED';
+}
+
+function toStorageKey(absPath) {
+  const root = getDataRoot();
+  const rel = path.relative(root, path.resolve(String(absPath)));
+  if (rel.startsWith('..')) throw new Error('Path outside data root');
+  return rel;
 }
 
 function hasOptimizationCancelRequest(jobKey) {
@@ -569,7 +576,7 @@ export function needsOptimization(params) {
  * @param {Function} saveFileNamesMapFn - Функция сохранения маппинга
  * @returns {Promise<Object>} Результат оптимизации
  */
-export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNamesMap, saveFileNamesMapFn) {
+export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNamesMap, saveFileNamesMapFn, storage = null) {
   const d = devices[deviceId];
   if (!d) return { success: false, message: 'Device not found' };
 
@@ -890,6 +897,15 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       fs.chmodSync(filePath, 0o644);
 
       logger.info(`[VideoOpt] 🎉 Видео оптимизировано: ${fileName}`, { deviceId, fileName, sizeMB: Math.round(stats.size / 1024 / 1024) });
+    }
+
+    // Синхронизируем с storage (S3)
+    if (storage) {
+      try { await storage.delete(toStorageKey(filePath)); } catch {}
+      try {
+        const data = fs.readFileSync(resultingPath);
+        await storage.write(toStorageKey(resultingPath), data);
+      } catch {}
     }
 
     const finalStats = fs.statSync(resultingPath);

@@ -6,7 +6,7 @@
 import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getDevicesPath } from '../config/settings-manager.js';
+import { getDevicesPath, getDataRoot } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { deleteDevice as deleteDeviceFromDB, deleteDeviceFileNames } from '../database/database.js';
 import { createLimiter, deleteLimiter } from '../middleware/rate-limit.js';
@@ -32,6 +32,13 @@ function getTrimmedDeviceId(rawId) {
     return '';
   }
   return rawId.trim();
+}
+
+function toStorageKey(absPath) {
+  const root = getDataRoot();
+  const rel = path.relative(root, path.resolve(String(absPath)));
+  if (rel.startsWith('..')) throw new Error('Path outside data root');
+  return rel;
 }
 
 function normalizeRequestedDeviceId(rawId) {
@@ -78,7 +85,8 @@ export function createDevicesRouter(deps) {
     requireAdmin,
     requireSpeaker,
     onDeviceCreated,
-    onDeviceDeleted
+    onDeviceDeleted,
+    storage
   } = deps;
   
   // GET /api/devices - Получить список всех устройств
@@ -155,7 +163,7 @@ export function createDevicesRouter(deps) {
     // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
     const devicesPath = getDevicesPath();
     const devicePath = validatePath(path.resolve(devicesPath, normalizedDeviceId), devicesPath);
-    fs.mkdirSync(devicePath, { recursive: true });
+    try { await storage.ensureDir(toStorageKey(devicePath)); } catch { fs.mkdirSync(devicePath, { recursive: true }); }
     
     // КРИТИЧНО: Устанавливаем права 755 на папку устройства
     // Чтобы Nginx (www-data) мог читать файлы
@@ -284,15 +292,16 @@ export function createDevicesRouter(deps) {
     if (safeDevicePath) {
       logDevice('info', `Deleting device folder`, { deviceId: id, path: safeDevicePath });
       try {
+        await storage.rm(toStorageKey(safeDevicePath));
+        logDevice('info', `Device folder deleted from storage`, { deviceId: id, path: safeDevicePath });
+      } catch { /* fallback to fs */ }
+      try {
         if (fs.existsSync(safeDevicePath)) {
           fs.rmSync(safeDevicePath, { recursive: true, force: true });
-          logDevice('info', `Device folder deleted`, { deviceId: id, path: safeDevicePath });
-        } else {
-          logDevice('warn', `Device folder does not exist, skipping`, { deviceId: id, path: safeDevicePath });
+          logDevice('info', `Device folder deleted from filesystem`, { deviceId: id, path: safeDevicePath });
         }
       } catch (err) {
         logDevice('error', `Failed to delete device folder`, { deviceId: id, path: safeDevicePath, error: err.message });
-        // Продолжаем удаление, даже если папка не удалилась
       }
     } else {
       logDevice('warn', `Device folder path unresolved, skipping`, { deviceId: id, folder: folderName });

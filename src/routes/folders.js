@@ -22,7 +22,7 @@ const router = express.Router();
  * @returns {express.Router} Настроенный роутер
  */
 export function createFoldersRouter(deps) {
-  const { devices, requireAuth } = deps;
+  const { devices, requireAuth, storage } = deps;
   
   // GET /api/devices/:id/folder/:folderName/images - Получить список изображений (публичный - для плеера)
   router.get('/:id/folder/:folderName/images', async (req, res) => {
@@ -33,7 +33,7 @@ export function createFoldersRouter(deps) {
     if (!folderName) return res.status(400).json({ error: 'Требуется имя папки' });
     
     try {
-      const { files: images } = await getFolderImages(id, folderName);
+      const { files: images } = await getFolderImages(id, folderName, storage);
       if (!images || images.length === 0) {
         return res.status(404).json({ error: 'Изображения не найдены в папке' });
       }
@@ -62,7 +62,7 @@ export function createFoldersRouter(deps) {
     }
     
     try {
-      const count = await getFolderImagesCount(id, folderName);
+      const count = await getFolderImagesCount(id, folderName, storage);
       res.json({ count });
     } catch (error) {
       logger.error('[folders] Error getting folder count', { error: error.message, stack: error.stack, deviceId: id, folderName });
@@ -82,7 +82,7 @@ export function createFoldersRouter(deps) {
     }
     
     try {
-      const { files: images, folderPath } = await getFolderImages(id, folderName);
+      const { files: images, folderPath } = await getFolderImages(id, folderName, storage);
       
       if (index > images.length || images.length === 0) {
         return res.status(404).json({ error: 'Изображение не найдено' });

@@ -485,7 +485,7 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
     // Сохраняем метаданные в БД для скопированной папки
     try {
       const stat = fs.statSync(targetPath);
-      const pagesCount = await getFolderImagesCount(targetId, targetSafeName);
+              const pagesCount = await getFolderImagesCount(targetId, targetSafeName, storage);
       await saveFileMetadata({
         deviceId: targetId,
         safeName: targetSafeName,
@@ -843,7 +843,7 @@ export async function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
               const { deleteFileMetadata, saveFileMetadata } = await import('../database/files-metadata.js');
               const folderStats = fs.statSync(possibleFolderPath);
               const { getFolderImagesCount } = await import('../converters/folder-converter.js');
-              const pagesCount = await getFolderImagesCount(deviceId, folderName);
+              const pagesCount = await getFolderImagesCount(deviceId, folderName, storage);
               
               // Удаляем старую запись
               await deleteFileMetadata(deviceId, safeName);
@@ -992,6 +992,7 @@ export function createFilesRouter(deps) {
   const { 
     devices, 
     io, 
+    storage,
     fileNamesMap, 
     saveFileNamesMap, 
     upload,
@@ -1002,6 +1003,15 @@ export function createFilesRouter(deps) {
     requireAdmin = (_req, _res, next) => next(),
     requireManager = requireAdmin
   } = deps;
+
+  function toStorageKey(absPath) {
+    const root = getDataRoot();
+    const rel = path.relative(root, path.resolve(String(absPath)));
+    if (rel.startsWith('..')) {
+      throw new Error('Path traversal: outside data root');
+    }
+    return rel;
+  }
 
   function isFileReadyForSpeaker(deviceId, safeName) {
     const status = getFileStatus(deviceId, safeName);
@@ -1556,7 +1566,7 @@ export function createFilesRouter(deps) {
     }
 
     if (path.resolve(targetPath) !== finalPath) {
-      fs.renameSync(finalPath, targetPath);
+      try { await storage.move(toStorageKey(finalPath), toStorageKey(targetPath)); } catch { fs.renameSync(finalPath, targetPath); }
       finalPath = targetPath;
     }
 
@@ -1917,7 +1927,7 @@ export function createFilesRouter(deps) {
         const folderName = sourceMeta.content_type === 'folder'
           ? sourceMeta.safe_name || safeName
           : (sourceMeta.safe_name || safeName).replace(/\.(pdf|pptx)$/i, '');
-        pagesCount = await getFolderImagesCount(sourceDeviceId, folderName);
+        pagesCount = await getFolderImagesCount(sourceDeviceId, folderName, storage);
       } catch (err) {
         pagesCount = null;
       }
@@ -3166,7 +3176,7 @@ export function createFilesRouter(deps) {
                   fs.chmodSync(zipTargetPath, 0o644);
                 }
                 
-                const extractResult = await extractZipToFolder(id, file.filename, devices[id]?.folder || id);
+                const extractResult = await extractZipToFolder(id, file.filename, devices[id]?.folder || id, storage);
                 if (!extractResult.success) {
                   logger.error(`[upload] ❌ Ошибка распаковки ZIP ${file.filename}`, { 
                     deviceId: id, 
@@ -4100,7 +4110,7 @@ export function createFilesRouter(deps) {
     
     try {
       logFile('info', `🔄 ${oldPath} -> ${newPath}`, { deviceId: id, oldName, newName, oldPath, newPath });
-      fs.renameSync(oldPath, newPath);
+      try { await storage.move(toStorageKey(oldPath), toStorageKey(newPath)); } catch { fs.renameSync(oldPath, newPath); }
       
       // Обновляем маппинг имен
       if (!fileNamesMap[id]) fileNamesMap[id] = {};
@@ -4393,21 +4403,38 @@ export function createFilesRouter(deps) {
     );
 
     setSafeDownloadFileNameHeader(res, fileNameForDownload);
-    return res.download(downloadTargetPath, fileNameForDownload, (error) => {
-      if (!error) return;
 
-      logger.error('[download] Failed to send file', {
-        deviceId: id,
-        name,
-        targetPath: downloadTargetPath,
-        fileNameForDownload,
-        error: error.message
+    const storageKey = toStorageKey(downloadTargetPath);
+    try {
+      const readStream = await storage.createReadStream(storageKey);
+      const fileStat = await storage.stat(storageKey);
+      res.setHeader('Content-Length', fileStat.size);
+      readStream.pipe(res);
+      readStream.on('error', (error) => {
+        logger.error('[download] Failed to send file', {
+          deviceId: id, name, targetPath: downloadTargetPath, error: error.message
+        });
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Ошибка передачи файла' });
+        }
       });
-
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'Ошибка передачи файла' });
+    } catch (storageErr) {
+      if (typeof storage.resolve === 'function') {
+        return res.download(storage.resolve(storageKey), fileNameForDownload, (error) => {
+          if (!error) return;
+          logger.error('[download] Failed to send file', {
+            deviceId: id, name, targetPath: downloadTargetPath, fileNameForDownload, error: error.message
+          });
+          if (!res.headersSent) {
+            res.status(500).json({ error: 'Ошибка передачи файла' });
+          }
+        });
       }
-    });
+      logger.error('[download] Storage download failed', {
+        deviceId: id, name, targetPath: downloadTargetPath, error: storageErr.message
+      });
+      return res.status(500).json({ error: 'Ошибка передачи файла' });
+    }
   });
   
   // DELETE /api/devices/:id/files/:name - Удаление файла или папки
@@ -4454,16 +4481,20 @@ export function createFilesRouter(deps) {
       }
       
       // Удаляем каталог устройства полностью (включая заглушки и медиа)
-      if (fs.existsSync(devicePath)) {
-        logger.info('[clear-device-files] Удаление директории', { deviceId: id, devicePath });
-        fs.rmSync(devicePath, { recursive: true, force: true });
-      } else {
-        logger.warn('[clear-device-files] Директория не существует', { deviceId: id, devicePath });
+      try {
+        const storageKey = toStorageKey(devicePath);
+        await storage.rm(storageKey);
+        await storage.ensureDir(storageKey);
+        logger.info('[clear-device-files] Директория удалена и создана заново', { deviceId: id, devicePath });
+      } catch (storageErr) {
+        // Fallback на прямые fs операции, если storage не может обработать путь
+        if (fs.existsSync(devicePath)) {
+          logger.info('[clear-device-files] Удаление директории (fallback)', { deviceId: id, devicePath });
+          fs.rmSync(devicePath, { recursive: true, force: true });
+        }
+        fs.mkdirSync(devicePath, { recursive: true });
+        logger.info('[clear-device-files] Директория создана заново (fallback)', { deviceId: id, devicePath });
       }
-      
-      // Создаем пустую директорию заново
-      fs.mkdirSync(devicePath, { recursive: true });
-      logger.info('[clear-device-files] Директория создана заново', { deviceId: id, devicePath });
       
       // Очищаем метаданные в БД (используем функцию вместо цикла)
       const deletedCount = await deleteDeviceFilesMetadata(id);
@@ -4622,7 +4653,7 @@ export function createFilesRouter(deps) {
     // Проверяем PDF/PPTX папку
     if (fs.existsSync(possibleFolder) && fs.statSync(possibleFolder).isDirectory()) {
       try {
-        fs.rmSync(possibleFolder, { recursive: true, force: true });
+        try { await storage.rm(toStorageKey(possibleFolder)); } catch { fs.rmSync(possibleFolder, { recursive: true, force: true }); }
         deletedFileName = folderName;
         isFolder = true;
         logFile('info', `Удалена папка PDF/PPTX: ${folderName}`, { deviceId: id, fileName: name, folderName });
@@ -4639,7 +4670,7 @@ export function createFilesRouter(deps) {
       const imageFolderPath = path.join(deviceFolder, name);
       if (fs.existsSync(imageFolderPath) && fs.statSync(imageFolderPath).isDirectory()) {
         try {
-          fs.rmSync(imageFolderPath, { recursive: true, force: true });
+          try { await storage.rm(toStorageKey(imageFolderPath)); } catch { fs.rmSync(imageFolderPath, { recursive: true, force: true }); }
           deletedFileName = name;
           isFolder = true;
           logFile('info', `Удалена папка с изображениями: ${name}`, { deviceId: id, fileName: name });
@@ -4675,11 +4706,11 @@ export function createFilesRouter(deps) {
           remainingReferences: refCount
         });
         
-        // 4. Если никто не использует - удаляем физический файл
+        // 4. Если никто не используем - удаляем физический файл
         if (refCount === 0) {
           try {
             if (fs.existsSync(physicalPath)) {
-              fs.unlinkSync(physicalPath);
+              try { await storage.delete(toStorageKey(physicalPath)); } catch { fs.unlinkSync(physicalPath); }
               logFile('info', '🗑️ Physical file deleted (no references)', {
                 filePath: physicalPath,
                 sizeMB: (metadata.file_size / 1024 / 1024).toFixed(2)
@@ -4714,7 +4745,7 @@ export function createFilesRouter(deps) {
         for (const candidatePath of candidatePaths) {
           try {
             if (fs.existsSync(candidatePath)) {
-              fs.rmSync(candidatePath, { recursive: true, force: true });
+              try { await storage.rm(toStorageKey(candidatePath)); } catch { fs.rmSync(candidatePath, { recursive: true, force: true }); }
               logFile('info', '🗑️ File deleted from disk (no DB record)', {
                 filePath: candidatePath,
                 deviceId: id
@@ -5042,7 +5073,7 @@ export function createFilesRouter(deps) {
                 const { deleteFileMetadata, saveFileMetadata } = await import('../database/files-metadata.js');
                 const folderStats = fs.statSync(possibleFolderPath);
                 const { getFolderImagesCount } = await import('../converters/folder-converter.js');
-                const pagesCount = await getFolderImagesCount(id, folderName);
+                const pagesCount = await getFolderImagesCount(id, folderName, storage);
                 
                 // Удаляем старую запись
                 await deleteFileMetadata(id, safeName);
@@ -5110,11 +5141,11 @@ export function createFilesRouter(deps) {
           const folderName = safeName.replace(/\.(zip|pdf|pptx)$/i, '');
           try {
             if (contentType === 'folder' || !ext || ext === '' || ext === '.zip') {
-              folderImageCount = await getFolderImagesCount(id, folderName);
+              folderImageCount = await getFolderImagesCount(id, folderName, storage);
             } else {
               // Для PDF/PPTX используем getPageSlideCount
               const { getPageSlideCount } = await import('../converters/document-converter.js');
-              folderImageCount = await getPageSlideCount(id, safeName);
+              folderImageCount = await getPageSlideCount(id, safeName, storage);
             }
           } catch (error) {
             folderImageCount = null;

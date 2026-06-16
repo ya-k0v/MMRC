@@ -77,7 +77,7 @@ async function startServerPlaylistLoop(deviceId, file, intervalSeconds, startPag
   const folderName = file.replace(/\.zip$/i, '');
   let totalImages = 0;
   try {
-    totalImages = await getFolderImagesCount(deviceId, folderName);
+    totalImages = await getFolderImagesCount(deviceId, folderName, storage);
   } catch (error) {
     logger.error(`[Playlist] Failed to get images count for ${deviceId}/${file}`, { error: error.message, stack: error.stack, deviceId, file });
     return;
@@ -168,7 +168,7 @@ function scheduleNextFolderSlide(loopState, devices, io) {
  * @param {Object} deps - Зависимости {devices, io, getPageSlideCount}
  */
 export function setupControlHandlers(socket, deps) {
-  const { devices, io, getPageSlideCount, applyVolumeCommand, getVolumeState } = deps;
+  const { devices, io, getPageSlideCount, applyVolumeCommand, getVolumeState, storage } = deps;
 
   const emitDeviceVolumeState = (deviceId, reason = 'control_play') => {
     if (typeof getVolumeState !== 'function') {
@@ -1139,7 +1139,7 @@ export function setupControlHandlers(socket, deps) {
       const contentDeviceId = d.current.originDeviceId || device_id;
       const folderName = d.current.file.replace(/\.zip$/i, ''); // Убираем .zip если есть
       try {
-        const maxImages = await getFolderImagesCount(contentDeviceId, folderName);
+        const maxImages = await getFolderImagesCount(contentDeviceId, folderName, storage);
         logger.info(`[Control] pdfPrev folder: maxImages=${maxImages}, currentPage=${d.current.page}`, { deviceId: device_id, folderName, maxImages, currentPage: d.current.page });
         if (maxImages > 0) {
           const prevImage = Math.max(1, (d.current.page || 1) - 1);
@@ -1181,7 +1181,7 @@ export function setupControlHandlers(socket, deps) {
     const contentDeviceId = d.current.originDeviceId || device_id;
     
     if (d.current.type === 'pdf' && d.current.file) {
-      const maxPages = await getPageSlideCount(contentDeviceId, d.current.file, 'page');
+      const maxPages = await getPageSlideCount(contentDeviceId, d.current.file, storage);
       if (maxPages > 0) {
         const nextPage = Math.min((d.current.page || 1) + 1, maxPages);
         if (nextPage !== d.current.page) {
@@ -1191,7 +1191,7 @@ export function setupControlHandlers(socket, deps) {
         }
       }
     } else if (d.current.type === 'pptx' && d.current.file) {
-      const maxSlides = await getPageSlideCount(contentDeviceId, d.current.file, 'slide');
+      const maxSlides = await getPageSlideCount(contentDeviceId, d.current.file, storage);
       if (maxSlides > 0) {
         const nextSlide = Math.min((d.current.page || 1) + 1, maxSlides);
         if (nextSlide !== d.current.page) {
@@ -1204,7 +1204,7 @@ export function setupControlHandlers(socket, deps) {
       // Получаем количество изображений в папке
       const folderName = d.current.file.replace(/\.zip$/i, ''); // Убираем .zip если есть
       try {
-        const maxImages = await getFolderImagesCount(contentDeviceId, folderName);
+        const maxImages = await getFolderImagesCount(contentDeviceId, folderName, storage);
         logger.info(`[Control] pdfNext folder: maxImages=${maxImages}, currentPage=${d.current.page}`, { deviceId: device_id, folderName, maxImages, currentPage: d.current.page });
         if (maxImages > 0) {
           const nextImage = Math.min((d.current.page || 1) + 1, maxImages);

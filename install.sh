@@ -211,6 +211,34 @@ select_database() {
 }
 
 # ========================
+# Storage Selection
+# ========================
+
+select_storage() {
+    STORAGE_BACKEND="${STORAGE_BACKEND:-local}"
+
+    if [ "$DB_TYPE" != "postgres" ]; then
+        return
+    fi
+
+    if [ "$STORAGE_BACKEND" = "local" ]; then
+        echo ""
+        colorized_echo yellow "💾 Select storage backend:"
+        echo "  [1] Local filesystem (built-in, no setup required)"
+        echo "  [2] S3/MinIO (via Docker, separate container)"
+        read -p "  Choose [1-2]: " s3_choice < /dev/tty
+        echo ""
+        case "$s3_choice" in
+            2) STORAGE_BACKEND="s3" ;;
+            *) STORAGE_BACKEND="local" ;;
+        esac
+    fi
+
+    S3_ACCESS_KEY="${S3_ACCESS_KEY:-minioadmin}"
+    S3_SECRET_KEY="${S3_SECRET_KEY:-minioadmin}"
+}
+
+# ========================
 # Installation
 # ========================
 
@@ -235,6 +263,9 @@ install_mmrc() {
 
     # Select database type first
     select_database
+
+    # Select storage backend
+    select_storage
 
     # Create directories
     mkdir -p "$INSTALL_DIR" "$DATA_DIR"
@@ -283,13 +314,14 @@ ENVEOF
     echo "JWT_SECRET=$JWT_SECRET" >> "$ENV_FILE"
 
     # Continue writing the rest of .env
-    cat >> "$ENV_FILE" << 'ENVEOF2'
-# Server
-SERVER_PORT=3000
-SERVER_URL=http://mmrc:3000
-ADMIN_INTERNAL_API_URL=http://mmrc:3000
+    cat >> "$ENV_FILE" << ENVEOF2
+# Database connection (SQLite ignores host/port/user/password)
+DB_HOST=mmrc-postgres
+DB_PORT=5432
+DB_NAME=mmrc
+DB_USER=mmrc
+DB_PASSWORD=mmrc
 
-# Database
 WAL_CHECKPOINT_INTERVAL_MS=300000
 
 # Night Optimization
@@ -299,24 +331,35 @@ NIGHT_OPT_END_HOUR=5
 # Resource Limits
 JOB_RESERVE_CPU_PERCENT=30
 JOB_RESERVE_MEMORY_MB=2048
-JOB_MAX_SINGLE_JOB_PERCENT=70
-
 
 STREAM_MAX_JOBS=100
 STREAM_IDLE_TIMEOUT_MS=180000
 
 # Content Storage (project dir by default)
 CONTENT_DIR=/opt/mmrc/data
-
-# Host data dir (for converter container volume mount)
 HOST_DATA_DIR=/opt/mmrc/data
 
 # Docker sibling containers
 MMRC_DOCKER=1
+MMRC_COMPOSE_DIR=/host
+DOCKER_IMAGE=pingwin1900/mmrc
+DOCKER_IMAGE_TAG=${MMRC_DOCKER_TAG:-v340}
 CONVERTER_IMAGE=pingwin1900/mmrc-converter
 FFMPEG_IMAGE=pingwin1900/mmrc-ffmpeg
 STREAMER_IMAGE=pingwin1900/mmrc-streamer
 MMRC_STREAMER_ENABLED=false
+
+# Redis
+REDIS_URL=redis://mmrc-redis:6379
+
+# Storage Backend: local | s3
+STORAGE_BACKEND=$STORAGE_BACKEND
+S3_ENDPOINT=http://mmrc-minio:9000
+S3_REGION=us-east-1
+S3_BUCKET=mmrc
+S3_ACCESS_KEY=${S3_ACCESS_KEY:-minioadmin}
+S3_SECRET_KEY=${S3_SECRET_KEY:-minioadmin}
+S3_FORCE_PATH_STYLE=true
 
 # LDAP (optional)
 LDAP_URL=
@@ -328,7 +371,7 @@ ENVEOF2
     if [ "$DB_TYPE" = "postgres" ]; then
         cat >> "$ENV_FILE" << ENVEOF3
 
-# PostgreSQL connection
+# PostgreSQL connection (overrides above)
 DB_HOST=$DB_POSTGRES_HOST
 DB_PORT=$DB_POSTGRES_PORT
 DB_NAME=$DB_POSTGRES_DB
@@ -357,6 +400,9 @@ ENVEOF3
     sed -i "s|^CONTENT_DIR=.*|CONTENT_DIR=${content_dir}|" "$ENV_FILE"
     sed -i "s|^HOST_DATA_DIR=.*|HOST_DATA_DIR=${content_dir}|" "$ENV_FILE"
     mkdir -p "$content_dir"/{db,content,streams,converted/trailers,logs,temp,hero}
+    if [ "$STORAGE_BACKEND" = "s3" ]; then
+        mkdir -p "$content_dir/minio"
+    fi
     chown -R 1001:1001 "$content_dir" 2>/dev/null || true
     success "Content directory: $content_dir"
 
@@ -412,6 +458,9 @@ ENVEOF3
     PROFILES=""
     if [ "$DB_TYPE" = "postgres" ] && [ "$POSTGRES_SOURCE" = "docker" ]; then
         PROFILES="--profile postgres"
+    fi
+    if [ "$STORAGE_BACKEND" = "s3" ]; then
+        PROFILES="$PROFILES --profile s3"
     fi
     if [ "$STREAMER_ENABLED" = "true" ]; then
         PROFILES="$PROFILES --profile streamer"

@@ -3,77 +3,174 @@
 ## Goal
 Превратить MMRC из монолита в архитектуру, готовую к нагрузке, отказам и горизонтальному масштабированию.
 
-## Status: DONE ✅ (кроме Phase 4-6 — перенесены в следующий спринт)
+## Результат: ✅ Phases 0-3 готовы
 
 ---
 
-### Phase 0 — Centralised version.json
-Все версии и теги — в одном файле.
+### Phase 0 — Centralised version.json ✅
+Все версии и теги — в одном файле `version.json`.
 
-| № | Задача | Статус |
-|---|--------|--------|
-| 0.1 | Создать `version.json` | ✅ |
-| 0.2 | `package.json` → читает `version` из `version.json` | ✅ |
-| 0.3 | Dockerfile → `LABEL version=...` + build ARG | ✅ |
-| 0.4 | `src/utils/docker-update-manager.js` → импорт `version.json` | ✅ |
-| 0.5 | `src/utils/update-manager.js` → импорт `version.json` | ✅ |
-| 0.6 | `src/utils/docker-ffmpeg.js` → `DOCKER_IMAGE_TAG` из `version.json` | ✅ |
-| 0.7 | `src/converters/document-converter.js` → `DOCKER_IMAGE_TAG` из `version.json` | ✅ |
-| 0.8 | `public/js/player-videojs.js` → сервер отдаёт версию через API/env | ✅ |
-| 0.9 | `install.sh` → `MMRC_BRANCH` и `MMRC_RAW` из `version.json` через `curl` | ✅ |
-| 0.10 | `mmrc.sh` → `MMRC_BRANCH` и `DOCKER_IMAGE_TAG` из `version.json` | ✅ |
+### Phase 1 — Graceful shutdown + Healthcheck + Timeout ✅
+SIGTERM → server.close → queue.close → db.close. `/health` проверяет БД, диск, uptime. Retry, circuit breaker, таймауты на внешние вызовы.
+
+### Phase 2 — Redis + Bull (очередь задач) ✅
+Bull queues: video-optimize, stream, converter. Redis container, Bull Board UI, Redis adapter для socket.io.
+
+### Phase 3 — Отдельный стриминг ✅
+`mmrc-streamer` образ, stream manager, graceful stream shutdown.
 
 ---
 
-### Phase 1 — Graceful shutdown + Healthcheck + Timeout
-Базовая устойчивость без инфраструктурных изменений.
-
-| № | Задача | Статус |
-|---|--------|--------|
-| 1.1 | Graceful shutdown | ✅ Done |
-| 1.2 | Deep healthcheck (`/health` проверяет БД, диск, uptime) | ✅ Done |
-| 1.3 | Timeout на внешние вызовы (30s) | ✅ Done |
-| 1.4 | Retry с exponential backoff | ✅ Done |
-| 1.5 | Circuit breaker wrapper | ✅ Done |
+## Исправлено в v340
+- Server hang on startup — bullBoardRouter TDZ
+- bullAdapter import — `@bull-board/api@8.0.0` экспортирует `./bullAdapter`
+- Health endpoint crash — `DEFAULT_DATA_DIR → getDataRoot()`
+- Streamer healthcheck YAML — curly braces → block scalar
+- install.sh: `MMRC_BRANCH` fallback + size validation
+- Redis не стартовал: `profiles: [redis]` убран
 
 ---
 
-### Phase 2 — Redis + Bull (очередь задач)
-Разгружаем event loop — ffmpeg-оптимизация уходит в фоновые воркеры.
+## Phase 4 — S3/MinIO (следующий спринт)
 
-| № | Задача | Статус |
-|---|--------|--------|
-| 2.1 | Redis контейнер в `docker-compose.yml` | ✅ |
-| 2.2 | Bull queue setup (video-optimize, stream, converter) | ✅ |
-| 2.3 | Вынести `autoOptimizeVideo` в очередь | ✅ |
-| 2.4 | Status via Redis pub/sub | ✅ |
-| 2.5 | Bull Board (UI) | ✅ (bull-board v8.0.0) |
-| 2.6 | Redis adapter для socket.io | ✅ |
+**Цель**: Перейти с локальной файловой системы на S3-совместимое хранилище (MinIO).  
+**Зачем**: Единое хранилище для всех реплик — необходимо для HA (Phase 5).  
+**Сложность**: Высокая — ~20+ файлов с прямыми `fs` операциями.
+
+### Зависимости
+- `@aws-sdk/client-s3` для S3 API
+- MinIO контейнер в docker-compose
+
+### План
+
+#### 4.1 Storage абстракция
+Создать `src/storage/` с классами:
+
+| Файл | Описание |
+|------|----------|
+| `src/storage/provider.js` | Abstract class `StorageProvider` — контракт: `read(key)`, `write(key, buffer)`, `delete(key)`, `exists(key)`, `list(prefix)`, `copy(src, dest)`, `move(src, dest)`, `stream(key)`, `stat(key)` |
+| `src/storage/local.js` | `LocalStorage` — реализация через `node:fs/promises`. Путь: `{dataRoot}/storage/{key}` |
+| `src/storage/s3.js` | `S3Storage` — реализация через `@aws-sdk/client-s3`. Поддержка MinIO endpoint. Bucket: конфигурируется |
+| `src/storage/factory.js` | Фабрика — по `STORAGE_BACKEND=local|s3` возвращает нужный провайдер |
+
+#### 4.2 Миграция точек входа (server.js)
+| № | Что | Файл |
+|---|-----|------|
+| 4.2.1 | Инициализация storage в `server.js` | `server.js` — вместо прямых `fs.mkdirSync` для data/streams/converted/logs |
+| 4.2.2 | Инициализация `StorageProvider` по env | `server.js` — `STORAGE_BACKEND`, `S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` |
+| 4.2.3 | Передать провайдер в `app` context | `server.js` — через `req.storage` или import |
+
+#### 4.3 Миграция загрузки файлов
+Самый частый паттерн: upload → `fs.writeFileSync` / `fs.renameSync` → сохранение пути в БД.
+
+| № | Файл | Кол-во fs операций |
+|---|------|--------------------|
+| 4.3.1 | `src/routes/files.js` | ~50 операций (write, unlink, rename, mkdir, chmod) |
+| 4.3.2 | `src/routes/files.js` — upload handler | multer → multer-s3 или write через `storage.write()` |
+| 4.3.3 | `src/routes/files.js` — delete | `fs.unlinkSync` → `storage.delete()` |
+
+#### 4.4 Миграция стримов (HLS)
+| № | Файл | Что менять |
+|---|------|------------|
+| 4.4.1 | `src/streams/stream-manager.js` | HLS плейлисты и сегменты читаются/пишутся через `storage` |
+| 4.4.2 | Stream files | ffmpeg output → HLS segments. Через `storage.stream()` или локальный temp + upload |
+
+#### 4.5 Миграция конвертеров
+| № | Файл | Что менять |
+|---|------|------------|
+| 4.5.1 | `src/converters/document-converter.js` | Временные файлы и результат через `storage` |
+| 4.5.2 | `src/converters/folder-converter.js` | Распаковка ZIP → read/write через `storage` |
+
+#### 4.6 Миграция конфигов и БД
+| № | Файл | Что менять |
+|---|------|------------|
+| 4.6.1 | `src/config/settings-manager.js` | `fs.readFileSync/writeFileSync` → `storage.read/write` |
+| 4.6.2 | `src/config/constants.js` | `fs.mkdirSync` → storage init |
+| 4.6.3 | `src/database/driver/SqliteDriver.js` | SQLite на S3? Лучше PostgreSQL только |
+| 4.6.4 | `src/hero/database/hero-db.js` | SQLite для hero — на S3 или migrate to pg |
+
+#### 4.7 Nginx прокси для S3
+MinIO обычно на отдельном порту. Nginx может проксировать `/content/` → MinIO bucket.
+
+#### 4.8 .env переменные
+Добавить в `.env`:
+```
+STORAGE_BACKEND=local        # local | s3
+S3_ENDPOINT=http://minio:9000
+S3_REGION=us-east-1
+S3_BUCKET=mmrc
+S3_ACCESS_KEY=minioadmin
+S3_SECRET_KEY=minioadmin
+S3_FORCE_PATH_STYLE=true
+```
+
+#### 4.9 Миграция данных
+Скрипт для копирования существующих файлов из локальной FS в S3:
+```
+mmrc storage:migrate
+```
 
 ---
 
-### Phase 3 — Отдельный стриминг
-Выносим ffmpeg-стримы из основного процесса в изолированные контейнеры.
+## Phase 5 — HA: Nginx LB + N реплик (следующий спринт)
 
-| № | Задача | Статус |
-|---|--------|--------|
-| 3.1 | `mmrc-streamer` образ | ✅ |
-| 3.2 | Stream manager в mmrc | ✅ |
-| 3.3 | Graceful stream shutdown | ✅ |
+**Цель**: Несколько реплик mmrc за Nginx, отказоустойчивость, горизонтальное масштабирование.  
+**Зависимость**: Phase 4 (S3) — без общего хранилища реплики не имеют смысла.  
+**Сложность**: Средняя.
+
+### План
+
+#### 5.1 Nginx upstream → несколько реплик
+| № | Что | Файл |
+|---|-----|------|
+| 5.1.1 | upstream с несколькими серверами | `docker/nginx/nginx.conf` |
+| 5.1.2 | Health-aware LB | nginx `max_fails=3 fail_timeout=30s` |
+| 5.1.3 | Docker Compose `deploy: replicas: 3` | `docker-compose.deploy.yml` mmrc service |
+
+#### 5.2 Session affinity
+Socket.IO требует, чтобы клиент подключался к той же реплике, или Redis adapter.
+
+| № | Что | Статус |
+|---|-----|--------|
+| 5.2.1 | Redis adapter для socket.io | ✅ Уже есть (Phase 2.6) |
+| 5.2.2 | Sticky sessions (ip_hash) | `nginx.conf`: `ip_hash;` в upstream |
+| 5.2.3 | Express session → Redis | `connect-redis` или аналогично |
+
+#### 5.3 Docker Compose scalable
+| № | Что | Файл |
+|---|-----|------|
+| 5.3.1 | Убрать `container_name` для mmrc (конфликт с репликами) | `docker-compose.deploy.yml` |
+| 5.3.2 | `deploy:` секция с replicas | `docker-compose.deploy.yml` |
+| 5.3.3 | `ports:` не `80:80`, а `loadbalancer:80:80` | Через nginx service |
+| 5.3.4 | healthcheck для nginx | `docker-compose.deploy.yml` |
+
+#### 5.4 Nginx rate limiting (уже есть)
+- api: 10r/s, upload: 2r/s, login: 5r/m — **уже настроено** в `docker/nginx/nginx.conf`
+
+#### 5.5 Graceful shutdown для реплик (уже есть ✅)
+- SIGTERM → server.close → queue.close → db.close — **уже реализовано** (Phase 1.1)
+
+#### 5.6 Настроить Docker Compose profiles
+| Профиль | Что включает |
+|---------|-------------|
+| `ha` | replicas: 3 + nginx |
+| (default) | single instance (текущее поведение) |
+
+#### 5.7 Обновить install.sh
+| № | Что |
+|---|-----|
+| 5.7.1 | HA опция: "Enable HA mode? [y/N]" |
+| 5.7.2 | При HA: `--profile ha` |
 
 ---
 
-## Исправлено в процессе v340
+## Phase 6 — Sharp migration ✅
 
-- **Server hang on startup** — bullBoardRouter TDZ (let объявлен позже места использования)
-- **bullAdapter import** — `@bull-board/api@8.0.0` экспортирует `./bullAdapter` (без `.js`)
-- **Health endpoint crash** — `DEFAULT_DATA_DIR` undeclared → `getDataRoot()`
-- **Streamer healthcheck YAML** — `{` `}` `?` в curly-скобках не парсились в flow sequence → block scalar
-- **install.sh URL bug** — `MMRC_BRANCH` был пустым → URL `.../MMRC//docker-compose.deploy.yml` → GitHub возвращает `400: Invalid request` (20 байт) → YAML парсер читает `400:` как числовой ключ
-- **Redis not starting** — `profiles: [redis]` никогда не активировался в install.sh → Bull очереди не могли подключиться (ETIMEDOUT)
+**Фактически已完成**: `sharp` используется вместо ImageMagick/GM ещё до v340.  
+Осталось только почистить Dockerfile от мёртвого груза.
 
-## Что НЕ вошло в v340 (перенесено)
-
-- Phase 4 — S3/MinIO (следующий спринт)
-- Phase 5 — HA: Nginx LB + реплики (следующий спринт)
-- Phase 6 — Sharp migration (следующий спринт)
+### TODO (cleanup, не срочно)
+- Убрать `imagemagick` из `apt-get install` в Dockerfile
+- Убрать `sed` правку ImageMagick policy (строка 58 Dockerfile)
+- Убрать `pdf2pic` — проверить нет ли в `package.json` (скорее всего только в lock)
+- Провалидировать, что `convert`, `identify`, `mogrify` нигде не вызываются

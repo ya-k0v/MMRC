@@ -1,8 +1,3 @@
-/**
- * Конвертация PDF и PPTX документов в изображения
- * @module converters/document-converter
- */
-
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -21,54 +16,83 @@ import { validatePath } from '../utils/path-validator.js';
 
 const execFileAsync = promisify(execFile);
 
-/**
- * Получить количество страниц в PDF
- * @param {string} pdfPath - Путь к PDF файлу
- * @returns {Promise<number>} Количество страниц
- */
-export async function getPdfPageCount(pdfPath) {
-  const pdfBytes = await fs.promises.readFile(pdfPath);
+function toStorageKey(absPath) {
+  const root = getDataRoot();
+  const rel = path.relative(root, path.resolve(String(absPath)));
+  if (rel.startsWith('..')) throw new Error('Path outside data root');
+  return rel.replace(/\\/g, '/');
+}
+
+export async function getPdfPageCount(pdfPath, storage = null) {
+  let pdfBytes;
+  if (storage) {
+    try {
+      const key = toStorageKey(pdfPath);
+      pdfBytes = await storage.read(key);
+    } catch {
+      try {
+        pdfBytes = await fs.promises.readFile(pdfPath);
+      } catch {
+        return 0;
+      }
+    }
+  } else {
+    try {
+      pdfBytes = await fs.promises.readFile(pdfPath);
+    } catch {
+      return 0;
+    }
+  }
   const pdfDoc = await PDFDocument.load(pdfBytes);
   return pdfDoc.getPageCount();
 }
 
-/**
- * Получить размеры страницы PDF
- * @param {string} pdfPath - Путь к PDF файлу
- * @param {number} pageIndex - Индекс страницы (0-based, по умолчанию 0)
- * @returns {Promise<{width: number, height: number, aspectRatio: number}>}
- */
-export async function getPdfPageSize(pdfPath, pageIndex = 0) {
+export async function getPdfPageSize(pdfPath, pageIndex = 0, storage = null) {
+  let pdfBytes;
   try {
-    const pdfBytes = await fs.promises.readFile(pdfPath);
-    const pdfDoc = await PDFDocument.load(pdfBytes);
-    const page = pdfDoc.getPage(pageIndex);
-    const { width, height } = page.getSize();
-    const aspectRatio = width / height;
-    
-    return { width, height, aspectRatio };
+    if (storage) {
+      const key = toStorageKey(pdfPath);
+      pdfBytes = await storage.read(key);
+    } else {
+      pdfBytes = await fs.promises.readFile(pdfPath);
+    }
   } catch (error) {
-    logger.warn(`[Converter] Не удалось получить размеры страницы, используем значения по умолчанию`, { 
-      error: error.message, 
-      pdfPath 
-    });
-    // Возвращаем стандартный A4 (595x842 points при 72 DPI)
+    logger.warn(`[Converter] Failed to get page size, using defaults`, { error: error.message, pdfPath });
     return { width: 595, height: 842, aspectRatio: 595 / 842 };
   }
+  const pdfDoc = await PDFDocument.load(pdfBytes);
+  const page = pdfDoc.getPage(pageIndex);
+  const { width, height } = page.getSize();
+  return { width, height, aspectRatio: width / height };
 }
 
-/**
- * Конвертировать PDF в изображения (PNG) с сохранением пропорций
- * @param {string} pdfPath - Путь к PDF файлу
- * @param {string} outputDir - Папка для сохранения изображений
- * @returns {Promise<number>} Количество конвертированных страниц
- */
-export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) {
+export async function convertPdfToImages(pdfPath, outputDir, onProgress = null, storage = null) {
   const dataRoot = getDataRoot();
   const safeOutputDir = validatePath(path.resolve(outputDir), dataRoot);
-  const safePdfPath = validatePath(path.resolve(pdfPath), dataRoot);
+  let safePdfPath = validatePath(path.resolve(pdfPath), dataRoot);
 
-  const pageSize = await getPdfPageSize(safePdfPath, 0);
+  if (!fs.existsSync(safePdfPath) && storage) {
+    try {
+      const key = toStorageKey(safePdfPath);
+      const readStream = await storage.createReadStream(key);
+      const tempPdf = path.join(os.tmpdir(), `mmrc-pdf-${crypto.randomUUID()}-${path.basename(safePdfPath)}`);
+      const writeStream = fs.createWriteStream(tempPdf);
+      await new Promise((resolve, reject) => {
+        readStream.pipe(writeStream);
+        writeStream.on('finish', resolve);
+        writeStream.on('error', reject);
+        readStream.on('error', reject);
+      });
+      safePdfPath = tempPdf;
+    } catch (err) {
+      logger.error(`[Converter] Cannot retrieve PDF from storage`, { error: err.message, pdfPath });
+      throw new Error(`Source PDF not available locally or in storage: ${pdfPath}`);
+    }
+  } else if (!fs.existsSync(safePdfPath)) {
+    throw new Error(`Source PDF not found: ${pdfPath}`);
+  }
+
+  const pageSize = await getPdfPageSize(safePdfPath, 0, storage);
   const { aspectRatio } = pageSize;
 
   const MAX_WIDTH = 1920;
@@ -81,24 +105,24 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
     if (aspectRatio >= 1.6 && aspectRatio <= 1.9) {
       targetWidth = MAX_WIDTH;
       targetHeight = MAX_HEIGHT;
-      logger.info(`[Converter] Ландшафтный формат ${aspectRatio.toFixed(2)}:1, используем ${targetWidth}x${targetHeight}`);
+      logger.info(`[Converter] Landscape ${aspectRatio.toFixed(2)}:1, using ${targetWidth}x${targetHeight}`);
     } else if (aspectRatio > MAX_ASPECT_RATIO) {
       targetWidth = MAX_WIDTH;
       targetHeight = Math.round(MAX_WIDTH / aspectRatio);
-      logger.info(`[Converter] Широкий формат ${aspectRatio.toFixed(2)}:1, используем ${targetWidth}x${targetHeight}`);
+      logger.info(`[Converter] Wide ${aspectRatio.toFixed(2)}:1, using ${targetWidth}x${targetHeight}`);
     } else {
       targetHeight = MAX_HEIGHT;
       targetWidth = Math.round(MAX_HEIGHT * aspectRatio);
-      logger.info(`[Converter] Ландшафтный формат ${aspectRatio.toFixed(2)}:1, используем ${targetWidth}x${targetHeight}`);
+      logger.info(`[Converter] Landscape ${aspectRatio.toFixed(2)}:1, using ${targetWidth}x${targetHeight}`);
     }
   } else {
     targetHeight = MAX_HEIGHT;
     targetWidth = Math.round(MAX_HEIGHT * aspectRatio);
-    logger.info(`[Converter] Портретный формат ${(1/aspectRatio).toFixed(2)}:1, используем ${targetWidth}x${targetHeight}`);
+    logger.info(`[Converter] Portrait ${(1/aspectRatio).toFixed(2)}:1, using ${targetWidth}x${targetHeight}`);
   }
 
-  const pageCount = await getPdfPageCount(safePdfPath);
-  logger.info(`[Converter] Начало конвертации PDF: ${pageCount} страниц, целевой размер: ${targetWidth}x${targetHeight}`);
+  const pageCount = await getPdfPageCount(safePdfPath, storage);
+  logger.info(`[Converter] Starting PDF conversion: ${pageCount} pages, target: ${targetWidth}x${targetHeight}`);
 
   const density = 150;
   const convertedPages = [];
@@ -128,22 +152,28 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
         .png()
         .toFile(imagePath);
 
+      if (storage) {
+        try {
+          const pngKey = toStorageKey(imagePath);
+          await storage.write(pngKey, fs.createReadStream(imagePath));
+        } catch (uploadErr) {
+          logger.warn(`[Converter] Failed to upload page ${i} to storage`, { error: uploadErr.message });
+        }
+      }
+
       const stats = fs.statSync(imagePath);
       if (stats.size > 100) {
         convertedPages.push({ page: i, path: imagePath });
-        logger.info(`[Converter] ✅ Страница ${i} конвертирована: ${imagePath} (${(stats.size / 1024).toFixed(2)} KB)`);
+        logger.info(`[Converter] Page ${i} converted: ${imagePath} (${(stats.size / 1024).toFixed(2)} KB)`);
         if (onProgress) {
-          const pct = Math.max(0, Math.min(99, Math.round((i / pageCount) * 99)));
-          onProgress(pct);
+          onProgress(Math.max(0, Math.min(99, Math.round((i / pageCount) * 99))));
         }
       } else {
-        logger.warn(`[Converter] ⚠️ Страница ${i}: файл слишком мал: ${imagePath}`);
+        logger.warn(`[Converter] Page ${i}: file too small: ${imagePath}`);
       }
     } catch (error) {
-      logger.error(`[Converter] ❌ Ошибка конвертации страницы ${i}`, {
-        error: error.message,
-        stack: error.stack,
-        page: i
+      logger.error(`[Converter] Error converting page ${i}`, {
+        error: error.message, stack: error.stack, page: i
       });
     } finally {
       if (tempFile) {
@@ -153,16 +183,16 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
   }
 
   if (convertedPages.length === 0) {
-    throw new Error(`Не удалось конвертировать ни одной страницы из ${pageCount}`);
+    throw new Error(`Failed to convert any of ${pageCount} pages`);
   }
 
-  logger.info(`[Converter] Успешно конвертировано ${convertedPages.length} из ${pageCount} страниц`);
+  logger.info(`[Converter] Converted ${convertedPages.length} of ${pageCount} pages`);
 
   for (const { page, path: imagePath } of convertedPages) {
     if (fs.existsSync(imagePath)) {
       try {
         const meta = await sharp(imagePath).metadata();
-        logger.info(`[Converter] ✅ Изображение ${page} готово: ${meta.width}x${meta.height} (целевой: ${targetWidth}x${targetHeight})`);
+        logger.info(`[Converter] Image ${page} ready: ${meta.width}x${meta.height} (target: ${targetWidth}x${targetHeight})`);
       } catch (e) {
       }
     }
@@ -171,19 +201,35 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null) 
   return pageCount;
 }
 
-/**
- * Конвертировать PPTX в изображения (через PDF)
- * @param {string} pptxPath - Путь к PPTX файлу
- * @param {string} outputDir - Папка для сохранения изображений
- * @returns {Promise<number>} Количество конвертированных слайдов
- */
-export async function convertPptxToImages(pptxPath, outputDir, onProgress = null) {
+export async function convertPptxToImages(pptxPath, outputDir, onProgress = null, storage = null) {
   const dataRoot = getDataRoot();
   const safeOutputDir = validatePath(path.resolve(outputDir), dataRoot);
-  const safePptxPath = validatePath(path.resolve(pptxPath), dataRoot);
+  let safePptxPath = validatePath(path.resolve(pptxPath), dataRoot);
+
+  if (!fs.existsSync(safePptxPath) && storage) {
+    try {
+      const key = toStorageKey(safePptxPath);
+      const readStream = await storage.createReadStream(key);
+      const tempPptx = path.join(os.tmpdir(), `mmrc-pptx-${crypto.randomUUID()}-${path.basename(safePptxPath)}`);
+      const writeStream = fs.createWriteStream(tempPptx);
+      await new Promise((resolve, reject) => {
+        readStream.pipe(writeStream);
+        writeStream.on('finish', resolve);
+        writeStream.on('error', reject);
+        readStream.on('error', reject);
+      });
+      safePptxPath = tempPptx;
+    } catch (err) {
+      logger.error(`[Converter] Cannot retrieve PPTX from storage`, { error: err.message, pptxPath });
+      throw new Error(`Source PPTX not available locally or in storage: ${pptxPath}`);
+    }
+  } else if (!fs.existsSync(safePptxPath)) {
+    throw new Error(`Source PPTX not found: ${pptxPath}`);
+  }
+
   const fileNameWithoutExt = path.basename(safePptxPath, path.extname(safePptxPath));
   const pdfPath = path.join(safeOutputDir, `${fileNameWithoutExt}.pdf`);
-  
+
   try {
     if (process.env.MMRC_DOCKER === '1') {
       await convertPptxToPdfViaDocker(safePptxPath, safeOutputDir);
@@ -191,18 +237,18 @@ export async function convertPptxToImages(pptxPath, outputDir, onProgress = null
       await execWithGuard('converter', 'soffice', ['--headless', '--convert-to', 'pdf', '--outdir', safeOutputDir, safePptxPath]);
     }
     if (onProgress) onProgress(5);
-    
+
     if (!fs.existsSync(pdfPath)) {
-      throw new Error(`PDF не создан: ${pdfPath}`);
+      throw new Error(`PDF not created: ${pdfPath}`);
     }
-    
-    const numPages = await convertPdfToImages(pdfPath, safeOutputDir, onProgress);
-    
+
+    const numPages = await convertPdfToImages(pdfPath, safeOutputDir, onProgress, storage);
+
     fs.unlinkSync(pdfPath);
-    
+
     return numPages;
   } catch (error) {
-    logger.error(`[Converter] ❌ PPTX конвертация failed`, { error: error.message, stack: error.stack, pptxPath });
+    logger.error(`[Converter] PPTX conversion failed`, { error: error.message, stack: error.stack, pptxPath });
     throw error;
   }
 }
@@ -226,223 +272,228 @@ async function convertPptxToPdfViaDocker(pptxPath, outputDir) {
   ]);
 }
 
-/**
- * Найти папку с конвертированными файлами
- * @param {string} deviceFolderOrId - Имя папки устройства или ID устройства (обычно совпадают)
- * @param {string} fileName - Имя файла (PDF/PPTX)
- * @returns {string|null} Путь к папке или null
- */
-export function findFileFolder(deviceFolderOrId, fileName) {
-  // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
-  // Это важно, так как contentRoot может измениться через настройки
+export async function findFileFolder(deviceFolderOrId, fileName, storage = null) {
   const devicesPath = getDevicesPath();
   const deviceFolder = path.join(devicesPath, deviceFolderOrId);
-  if (!fs.existsSync(deviceFolder)) return null;
-  
+  if (!fs.existsSync(deviceFolder)) {
+    if (storage) {
+      try {
+        const prefix = toStorageKey(deviceFolder);
+        const entries = await storage.list(prefix);
+        const folderName = fileName.replace(/\.(pdf|pptx)$/i, '');
+        const possibleFolderRel = path.posix.join(prefix, folderName);
+        const pngPattern = `${possibleFolderRel}/page.`;
+        const hasPng = entries.some(e => e.startsWith(pngPattern));
+        if (hasPng) {
+          const possibleFolder = path.join(deviceFolder, folderName);
+          return possibleFolder;
+        }
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
   const ext = path.extname(fileName).toLowerCase();
   const folderName = fileName.replace(/\.(pdf|pptx)$/i, '');
   const possibleFolder = path.join(deviceFolder, folderName);
-  
-  // КРИТИЧНО: После конвертации исходный файл удаляется, поэтому проверяем только существование папки
-  // и наличие PNG файлов внутри (признак успешной конвертации)
+
   if (fs.existsSync(possibleFolder) && fs.statSync(possibleFolder).isDirectory()) {
     const folderContents = fs.readdirSync(possibleFolder);
-    // Проверяем наличие PNG файлов (признак успешной конвертации)
     const hasPngFiles = folderContents.some(f => f.toLowerCase().endsWith('.png'));
     if (hasPngFiles) {
       return possibleFolder;
     }
-    // Если это PDF/PPTX и папка существует, но нет PNG - возможно конвертация еще идет
-    // Возвращаем папку в любом случае, чтобы не блокировать запросы
     if (ext === '.pdf' || ext === '.pptx') {
       return possibleFolder;
     }
   }
-  
-  // Если передали имя папки напрямую (без расширения), проверяем его
+
   if (!ext || ext === '') {
     const directFolder = path.join(deviceFolder, fileName);
     if (fs.existsSync(directFolder) && fs.statSync(directFolder).isDirectory()) {
       return directFolder;
     }
   }
-  
+
+  if (storage) {
+    try {
+      const prefix = toStorageKey(deviceFolder);
+      const entries = await storage.list(prefix);
+      const targetFolder = path.posix.join(prefix, folderName);
+      const hasPng = entries.some(e => e.startsWith(`${targetFolder}/page.`) && e.endsWith('.png'));
+      if (hasPng) {
+        return path.join(deviceFolder, folderName);
+      }
+    } catch {
+    }
+  }
+
   return null;
 }
 
-/**
- * Получить количество конвертированных слайдов/страниц
- * @param {string} deviceId - ID устройства
- * @param {string} fileName - Имя файла (PDF/PPTX)
- * @returns {Promise<number>} Количество слайдов
- */
-export async function getPageSlideCount(deviceId, fileName) {
+export async function getPageSlideCount(deviceId, fileName, storage = null) {
   try {
-    const convertedDir = findFileFolder(deviceId, fileName);
+    const convertedDir = await findFileFolder(deviceId, fileName, storage);
     if (!convertedDir) return 0;
-    
-    const pngFiles = fs.readdirSync(convertedDir)
-      .filter(f => f.toLowerCase().endsWith('.png'))
-      .sort();
-    
-    return pngFiles.length;
+
+    if (fs.existsSync(convertedDir)) {
+      const pngFiles = fs.readdirSync(convertedDir)
+        .filter(f => f.toLowerCase().endsWith('.png'))
+        .sort();
+      if (pngFiles.length > 0) return pngFiles.length;
+    }
+
+    if (storage) {
+      try {
+        const prefix = toStorageKey(convertedDir);
+        const entries = await storage.list(prefix);
+        const pngFiles = entries
+          .filter(e => e.endsWith('.png'))
+          .sort();
+        return pngFiles.length;
+      } catch {
+      }
+    }
+
+    return 0;
   } catch {
     return 0;
   }
 }
 
-/**
- * Автоматическая конвертация PDF/PPTX файла в изображения
- * @param {string} deviceId - ID устройства
- * @param {string} fileName - Имя файла
- * @param {Object} devices - Объект devices
- * @param {Object} fileNamesMap - Маппинг имен файлов
- * @param {Function} saveFileNamesMapFn - Функция сохранения маппинга
- * @returns {Promise<number>} Количество конвертированных страниц/слайдов
- */
-export async function autoConvertFile(deviceId, fileName, devices, fileNamesMap, saveFileNamesMapFn, io = null) {
+export async function autoConvertFile(deviceId, fileName, devices, fileNamesMap, saveFileNamesMapFn, io = null, storage = null) {
   const d = devices[deviceId];
   if (!d) return 0;
-  
-  // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
-  // Это важно, так как contentRoot может измениться через настройки
+
   const devicesPath = getDevicesPath();
   const deviceFolder = path.join(devicesPath, d.folder);
   const filePath = path.join(deviceFolder, fileName);
-  
-  if (!fs.existsSync(filePath)) {
-    logger.warn(`[Converter] ⚠️ Файл не найден: ${filePath}`, { deviceId, fileName, deviceFolder, devicesPath });
+
+  if (fs.existsSync(filePath)) {
+  } else if (storage) {
+    try {
+      const key = toStorageKey(filePath);
+      await storage.stat(key);
+      await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+      const readStream = await storage.createReadStream(key);
+      const writeStream = fs.createWriteStream(filePath);
+      await new Promise((resolve, reject) => {
+        readStream.pipe(writeStream);
+        writeStream.on('finish', resolve);
+        writeStream.on('error', reject);
+        readStream.on('error', reject);
+      });
+      logger.info(`[Converter] Downloaded source from storage: ${fileName}`, { deviceId, fileName });
+    } catch {
+      logger.warn(`[Converter] File not found locally or in storage: ${filePath}`, { deviceId, fileName, deviceFolder, devicesPath });
+      return 0;
+    }
+  } else {
+    logger.warn(`[Converter] File not found: ${filePath}`, { deviceId, fileName, deviceFolder, devicesPath });
     return 0;
   }
-  
+
   const ext = path.extname(fileName).toLowerCase();
   if (ext !== '.pdf' && ext !== '.pptx') return 0;
   const folderName = fileName.replace(/\.(pdf|pptx)$/i, '');
-  
-  // Отправляем событие начала обработки
+
   if (io) {
     io.emit('file/processing', { device_id: deviceId, file: fileName, type: ext.substring(1) });
     io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 0 });
-    logger.info(`[Converter] 📄 Начало конвертации: ${fileName}`, { deviceId, fileName });
+    logger.info(`[Converter] Starting conversion: ${fileName}`, { deviceId, fileName });
   }
-  setFileStatus(deviceId, fileName, { status: 'processing', progress: 0, canPlay: false }); // Используем fileName, а не folderName
-  
+  setFileStatus(deviceId, fileName, { status: 'processing', progress: 0, canPlay: false });
+
   const convertedDir = path.join(deviceFolder, folderName);
   const originalName = fileNamesMap[deviceId]?.[fileName] || fileName;
-  
-  // Проверяем есть ли уже конвертированные файлы
+
   const existing = fs.existsSync(convertedDir) && fs.statSync(convertedDir).isDirectory()
     ? fs.readdirSync(convertedDir).filter(f => f.toLowerCase().endsWith('.png')).length
     : 0;
-  
+
   if (existing > 0) {
-    // Файлы уже конвертированы, сохраняем маппинг если нужно
     if (!fileNamesMap[deviceId]) fileNamesMap[deviceId] = {};
     if (!fileNamesMap[deviceId][folderName]) {
       fileNamesMap[deviceId][folderName] = originalName;
       saveFileNamesMapFn(fileNamesMap);
     }
-    
-    // КРИТИЧНО: Обновляем статус с fileName (не folderName), чтобы фронтенд мог найти файл
+
     setFileStatus(deviceId, fileName, { status: 'ready', progress: 100, canPlay: true });
-    
-    // Отправляем событие готовности (файл уже был конвертирован)
+
     if (io) {
       io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 100 });
       io.emit('file/ready', { device_id: deviceId, file: fileName, pages: existing });
-      logger.info(`[Converter] ✅ Уже конвертирован: ${fileName} (${existing} страниц)`, { deviceId, fileName, pages: existing });
+      logger.info(`[Converter] Already converted: ${fileName} (${existing} pages)`, { deviceId, fileName, pages: existing });
     }
-    
+
     return existing;
   }
-  
+
   try {
-    // Создаем папку для конвертированных файлов
     if (!fs.existsSync(convertedDir)) {
       fs.mkdirSync(convertedDir, { recursive: true });
     }
-    
-    // КРИТИЧНО: Конвертируем напрямую из исходного файла, затем удаляем его
-    // Конвертация создаст изображения в convertedDir
+
     let count = 0;
     if (ext === '.pptx') {
       count = await convertPptxToImages(filePath, convertedDir, (progress) => {
-        // КРИТИЧНО: Используем fileName для статуса (не folderName), чтобы фронтенд мог найти файл
         setFileStatus(deviceId, fileName, { status: 'processing', progress, canPlay: false });
-        // Отправляем прогресс на каждое обновление (не только каждые 5%)
         if (io) {
           io.emit('file/progress', { device_id: deviceId, file: fileName, progress });
         }
-      });
+      }, storage);
     } else if (ext === '.pdf') {
       count = await convertPdfToImages(filePath, convertedDir, (progress) => {
-        // КРИТИЧНО: Используем fileName для статуса (не folderName), чтобы фронтенд мог найти файл
         setFileStatus(deviceId, fileName, { status: 'processing', progress, canPlay: false });
-        // Отправляем прогресс на каждое обновление (не только каждые 5%)
         if (io) {
           io.emit('file/progress', { device_id: deviceId, file: fileName, progress });
         }
-      });
+      }, storage);
     }
-    
-    // Удаляем исходный файл после успешной конвертации
+
     if (count > 0 && fs.existsSync(filePath)) {
       try {
         fs.unlinkSync(filePath);
-        logger.info(`[Converter] 🗑️ Исходный файл удален: ${fileName}`, { deviceId, fileName });
+        logger.info(`[Converter] Source file deleted: ${fileName}`, { deviceId, fileName });
       } catch (delErr) {
-        logger.warn(`[Converter] ⚠️ Не удалось удалить исходный файл: ${fileName}`, { 
-          error: delErr.message, 
-          deviceId, 
-          fileName 
+        logger.warn(`[Converter] Failed to delete source file: ${fileName}`, {
+          error: delErr.message, deviceId, fileName
         });
       }
     }
-    
-    // Сохраняем маппинг имен
+
     if (!fileNamesMap[deviceId]) fileNamesMap[deviceId] = {};
     fileNamesMap[deviceId][folderName] = originalName;
-    // Удаляем маппинг для исходного файла, так как он удален
     if (fileNamesMap[deviceId][fileName]) {
       delete fileNamesMap[deviceId][fileName];
     }
     saveFileNamesMapFn(fileNamesMap);
-    
-    // Отправляем событие успешной конвертации
+
     if (io && count > 0) {
-      // Отправляем финальный прогресс 100%
       io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 100 });
       io.emit('file/ready', { device_id: deviceId, file: fileName, pages: count });
-      logger.info(`[Converter] ✅ Конвертировано: ${fileName} (${count} страниц)`, { deviceId, fileName, pages: count });
-      
-      // КРИТИЧНО: Обновляем список файлов (PPTX превратился в папку)
+      logger.info(`[Converter] Converted: ${fileName} (${count} pages)`, { deviceId, fileName, pages: count });
       io.emit('devices/updated');
     }
-    
-    // КРИТИЧНО: Обновляем статус с fileName (не folderName), чтобы фронтенд мог найти файл
+
     setFileStatus(deviceId, fileName, { status: 'ready', progress: 100, canPlay: true });
-    
+
     return count;
-    
+
   } catch (error) {
-    logger.error(`[Converter] ❌ Ошибка конвертации ${fileName}`, { error: error.message, stack: error.stack, deviceId, fileName });
-    
-    // Отправляем событие ошибки
+    logger.error(`[Converter] Conversion error ${fileName}`, { error: error.message, stack: error.stack, deviceId, fileName });
+
     if (io) {
-      io.emit('file/error', { 
-        device_id: deviceId, 
-        file: fileName, 
-        error: error.message || String(error) 
+      io.emit('file/error', {
+        device_id: deviceId, file: fileName, error: error.message || String(error)
       });
       io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 0 });
     }
-    
-    // КРИТИЧНО: Обновляем статус с fileName (не folderName), чтобы фронтенд мог найти файл
+
     setFileStatus(deviceId, fileName, { status: 'error', progress: 0, canPlay: false, error: error.message });
-    
-    // При ошибке исходный файл остается на месте (не удаляем его)
-    
+
     return 0;
   }
 }
-

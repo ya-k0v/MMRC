@@ -76,6 +76,7 @@ import { createDockerUpdateManager } from './src/utils/docker-update-manager.js'
 import adminRouter from './src/routes/admin.js';
 import { createModulesRouter } from './src/routes/modules.js';
 import { initEnabledModules, getEnabledModules } from './src/modules/index.js';
+import { createStorage } from './src/storage/factory.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -98,6 +99,9 @@ if (!fs.existsSync(streamsDir)) fs.mkdirSync(streamsDir, { recursive: true });
 if (!fs.existsSync(convertedDir)) fs.mkdirSync(convertedDir, { recursive: true });
 if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+
+const storage = createStorage(dataRoot);
+logger.info(`[Config] 📦 Storage backend: ${storage.constructor.name} (root: ${storage.root})`);
 
 // Логируем используемые директории данных
 logger.info(`[Config] 📁 Data root (contentRoot): ${dataRoot}`);
@@ -366,8 +370,9 @@ const devicesRouter = createDevicesRouter({
   saveDevicesJson: saveDevicesToDB, 
   fileNamesMap, 
   saveFileNamesMap: saveFileNamesToDB,
-  requireAdmin,  // Передаем для защиты POST/DELETE
+  requireAdmin,
   requireSpeaker,
+  storage,
   onDeviceCreated: (deviceId) => {
     const state = ensureVolumeState(deviceId);
     io.emit('devices/volume/state', {
@@ -392,6 +397,7 @@ const placeholderRouter = createPlaceholderRouter({
 const filesRouter = createFilesRouter({
   devices,
   io,
+  storage,
   fileNamesMap,
   saveFileNamesMap: saveFileNamesToDB,
   upload,
@@ -417,12 +423,14 @@ const conversionRouter = createConversionRouter({
   getPageSlideCount,
   findFileFolder,
   autoConvertFileWrapper,
-  requireAuth  // Передаем middleware
+  requireAuth,
+  storage  // Передаем storage backend
 });
 
 const foldersRouter = createFoldersRouter({
   devices,
-  requireAuth  // Передаем middleware
+  requireAuth,
+  storage
 });
 
 const deduplicationRouter = createDeduplicationRouter({
@@ -1290,7 +1298,7 @@ app.post('/api/admin/database/cleanup-orphaned-files', requireAuth, requireAdmin
     logger.info('[Admin] Starting orphaned files cleanup', { dryRun, excludeExtensions });
     
     // Удаляем файлы в /content/ корне, которые не имеют записей в БД
-    const result = await cleanupOrphanedFiles({ dryRun, excludeExtensions });
+    const result = await cleanupOrphanedFiles({ dryRun, excludeExtensions }, storage);
     
     logger.info('[Admin] Orphaned files cleanup completed', result);
     
@@ -1426,14 +1434,14 @@ async function autoOptimizeVideoWrapper(deviceId, fileName) {
     const job = await videoOptimizeQueue.add({ deviceId, fileName });
     return { success: true, status: 'queued', jobId: job.id };
   }
-  return await autoOptimizeVideo(deviceId, fileName, devices, io, fileNamesMap, (map) => saveFileNamesToDB(map));
+  return await autoOptimizeVideo(deviceId, fileName, devices, io, fileNamesMap, (map) => saveFileNamesToDB(map), storage);
 }
 
 if (queuesReady && videoOptimizeQueue) {
   videoOptimizeQueue.process(async (job) => {
     const { deviceId, fileName } = job.data;
     logger.info(`[Queue] Processing optimize job ${job.id}: ${deviceId}/${fileName}`);
-    return autoOptimizeVideo(deviceId, fileName, devices, io, fileNamesMap, (map) => saveFileNamesToDB(map));
+    return autoOptimizeVideo(deviceId, fileName, devices, io, fileNamesMap, (map) => saveFileNamesToDB(map), storage);
   });
 }
 
@@ -1459,13 +1467,12 @@ if (bullBoardRouter) {
 }
 
 async function autoConvertFileWrapper(deviceId, fileName, devicesParam, fileNamesMapParam, saveFileNamesMapFnParam, ioParam) {
-  // Используем переданные параметры или глобальные значения
   const devicesToUse = devicesParam || devices;
   const fileNamesMapToUse = fileNamesMapParam || fileNamesMap;
   const saveFileNamesMapFnToUse = saveFileNamesMapFnParam || ((map) => saveFileNamesToDB(map));
   const ioToUse = ioParam || io;
   
-  return await autoConvertFile(deviceId, fileName, devicesToUse, fileNamesMapToUse, saveFileNamesMapFnToUse, ioToUse);
+  return await autoConvertFile(deviceId, fileName, devicesToUse, fileNamesMapToUse, saveFileNamesMapFnToUse, ioToUse, storage);
 }
 
 // ========================================
@@ -1481,7 +1488,8 @@ setupSocketHandlers(io, {
   getVolumeState,
   persistVolumeState,
   applyVolumeCommand,
-  deviceVolumeState
+  deviceVolumeState,
+  storage
 });
 
 // Настраиваем Socket.IO обработчики для уведомлений

@@ -158,7 +158,11 @@ class StreamManager extends EventEmitter {
     if (!this.options.outputRoot) {
       this.options.outputRoot = getStreamsOutputDir();
     }
-    ensureDir(this.options.outputRoot);
+    if (this.options.storage) {
+      this.options.storage.ensureDir('streams').catch(() => ensureDir(this.options.outputRoot));
+    } else {
+      ensureDir(this.options.outputRoot);
+    }
     
     // КРИТИЧНО: При старте сервиса очищаем все старые файлы стримов
     // Это необходимо, так как процессы FFmpeg не запущены и старые файлы могут блокировать новые стримы
@@ -497,6 +501,11 @@ class StreamManager extends EventEmitter {
     return { folderPath, playlistPath, segmentPattern, publicUrl };
   }
 
+  _storageKey(safeName, subPath = '') {
+    const safeFile = sanitizePathFragment(safeName);
+    return path.posix.join('streams', safeFile, subPath).replace(/\\/g, '/');
+  }
+
   /**
    * Получает кэшированный статус файла плейлиста
    * @param {string} safeName - Безопасное имя стрима
@@ -764,6 +773,10 @@ class StreamManager extends EventEmitter {
    * @param {string} folderPath - Путь к папке стрима
    */
   _emergencyCleanupOnDiskFull(folderPath) {
+    if (this.options.storage) {
+      logger.warn('[StreamManager] Emergency cleanup skipped for S3 storage (managed by MinIO)');
+      return;
+    }
     try {
       if (!fs.existsSync(folderPath)) {
         logger.debug('[StreamManager] Folder does not exist for emergency cleanup', { folderPath });
@@ -861,6 +874,49 @@ class StreamManager extends EventEmitter {
    */
   _cleanupAllOldStreams() {
     try {
+      if (this.options.storage) {
+        this._cleanupAllOldStreamsViaStorage().catch(() => this._cleanupAllOldStreamsViaFs());
+        return;
+      }
+      this._cleanupAllOldStreamsViaFs();
+    } catch (err) {
+      logger.error('[StreamManager] Error cleaning up old streams on startup', {
+        error: err.message,
+        stack: err.stack,
+        outputRoot: this.options.outputRoot
+      });
+    }
+  }
+
+  async _cleanupAllOldStreamsViaStorage() {
+    try {
+      const entries = await this.options.storage.list('streams/');
+      let cleaned = 0;
+
+      for (const entry of entries) {
+        if (!entry || entry.endsWith('/')) continue;
+        try {
+          const key = `streams/${entry.split('/')[0]}`;
+          await this.options.storage.rm(key);
+          cleaned++;
+        } catch (err) {
+          logger.warn('[StreamManager] Failed to cleanup old stream folder', { entry, error: err.message });
+        }
+      }
+
+      if (cleaned > 0) {
+        logger.info('[StreamManager] Cleaned up old stream folders on startup (storage)', { cleanedFolders: cleaned });
+      }
+    } catch (err) {
+      logger.error('[StreamManager] Storage cleanup failed, falling back to fs', {
+        error: err.message
+      });
+      this._cleanupAllOldStreamsViaFs();
+    }
+  }
+
+  _cleanupAllOldStreamsViaFs() {
+    try {
       if (!fs.existsSync(this.options.outputRoot)) {
         return;
       }
@@ -873,7 +929,6 @@ class StreamManager extends EventEmitter {
         try {
           const stats = fs.statSync(entryPath);
           if (stats.isDirectory()) {
-            // Удаляем всю папку со стримом
             fs.rmSync(entryPath, { recursive: true, force: true });
             cleaned++;
             logger.debug('[StreamManager] Cleaned up old stream folder on startup', {
@@ -906,6 +961,26 @@ class StreamManager extends EventEmitter {
   }
 
   _cleanupFolder(folderPath) {
+    const safeName = path.basename(folderPath);
+    if (this.options.storage && safeName) {
+      this._cleanupFolderViaStorage(safeName).catch(() => this._cleanupFolderViaFs(folderPath));
+      return;
+    }
+    this._cleanupFolderViaFs(folderPath);
+  }
+
+  async _cleanupFolderViaStorage(safeName) {
+    const key = this._storageKey(safeName);
+    try {
+      await this.options.storage.rm(key);
+      logger.info('[StreamManager] Cleaned up stream folder via storage', { safeName, key });
+    } catch (err) {
+      logger.warn('[StreamManager] Storage cleanup failed, falling back to fs', { safeName, key, error: err.message });
+      throw err;
+    }
+  }
+
+  _cleanupFolderViaFs(folderPath) {
     try {
       if (fs.existsSync(folderPath)) {
         // КРИТИЧНО: Сначала удаляем ВСЕ файлы вручную, чтобы освободить их

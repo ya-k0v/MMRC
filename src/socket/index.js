@@ -23,7 +23,8 @@ export function setupSocketHandlers(io, deps) {
     deviceVolumeState,
     getVolumeState,
     persistVolumeState,
-    applyVolumeCommand
+    applyVolumeCommand,
+    storage
   } = deps;
   
   io.on('connection', socket => {
@@ -67,7 +68,7 @@ export function setupSocketHandlers(io, deps) {
     
     // Настраиваем обработчики
     setupDeviceHandlers(socket, { devices, io, getVolumeState, persistVolumeState });
-    setupControlHandlers(socket, { devices, io, getPageSlideCount, applyVolumeCommand, getVolumeState });
+    setupControlHandlers(socket, { devices, io, getPageSlideCount, applyVolumeCommand, getVolumeState, storage });
     handleDisconnect(socket, { io });
   });
 

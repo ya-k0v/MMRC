@@ -4,7 +4,7 @@
  */
 
 import { getDatabase } from './database.js';
-import { getDevicesPath } from '../config/settings-manager.js';
+import { getDevicesPath, getDataRoot } from '../config/settings-manager.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createModuleLogger } from '../utils/logger.js';
@@ -17,7 +17,7 @@ const logger = createModuleLogger('file');
  * @param {Array<string>} options.excludeExtensions - Расширения файлов, которые не нужно удалять (по умолчанию [])
  * @returns {Promise<Object>} - Статистика очистки: { checked, orphaned, deleted, errors, totalSizeMB }
  */
-export async function cleanupOrphanedFiles({ dryRun = false, excludeExtensions = [] } = {}) {
+export async function cleanupOrphanedFiles({ dryRun = false, excludeExtensions = [] } = {}, storage = null) {
   try {
     const db = getDatabase();
     const devicesPath = getDevicesPath();
@@ -151,6 +151,13 @@ export async function cleanupOrphanedFiles({ dryRun = false, excludeExtensions =
     for (const file of orphanedFiles) {
       try {
         if (!dryRun) {
+          if (storage) {
+            try {
+              const root = getDataRoot();
+              const rel = path.relative(root, path.resolve(file.filePath));
+              if (!rel.startsWith('..')) await storage.delete(rel);
+            } catch {}
+          }
           fs.unlinkSync(file.filePath);
           deleted++;
           
