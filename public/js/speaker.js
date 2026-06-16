@@ -2345,6 +2345,9 @@ async function selectDevice(id, resetPage = true, { preserveSelection = false } 
 
   await loadFiles();
   await syncPreviewWithPlayerState();
+  // КРИТИЧНО: Обновляем отображение времени воспроизведения при переключении устройства
+  // Берём данные из playbackProgressByDevice (заполняется через player/progress)
+  updatePlaybackInfoUI();
   updateVolumeUI();
   await ensureVolumeState(currentDevice);
   
