@@ -361,6 +361,10 @@ S3_ACCESS_KEY=${S3_ACCESS_KEY:-minioadmin}
 S3_SECRET_KEY=${S3_SECRET_KEY:-minioadmin}
 S3_FORCE_PATH_STYLE=true
 
+# MinIO root credentials (must match S3_ACCESS_KEY/S3_SECRET_KEY)
+MINIO_ROOT_USER=${S3_ACCESS_KEY:-minioadmin}
+MINIO_ROOT_PASSWORD=${S3_SECRET_KEY:-minioadmin}
+
 # LDAP (optional)
 LDAP_URL=
 LDAP_BIND_DN=
