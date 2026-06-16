@@ -146,7 +146,7 @@ services:
     volumes:
       - mmrc-minio:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "mc", "ready", "http://localhost:9000"]
       interval: 10s
       timeout: 5s
       retries: 5
