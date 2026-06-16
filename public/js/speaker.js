@@ -2257,7 +2257,7 @@ function showLivePreviewForTV(deviceId, force = false) {
   if (force) {
     resetPreviewHighlightState();
     currentPreviewContext = { deviceId, file: device && device.current ? device.current.file : null, page: null };
-    filePreview.innerHTML = `<iframe src="${previewUrl}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
+    filePreview.innerHTML = `<iframe src="${previewUrl}&_=${Date.now()}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
     updatePreviewControlButtons();
     return;
   }
@@ -4254,6 +4254,13 @@ socket.on('player/progress', ({ device_id, type, file, currentTime, duration, pa
       durationKnownFromStart
     });
 
+    // Обновляем currentTime в devices для корректного startTime в превью при переключении
+    const deviceForPreview = devices.find(d => d.device_id === device_id);
+    if (deviceForPreview) {
+      if (!deviceForPreview.current) deviceForPreview.current = {};
+      deviceForPreview.current.currentTime = numCurrentTime;
+    }
+
     if (type === 'audio') {
       const device = devices.find(d => d.device_id === device_id);
       if (device) {
@@ -4581,6 +4588,24 @@ if (videoProgressBar) {
       prog.currentTime = targetTime;
       playbackProgressByDevice.set(currentDevice, prog);
       updatePlaybackInfoUI();
+    }
+
+    // Перематываем превью на новую позицию
+    const seekDevice = devices.find(d => d.device_id === currentDevice);
+    if (seekDevice && seekDevice.current && seekDevice.current.file === file) {
+      seekDevice.current.currentTime = targetTime;
+      const seekIframe = filePreview.querySelector('iframe');
+      if (seekIframe) {
+        let seekUrl = `/player-videojs.html?device_id=${encodeURIComponent(currentDevice)}&preview=1&muted=1`;
+        seekUrl += `&file=${encodeURIComponent(seekDevice.current.file)}`;
+        if (seekDevice.current.type) seekUrl += `&type=${encodeURIComponent(seekDevice.current.type)}`;
+        seekUrl += `&startTime=${encodeURIComponent(targetTime)}`;
+        if (typeof seekDevice.current.page === 'number' && seekDevice.current.page > 0) {
+          seekUrl += `&page=${encodeURIComponent(seekDevice.current.page)}`;
+        }
+        seekUrl += `&_=${Date.now()}`;
+        seekIframe.src = seekUrl;
+      }
     }
     
     isVideoSeeking = false;

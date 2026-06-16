@@ -1074,7 +1074,7 @@ if (!device_id || !device_id.trim()) {
                 vjsPlayer.loop(true);
                 vjsPlayer.muted(true);
                 vjsPlayer.volume(0);
-                const previewVideoUrl = previewTrailerUrl || videoPreviewSource(previewFile, { seconds: 10 }) || content(previewFile);
+                const previewVideoUrl = previewTrailerUrl || videoPreviewSource(previewFile, { seconds: 10, start: previewStartTime ? parseFloat(previewStartTime) : 0 }) || content(previewFile);
                 if (videoContainer) {
                   videoContainer.style.display = 'block';
                   videoContainer.style.visibility = 'visible';

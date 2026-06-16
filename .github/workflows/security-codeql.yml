@@ -15,6 +15,7 @@ on:
       - 'v*'
   schedule:
     - cron: '20 2 * * 1'
+  workflow_call:
 
 permissions:
   actions: read

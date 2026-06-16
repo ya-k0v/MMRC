@@ -6,7 +6,16 @@ on:
   workflow_dispatch:
 
 jobs:
+  ci:
+    uses: ./.github/workflows/app-test.yml
+    secrets: inherit
+
+  codeql:
+    uses: ./.github/workflows/security-codeql.yml
+    secrets: inherit
+
   build:
+    needs: [ci, codeql]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

@@ -3156,7 +3156,7 @@ export function createFilesRouter(deps) {
                 // Для ZIP сначала распаковываем
                 // ZIP файл находится в /content/, но нужно распаковать в /content/{device}/
                 // Сначала перемещаем ZIP в папку устройства
-                const zipDeviceFolder = path.join(devicesPath, devices[id].folder);
+                const zipDeviceFolder = path.join(devicesPath, devices[id]?.folder || id);
                 if (!fs.existsSync(zipDeviceFolder)) {
                   fs.mkdirSync(zipDeviceFolder, { recursive: true });
                 }
@@ -3166,7 +3166,7 @@ export function createFilesRouter(deps) {
                   fs.chmodSync(zipTargetPath, 0o644);
                 }
                 
-                const extractResult = await extractZipToFolder(id, file.filename, devices[id].folder);
+                const extractResult = await extractZipToFolder(id, file.filename, devices[id]?.folder || id);
                 if (!extractResult.success) {
                   logger.error(`[upload] ❌ Ошибка распаковки ZIP ${file.filename}`, { 
                     deviceId: id, 
@@ -3260,7 +3260,7 @@ export function createFilesRouter(deps) {
               
               // Для PDF/PPTX: сначала перемещаем в папку устройства, затем обрабатываем
               // КРИТИЧНО: autoConvertFile ожидает файл в /content/{device}/, а не в корне
-              const deviceFolder = path.join(devicesPath, devices[id].folder);
+              const deviceFolder = path.join(devicesPath, devices[id]?.folder || id);
               if (!fs.existsSync(deviceFolder)) {
                 fs.mkdirSync(deviceFolder, { recursive: true });
               }
@@ -3398,7 +3398,7 @@ export function createFilesRouter(deps) {
           // Создаем безопасное имя папки через транслитерацию
           const safeFolderName = makeSafeFolderName(folderName);
           const devicesPath = getDevicesPath();
-          const deviceFolder = path.join(devicesPath, devices[id].folder);
+          const deviceFolder = path.join(devicesPath, devices[id]?.folder || id);
           const targetFolder = path.join(deviceFolder, safeFolderName);
           
           logger.info(`[upload] 📝 Имя папки: "${folderName}" → "${safeFolderName}"`);

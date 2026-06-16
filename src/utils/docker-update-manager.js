@@ -78,6 +78,11 @@ class DockerUpdateManager {
 
     this.state = this.getDefaultState();
     this.loadState();
+
+    this._pendingShaSync = null;
+    if (this.state.deployedSha && this.state.lastKnownRemoteSha && this.state.deployedSha !== this.state.lastKnownRemoteSha) {
+      this._pendingShaSync = this.state.lastKnownRemoteSha;
+    }
   }
 
   getDefaultState() {
@@ -200,19 +205,26 @@ class DockerUpdateManager {
     }
 
     const localSha = this.state.deployedSha;
-    const updateAvailable = Boolean(
+    let updateAvailable = Boolean(
       localSha && remoteSha && remoteSha !== localSha
     );
     const dismissed = Boolean(
       this.state.dismissedRemoteSha && remoteSha && this.state.dismissedRemoteSha === remoteSha
     );
 
+    if (updateAvailable && this._pendingShaSync && remoteSha === this._pendingShaSync) {
+      this.state.deployedSha = remoteSha;
+      this._pendingShaSync = null;
+      updateAvailable = false;
+      this.saveState();
+    }
+
     const status = {
       checkedAt,
       branch: this.branch,
       currentBranch: this.branch,
       onTrackedBranch: true,
-      localSha: localSha || null,
+      localSha: this.state.deployedSha || null,
       remoteSha: remoteSha || null,
       behindCount: updateAvailable ? 1 : 0,
       aheadCount: 0,
@@ -242,7 +254,7 @@ class DockerUpdateManager {
       type: 'docker_update_available',
       severity: 'info',
       title: 'Доступно обновление',
-      message: `Новая версия: ${localLabel} -> ${remoteLabel} (${behindLabel}). Для обновления выполните в консоли:\nsudo docker compose pull && sudo docker compose up -d`,
+      message: `Новая версия: ${localLabel} -> ${remoteLabel} (${behindLabel}). Для обновления выполните в консоли:\nsudo mmrc update`,
       key: UPDATE_NOTIFICATION_KEY,
       source: 'docker-update-manager',
       details: {
@@ -449,6 +461,7 @@ class DockerUpdateManager {
         this.state.dismissedRemoteSha = null;
         this.state.lastUpdateError = null;
         this.state.lastUpdateFinishedAt = nowIso();
+        this.state.deployedSha = this.state.lastKnownRemoteSha;
 
         notificationsManager.upsert({
           type: 'docker_update_apply',
