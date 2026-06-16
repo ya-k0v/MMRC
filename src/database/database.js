@@ -678,10 +678,12 @@ export async function transaction(fn) {
 }
 
 export async function getDatabaseStats() {
-  const deviceCount = await driver.get('SELECT COUNT(*) as count FROM devices');
-  const fileNameCount = await driver.get('SELECT COUNT(*) as count FROM file_names');
-  const fileStatusCount = await driver.get('SELECT COUNT(*) as count FROM file_statuses');
-  const placeholderCount = await driver.get('SELECT COUNT(*) as count FROM placeholders');
+  const [deviceCount, fileNameCount, fileStatusCount, placeholderCount] = await Promise.all([
+    driver.get('SELECT COUNT(*) as count FROM devices'),
+    driver.get('SELECT COUNT(*) as count FROM file_names'),
+    driver.get('SELECT COUNT(*) as count FROM file_statuses'),
+    driver.get('SELECT COUNT(*) as count FROM placeholders')
+  ]);
   const dbSize = driverType === 'sqlite' && driver.dbPath ? fs.statSync(driver.dbPath).size : 0;
 
   return {

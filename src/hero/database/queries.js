@@ -17,9 +17,13 @@ export const heroQueries = {
   async getAll() {
     const db = await getDb();
     const heroes = await db.query('SELECT * FROM heroes ORDER BY full_name');
+    if (heroes.length === 0) return heroes;
+    const ids = heroes.map(h => h.id);
+    const placeholders = ids.map(() => '?').join(',');
+    const allMedia = await db.query(`SELECT * FROM hero_media WHERE hero_id IN (${placeholders}) ORDER BY hero_id, order_index`, ids);
+    const mediaByHero = groupMediaByHeroId(allMedia);
     for (const hero of heroes) {
-      const mediaRows = await db.query('SELECT * FROM hero_media WHERE hero_id = ? ORDER BY order_index', [hero.id]);
-      hero.media = mediaRows.map(normalizeMedia);
+      hero.media = (mediaByHero[hero.id] || []).map(normalizeMedia);
     }
     return heroes;
   },
@@ -49,9 +53,14 @@ export const heroQueries = {
       .filter(hero => normalizeString(hero.full_name || '').startsWith(normalizedQuery))
       .slice(0, 10);
 
-    for (const hero of filtered) {
-      const mediaRows = await db.query('SELECT * FROM hero_media WHERE hero_id = ? ORDER BY order_index', [hero.id]);
-      hero.media = mediaRows.map(normalizeMedia);
+    if (filtered.length > 0) {
+      const ids = filtered.map(h => h.id);
+      const placeholders = ids.map(() => '?').join(',');
+      const allMedia = await db.query(`SELECT * FROM hero_media WHERE hero_id IN (${placeholders}) ORDER BY hero_id, order_index`, ids);
+      const mediaByHero = groupMediaByHeroId(allMedia);
+      for (const hero of filtered) {
+        hero.media = (mediaByHero[hero.id] || []).map(normalizeMedia);
+      }
     }
     return filtered;
   },
@@ -151,6 +160,16 @@ export const heroQueries = {
     });
   }
 };
+
+function groupMediaByHeroId(rows) {
+  const map = Object.create(null);
+  for (const row of rows) {
+    const hid = row.hero_id;
+    if (!map[hid]) map[hid] = [];
+    map[hid].push(row);
+  }
+  return map;
+}
 
 function normalizeMedia(row) {
   const type = row.type || (row.media_type === 'image' ? 'photo' : row.media_type || 'photo');

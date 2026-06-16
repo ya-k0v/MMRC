@@ -120,13 +120,11 @@ export async function saveFileMetadata({
       ];
       const dt = getDriverType();
       const ph = cols.map((_, i) => dt === 'postgres' ? `$${i + 1}` : '?').join(', ');
-      const insertSql = dt === 'postgres'
-        ? `INSERT INTO files_metadata (${cols.join(', ')})
-           VALUES (${ph})
-           ON CONFLICT (device_id, safe_name) DO UPDATE SET
-             ${cols.slice(2).map(c => `${c} = EXCLUDED.${c}`).join(', ')}`
-        : `INSERT OR REPLACE INTO files_metadata (${cols.join(', ')})
-           VALUES (${ph})`;
+      const upsertSet = cols.slice(2).map(c => `${c} = EXCLUDED.${c}`).join(', ');
+      const insertSql =
+        `INSERT INTO files_metadata (${cols.join(', ')})
+         VALUES (${ph})
+         ON CONFLICT (device_id, safe_name) DO UPDATE SET ${upsertSet}`;
 
       const result = await db.run(insertSql, [
         deviceId,
@@ -155,7 +153,7 @@ export async function saveFileMetadata({
       ]);
       
       // Проверяем, что запись действительно в БД
-      const checkResult = await db.get('SELECT * FROM files_metadata WHERE device_id = ? AND safe_name = ?', [deviceId, safeName]);
+      const checkResult = await db.get('SELECT 1 FROM files_metadata WHERE device_id = ? AND safe_name = ?', [deviceId, safeName]);
       
       // Логируем успешное сохранение с деталями
       const logLevel = STATIC_CONTENT_TYPES.has(contentType) ? 'info' : 'debug';
