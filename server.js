@@ -36,7 +36,7 @@ import { checkVideoParameters } from './src/video/ffmpeg-wrapper.js';
 import { autoOptimizeVideo } from './src/video/optimizer.js';
 import { videoOptimizeQueue, queuesReady } from './src/queue/queue.js';
 import { createBullBoard } from '@bull-board/api';
-import { BullAdapter } from '@bull-board/api/bullAdapter.js';
+import { BullAdapter } from '@bull-board/api/bullAdapter';
 import { ExpressAdapter } from '@bull-board/express';
 import { 
   findFileFolder, getPageSlideCount, autoConvertFile 
@@ -1128,11 +1128,6 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
 const modulesRouter = createModulesRouter();
 app.use('/api/admin/modules', requireAuth, requireAdmin, modulesRouter);
 
-// Bull Board (мониторинг очередей)
-if (bullBoardRouter) {
-  app.use('/admin/queues', requireAuth, requireAdmin, bullBoardRouter);
-}
-
 // Настройки администратора
 app.get('/api/admin/settings', requireAuth, requireAdmin, async (req, res) => {
   try {
@@ -1359,13 +1354,14 @@ app.get('/health', async (req, res) => {
     const { execFile } = await import('node:child_process');
     const { promisify } = await import('node:util');
     const execFileAsync = promisify(execFile);
-    const { stdout } = await execFileAsync('df', ['-m', DEFAULT_DATA_DIR], { timeout: 5000 });
+    const healthDataDir = getDataRoot();
+    const { stdout } = await execFileAsync('df', ['-m', healthDataDir], { timeout: 5000 });
     const lines = stdout.trim().split('\n');
     if (lines.length >= 2) {
       const parts = lines[1].split(/\s+/);
       if (parts.length >= 4) {
         health.disk = {
-          path: DEFAULT_DATA_DIR,
+          path: healthDataDir,
           totalMB: parseInt(parts[1], 10) || 0,
           usedMB: parseInt(parts[2], 10) || 0,
           availableMB: parseInt(parts[3], 10) || 0
@@ -1373,7 +1369,7 @@ app.get('/health', async (req, res) => {
       }
     }
   } catch {
-    health.disk = { path: DEFAULT_DATA_DIR, error: 'unable to check' };
+    health.disk = { path: getDataRoot(), error: 'unable to check' };
   }
 
   // Состояние circuit breakers
@@ -1455,6 +1451,11 @@ if (queuesReady) {
   } catch (err) {
     logger.warn('[BullBoard] Failed to initialize', { error: err.message });
   }
+}
+
+// Bull Board route (if initialized)
+if (bullBoardRouter) {
+  app.use('/admin/queues', requireAuth, requireAdmin, bullBoardRouter);
 }
 
 async function autoConvertFileWrapper(deviceId, fileName, devicesParam, fileNamesMapParam, saveFileNamesMapFnParam, ioParam) {
