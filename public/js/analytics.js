@@ -252,10 +252,9 @@ function renderFlowMap(flowMap) {
       </label>
       <button id="flowFullscreenBtn" type="button">\uD83D\uDDD2 \u041D\u0430 \u0432\u0435\u0441\u044C \u044D\u043A\u0440\u0430\u043D</button>
     </div>
-    <div class="analytics-grid" style="overflow:visible;">
-      <div class="card flow-map-container" style="padding:0;position:relative;">
-        <div id="flowSvgWrapper" style="overflow:auto;width:100%;min-height:500px;max-height:700px;">
-          <svg id="flowSvg" viewBox="0 0 ${svgW} ${svgH}" style="width:${Math.max(svgW, 900)}px;height:auto;display:block;" xmlns="http://www.w3.org/2000/svg">
+    <div class="flow-map-container" style="position:relative;margin:0 16px 16px;">
+      <div id="flowSvgWrapper" style="overflow:auto;width:100%;min-height:500px;max-height:700px;">
+          <svg id="flowSvg" viewBox="0 0 ${svgW} ${svgH}" style="width:100%;min-width:${svgW}px;height:auto;display:block;" xmlns="http://www.w3.org/2000/svg">
             <defs>
               <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
                 <polygon points="0 0, 10 3.5, 0 7" fill="${colors.muted}"/>

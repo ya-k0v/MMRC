@@ -51,8 +51,8 @@
     .flow-controls button { cursor:pointer; padding:4px 10px; border:1px solid var(--border,#313244); border-radius:6px; background:var(--bg-card,#1e1e2e); color:var(--text,#cdd6f4); font-size:0.8rem; }
     .flow-controls button:hover { background:var(--accent,#3b82f6); color:#fff; }
     .flow-controls input[type=range] { width:120px; accent-color:var(--accent,#3b82f6); }
-    .flow-map-container { position:relative; overflow:hidden; min-height:500px; }
-    .flow-map-container.fullscreen { position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:9999; background:var(--bg,#11111b); }
+    .flow-map-container { position:relative; overflow:hidden; min-height:500px; background:var(--card-bg, var(--bg-card, #1e1e2e)); border:1px solid var(--card-border, var(--border, #313244)); border-radius:12px; }
+    .flow-map-container.fullscreen { position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:9999; background:var(--bg,#11111b); border:none; border-radius:0; }
   </style>
 </head>
 <body class="maintenance-ui admin-page">

@@ -392,35 +392,31 @@ function buildFlowMap(dockerStats, nginxStats, replicaMetrics, redisInfo, pgInfo
   nodes.push(...replicaNodes);
 
   if (replicaNodes.length > 0) {
-    const firstReplica = replicaNodes[0].id;
-
-    edges.push({
-      from: firstReplica,
-      to: 'redis',
-      label: 'Pub/Sub + Queue',
-      type: 'service',
-      meta: redisInfo ? `cmd: ${(redisInfo.totalCommands || 0).toLocaleString()}` : undefined
-    });
-    edges.push({
-      from: firstReplica,
-      to: 'postgres',
-      label: 'SQL',
-      type: 'service',
-      meta: pgInfo ? `q: ${(pgInfo.transactions?.commit || 0).toLocaleString()}` : undefined
-    });
-    edges.push({
-      from: firstReplica,
-      to: 'minio',
-      label: 'S3',
-      type: 'service'
-    });
-    edges.push({
-      from: firstReplica,
-      to: 'streamer',
-      label: 'Bull Queue',
-      type: 'service',
-      meta: queueInfo ? Object.values(queueInfo).reduce((s, q) => s + (q?.active || 0) + (q?.waiting || 0), 0).toString() + ' jobs' : undefined
-    });
+    for (const rep of replicaNodes) {
+      edges.push({
+        from: rep.id,
+        to: 'redis',
+        label: 'Pub/Sub + Queue',
+        meta: redisInfo ? `cmd: ${(redisInfo.totalCommands || 0).toLocaleString()}` : undefined
+      });
+      edges.push({
+        from: rep.id,
+        to: 'postgres',
+        label: 'SQL',
+        meta: pgInfo ? `q: ${(pgInfo.transactions?.commit || 0).toLocaleString()}` : undefined
+      });
+      edges.push({
+        from: rep.id,
+        to: 'minio',
+        label: 'S3'
+      });
+      edges.push({
+        from: rep.id,
+        to: 'streamer',
+        label: 'Bull Queue',
+        meta: queueInfo ? Object.values(queueInfo).reduce((s, q) => s + (q?.active || 0) + (q?.waiting || 0), 0).toString() + ' jobs' : undefined
+      });
+    }
   }
 
   nodes.push({
