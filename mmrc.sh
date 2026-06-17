@@ -643,12 +643,36 @@ cmd_ha() {
             fi
 
             info "Downloading HA configuration..."
-            curl -fSL -o "docker-compose.ha.yml" \
-                "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/docker-compose.ha.yml"
+            local ha_yml_ok=false ha_lb_ok=false
+            if curl -fSL --connect-timeout 10 --max-time 30 -o "docker-compose.ha.yml" \
+                "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/docker-compose.ha.yml" 2>/dev/null; then
+                ha_yml_ok=true
+            else
+                if [ -f "docker-compose.ha.yml" ] && [ -s "docker-compose.ha.yml" ]; then
+                    warn "GitHub download failed; using existing docker-compose.ha.yml"
+                    ha_yml_ok=true
+                else
+                    error "Failed to download docker-compose.ha.yml (check network)"
+                    ha_yml_ok=false
+                fi
+            fi
             mkdir -p "docker/nginx"
-            curl -fSL -o "docker/nginx/ha-lb.conf" \
-                "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/docker/nginx/ha-lb.conf"
-            success "HA configuration downloaded"
+            if curl -fSL --connect-timeout 10 --max-time 30 -o "docker/nginx/ha-lb.conf" \
+                "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/docker/nginx/ha-lb.conf" 2>/dev/null; then
+                ha_lb_ok=true
+            else
+                if [ -f "docker/nginx/ha-lb.conf" ] && [ -s "docker/nginx/ha-lb.conf" ]; then
+                    warn "GitHub download failed; using existing ha-lb.conf"
+                    ha_lb_ok=true
+                else
+                    error "Failed to download ha-lb.conf (check network)"
+                    ha_lb_ok=false
+                fi
+            fi
+            if ! $ha_yml_ok || ! $ha_lb_ok; then
+                exit 1
+            fi
+            success "HA configuration ready"
 
             COMPOSE_HA="-f docker-compose.yml -f docker-compose.ha.yml"
             PROFILES=$(get_compose_profiles)

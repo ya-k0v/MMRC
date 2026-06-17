@@ -433,11 +433,37 @@ ENVEOF3
             done
 
             info "Downloading HA configuration..."
-            curl -fSL -o "$INSTALL_DIR/docker-compose.ha.yml" \
-                "$MMRC_RAW/docker-compose.ha.yml"
+            local ha_retry=0
+            while [ $ha_retry -lt 3 ]; do
+                if curl -fSL --connect-timeout 10 --max-time 30 -o "$INSTALL_DIR/docker-compose.ha.yml" \
+                    "$MMRC_RAW/docker-compose.ha.yml" 2>/dev/null; then
+                    break
+                fi
+                ha_retry=$((ha_retry + 1))
+                if [ $ha_retry -lt 3 ]; then
+                    warn "Download failed (attempt ${ha_retry}/3), retrying..."
+                    sleep 3
+                else
+                    error "Failed to download docker-compose.ha.yml after 3 attempts"
+                    exit 1
+                fi
+            done
             mkdir -p "$INSTALL_DIR/docker/nginx"
-            curl -fSL -o "$INSTALL_DIR/docker/nginx/ha-lb.conf" \
-                "$MMRC_RAW/docker/nginx/ha-lb.conf"
+            ha_retry=0
+            while [ $ha_retry -lt 3 ]; do
+                if curl -fSL --connect-timeout 10 --max-time 30 -o "$INSTALL_DIR/docker/nginx/ha-lb.conf" \
+                    "$MMRC_RAW/docker/nginx/ha-lb.conf" 2>/dev/null; then
+                    break
+                fi
+                ha_retry=$((ha_retry + 1))
+                if [ $ha_retry -lt 3 ]; then
+                    warn "Download failed (attempt ${ha_retry}/3), retrying..."
+                    sleep 3
+                else
+                    error "Failed to download ha-lb.conf after 3 attempts"
+                    exit 1
+                fi
+            done
             success "HA configuration downloaded"
 
             COMPOSE_HA="-f docker-compose.yml -f docker-compose.ha.yml"
