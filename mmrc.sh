@@ -254,6 +254,9 @@ cmd_start() {
     COMPOSE_HA=$(get_compose_ha)
     PROFILES=$(get_compose_profiles)
     if [ -n "$COMPOSE_HA" ]; then
+        # Stop single-node mmrc container if still running (profile prevents restart)
+        docker stop mmrc 2>/dev/null || true
+        docker rm mmrc 2>/dev/null || true
         HA_REPLICAS=$(get_ha_replicas)
         [ "$HA_REPLICAS" -le 0 ] 2>/dev/null && HA_REPLICAS=1
         HA_SCALE="--scale mmrc-replica=$HA_REPLICAS"
@@ -682,6 +685,9 @@ cmd_ha() {
             PROFILES=$(get_compose_profiles)
 
             info "Starting with $HA_REPLICAS replicas..."
+            # Stop single-node mmrc container if still running (profile prevents restart)
+            docker stop mmrc 2>/dev/null || true
+            docker rm mmrc 2>/dev/null || true
             $COMPOSE $COMPOSE_HA $PROFILES up -d --scale "mmrc-replica=$HA_REPLICAS"
             success "HA enabled with $HA_REPLICAS replica(s)"
             ;;
@@ -704,6 +710,9 @@ cmd_ha() {
             PROFILES=$(get_compose_profiles)
 
             info "Scaling to $HA_REPLICAS replica(s)..."
+            # Stop single-node mmrc container if still running (profile prevents restart)
+            docker stop mmrc 2>/dev/null || true
+            docker rm mmrc 2>/dev/null || true
             $COMPOSE $COMPOSE_HA $PROFILES up -d --scale "mmrc-replica=$HA_REPLICAS"
             success "Scaled to $HA_REPLICAS replica(s)"
             ;;
