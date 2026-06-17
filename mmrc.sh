@@ -256,11 +256,6 @@ cmd_start() {
     HA_REPLICAS=$(get_ha_replicas)
     HA_SCALE=""
     [ "$HA_REPLICAS" -gt 0 ] 2>/dev/null && HA_SCALE="--scale mmrc-replica=$HA_REPLICAS"
-    # When HA is enabled, remove the main mmrc container to free ports for nginx-ha
-    if [ -n "$COMPOSE_HA" ]; then
-        docker stop mmrc 2>/dev/null || true
-        docker rm mmrc 2>/dev/null || true
-    fi
     $COMPOSE $COMPOSE_HA $PROFILES up -d $HA_SCALE
     success "Services started"
 }
@@ -653,9 +648,6 @@ cmd_ha() {
             PROFILES=$(get_compose_profiles)
 
             info "Starting with $HA_REPLICAS replicas..."
-            # Remove main mmrc container to free ports for nginx-ha
-            docker stop mmrc 2>/dev/null || true
-            docker rm mmrc 2>/dev/null || true
             $COMPOSE $COMPOSE_HA $PROFILES up -d --scale "mmrc-replica=$HA_REPLICAS"
             success "HA enabled with $HA_REPLICAS replica(s)"
             ;;
@@ -678,9 +670,6 @@ cmd_ha() {
             PROFILES=$(get_compose_profiles)
 
             info "Scaling to $HA_REPLICAS replica(s)..."
-            # Remove main mmrc container to free ports for nginx-ha
-            docker stop mmrc 2>/dev/null || true
-            docker rm mmrc 2>/dev/null || true
             $COMPOSE $COMPOSE_HA $PROFILES up -d --scale "mmrc-replica=$HA_REPLICAS"
             success "Scaled to $HA_REPLICAS replica(s)"
             ;;

@@ -482,12 +482,6 @@ ENVEOF3
         PROFILES="$PROFILES --profile streamer"
     fi
 
-    # When HA is enabled, remove the main mmrc container to free ports for nginx-ha
-    if [ -n "$COMPOSE_HA" ]; then
-        docker stop mmrc 2>/dev/null || true
-        docker rm mmrc 2>/dev/null || true
-    fi
-
     if retry 3 10 "$COMPOSE $COMPOSE_HA $PROFILES up -d $HA_SCALE"; then
         success "Services started"
     else
