@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { SqliteDriver } from './SqliteDriver.js';
 import { PostgresDriver } from './PostgresDriver.js';
 import { createModuleLogger } from '../../utils/logger.js';
+import { recordDatabaseQuery } from '../../utils/metrics.js';
 const logger = createModuleLogger('db');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -51,8 +52,29 @@ export async function createDriver(config) {
     await _driver.connect(config);
   }
 
+  _wrapQueryMethods(_driver);
   logger.info(`[DB] Driver created: ${config.type}`);
   return _driver;
+}
+
+function _wrapQueryMethods(driver) {
+  const methods = ['query', 'get', 'run', 'exec'];
+  for (const method of methods) {
+    const original = driver[method].bind(driver);
+    driver[method] = async (sql, params) => {
+      const start = Date.now();
+      try {
+        const result = await original(sql, params);
+        const duration = Date.now() - start;
+        recordDatabaseQuery(duration, false, duration > 1000);
+        return result;
+      } catch (err) {
+        const duration = Date.now() - start;
+        recordDatabaseQuery(duration, true, duration > 1000);
+        throw err;
+      }
+    };
+  }
 }
 
 export function getDriver() {

@@ -162,10 +162,10 @@ function renderFlowMap(flowMap) {
   const nodes = flowMap.nodes;
   const edges = flowMap.edges;
 
-  const gapX = 180;
-  const gapY = 100;
-  const nodeW = 150;
-  const nodeH = 50;
+  const gapX = 220;
+  const gapY = 120;
+  const nodeW = 170;
+  const nodeH = 56;
 
   const positions = {};
   const layers = { source: 0, lb: 1, app: 2, service: 3 };
@@ -179,21 +179,20 @@ function renderFlowMap(flowMap) {
 
   for (const [layerIdx, layerNodes] of Object.entries(byLayer)) {
     const ln = parseInt(layerIdx);
-    const totalW = layerNodes.length * nodeW + (layerNodes.length - 1) * gapX;
-    const startX = 40;
+    const startX = 60;
     let x = startX;
-    const y = 40 + ln * (nodeH + gapY);
+    const y = 50 + ln * (nodeH + gapY);
     for (const n of layerNodes) {
       positions[n.id] = { x, y };
       x += nodeW + gapX;
     }
   }
 
-  let svgW = 100;
-  let svgH = 100;
+  let svgW = 200;
+  let svgH = 200;
   for (const [id, pos] of Object.entries(positions)) {
-    svgW = Math.max(svgW, pos.x + nodeW + 40);
-    svgH = Math.max(svgH, pos.y + nodeH + 40);
+    svgW = Math.max(svgW, pos.x + nodeW + 60);
+    svgH = Math.max(svgH, pos.y + nodeH + 60);
   }
 
   const edgeLines = edges.map(e => {
@@ -209,7 +208,7 @@ function renderFlowMap(flowMap) {
     const reqs = e.requests ? e.requests.toLocaleString() : (e.requests === undefined ? '' : '0');
     return `
       <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${colors.muted}" stroke-width="2" stroke-dasharray="6,3" class="flow-edge" data-from="${e.from}" data-to="${e.to}" data-label="${e.label}" data-requests="${reqs}"/>
-      <text x="${midX}" y="${midY - 8}" text-anchor="middle" fill="${colors.muted}" font-size="10" class="flow-edge-label">${e.label}${reqs ? ' [' + reqs + ']' : ''}</text>
+      <text x="${midX}" y="${midY - 8}" text-anchor="middle" fill="${colors.muted}" font-size="11" class="flow-edge-label">${e.label}${reqs ? ' [' + reqs + ']' : ''}</text>
     `;
   }).join('');
 
@@ -228,73 +227,135 @@ function renderFlowMap(flowMap) {
     if (n.memory) details += `\u041F\u0430\u043C\u044F\u0442\u044C: ${n.memory}`;
 
     const statusDot = n.status?.includes('Up')
-      ? `<circle cx="${pos.x + nodeW - 10}" cy="${pos.y + 10}" r="4" fill="${colors.green}"/>`
+      ? `<circle cx="${pos.x + nodeW - 12}" cy="${pos.y + 12}" r="5" fill="${colors.green}"/>`
       : n.status
-        ? `<circle cx="${pos.x + nodeW - 10}" cy="${pos.y + 10}" r="4" fill="${colors.red}"/>`
+        ? `<circle cx="${pos.x + nodeW - 12}" cy="${pos.y + 12}" r="5" fill="${colors.red}"/>`
         : '';
 
     return `
       <g class="flow-node" data-id="${n.id}" data-details="${details.replace(/"/g, '&quot;').trim()}">
-        <rect x="${pos.x}" y="${pos.y}" width="${nodeW}" height="${nodeH}" rx="8" fill="${color}" opacity="0.15" stroke="${color}" stroke-width="2" class="flow-node-bg"/>
+        <rect x="${pos.x}" y="${pos.y}" width="${nodeW}" height="${nodeH}" rx="10" fill="${color}" opacity="0.15" stroke="${color}" stroke-width="2" class="flow-node-bg"/>
         ${statusDot}
-        <text x="${pos.x + nodeW / 2}" y="${pos.y + nodeH / 2 + 5}" text-anchor="middle" fill="${colors.text}" font-size="12" font-weight="600">${n.label}</text>
+        <text x="${pos.x + nodeW / 2}" y="${pos.y + nodeH / 2 + 5}" text-anchor="middle" fill="${colors.text}" font-size="13" font-weight="600">${n.label}</text>
       </g>
     `;
   }).join('');
 
   return `
     <div class="section-title">\u041A\u0430\u0440\u0442\u0430 \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432</div>
-    <div class="analytics-grid" style="overflow:auto;">
-      <div class="card" style="padding:16px;overflow:auto;">
-        <svg viewBox="0 0 ${svgW} ${svgH}" style="width:100%;min-width:500px;" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
-              <polygon points="0 0, 10 3.5, 0 7" fill="${colors.muted}"/>
-            </marker>
-          </defs>
-          <rect width="${svgW}" height="${svgH}" fill="transparent"/>
-          ${edgeLines}
-          ${nodeRects}
-        </svg>
-        <div id="flowTooltip" style="display:none;position:absolute;background:${colors.bg};border:1px solid ${colors.border};border-radius:6px;padding:8px 12px;font-size:0.85rem;color:${colors.text};pointer-events:none;z-index:100;white-space:pre-line;max-width:260px;"></div>
+    <div class="flow-controls">
+      <button id="flowZoomFit" type="button">\u041F\u043E \u0440\u0430\u0437\u043C\u0435\u0440\u0443</button>
+      <label style="display:flex;align-items:center;gap:6px;font-size:0.8rem;color:var(--muted,#6c7086);">
+        \u041C\u0430\u0441\u0448\u0442\u0430\u0431:
+        <input type="range" id="flowZoomRange" min="25" max="200" value="100" style="width:100px;">
+        <span id="flowZoomPct">100%</span>
+      </label>
+      <button id="flowFullscreenBtn" type="button">\uD83D\uDDD2 \u041D\u0430 \u0432\u0435\u0441\u044C \u044D\u043A\u0440\u0430\u043D</button>
+    </div>
+    <div class="analytics-grid" style="overflow:visible;">
+      <div class="card flow-map-container" style="padding:0;position:relative;">
+        <div id="flowSvgWrapper" style="overflow:auto;width:100%;min-height:500px;max-height:700px;">
+          <svg id="flowSvg" viewBox="0 0 ${svgW} ${svgH}" style="width:${Math.max(svgW, 900)}px;height:auto;display:block;" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+                <polygon points="0 0, 10 3.5, 0 7" fill="${colors.muted}"/>
+              </marker>
+            </defs>
+            <rect width="${svgW}" height="${svgH}" fill="transparent"/>
+            ${edgeLines}
+            ${nodeRects}
+          </svg>
+        </div>
+        <div id="flowTooltip" style="display:none;position:absolute;background:${colors.bg};border:1px solid ${colors.border};border-radius:6px;padding:8px 12px;font-size:0.85rem;color:${colors.text};pointer-events:none;z-index:100;white-space:pre-line;max-width:280px;box-shadow:0 4px 12px rgba(0,0,0,0.3);"></div>
       </div>
     </div>`;
 }
 
 function initFlowInteractions() {
   const tooltip = document.getElementById('flowTooltip');
+  const svg = document.getElementById('flowSvg');
+  const wrapper = document.getElementById('flowSvgWrapper');
+  if (!svg) return;
+
+  const zoomRange = document.getElementById('flowZoomRange');
+  const zoomPct = document.getElementById('flowZoomPct');
+  const zoomFit = document.getElementById('flowZoomFit');
+  const fsBtn = document.getElementById('flowFullscreenBtn');
+  const container = svg.closest('.flow-map-container');
+
+  if (zoomRange && zoomPct) {
+    zoomRange.addEventListener('input', () => {
+      const scale = parseInt(zoomRange.value) / 100;
+      svg.style.transform = `scale(${scale})`;
+      svg.style.transformOrigin = 'top left';
+      zoomPct.textContent = zoomRange.value + '%';
+    });
+  }
+
+  if (zoomFit && svg) {
+    zoomFit.addEventListener('click', () => {
+      const parentW = wrapper.clientWidth - 20;
+      const scale = Math.min(1, parentW / svg.scrollWidth) * 100;
+      zoomRange.value = Math.round(scale);
+      zoomRange.dispatchEvent(new Event('input'));
+    });
+  }
+
+  if (fsBtn && container) {
+    fsBtn.addEventListener('click', () => {
+      container.classList.toggle('fullscreen');
+      if (container.classList.contains('fullscreen')) {
+        wrapper.style.maxHeight = 'none';
+        wrapper.style.minHeight = 'calc(100vh - 80px)';
+        setTimeout(() => zoomFit?.click(), 100);
+      } else {
+        wrapper.style.maxHeight = '700px';
+        wrapper.style.minHeight = '500px';
+      }
+    });
+  }
+
   if (!tooltip) return;
+
+  let tooltipTimeout;
+  function showTooltip(e, text) {
+    clearTimeout(tooltipTimeout);
+    tooltip.textContent = text;
+    tooltip.style.display = 'block';
+    const rect = container.getBoundingClientRect();
+    let left = e.clientX - rect.left + 14;
+    let top = e.clientY - rect.top - 10;
+    if (left + 280 > rect.width) left = rect.width - 290;
+    if (top < 0) top = e.clientY - rect.top + 20;
+    tooltip.style.left = left + 'px';
+    tooltip.style.top = top + 'px';
+  }
+  function hideTooltip() {
+    tooltipTimeout = setTimeout(() => { tooltip.style.display = 'none'; }, 100);
+  }
 
   document.querySelectorAll('.flow-node').forEach(el => {
     el.addEventListener('mouseenter', (e) => {
       const details = el.dataset.details;
       if (!details) return;
-      tooltip.textContent = details;
-      tooltip.style.display = 'block';
+      showTooltip(e, details);
     });
     el.addEventListener('mousemove', (e) => {
-      const rect = el.closest('.card').getBoundingClientRect();
-      tooltip.style.left = (e.clientX - rect.left + 12) + 'px';
-      tooltip.style.top = (e.clientY - rect.top - 10) + 'px';
+      const details = el.dataset.details;
+      if (!details) return;
+      showTooltip(e, details);
     });
-    el.addEventListener('mouseleave', () => {
-      tooltip.style.display = 'none';
-    });
+    el.addEventListener('mouseleave', hideTooltip);
   });
 
   document.querySelectorAll('.flow-edge').forEach(el => {
     el.addEventListener('mouseenter', (e) => {
-      tooltip.textContent = `${el.dataset.label}: ${el.dataset.requests || '0'} запросов`;
-      tooltip.style.display = 'block';
+      showTooltip(e, `${el.dataset.label}: ${el.dataset.requests || '0'} \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432`);
     });
     el.addEventListener('mousemove', (e) => {
-      const rect = el.closest('.card').getBoundingClientRect();
-      tooltip.style.left = (e.clientX - rect.left + 12) + 'px';
-      tooltip.style.top = (e.clientY - rect.top - 10) + 'px';
+      showTooltip(e, `${el.dataset.label}: ${el.dataset.requests || '0'} \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432`);
     });
-    el.addEventListener('mouseleave', () => {
-      tooltip.style.display = 'none';
-    });
+    el.addEventListener('mouseleave', hideTooltip);
   });
 }
 

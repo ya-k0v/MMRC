@@ -18,6 +18,9 @@
   <script type="module" src="/js/analytics.js"></script>
   <style>
     :root { --card-bg: var(--bg-card, #1e1e2e); --card-border: var(--border, #313244); }
+    html, body { height: 100%; margin: 0; }
+    body.admin-page { overflow: hidden !important; }
+    #app { height: 100%; overflow-y: auto; overflow-x: hidden; padding-bottom: 40px; }
     .analytics-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px; padding:16px; }
     .analytics-grid .card { margin:0; }
     .card-value { font-size:2rem; font-weight:700; color:var(--accent,#3b82f6); }
@@ -41,9 +44,15 @@
     @media (max-width:768px) { .two-col { grid-template-columns:1fr; } }
     .flow-node { cursor:pointer; }
     .flow-node:hover .flow-node-bg { opacity:0.4 !important; transition:opacity 0.2s; }
-    .flow-edge { transition:stroke 0.2s; cursor:crosshair; }
+    .flow-edge { transition:stroke 0.2s; cursor:crosshair; fill:none; }
     .flow-edge:hover { stroke:var(--accent,#3b82f6) !important; stroke-width:3 !important; }
     .flow-edge-label { pointer-events:none; user-select:none; }
+    .flow-controls { display:flex; gap:8px; align-items:center; padding:8px 16px; flex-wrap:wrap; }
+    .flow-controls button { cursor:pointer; padding:4px 10px; border:1px solid var(--border,#313244); border-radius:6px; background:var(--bg-card,#1e1e2e); color:var(--text,#cdd6f4); font-size:0.8rem; }
+    .flow-controls button:hover { background:var(--accent,#3b82f6); color:#fff; }
+    .flow-controls input[type=range] { width:120px; accent-color:var(--accent,#3b82f6); }
+    .flow-map-container { position:relative; overflow:hidden; min-height:500px; }
+    .flow-map-container.fullscreen { position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:9999; background:var(--bg,#11111b); }
   </style>
 </head>
 <body class="maintenance-ui admin-page">
