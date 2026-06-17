@@ -482,6 +482,15 @@ app.use('/api/system', requireAuth, systemInfoRouter);
 const analyticsRouter = createAnalyticsRouter();
 app.use('/api', requireAuth, requireAdmin, analyticsRouter);
 
+// Internal metrics endpoint (no auth — used by other replicas via Docker network)
+app.get('/internal/metrics', (req, res) => {
+  try {
+    res.json(getMetrics());
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Admin API (установка APK и др.)
 app.use('/api/admin', adminRouter);
 

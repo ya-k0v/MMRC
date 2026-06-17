@@ -1,5 +1,6 @@
 import express from 'express';
 import os from 'node:os';
+import http from 'node:http';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createModuleLogger } from '../utils/logger.js';
@@ -17,14 +18,18 @@ export function createAnalyticsRouter() {
   router.get('/analytics', async (req, res) => {
     try {
       const start = Date.now();
-      const [metricsData, dockerStats, redisInfo, pgInfo, queueInfo, systemInfo] = await Promise.all([
+      const [metricsData, dockerStats, redisInfo, pgInfo, queueInfo, systemInfo, nginxStats, replicaMetrics] = await Promise.all([
         Promise.resolve(getInAppMetrics()),
         getDockerStats(),
         getRedisInfo(),
         getPostgresInfo(),
         getQueueInfo(),
-        Promise.resolve(getSystemMetrics())
+        Promise.resolve(getSystemMetrics()),
+        getNginxUpstreamStats(),
+        getReplicaMetrics()
       ]);
+
+      const flowMap = buildFlowMap(dockerStats, nginxStats, replicaMetrics, redisInfo, pgInfo, queueInfo);
 
       res.json({
         inApp: metricsData,
@@ -33,6 +38,9 @@ export function createAnalyticsRouter() {
         postgres: pgInfo,
         queues: queueInfo,
         system: systemInfo,
+        nginx: nginxStats,
+        replicaMetrics,
+        flowMap,
         collectTimeMs: Date.now() - start,
         timestamp: new Date().toISOString()
       });
@@ -81,6 +89,79 @@ async function getDockerStats() {
   }
 }
 
+async function getNginxUpstreamStats() {
+  try {
+    const log = await execAsync(
+      'docker exec mmrc-nginx-ha cat /var/log/nginx/access.log 2>/dev/null || echo ""'
+    );
+    const lines = log.stdout.trim().split('\n').filter(Boolean);
+    if (lines.length === 0) return null;
+
+    const upstreams = {};
+    const statusCodes = {};
+    let total = 0;
+
+    for (const line of lines) {
+      const upMatch = line.match(/upstream="([^"]+)"/);
+      const statusMatch = line.match(/"\s+(\d{3})\s+/);
+      if (upMatch) {
+        const addr = upMatch[1];
+        upstreams[addr] = (upstreams[addr] || 0) + 1;
+      }
+      if (statusMatch) {
+        const code = statusMatch[1];
+        statusCodes[code] = (statusCodes[code] || 0) + 1;
+      }
+      total++;
+    }
+
+    return {
+      total,
+      lines: lines.length,
+      upstreams,
+      statusCodes,
+      lastEntry: lines[lines.length - 1] || null
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+async function getReplicaMetrics() {
+  try {
+    const { stdout } = await execAsync(
+      'docker ps --filter name=mmrc-replica --format "{{.Names}}" 2>/dev/null'
+    );
+    const names = stdout.trim().split('\n').filter(Boolean);
+    if (names.length === 0) return null;
+
+    const results = {};
+    for (const name of names) {
+      try {
+        const json = await httpGet(`http://${name}:80/internal/metrics`, 3000);
+        if (json) results[name] = JSON.parse(json);
+      } catch {
+        // skip
+      }
+    }
+    return Object.keys(results).length > 0 ? results : null;
+  } catch {
+    return null;
+  }
+}
+
+function httpGet(url, timeout = 3000) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(url, { timeout }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => resolve(data));
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+  });
+}
+
 async function getRedisInfo() {
   const redisUrl = process.env.REDIS_URL;
   if (!redisUrl) return null;
@@ -90,7 +171,6 @@ async function getRedisInfo() {
     redis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, retryStrategy: () => null });
     await redis.connect();
     const info = await redis.info();
-    const infoAll = await redis.info('all');
     await redis.quit();
 
     const parsed = {};
@@ -229,4 +309,147 @@ function getSystemMetrics() {
     logger.error('[Analytics] Error getting system metrics:', e);
     return null;
   }
+}
+
+function buildFlowMap(dockerStats, nginxStats, replicaMetrics, redisInfo, pgInfo, queueInfo) {
+  const nodes = [];
+  const edges = [];
+
+  const replicaCounts = {};
+  if (replicaMetrics) {
+    for (const [name, m] of Object.entries(replicaMetrics)) {
+      replicaCounts[name] = m.requests?.total || 0;
+    }
+  }
+
+  const upstreamCounts = {};
+  let nginxTotal = 0;
+  if (nginxStats && nginxStats.upstreams) {
+    for (const [addr, count] of Object.entries(nginxStats.upstreams)) {
+      upstreamCounts[addr] = count;
+      nginxTotal += count;
+    }
+  }
+
+  const containers = dockerStats?.containers || [];
+  const getContainer = (name) => containers.find(c =>
+    c.name.includes(name) || name.includes(c.name)
+  );
+
+  nodes.push({
+    id: 'browser',
+    label: 'Браузеры / Устройства',
+    type: 'source',
+    requests: 0
+  });
+
+  const nginxC = getContainer('nginx-ha') || getContainer('nginx');
+  nodes.push({
+    id: 'nginx',
+    label: 'NGINX LB',
+    type: 'lb',
+    requests: nginxTotal || undefined,
+    cpu: nginxC?.cpuPercent,
+    mem: nginxC?.memoryPercent,
+    status: nginxC?.status
+  });
+
+  edges.push({
+    from: 'browser',
+    to: 'nginx',
+    label: 'HTTP / WebSocket',
+    requests: nginxTotal || undefined
+  });
+
+  const replicaNodes = [];
+  let replicaIndex = 0;
+  for (const c of containers) {
+    if (c.name.includes('mmrc-replica') || c.name.includes('replica')) {
+      const shortName = `replica-${++replicaIndex}`;
+      const repName = c.name;
+      const repMetrics = replicaMetrics ? replicaMetrics[repName] : null;
+      replicaNodes.push({
+        id: shortName,
+        label: c.name.length > 30 ? c.name.substring(0, 28) + '…' : c.name,
+        type: 'app',
+        requests: repMetrics?.requests?.total || (upstreamCounts[Object.keys(upstreamCounts)[replicaIndex - 1]] || 0),
+        socketConns: repMetrics?.socket?.activeConnections,
+        cpu: c.cpuPercent,
+        mem: c.memoryPercent,
+        status: c.status
+      });
+
+      const upstreamReqs = Object.values(upstreamCounts)[replicaIndex - 1] || 0;
+      edges.push({
+        from: 'nginx',
+        to: shortName,
+        label: 'upstream',
+        requests: upstreamReqs
+      });
+    }
+  }
+  nodes.push(...replicaNodes);
+
+  if (replicaNodes.length > 0) {
+    const firstReplica = replicaNodes[0].id;
+
+    edges.push({
+      from: firstReplica,
+      to: 'redis',
+      label: 'Pub/Sub + Queue',
+      type: 'service',
+      meta: redisInfo ? `cmd: ${(redisInfo.totalCommands || 0).toLocaleString()}` : undefined
+    });
+    edges.push({
+      from: firstReplica,
+      to: 'postgres',
+      label: 'SQL',
+      type: 'service',
+      meta: pgInfo ? `q: ${(pgInfo.transactions?.commit || 0).toLocaleString()}` : undefined
+    });
+    edges.push({
+      from: firstReplica,
+      to: 'minio',
+      label: 'S3',
+      type: 'service'
+    });
+    edges.push({
+      from: firstReplica,
+      to: 'streamer',
+      label: 'Bull Queue',
+      type: 'service',
+      meta: queueInfo ? Object.values(queueInfo).reduce((s, q) => s + (q?.active || 0) + (q?.waiting || 0), 0).toString() + ' jobs' : undefined
+    });
+  }
+
+  nodes.push({
+    id: 'redis',
+    label: 'Redis',
+    type: 'service',
+    commands: redisInfo?.totalCommands,
+    clients: redisInfo?.connectedClients,
+    memory: redisInfo?.usedMemoryHuman,
+    version: redisInfo?.version
+  });
+  nodes.push({
+    id: 'postgres',
+    label: 'PostgreSQL',
+    type: 'service',
+    version: pgInfo?.version,
+    size: pgInfo?.databaseSize,
+    connections: pgInfo?.activeConnections
+  });
+  nodes.push({
+    id: 'minio',
+    label: 'MinIO',
+    type: 'service'
+  });
+  nodes.push({
+    id: 'streamer',
+    label: 'Streamer (FFmpeg)',
+    type: 'service',
+    active: queueInfo ? Object.values(queueInfo).reduce((s, q) => s + (q?.active || 0), 0) : 0
+  });
+
+  return { nodes, edges };
 }
