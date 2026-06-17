@@ -644,31 +644,35 @@ cmd_ha() {
 
             info "Downloading HA configuration..."
             local ha_yml_ok=false ha_lb_ok=false
-            if curl -fSL --connect-timeout 10 --max-time 30 -o "docker-compose.ha.yml" \
-                "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/docker-compose.ha.yml" 2>/dev/null; then
+
+            # Use existing file if it exists and is not the 70-byte 400 error page
+            if [ -f "docker-compose.ha.yml" ] && [ "$(stat -c%s "docker-compose.ha.yml" 2>/dev/null || echo 0)" -gt 100 ]; then
+                warn "GitHub download unavailable; using existing docker-compose.ha.yml"
                 ha_yml_ok=true
             else
-                if [ -f "docker-compose.ha.yml" ] && [ -s "docker-compose.ha.yml" ]; then
-                    warn "GitHub download failed; using existing docker-compose.ha.yml"
+                if curl -fSL --connect-timeout 10 --max-time 30 -o "docker-compose.ha.yml" \
+                    "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/docker-compose.ha.yml" 2>/dev/null; then
                     ha_yml_ok=true
                 else
                     error "Failed to download docker-compose.ha.yml (check network)"
                     ha_yml_ok=false
                 fi
             fi
+
             mkdir -p "docker/nginx"
-            if curl -fSL --connect-timeout 10 --max-time 30 -o "docker/nginx/ha-lb.conf" \
-                "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/docker/nginx/ha-lb.conf" 2>/dev/null; then
+            if [ -f "docker/nginx/ha-lb.conf" ] && [ "$(stat -c%s "docker/nginx/ha-lb.conf" 2>/dev/null || echo 0)" -gt 100 ]; then
+                warn "GitHub download unavailable; using existing ha-lb.conf"
                 ha_lb_ok=true
             else
-                if [ -f "docker/nginx/ha-lb.conf" ] && [ -s "docker/nginx/ha-lb.conf" ]; then
-                    warn "GitHub download failed; using existing ha-lb.conf"
+                if curl -fSL --connect-timeout 10 --max-time 30 -o "docker/nginx/ha-lb.conf" \
+                    "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/docker/nginx/ha-lb.conf" 2>/dev/null; then
                     ha_lb_ok=true
                 else
                     error "Failed to download ha-lb.conf (check network)"
                     ha_lb_ok=false
                 fi
             fi
+
             if ! $ha_yml_ok || ! $ha_lb_ok; then
                 exit 1
             fi
