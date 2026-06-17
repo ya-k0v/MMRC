@@ -54,24 +54,47 @@ const MIGRATIONS = [
 async function runRegisteredMigrations(driver) {
   await ensureSchemaMigrationsTable(driver);
 
-  const executedRows = await driver.query('SELECT id FROM schema_migrations');
-  const executedIds = new Set(executedRows.map((row) => row.id));
+  // PostgreSQL: use advisory lock so only one replica runs migrations
+  const isPostgres = driver.dialect === 'postgres';
+  let lockHeld = false;
 
-  for (const migration of MIGRATIONS) {
-    if (executedIds.has(migration.id)) continue;
+  if (isPostgres) {
+    const lockResult = await driver.query("SELECT pg_try_advisory_lock(20260407) as locked");
+    lockHeld = lockResult[0]?.locked === true || lockResult[0]?.locked === 't';
+    if (!lockHeld) {
+      logger.warn('[migrate] Advisory lock not acquired — another replica is running migrations, skipping');
+    }
+  }
 
-    logger.info('[migrate] Applying migration', { id: migration.id, description: migration.description });
+  try {
+    const executedRows = await driver.query('SELECT id FROM schema_migrations');
+    const executedIds = new Set(executedRows.map((row) => row.id));
 
-    const ph = (i) => driver.dialect === 'postgres' ? `$${i}` : '?';
-    await driver.transaction(async (tx) => {
-      await migration.up(tx || driver);
-      await (tx || driver).run(
-        `INSERT INTO schema_migrations (id, description, executed_at) VALUES (${ph(1)}, ${ph(2)}, CURRENT_TIMESTAMP)`,
-        [migration.id, migration.description]
-      );
-    });
+    for (const migration of MIGRATIONS) {
+      if (executedIds.has(migration.id)) continue;
 
-    logger.info('[migrate] Migration applied', { id: migration.id });
+      if (isPostgres && !lockHeld) {
+        logger.warn('[migrate] Skipping migration (no lock)', { id: migration.id });
+        continue;
+      }
+
+      logger.info('[migrate] Applying migration', { id: migration.id, description: migration.description });
+
+      const ph = (i) => driver.dialect === 'postgres' ? `$${i}` : '?';
+      await driver.transaction(async (tx) => {
+        await migration.up(tx || driver);
+        await (tx || driver).run(
+          `INSERT INTO schema_migrations (id, description, executed_at) VALUES (${ph(1)}, ${ph(2)}, CURRENT_TIMESTAMP)`,
+          [migration.id, migration.description]
+        );
+      });
+
+      logger.info('[migrate] Migration applied', { id: migration.id });
+    }
+  } finally {
+    if (lockHeld) {
+      await driver.query("SELECT pg_advisory_unlock(20260407)").catch(() => {});
+    }
   }
 }
 

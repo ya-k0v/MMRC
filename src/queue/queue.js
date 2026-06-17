@@ -3,8 +3,10 @@ import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('queue');
 
 const REDIS_URL = process.env.REDIS_URL || '';
+const QUEUE_RETRY_DELAY = 2000;
+const QUEUE_MAX_RETRIES = 15;
 
-function createQueue(name) {
+function createQueue(name, retries = 0) {
   if (!REDIS_URL) return null;
 
   const queue = new Bull(name, REDIS_URL, {
@@ -13,6 +15,10 @@ function createQueue(name) {
       backoff: { type: 'exponential', delay: 2000 },
       removeOnComplete: 100,
       removeOnFail: 50
+    },
+    redis: {
+      maxRetriesPerRequest: 3,
+      retryStrategy: (times) => Math.min(times * 200, 10000)
     }
   });
 
@@ -23,7 +29,14 @@ function createQueue(name) {
     logger.error(`[Queue/${name}] Job ${job.id} failed`, { error: err.message });
   });
   queue.on('error', err => {
-    logger.error(`[Queue/${name}] Error`, { error: err.message });
+    logger.warn(`[Queue/${name}] Error${retries < QUEUE_MAX_RETRIES ? ' (retrying)' : ''}`, { error: err.message, retries });
+    if (retries >= QUEUE_MAX_RETRIES) {
+      logger.error(`[Queue/${name}] Max retries reached, giving up`, { error: err.message });
+    }
+  });
+
+  queue.on('ready', () => {
+    logger.info(`[Queue/${name}] Connected to Redis`);
   });
 
   return queue;
