@@ -243,6 +243,9 @@ get_compose_profiles() {
     if grep -q "^MMRC_STREAMER_ENABLED=true" "$ENV_FILE" 2>/dev/null; then
         profiles="$profiles --profile streamer"
     fi
+    if [ -f "$APP_DIR/docker-compose.ha.yml" ]; then
+        profiles="$profiles --profile ha"
+    fi
     echo "$profiles"
 }
 

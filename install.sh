@@ -531,6 +531,9 @@ ENVEOF3
     if [ "$STREAMER_ENABLED" = "true" ]; then
         PROFILES="$PROFILES --profile streamer"
     fi
+    if [ -n "$COMPOSE_HA" ]; then
+        PROFILES="$PROFILES --profile ha"
+    fi
     # Install CLI BEFORE starting services (so it's available even if compose fails)
     info "Installing MMRC CLI..."
     curl -fSL -o "$BIN_DIR/mmrc" "$MMRC_RAW/mmrc.sh"

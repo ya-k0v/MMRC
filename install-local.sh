@@ -481,6 +481,9 @@ ENVEOF3
     if [ "$STREAMER_ENABLED" = "true" ]; then
         PROFILES="$PROFILES --profile streamer"
     fi
+    if [ -n "$COMPOSE_HA" ]; then
+        PROFILES="$PROFILES --profile ha"
+    fi
 
     if retry 3 10 "$COMPOSE $COMPOSE_HA $PROFILES up -d $HA_SCALE"; then
         success "Services started"
