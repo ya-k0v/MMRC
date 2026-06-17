@@ -9,9 +9,6 @@
 # Scale replicas: docker compose -f docker-compose.deploy.yml -f docker-compose.ha.yml up -d --scale mmrc-replica=3
 
 services:
-  mmrc:
-    ports: []
-
   mmrc-replica:
     image: ${DOCKER_IMAGE:-pingwin1900/mmrc}:${DOCKER_IMAGE_TAG:-v340}
     restart: unless-stopped
