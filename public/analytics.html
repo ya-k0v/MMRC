@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5"/>
+  <title>MMRC Analytics</title>
+  <link rel="icon" type="image/svg+xml" href="/icon.svg"/>
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"/>
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png"/>
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"/>
+  <link rel="manifest" href="/manifest-admin.json"/>
+  <meta name="theme-color" content="#3b82f6"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+  <meta name="apple-mobile-web-app-title" content="MMRC Analytics"/>
+  <link rel="stylesheet" href="/css/app.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script type="module" src="/js/analytics.js"></script>
+  <style>
+    :root { --card-bg: var(--bg-card, #1e1e2e); --card-border: var(--border, #313244); }
+    .analytics-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px; padding:16px; }
+    .analytics-grid .card { margin:0; }
+    .card-value { font-size:2rem; font-weight:700; color:var(--accent,#3b82f6); }
+    .card-label { font-size:0.85rem; color:var(--muted,#6c7086); margin-top:4px; }
+    .card-row { display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border,#313244); }
+    .card-row:last-child { border-bottom:none; }
+    .card-row .label { color:var(--muted,#6c7086); font-size:0.85rem; }
+    .card-row .value { color:var(--text,#cdd6f4); font-weight:500; }
+    .chart-container { position:relative; height:250px; width:100%; }
+    .status-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; }
+    .status-dot.up { background:#4caf50; }
+    .status-dot.down { background:#f44336; }
+    .section-title { font-size:1.2rem; font-weight:600; color:var(--text,#cdd6f4); padding:16px 16px 0; }
+    .empty-state { color:var(--muted,#6c7086); text-align:center; padding:24px; font-style:italic; }
+    .refresh-controls { display:flex; align-items:center; gap:12px; margin-left:auto; }
+    .refresh-controls .meta { color:var(--muted,#6c7086); font-size:0.8rem; }
+    #refreshBtn { cursor:pointer; padding:6px 12px; border:1px solid var(--border,#313244); border-radius:6px; background:var(--bg-card,#1e1e2e); color:var(--text,#cdd6f4); font-size:0.85rem; }
+    #refreshBtn:hover { background:var(--accent,#3b82f6); color:#fff; }
+    .inline-chart { width:100%; height:100%; }
+    .two-col { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    @media (max-width:768px) { .two-col { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body class="maintenance-ui admin-page">
+  <header class="toolbar">
+    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+      <button id="themeBtn" class="meta-lg" type="button" style="padding:8px 12px; display:flex; align-items:center; justify-content:center;" aria-label="Переключить тему"></button>
+      <strong class="meta">Аналитика</strong>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+        <span id="userFullName" class="meta" style="font-weight:500; color:var(--text);"></span>
+        <span class="meta" style="color:var(--muted);">•</span>
+        <span id="logoutBtn" class="meta" style="font-weight:500; color:var(--text); text-decoration:underline; cursor:pointer;">Выйти</span>
+      </div>
+    </div>
+    <div class="refresh-controls">
+      <span id="lastUpdated" class="meta">—</span>
+      <button id="refreshBtn" type="button">Обновить</button>
+      <button id="adminBtn" class="meta-lg" type="button" style="padding:8px 12px;">Админка</button>
+    </div>
+  </header>
+
+  <div id="app">
+    <div class="section-title">Загрузка...</div>
+  </div>
+</body>
+</html>

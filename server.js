@@ -48,6 +48,7 @@ import { createFilesRouter, updateDeviceFilesFromDB } from './src/routes/files.j
 import { createVideoInfoRouter } from './src/routes/video-info.js';
 import { createConversionRouter } from './src/routes/conversion.js';
 import { createSystemInfoRouter } from './src/routes/system-info.js';
+import { createAnalyticsRouter } from './src/routes/analytics.js';
 import { createFoldersRouter } from './src/routes/folders.js';
 import { createAuthRouter } from './src/routes/auth.js';
 import { createDeduplicationRouter } from './src/routes/deduplication.js';
@@ -159,6 +160,10 @@ if (!isPostgres) {
     intervalMinutes: WAL_CHECKPOINT_INTERVAL_MS / 60000,
     thresholdMB: process.env.WAL_CHECKPOINT_THRESHOLD_MB || '100'
   });
+  if (process.env.REDIS_URL || process.env.MMRC_HA_MODE) {
+    logger.warn('[Server] ⚠️ SQLite + Redis/HA is unstable with multiple processes.');
+    logger.warn('[Server]    Set DB_TYPE=postgres in .env for production/HA deployments.');
+  }
 }
 
 // КРИТИЧНО: Завершаем инициализацию настроек с миграцией путей после инициализации БД
@@ -472,6 +477,10 @@ app.use('/api/devices', videoInfoRouter);  // GET открыт для устро
 // System info router
 const systemInfoRouter = createSystemInfoRouter();
 app.use('/api/system', requireAuth, systemInfoRouter);
+
+// Analytics dashboard router
+const analyticsRouter = createAnalyticsRouter();
+app.use('/api', requireAuth, requireAdmin, analyticsRouter);
 
 // Admin API (установка APK и др.)
 app.use('/api/admin', adminRouter);

@@ -245,6 +245,10 @@ get_compose_profiles() {
     fi
     if [ -f "$APP_DIR/docker-compose.ha.yml" ]; then
         profiles="$profiles --profile ha"
+        # HA requires PostgreSQL — SQLite не поддерживает multi-process
+        if ! echo "$profiles" | grep -q -- "--profile postgres"; then
+            profiles="$profiles --profile postgres"
+        fi
     fi
     echo "$profiles"
 }
@@ -257,6 +261,7 @@ cmd_start() {
     COMPOSE_HA=$(get_compose_ha)
     PROFILES=$(get_compose_profiles)
     if [ -n "$COMPOSE_HA" ]; then
+        warn_ha_sqlite
         # Stop single-node mmrc container if still running (profile prevents restart)
         docker stop mmrc 2>/dev/null || true
         docker rm mmrc 2>/dev/null || true
@@ -624,6 +629,15 @@ cmd_edit_env() {
     fi
 }
 
+warn_ha_sqlite() {
+    local db_type
+    db_type=$(grep "^DB_TYPE=" "$ENV_FILE" 2>/dev/null | cut -d= -f2)
+    if [ -z "$db_type" ] || [ "$db_type" = "sqlite" ]; then
+        warn "HA mode requires PostgreSQL! SQLite не поддерживает multi-process запись."
+        warn "Установите DB_TYPE=postgres в $ENV_FILE"
+    fi
+}
+
 cmd_ha() {
     require_installed
     detect_compose
@@ -631,6 +645,7 @@ cmd_ha() {
     case "${1:-status}" in
         setup|init)
             check_root
+            warn_ha_sqlite
             cd "$APP_DIR"
 
             if [ -f "docker-compose.ha.yml" ]; then
@@ -777,6 +792,9 @@ Commands:
   scale <N>    Scale replicas to N
   remove       Remove HA, return to single-node mode
   status       Show HA status
+
+Note: HA requires PostgreSQL + S3/MinIO (not SQLite).
+      Set DB_TYPE=postgres and STORAGE_BACKEND=s3 in .env
 "
             ;;
         *)

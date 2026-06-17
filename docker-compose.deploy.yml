@@ -176,7 +176,7 @@ services:
       - FFMPEG_IMAGE=${FFMPEG_IMAGE:-pingwin1900/mmrc-ffmpeg}
       - LOGS_DIR=/app/data/logs
       - WAL_CHECKPOINT_INTERVAL_MS=${WAL_CHECKPOINT_INTERVAL_MS:-300000}
-      - DB_TYPE=${DB_TYPE:-sqlite}
+      - DB_TYPE=${DB_TYPE:-postgres}
       - DB_HOST=${DB_HOST:-mmrc-postgres}
       - DB_PORT=${DB_PORT:-5432}
       - DB_NAME=${DB_NAME:-mmrc}
@@ -186,6 +186,7 @@ services:
       - MMRC_COMPOSE_DIR=/host
       - DOCKER_IMAGE=${DOCKER_IMAGE:-pingwin1900/mmrc}
       - DOCKER_IMAGE_TAG=${DOCKER_IMAGE_TAG:-v340}
+      - MMRC_HA_MODE=true
       - REDIS_URL=${REDIS_URL:-redis://mmrc-redis:6379}
       - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
       - S3_ENDPOINT=${S3_ENDPOINT:-http://mmrc-minio:9000}
