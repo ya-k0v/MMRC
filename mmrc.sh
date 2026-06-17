@@ -637,10 +637,10 @@ cmd_ha() {
             fi
 
             info "Downloading HA configuration..."
-            curl -# -L -o "docker-compose.ha.yml" \
+            curl -fSL -o "docker-compose.ha.yml" \
                 "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/docker-compose.ha.yml"
             mkdir -p "docker/nginx"
-            curl -# -L -o "docker/nginx/ha-lb.conf" \
+            curl -fSL -o "docker/nginx/ha-lb.conf" \
                 "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/docker/nginx/ha-lb.conf"
             success "HA configuration downloaded"
 
