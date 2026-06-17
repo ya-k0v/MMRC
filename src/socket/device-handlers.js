@@ -108,11 +108,9 @@ export function setupDeviceHandlers(socket, deps) {
       const deviceAppVersion = devices[device_id].appVersion || null;
 
       // Сохраняем ipAddress и platform в БД
-      try {
-        saveDevice(device_id, devices[device_id]);
-      } catch (e) {
+      saveDevice(device_id, devices[device_id]).catch(e => {
         logger.warn('[Socket.IO] Не удалось сохранить ipAddress/platform в БД', { deviceId: device_id, error: e.message });
-      }
+      });
       
       // КРИТИЧНО: Отправляем обновление устройства если IP изменился или это первое подключение
       const ipChanged = previousIP !== devices[device_id].ipAddress;

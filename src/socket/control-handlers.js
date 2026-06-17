@@ -375,7 +375,7 @@ export function setupControlHandlers(socket, deps) {
             });
           }
           
-          saveDevice(device_id, deviceStillExists).catch(() => {});
+          saveDevice(device_id, deviceStillExists).catch(e => logger.warn('[Control] saveDevice failed', { deviceId: device_id, error: e.message }));
           
           io.to(`device:${device_id}`).emit('player/play', {
             ...deviceStillExists.current,
@@ -788,7 +788,7 @@ export function setupControlHandlers(socket, deps) {
             d.current.playlistInterval = savedPlaylistInterval;
           }
           
-          saveDevice(device_id, devices[device_id]).catch(() => {});
+          saveDevice(device_id, devices[device_id]).catch(e => logger.warn('[Control] saveDevice failed', { deviceId: device_id, error: e.message }));
           
           // Логируем перед отправкой (для второго случая - переключение типа контента в setTimeout)
           if (type === 'streaming') {
@@ -840,7 +840,7 @@ export function setupControlHandlers(socket, deps) {
           streamUrl: playbackStreamUrl
         });
       }
-      saveDevice(device_id, d).catch(() => {});
+      saveDevice(device_id, d).catch(e => logger.warn('[Control] saveDevice failed', { deviceId: device_id, error: e.message }));
       
       // Восстанавливаем флаги плейлиста, если плейлист был активен для того же файла
       if (wasPlaylistActive && type === 'folder' && file === savedPlaylistFile) {
@@ -884,7 +884,7 @@ export function setupControlHandlers(socket, deps) {
       }
       
       // Сохраняем финальное состояние после восстановления плейлиста и fallback URL
-      saveDevice(device_id, d).catch(() => {});
+      saveDevice(device_id, d).catch(e => logger.warn('[Control] saveDevice failed', { deviceId: device_id, error: e.message }));
       
           io.to(`device:${device_id}`).emit('player/play', {
             ...d.current,
@@ -900,7 +900,7 @@ export function setupControlHandlers(socket, deps) {
       // НЕ отправляем player/play - это перезагрузит файл с начала!
       if (d.current) {
         d.current.state = 'playing';
-        saveDevice(device_id, d).catch(() => {});
+        saveDevice(device_id, d).catch(e => logger.warn('[Control] saveDevice failed', { deviceId: device_id, error: e.message }));
       }
       io.to(`device:${device_id}`).emit('player/resume');
       emitDeviceVolumeState(device_id, 'control_resume');
@@ -963,7 +963,7 @@ export function setupControlHandlers(socket, deps) {
     if (!d) return;
     
     d.current.state = 'paused';
-    saveDevice(device_id, d).catch(() => {});
+    saveDevice(device_id, d).catch(e => logger.warn('[Control] saveDevice failed', { deviceId: device_id, error: e.message }));
     io.to(`device:${device_id}`).emit('player/pause');
     io.emit('preview/refresh', { device_id });
   });
@@ -974,7 +974,7 @@ export function setupControlHandlers(socket, deps) {
     if (!d) return;
     
     d.current.state = 'playing';
-    saveDevice(device_id, d).catch(() => {});
+    saveDevice(device_id, d).catch(e => logger.warn('[Control] saveDevice failed', { deviceId: device_id, error: e.message }));
     io.to(`device:${device_id}`).emit('player/restart');
     io.emit('preview/refresh', { device_id });
   });
@@ -1016,7 +1016,7 @@ export function setupControlHandlers(socket, deps) {
     }
     
     d.current = { type: 'idle', file: null, state: 'idle' };
-    saveDevice(device_id, d).catch(() => {});
+    saveDevice(device_id, d).catch(e => logger.warn('[Control] saveDevice failed', { deviceId: device_id, error: e.message }));
     io.to(`device:${device_id}`).emit('player/stop', { reason: 'manual_stop' });
     io.emit('preview/refresh', { device_id });
     stopServerPlaylistLoop(device_id, 'control stop');

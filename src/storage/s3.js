@@ -119,7 +119,7 @@ export class S3Storage extends StorageProvider {
   async copy(src, dest) {
     const cmd = new S3.CopyObjectCommand({
       Bucket: this.#bucket,
-      CopySource: `/${this.#bucket}/${this._key(src)}`,
+      CopySource: `/${this.#bucket}/${encodeURI(this._key(src))}`,
       Key: this._key(dest)
     });
     await this.#client.send(cmd);
@@ -155,25 +155,31 @@ export class S3Storage extends StorageProvider {
   }
 
   async rm(key) {
+    const s3Key = this._key(key);
+    // Сначала пробуем точное удаление (для файлов)
+    try {
+      await this.#client.send(new S3.DeleteObjectCommand({ Bucket: this.#bucket, Key: s3Key }));
+      return;
+    } catch (e) {
+      // Если ключ не найден, возможно это "папка" (префикс) — удаляем по префиксу
+      if (e.name !== 'NotFound' && e.name !== 'NoSuchKey') throw e;
+    }
+    // Префиксное удаление для директорий
     let continuationToken;
     do {
-      const cmd = new S3.ListObjectsV2Command({
+      const listCmd = new S3.ListObjectsV2Command({
         Bucket: this.#bucket,
-        Prefix: this._key(key),
+        Prefix: s3Key,
         MaxKeys: 1000,
         ContinuationToken: continuationToken
       });
-      const response = await this.#client.send(cmd);
-
+      const response = await this.#client.send(listCmd);
       if (response.Contents && response.Contents.length > 0) {
-        const objects = response.Contents.map(obj => ({ Key: obj.Key }));
-        const deleteCmd = new S3.DeleteObjectsCommand({
+        await this.#client.send(new S3.DeleteObjectsCommand({
           Bucket: this.#bucket,
-          Delete: { Objects: objects, Quiet: true }
-        });
-        await this.#client.send(deleteCmd);
+          Delete: { Objects: response.Contents.map(obj => ({ Key: obj.Key })), Quiet: true }
+        }));
       }
-
       continuationToken = response.NextContinuationToken;
     } while (continuationToken);
   }

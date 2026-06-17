@@ -92,7 +92,8 @@ async function getDockerStats() {
 async function getNginxUpstreamStats() {
   try {
     const log = await execAsync(
-      'docker exec mmrc-nginx-ha cat /var/log/nginx/access.log 2>/dev/null || echo ""'
+      'docker exec mmrc-nginx-ha cat /var/log/nginx/access.log 2>/dev/null || echo ""',
+      { timeout: 5000 }
     );
     const lines = log.stdout.trim().split('\n').filter(Boolean);
     if (lines.length === 0) return null;

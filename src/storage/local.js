@@ -10,6 +10,11 @@ export class LocalStorage extends StorageProvider {
     super();
     if (!root) throw new Error('LocalStorage requires a root path');
     this.#root = path.resolve(root);
+    try {
+      this.#root = fs.realpathSync(this.#root);
+    } catch {
+      // root doesn't exist yet, use resolved path
+    }
   }
 
   get root() {
