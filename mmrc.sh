@@ -253,9 +253,13 @@ cmd_start() {
     info "Starting MMRC services..."
     COMPOSE_HA=$(get_compose_ha)
     PROFILES=$(get_compose_profiles)
-    HA_REPLICAS=$(get_ha_replicas)
-    HA_SCALE=""
-    [ "$HA_REPLICAS" -gt 0 ] 2>/dev/null && HA_SCALE="--scale mmrc-replica=$HA_REPLICAS"
+    if [ -n "$COMPOSE_HA" ]; then
+        HA_REPLICAS=$(get_ha_replicas)
+        [ "$HA_REPLICAS" -le 0 ] 2>/dev/null && HA_REPLICAS=1
+        HA_SCALE="--scale mmrc-replica=$HA_REPLICAS"
+    else
+        HA_SCALE=""
+    fi
     $COMPOSE $COMPOSE_HA $PROFILES up -d $HA_SCALE
     success "Services started"
 }
@@ -348,10 +352,10 @@ cmd_logs() {
         case $1 in
             server|mmrc) $COMPOSE $COMPOSE_HA $PROFILES logs -f mmrc ;;
             postgres|db) $COMPOSE $COMPOSE_HA $PROFILES logs -f postgres ;;
-            redis) $COMPOSE logs -f redis ;;
+            redis) $COMPOSE $COMPOSE_HA $PROFILES logs -f redis ;;
             minio|s3) $COMPOSE $COMPOSE_HA $PROFILES logs -f minio ;;
             streamer) $COMPOSE $COMPOSE_HA $PROFILES logs -f streamer ;;
-            converter) $COMPOSE logs -f converter 2>/dev/null || warn "Converter service not running" ;;
+            converter) $COMPOSE $COMPOSE_HA $PROFILES logs -f converter 2>/dev/null || warn "Converter service not running" ;;
             replica) $COMPOSE $COMPOSE_HA $PROFILES logs -f mmrc-replica ;;
             ha-lb|nginx) $COMPOSE $COMPOSE_HA $PROFILES logs -f nginx-ha ;;
             *) $COMPOSE $COMPOSE_HA $PROFILES logs -f "$1" ;;
@@ -495,8 +499,9 @@ cmd_ssl() {
 
     # In Docker mode, stop MMRC to free port 80 for acme.sh standalone
     info "Stopping MMRC to free port 80..."
+    COMPOSE_HA=$(get_compose_ha)
     PROFILES=$(get_compose_profiles)
-    $COMPOSE $PROFILES down
+    $COMPOSE $COMPOSE_HA $PROFILES down
     if ! command -v acme.sh >/dev/null 2>&1; then
         info "Installing acme.sh..."
         cd /root
@@ -533,14 +538,14 @@ cmd_ssl() {
         replace_or_append_env "SSL_KEY" "$DATA_DIR/certs/$domain/privkey.pem"
 
         info "Starting MMRC back..."
-        $COMPOSE $PROFILES up -d
+        $COMPOSE $COMPOSE_HA $PROFILES up -d
 
         info "SSL certificate will be used after you configure nginx for HTTPS."
         info "See: https://github.com/ya-k0v/MMRC/wiki/SSL"
     else
         error "Failed to issue certificate"
         info "Starting MMRC back..."
-        $COMPOSE $PROFILES up -d
+        $COMPOSE $COMPOSE_HA $PROFILES up -d
         exit 1
     fi
 }
@@ -576,8 +581,9 @@ cmd_uninstall() {
     cd "$APP_DIR"
 
     info "Stopping services..."
+    COMPOSE_HA=$(get_compose_ha)
     PROFILES=$(get_compose_profiles)
-    $COMPOSE $PROFILES down -v
+    $COMPOSE $COMPOSE_HA $PROFILES down -v
     success "Services stopped"
 
     info "Removing installation..."
