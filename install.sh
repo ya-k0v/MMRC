@@ -274,7 +274,7 @@ install_mmrc() {
     # Download docker-compose.yml with progress
     info "Downloading docker-compose.yml..."
     info "  URL: $MMRC_RAW/docker-compose.deploy.yml"
-    curl -# -L -o "$COMPOSE_FILE" "$MMRC_RAW/docker-compose.deploy.yml"
+    curl -fSL -o "$COMPOSE_FILE" "$MMRC_RAW/docker-compose.deploy.yml"
 
     # Validate the downloaded file
     local compose_size
@@ -433,10 +433,10 @@ ENVEOF3
             done
 
             info "Downloading HA configuration..."
-            curl -# -L -o "$INSTALL_DIR/docker-compose.ha.yml" \
+            curl -fSL -o "$INSTALL_DIR/docker-compose.ha.yml" \
                 "$MMRC_RAW/docker-compose.ha.yml"
             mkdir -p "$INSTALL_DIR/docker/nginx"
-            curl -# -L -o "$INSTALL_DIR/docker/nginx/ha-lb.conf" \
+            curl -fSL -o "$INSTALL_DIR/docker/nginx/ha-lb.conf" \
                 "$MMRC_RAW/docker/nginx/ha-lb.conf"
             success "HA configuration downloaded"
 
@@ -532,7 +532,7 @@ ENVEOF3
 
     # Install CLI with progress
     info "Installing MMRC CLI..."
-    curl -# -L -o "$BIN_DIR/mmrc" "$MMRC_RAW/mmrc.sh"
+    curl -fSL -o "$BIN_DIR/mmrc" "$MMRC_RAW/mmrc.sh"
     chmod +x "$BIN_DIR/mmrc"
     success "CLI installed: mmrc"
 
