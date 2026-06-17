@@ -505,36 +505,40 @@ ENVEOF3
     if [ "$STREAMER_ENABLED" = "true" ]; then
         PROFILES="$PROFILES --profile streamer"
     fi
-    $COMPOSE $COMPOSE_HA $PROFILES up -d $HA_SCALE
-    success "Services started"
+    # Install CLI BEFORE starting services (so it's available even if compose fails)
+    info "Installing MMRC CLI..."
+    curl -fSL -o "$BIN_DIR/mmrc" "$MMRC_RAW/mmrc.sh"
+    chmod +x "$BIN_DIR/mmrc"
+    success "CLI installed: mmrc"
+
+    if $COMPOSE $COMPOSE_HA $PROFILES up -d $HA_SCALE; then
+        success "Services started"
+    else
+        warn "Some services failed to start (check port conflicts with: mmrc logs)"
+    fi
 
     # Wait for health with progress
     info "Waiting for server to be ready..."
     local check_port=80
+    local server_ready=false
     for i in $(seq 1 15); do
         printf "\r  Waiting... %ds" "$i"
         sleep 1
         if curl -fsS http://localhost:${check_port}/health >/dev/null 2>&1; then
             echo ""
             success "Server is ready"
+            server_ready=true
             break
         fi
-        if [ $i -eq 15 ]; then
-            echo ""
-            warn "Server may still be starting. Check logs: mmrc logs"
-        fi
     done
+    if [ "$server_ready" = false ]; then
+        echo ""
+        warn "Server health check timed out. Use 'mmrc logs' to investigate."
+    fi
 
     # Get server IP
     info "Detecting server IP..."
     SERVER_IP=$(curl -4 -fsS --max-time 5 https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
-    success "Server IP: ${SERVER_IP}"
-
-    # Install CLI with progress
-    info "Installing MMRC CLI..."
-    curl -fSL -o "$BIN_DIR/mmrc" "$MMRC_RAW/mmrc.sh"
-    chmod +x "$BIN_DIR/mmrc"
-    success "CLI installed: mmrc"
 
     echo ""
     colorized_echo cyan "╔════════════════════════════════════════════════════════════════════════════════════════════════════╗"
