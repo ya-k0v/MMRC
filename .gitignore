@@ -74,6 +74,10 @@ bin/yt-dlp
 bin/yt-dlp.exe
 bin/yt-dlp.tmp-*
 
+# Python cache
+__pycache__/
+*.pyc
+
 # Archives / releases
 *.tar.gz
 *.zip
