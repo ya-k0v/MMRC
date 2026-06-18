@@ -72,9 +72,10 @@ export class PostgresDriver extends DatabaseDriver {
 
   async _runReturning(sql, params) {
     const result = await this._pool.query(sql, params);
+    const row = result.rows[0];
     return {
       changes: result.rowCount || 0,
-      lastInsertRowid: result.rows[0]?.id || null
+      lastInsertRowid: row?.id ?? row?.device_id ?? null
     };
   }
 
@@ -83,7 +84,7 @@ export class PostgresDriver extends DatabaseDriver {
     let finalSql = q.sql;
     const isInsert = /^\s*INSERT\s/i.test(finalSql);
     if (isInsert && !/RETURNING\s/i.test(finalSql)) {
-      finalSql += ' RETURNING id';
+      finalSql += ' RETURNING *';
       try {
         return await this._runReturning(finalSql, q.params);
       } catch (err) {
@@ -95,9 +96,10 @@ export class PostgresDriver extends DatabaseDriver {
       }
     }
     const result = await this._pool.query(finalSql, q.params);
+    const row = result.rows[0];
     return {
       changes: result.rowCount || 0,
-      lastInsertRowid: result.rows[0]?.id || null
+      lastInsertRowid: row?.id ?? row?.device_id ?? null
     };
   }
 
@@ -128,10 +130,11 @@ export class PostgresDriver extends DatabaseDriver {
           let finalSql = q.sql;
           const isInsert = /^\s*INSERT\s/i.test(finalSql);
           if (isInsert && !/RETURNING\s/i.test(finalSql)) {
-            finalSql += ' RETURNING id';
+            finalSql += ' RETURNING *';
             try {
               const r = await client.query(finalSql, q.params);
-              return { changes: r.rowCount || 0, lastInsertRowid: r.rows[0]?.id || null };
+              const row = r.rows[0];
+              return { changes: r.rowCount || 0, lastInsertRowid: row?.id ?? row?.device_id ?? null };
             } catch (err) {
               if (err.message?.includes('column "id" does not exist')) {
                 const r = await client.query(q.sql, q.params);
@@ -141,7 +144,8 @@ export class PostgresDriver extends DatabaseDriver {
             }
           }
           const r = await client.query(finalSql, q.params);
-          return { changes: r.rowCount || 0, lastInsertRowid: r.rows[0]?.id || null };
+          const row = r.rows[0];
+          return { changes: r.rowCount || 0, lastInsertRowid: row?.id ?? row?.device_id ?? null };
         },
         exec: async (sql) => { await client.query(sql); },
         columns: async (table) => {
@@ -179,10 +183,11 @@ export class PostgresDriver extends DatabaseDriver {
     const returning = `${table}_returning`;
 
     const result = await this._pool.query(
-      `INSERT INTO ${table} (${cols}) VALUES (${placeholders}) RETURNING id`,
+      `INSERT INTO ${table} (${cols}) VALUES (${placeholders}) RETURNING *`,
       keys.map(k => data[k])
     );
-    return result.rows[0]?.id || null;
+    const row = result.rows[0];
+    return row?.id ?? row?.device_id ?? null;
   }
 
   async upsert(table, data, conflictKeys) {
