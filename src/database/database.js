@@ -90,6 +90,89 @@ export function getDriverType() {
   return driverType;
 }
 
+let _reconnectTimer = null;
+let _isReconnecting = false;
+
+export async function checkDatabaseHealth() {
+  if (!driver) return false;
+  try {
+    await driver.query('SELECT 1');
+    return true;
+  } catch (e) {
+    logger.warn('[DB] Health check failed:', e.message);
+    return false;
+  }
+}
+
+export async function reconnectDatabase() {
+  if (_isReconnecting || driverType !== 'postgres') return false;
+  
+  _isReconnecting = true;
+  logger.info('[DB] Attempting to reconnect to PostgreSQL...');
+  
+  try {
+    await closeDriver();
+    driver = null;
+    
+    const resolvedConfig = resolveDriverConfig();
+    driver = await createDriver(resolvedConfig);
+    
+    const schemaSql = getSchemaSql(driverType);
+    await driver.exec(schemaSql);
+    
+    await ensureFilesMetadataStreamingColumns();
+    await ensureUsersAuthColumns();
+    await ensureUserDevicesTable();
+    await ensureDefaultAdminUser();
+    await ensureHeroAdminMigration();
+    await ensureManagerRoleMigration();
+    await ensureFileUploadedByColumn();
+    
+    logger.info('[DB] Successfully reconnected to PostgreSQL');
+    _isReconnecting = false;
+    return true;
+  } catch (e) {
+    logger.error('[DB] Reconnection failed:', e.message);
+    _isReconnecting = false;
+    return false;
+  }
+}
+
+export function startReconnectWatcher(intervalMs = 30000) {
+  if (_reconnectTimer) return;
+  
+  if (driverType !== 'postgres') {
+    logger.info('[DB] Reconnect watcher not started (not using PostgreSQL)');
+    return;
+  }
+  
+  _reconnectTimer = setInterval(async () => {
+    const healthy = await checkDatabaseHealth();
+    if (!healthy) {
+      logger.warn('[DB] PostgreSQL connection lost, attempting reconnect...');
+      const reconnected = await reconnectDatabase();
+      if (reconnected) {
+        logger.info('[DB] Reconnected successfully, emitting reload event');
+        globalThis.__mmrc_reload_devices = true;
+      }
+    }
+  }, intervalMs);
+  
+  logger.info(`[DB] Reconnect watcher started (interval: ${intervalMs}ms)`);
+}
+
+export function stopReconnectWatcher() {
+  if (_reconnectTimer) {
+    clearInterval(_reconnectTimer);
+    _reconnectTimer = null;
+    logger.info('[DB] Reconnect watcher stopped');
+  }
+}
+
+export function isReconnecting() {
+  return _isReconnecting;
+}
+
 async function ensureTableExists(name, createSql) {
   const exists = await driver.tableExists(name);
   if (!exists) {

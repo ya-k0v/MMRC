@@ -20,7 +20,10 @@ import {
   saveDeviceVolumeState,
   startWalCheckpointInterval,
   stopWalCheckpointInterval,
-  performWalCheckpoint
+  performWalCheckpoint,
+  startReconnectWatcher,
+  stopReconnectWatcher,
+  isReconnecting
 } from './src/database/database.js';
 import { APP_VERSION, APP_BRANCH, DOCKER_TAG, DOCKER_IMAGES, APPS } from './src/config/constants.js';
 import { runMigrations } from './src/database/migrate.js';
@@ -206,6 +209,8 @@ async function startupDatabase() {
   return enabledModules;
 }
 const enabledModules = await startupDatabase();
+
+startReconnectWatcher(30000);
 
 const streamManager = initStreamManager({
   outputRoot: getStreamsOutputDir(),
@@ -1749,9 +1754,12 @@ async function gracefulShutdown(signal, exitCode = 0) {
     timerRegistry.clearAll('graceful_shutdown');
     logger.info('✅ All timers cleared');
 
+    stopReconnectWatcher();
+    logger.info('✅ Reconnect watcher stopped');
+
     // Останавливаем WAL checkpoint
     stopWalCheckpointInterval();
-    logger.info('✅ WAL checkpoint interval stopped');
+    logger.info('� WAL checkpoint interval stopped');
 
     // 4. Останавливаем StreamManager
     if (streamManager && typeof streamManager.stop === 'function') {
@@ -1797,6 +1805,25 @@ timerRegistry.setInterval(() => {
     criticalErrorCount = Math.max(0, criticalErrorCount - 1);
   }
 }, CRITICAL_ERROR_RESET_TIME, 'Critical error counter reset');
+
+timerRegistry.setInterval(async () => {
+  if (globalThis.__mmrc_reload_devices && !isReconnecting()) {
+    logger.info('[Server] Reloading devices cache after PostgreSQL reconnect...');
+    try {
+      devices = await loadDevicesFromDB();
+      fileNamesMap = await loadFileNamesFromDB();
+      Object.keys(devices).forEach((deviceId) => {
+        updateDeviceFilesFromDB(deviceId, devices, fileNamesMap);
+      });
+      io.emit('devices/updated');
+      logger.info('[Server] Devices cache reloaded successfully');
+    } catch (e) {
+      logger.error('[Server] Failed to reload devices cache:', e.message);
+    } finally {
+      globalThis.__mmrc_reload_devices = false;
+    }
+  }
+}, 10000, 'Devices cache reload check');
 
 process.on('uncaughtException', (err) => {
   logger.error('💥 Uncaught Exception:', {
