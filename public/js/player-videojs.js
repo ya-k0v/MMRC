@@ -2726,7 +2726,7 @@ if (!device_id || !device_id.trim()) {
             console.warn('[Player] ⚠️ Ошибка очистки предыдущего видео:', e);
           }
           
-          vjsPlayer.loop(false);
+          vjsPlayer.loop(preview);
           applyVolumeToPlayer('play_video');
           
           // КРИТИЧНО: Скрываем big play button ДО установки src
