@@ -25,6 +25,25 @@ export function setupDeviceHandlers(socket, deps) {
     }
   };
   
+  // player/join-room - Присоединение к комнате устройства (для превью)
+  socket.on('player/join-room', ({ device_id }) => {
+    try {
+      recordSocketEvent('message');
+      
+      if (!device_id || !devices[device_id]) {
+        logSocket('warn', `Join room rejected: unknown device ${device_id}`, { socketId: socket.id });
+        return;
+      }
+      
+      socket.join(`device:${device_id}`);
+      socket.data.device_id = device_id;
+      socket.data.isPreview = true;
+      logSocket('info', `Preview joined room device:${device_id}`, { socketId: socket.id });
+    } catch (e) {
+      logSocket('error', 'Join room error', { error: e.message, socketId: socket.id });
+    }
+  });
+  
   // player/register - Регистрация устройства
   socket.on('player/register', ({ device_id, device_type, capabilities, platform, app_version }) => {
     try {

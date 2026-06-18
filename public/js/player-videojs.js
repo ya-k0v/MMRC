@@ -3402,13 +3402,23 @@ if (!device_id || !device_id.trim()) {
     // Логирование отключено для уменьшения спама
   });
 
-  socket.on('connect', () => {
-    isRegistered = false; // Сбрасываем при каждом connect
+  function onSocketConnected() {
+    isRegistered = false;
     registerInFlight = false;
     missedPongCount = 0;
     refreshAudioLogo(true);
     registerPlayer();
-  });
+    
+    if (preview && device_id) {
+      socket.emit('player/join-room', { device_id });
+    }
+  }
+
+  socket.on('connect', onSocketConnected);
+
+  if (socket.connected) {
+    onSocketConnected();
+  }
 
   socket.on('disconnect', (reason) => {
     console.warn('⚠️ Disconnected, reason:', reason);
@@ -3463,10 +3473,7 @@ if (!device_id || !device_id.trim()) {
 
   socket.on('reconnect', () => {
     console.log('🔄 Reconnected');
-    isRegistered = false;
-    registerInFlight = false;
-    missedPongCount = 0;
-    registerPlayer();
+    onSocketConnected();
   });
   
   // НОВОЕ: Обработчики попыток переподключения

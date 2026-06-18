@@ -1723,10 +1723,12 @@ async function syncPreviewWithPlayerState() {
     return; // Оставляем превью стрима как есть
   }
   
-  // Для статического контента продолжаем обычную логику
+  // Для динамического контента (видео/аудио) — превью само обрабатывает player/* события
+  // Не перезагружаем iframe, чтобы не ломать плавное воспроизведение
   if (!isStaticContent(state.type)) {
-    // Если это не статический контент и не стрим - показываем заглушку
-    if (!hasThumbnails && !hasStreamingPreview) {
+    const existingFrame = filePreview.querySelector('iframe');
+    const frameSrc = existingFrame?.src || '';
+    if (!existingFrame || !frameSrc.includes(encodeURIComponent(currentDevice))) {
       showLivePreviewForTV(currentDevice, true);
     }
     return;
@@ -2918,6 +2920,7 @@ async function loadFiles(stabilizeAttempt = 0) {
         let type = null;
         let page = undefined;
         let trailerUrl = null;
+        const ext = getFileExtension(safeName);
         if (IMAGE_EXTENSIONS.includes(ext)) {
           type = 'image';
           page = 1;

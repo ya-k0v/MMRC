@@ -374,3 +374,5 @@ if (!document.getElementById('notifications-styles')) {
   document.head.appendChild(style);
 }
 
+export { showToastNotification };
+

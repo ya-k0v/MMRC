@@ -1,4 +1,4 @@
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 
 /**
  * Запуск Android-приложения на устройстве по IP через adb

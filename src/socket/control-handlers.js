@@ -894,6 +894,7 @@ export function setupControlHandlers(socket, deps) {
             startDelayMs: normalizedStartDelayMs || undefined
           });
       emitDeviceVolumeState(device_id, 'control_play');
+      io.emit('preview/refresh', { device_id });
     } else {
       // КРИТИЧНО: Если файл не указан - это RESUME после паузы
       // Отправляем команду player/resume чтобы плеер продолжил с места паузы
@@ -907,7 +908,6 @@ export function setupControlHandlers(socket, deps) {
       logger.info(`[Control] ▶️ Resume: ${device_id} (продолжение с места паузы)`, { deviceId: device_id });
     }
     
-    io.emit('preview/refresh', { device_id });
   };
 
   socket.on('control/play', handleControlPlay);
@@ -965,7 +965,7 @@ export function setupControlHandlers(socket, deps) {
     d.current.state = 'paused';
     saveDevice(device_id, d).catch(e => logger.warn('[Control] saveDevice failed', { deviceId: device_id, error: e.message }));
     io.to(`device:${device_id}`).emit('player/pause');
-    io.emit('preview/refresh', { device_id });
+    // io.emit('preview/refresh', { device_id }); // пауза не требует полного рефреша превью
   });
 
   // control/restart - Перезапуск

@@ -485,7 +485,7 @@ app.use('/api/system', requireAuth, systemInfoRouter);
 
 // Analytics dashboard router
 const analyticsRouter = createAnalyticsRouter();
-app.use('/api', requireAuth, requireAdmin, analyticsRouter);
+app.use('/api/analytics', requireAuth, requireAdmin, analyticsRouter);
 
 // Internal metrics endpoint (no auth — used by other replicas via Docker network)
 app.get('/internal/metrics', (req, res) => {
