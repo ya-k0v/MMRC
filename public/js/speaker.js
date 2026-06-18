@@ -1711,15 +1711,9 @@ async function syncPreviewWithPlayerState() {
   const hasStreamingPreview = filePreview.querySelector('iframe')?.src?.includes('type=streaming');
   
   if (!state || !state.file) {
-    // Показываем заглушку только если нет превью папки, нет превью стрима
-    // и нет уже существующего iframe с видео (чтоб не убивать воспроизведение
-    // когда реальное устройство закончило трейлер)
+    // Показываем заглушку только если нет превью папки и нет превью стрима
     if (!hasThumbnails && !hasStreamingPreview) {
-      const existingFrame = filePreview.querySelector('iframe');
-      const frameSrc = existingFrame?.src || '';
-      if (!existingFrame || !frameSrc.includes('preview=1')) {
-        showLivePreviewForTV(currentDevice, true);
-      }
+      showLivePreviewForTV(currentDevice, true);
     }
     return;
   }

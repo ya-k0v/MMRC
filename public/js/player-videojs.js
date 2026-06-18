@@ -1072,7 +1072,6 @@ if (!device_id || !device_id.trim()) {
                 // Видео preview
                 showMusicLogo(false);
                 console.log('[Player] 🎬 Preview видео:', previewFile);
-                vjsPlayer.loop(true);
                 vjsPlayer.muted(true);
                 vjsPlayer.volume(0);
                 const previewVideoUrl = previewTrailerUrl || content(previewFile);
@@ -2726,7 +2725,6 @@ if (!device_id || !device_id.trim()) {
             console.warn('[Player] ⚠️ Ошибка очистки предыдущего видео:', e);
           }
           
-          vjsPlayer.loop(preview);
           applyVolumeToPlayer('play_video');
           
           // КРИТИЧНО: Скрываем big play button ДО установки src
