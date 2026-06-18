@@ -1713,7 +1713,15 @@ async function syncPreviewWithPlayerState() {
   if (!state || !state.file) {
     // Показываем заглушку только если нет превью папки и нет превью стрима
     if (!hasThumbnails && !hasStreamingPreview) {
-      showLivePreviewForTV(currentDevice, true);
+      // Не убиваем iframe если он уже показывает видео — устройство могло уйти в idle
+      // при естественном окончании (Android шлёт type:idle), а видео в iframe ещё
+      // может доигрывать. Пусть видео доиграет само — player/stop от пользователя
+      // всё равно дойдёт до iframe через сокет.
+      const existingFrame = filePreview.querySelector('iframe');
+      const frameSrc = existingFrame?.src || '';
+      if (!existingFrame || !frameSrc.includes('preview=1')) {
+        showLivePreviewForTV(currentDevice, true);
+      }
     }
     return;
   }
