@@ -998,7 +998,12 @@ if (!device_id || !device_id.trim()) {
                       console.log('[Player] 📡 Используем streamProxyUrl для превью (из API):', { playbackUrl, proto });
                       
                       // КРИТИЧНО: Для HLS стримов проверяем доступность плейлиста с retry
-                      if (playbackUrl.includes('.m3u8') || proto === 'hls') {
+                      // Для same-origin прокси-URL (начинаются с /) HEAD-проверка не нужна
+                      const isProxyUrl = playbackUrl.startsWith('/');
+                      if (isProxyUrl) {
+                        console.log('[Player] 📡 Same-origin HLS proxy, запускаем без проверки');
+                        handleStreamingPlayback(playbackUrl, previewFile, proto);
+                      } else if (playbackUrl.includes('.m3u8') || proto === 'hls') {
                         console.log('[Player] 📡 Проверяем доступность HLS плейлиста для превью...');
                         let retryCount = 0;
                         const maxRetries = 5;

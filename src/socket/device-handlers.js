@@ -477,6 +477,7 @@ export function setupDeviceHandlers(socket, deps) {
       }
       
       // Отправляем всем слушателям (speaker UI) агрегированный прогресс
+      const streamUrl = device?.current?.streamUrl || payload?.stream_url || null;
       io.emit('player/progress', {
         device_id,
         type,
@@ -484,6 +485,7 @@ export function setupDeviceHandlers(socket, deps) {
         currentTime,
         duration,
         page,
+        stream_url: streamUrl,
         stream_protocol: streamProtocol || undefined
       });
       

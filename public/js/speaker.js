@@ -4218,7 +4218,7 @@ function refreshTvTilePlaybackInfo(deviceId) {
 }
 
 // Прием прогресса от плееров
-socket.on('player/progress', ({ device_id, type, file, currentTime, duration, page }) => {
+socket.on('player/progress', ({ device_id, type, file, currentTime, duration, page, stream_url, stream_protocol }) => {
   if (!device_id) return;
   
   // Для видео и аудио - сохраняем прогресс воспроизведения
@@ -4299,8 +4299,17 @@ socket.on('player/progress', ({ device_id, type, file, currentTime, duration, pa
     return;
   }
   
-  // Для стримов - обновляем UI (стримы не имеют прогресса, но нужно показать информацию)
+  // Для стримов - обновляем UI и локальное состояние device.current
   if (type === 'streaming' && file) {
+    const device = devices.find(d => d.device_id === device_id);
+    if (device) {
+      if (!device.current) device.current = {};
+      device.current.type = 'streaming';
+      device.current.file = file;
+      device.current.state = 'playing';
+      if (stream_url) device.current.streamUrl = stream_url;
+      if (stream_protocol) device.current.streamProtocol = stream_protocol;
+    }
     refreshTvTilePlaybackInfo(device_id);
     if (device_id === currentDevice) {
       updatePlaybackInfoUI();

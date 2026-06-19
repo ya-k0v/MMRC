@@ -151,9 +151,17 @@ function buildDashUtcSyncUrl(deviceId, safeName) {
   return `/api/devices/${encodeURIComponent(deviceId)}/streams/${encodeURIComponent(safeName)}/dash-utc-time.xml`;
 }
 
+function buildHlsManifestRelayUrl(deviceId, safeName) {
+  if (!deviceId || !safeName) return null;
+  return `/api/devices/${encodeURIComponent(deviceId)}/streams/${encodeURIComponent(safeName)}/hls-proxy`;
+}
+
 function resolveDirectStreamPlaybackUrl(deviceId, safeName, streamUrl, protocol) {
   if (protocol === 'dash') {
     return buildDashManifestRelayUrl(deviceId, safeName) || streamUrl;
+  }
+  if (protocol === 'hls') {
+    return buildHlsManifestRelayUrl(deviceId, safeName) || streamUrl;
   }
   return streamUrl;
 }
@@ -2232,7 +2240,7 @@ export function createFilesRouter(deps) {
 
     const protocol = normalizeStreamProtocol(metadata.stream_protocol, metadata.stream_url, metadata.mime_type);
     const directPlaybackUrl = resolveDirectStreamPlaybackUrl(id, safeName, metadata.stream_url, protocol);
-    const playbackStrategy = protocol === 'dash' ? 'direct_dash_manifest_relay' : 'direct_hls';
+    const playbackStrategy = protocol === 'dash' ? 'direct_dash_manifest_relay' : 'hls_proxy';
 
     res.json({
       safeName: metadata.safe_name,
@@ -2245,6 +2253,84 @@ export function createFilesRouter(deps) {
       playbackStrategy,
       directPlaybackAvailable: true
     });
+  });
+
+  // HLS proxy: переписывает плейлисты (m3u8) и проксирует сегменты через единый endpoint
+  // Решает проблему CORS при загрузке HLS-стримов с внешних CDN (cdn2.ntv.ru и т.п.)
+  router.get('/:id/streams/:safeName/hls-proxy', async (req, res) => {
+    const id = sanitizeDeviceId(req.params.id);
+    if (!id) return res.status(400).send('Invalid device id');
+
+    const safeName = req.params.safeName;
+    if (!safeName) return res.status(400).send('Invalid stream name');
+
+    const metadata = await getFileMetadata(id, safeName);
+    if (!metadata || metadata.content_type !== 'streaming') {
+      return res.status(404).send('Stream not found');
+    }
+
+    const upstreamUrl = decodeURIComponent(String(req.query.url || '')).trim() || metadata.stream_url;
+    if (!upstreamUrl) return res.status(400).send('No URL');
+
+    try {
+      new URL(upstreamUrl);
+    } catch {
+      return res.status(400).send('Invalid upstream URL');
+    }
+
+    try {
+      const upstreamResponse = await fetch(upstreamUrl, {
+        headers: { 'User-Agent': 'MMRC-HLS-Proxy/1.0' },
+        signal: AbortSignal.timeout(15000)
+      });
+
+      if (!upstreamResponse.ok) {
+        logger.warn('[streams] HLS proxy upstream error', {
+          deviceId: id, safeName, status: upstreamResponse.status, upstreamUrl
+        });
+        return res.status(upstreamResponse.status).send('Upstream error');
+      }
+
+      const contentType = upstreamResponse.headers.get('content-type') || '';
+      const arrayBuffer = await upstreamResponse.arrayBuffer();
+      const bodyBuffer = Buffer.from(arrayBuffer);
+
+      // Проверяем, является ли ответ HLS-плейлистом (начинается с #EXTM3U)
+      if (bodyBuffer.slice(0, 7).toString() === '#EXTM3U') {
+        const bodyText = bodyBuffer.toString('utf-8');
+        const baseUrl = new URL(upstreamUrl);
+        const proxyPath = `/api/devices/${encodeURIComponent(id)}/streams/${encodeURIComponent(safeName)}/hls-proxy`;
+
+        const lines = bodyText.split('\n');
+        const rewrittenLines = lines.map(line => {
+          const trimmed = line.trim();
+          if (trimmed && !trimmed.startsWith('#') && !trimmed.startsWith('//')) {
+            try {
+              const absoluteUrl = new URL(trimmed, baseUrl).toString();
+              return `${proxyPath}?url=${encodeURIComponent(absoluteUrl)}`;
+            } catch {
+              return line;
+            }
+          }
+          return line;
+        });
+
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+        res.send(rewrittenLines.join('\n'));
+      } else {
+        // Сегмент или другой бинарный контент — проксируем как есть
+        const segmentType = contentType.split(';')[0].trim() || 'application/octet-stream';
+        res.setHeader('Content-Type', segmentType);
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+        res.send(bodyBuffer);
+      }
+    } catch (error) {
+      logger.error('[streams] HLS proxy failed', {
+        deviceId: id, safeName, upstreamUrl, error: error.message
+      });
+      res.status(502).send('HLS proxy error');
+    }
   });
 
   // PUT /api/devices/:id/streams/:safeName - Обновление стрима (только админ)
