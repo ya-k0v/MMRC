@@ -1454,16 +1454,32 @@ app.use('/api/duplicates', requireAuth, deduplicationRouter);
 // Оберточные функции для совместимости с существующим кодом
 async function autoOptimizeVideoWrapper(deviceId, fileName) {
   if (queuesReady && videoOptimizeQueue) {
-    const job = await videoOptimizeQueue.add({ deviceId, fileName });
+    // Быстрая оценка приоритета по размеру файла
+    let priority = 5;
+    try {
+      const device = devices[deviceId];
+      if (device) {
+        const deviceFolder = path.join(getDevicesPath(), device.folder);
+        const filePath = path.join(deviceFolder, fileName);
+        const stats = fs.statSync(filePath);
+        const sizeMB = stats.size / (1024 * 1024);
+        if (sizeMB < 50) priority = 1;
+        else if (sizeMB > 500) priority = 10;
+      }
+    } catch {}
+    const job = await videoOptimizeQueue.add(
+      { deviceId, fileName },
+      { priority }
+    );
     return { success: true, status: 'queued', jobId: job.id };
   }
   return await autoOptimizeVideo(deviceId, fileName, devices, io, fileNamesMap, (map) => saveFileNamesToDB(map), storage);
 }
 
 if (queuesReady && videoOptimizeQueue) {
-  videoOptimizeQueue.process(async (job) => {
+  videoOptimizeQueue.process(3, async (job) => {
     const { deviceId, fileName } = job.data;
-    logger.info(`[Queue] Processing optimize job ${job.id}: ${deviceId}/${fileName}`);
+    logger.info(`[Queue] Processing optimize job ${job.id} (priority ${job.opts.priority}): ${deviceId}/${fileName}`);
     return autoOptimizeVideo(deviceId, fileName, devices, io, fileNamesMap, (map) => saveFileNamesToDB(map), storage);
   });
 }
