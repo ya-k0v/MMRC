@@ -559,8 +559,10 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
  * @param {Object} fileNamesMap - Маппинг имен
  */
 export async function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
-  const device = devices[deviceId];
-  if (!device) return;
+  let device = devices[deviceId];
+  if (!device) {
+    device = devices[deviceId] = { folder: deviceId };
+  }
   
   // 1. Получаем файлы из БД (обычные файлы)
   const filesMetadata = await getDeviceFilesMetadata(deviceId);
@@ -4278,10 +4280,7 @@ export function createFilesRouter(deps) {
     }
     const name = sanitizedRequestedName;
 
-    const d = devices[id];
-    if (!d) {
-      return res.status(404).json({ error: 'Устройство не найдено' });
-    }
+    const d = devices[id] || { folder: id };
 
     const rawDeviceFolderName = String(d.folder || id || '').trim();
     const safeDeviceFolderName = sanitizeDeviceId(rawDeviceFolderName);
@@ -4954,10 +4953,7 @@ export function createFilesRouter(deps) {
       return res.status(403).json({ error: 'Доступ к устройству запрещен' });
     }
     
-    const d = devices[id];
-    if (!d) {
-      return res.status(404).json({ error: 'Устройство не найдено' });
-    }
+    const d = devices[id] || { folder: id };
 
     // Fallback: если список файлов пуст или не инициализирован (после перезапуска), подтягиваем из БД
     if (!d.files || d.files.length === 0) {
