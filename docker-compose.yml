@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        INCLUDE_DOCKER_CLI: "true"
     container_name: mmrc
     restart: unless-stopped
     environment:
