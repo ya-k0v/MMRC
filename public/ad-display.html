@@ -11,6 +11,8 @@
     #player { width: 100%; height: 100%; }
     .video-js { width: 100% !important; height: 100% !important; }
     .video-js .vjs-tech { object-fit: contain; }
+    #imageDisplay { width: 100%; height: 100%; display: none; align-items: center; justify-content: center; background: #000; }
+    #imageDisplay img { max-width: 100%; max-height: 100%; object-fit: contain; }
     #overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; background: #000; color: #fff; font: 24px sans-serif; z-index: 100; }
     #overlay.hidden { display: none; }
     #info { position: fixed; bottom: 20px; right: 20px; color: rgba(255,255,255,0.3); font: 12px monospace; z-index: 50; }
@@ -19,6 +21,7 @@
 <body>
   <div id="overlay">Подключение к серверу...</div>
   <div id="info"></div>
+  <div id="imageDisplay"><img id="imageEl" /></div>
   <video id="player" class="video-js vjs-default-skin" autoplay muted playsinline></video>
 
   <script src="/socket.io/socket.io.js"></script>
@@ -26,6 +29,8 @@
   <script>
     const socket = io();
     const playerEl = document.getElementById('player');
+    const imageDisplay = document.getElementById('imageDisplay');
+    const imageEl = document.getElementById('imageEl');
     const overlay = document.getElementById('overlay');
     const info = document.getElementById('info');
     const params = new URLSearchParams(location.search);
@@ -34,16 +39,12 @@
     let player = null;
     let playlist = [];
     let currentIndex = 0;
-    let timer = null;
-    let isPlaying = false;
+    let imageTimer = null;
 
     function initPlayer() {
       if (!player) {
         player = videojs(playerEl, {
-          controls: false,
-          autoplay: true,
-          muted: true,
-          preload: 'auto',
+          controls: false, autoplay: true, muted: true, preload: 'auto',
           html5: { nativeAudioTracks: false, nativeVideoTracks: false }
         });
         player.on('ended', playNext);
@@ -54,58 +55,65 @@
     async function fetchPlaylist() {
       try {
         const res = await fetch(`/api/ad/displays/${displayId}/playlist`);
-        const data = await res.json();
-        return data.playlist || [];
+        return (await res.json()).playlist || [];
       } catch { return []; }
     }
 
     function selectWeighted(entries) {
-      const totalWeight = entries.reduce((s, e) => s + (e.weight || 1), 0);
-      let rand = Math.random() * totalWeight;
-      for (const e of entries) {
-        rand -= (e.weight || 1);
-        if (rand <= 0) return e;
-      }
+      const total = entries.reduce((s, e) => s + (e.weight || 1), 0);
+      let r = Math.random() * total;
+      for (const e of entries) { r -= (e.weight || 1); if (r <= 0) return e; }
       return entries[0];
+    }
+
+    function fileName(p) { return p.split(/[/\\]/).pop(); }
+
+    function showImage(item) {
+      const url = `/ad-content/${fileName(item.file_path)}`;
+      imageEl.src = url;
+      imageDisplay.style.display = 'flex';
+      playerEl.style.display = 'none';
+      info.textContent = `${item.name} (🖼 ${item.display_duration || 10}с)`;
+      overlay.classList.add('hidden');
+      reportImpression(item);
+      clearTimeout(imageTimer);
+      imageTimer = setTimeout(playNext, (item.display_duration || 10) * 1000);
+    }
+
+    function playVideo(item) {
+      const url = `/ad-content/${fileName(item.file_path)}`;
+      imageDisplay.style.display = 'none';
+      playerEl.style.display = '';
+      info.textContent = `${item.name} (${Math.round(item.duration || 0)}с)`;
+      overlay.classList.add('hidden');
+      reportImpression(item);
+      try {
+        player.src({ src: url, type: 'video/mp4' });
+        player.play();
+      } catch { setTimeout(playNext, 3000); }
     }
 
     async function playNext() {
       if (!playlist.length) {
         overlay.textContent = 'Плейлист пуст. Ожидание...';
         overlay.classList.remove('hidden');
-        setTimeout(async () => {
-          playlist = await fetchPlaylist();
-          playNext();
-        }, 30000);
+        setTimeout(async () => { playlist = await fetchPlaylist(); playNext(); }, 30000);
         return;
       }
-
-      const defaultVideo = playlist.find(v => v.is_default);
-      const regularVideos = playlist.filter(v => !v.is_default);
-
+      const def = playlist.find(v => v.is_default);
+      const reg = playlist.filter(v => !v.is_default);
       let next;
-      if (!currentIndex && defaultVideo) {
-        next = defaultVideo;
-      } else if (regularVideos.length) {
-        next = selectWeighted(regularVideos);
+      if (!currentIndex && def) {
+        next = def;
+      } else if (reg.length) {
+        next = selectWeighted(reg);
       } else {
-        next = defaultVideo || playlist[0];
+        next = def || playlist[0];
       }
-
       currentIndex++;
-      if (currentIndex > 100) currentIndex = 0;
 
-      const videoUrl = `/ad-content/${path.basename(next.file_path)}`;
-      overlay.classList.add('hidden');
-      info.textContent = `${next.name} (${next.duration || 0}s)`;
-
-      try {
-        player.src({ src: videoUrl, type: 'video/mp4' });
-        player.play();
-        reportImpression(next);
-      } catch (e) {
-        setTimeout(playNext, 3000);
-      }
+      if (next.type === 'image') showImage(next);
+      else playVideo(next);
     }
 
     async function reportImpression(video) {
@@ -118,14 +126,9 @@
       } catch {}
     }
 
-    function pathBasename(p) {
-      return p.split(/[/\\]/).pop();
-    }
-    const path = { basename: pathBasename };
-
     async function start() {
       if (!displayId) {
-        overlay.textContent = 'Укажите display_id в URL (?display_id=1)';
+        overlay.textContent = '?display_id=ID в URL';
         overlay.classList.remove('hidden');
         return;
       }
@@ -133,10 +136,7 @@
       initPlayer();
       playlist = await fetchPlaylist();
       playNext();
-
-      setInterval(async () => {
-        playlist = await fetchPlaylist();
-      }, 60000);
+      setInterval(async () => { playlist = await fetchPlaylist(); }, 60000);
     }
 
     document.addEventListener('DOMContentLoaded', start);

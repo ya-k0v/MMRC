@@ -3,6 +3,7 @@ import multer from 'multer';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { spawnFfprobe } from '../../utils/docker-ffmpeg.js';
 import { getDatabase, driverType } from '../../database/database.js';
 import { createModuleLogger } from '../../utils/logger.js';
 const logger = createModuleLogger('ad');
@@ -31,6 +32,35 @@ function dbGet(sql, params = []) {
   return db.get(sql, params);
 }
 
+function probeDuration(filePath) {
+  return new Promise((resolve) => {
+    const args = [
+      '-v', 'quiet',
+      '-print_format', 'json',
+      '-show_format',
+      filePath
+    ];
+    const probe = spawnFfprobe(args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let settled = false;
+    const t = setTimeout(() => { if (!settled) { settled = true; probe.kill('SIGKILL'); resolve(0); } }, 15000);
+    probe.stdout.on('data', c => stdout += c.toString());
+    probe.on('error', () => { if (!settled) { settled = true; clearTimeout(t); resolve(0); } });
+    probe.on('close', code => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(t);
+      if (code !== 0) return resolve(0);
+      try {
+        const parsed = JSON.parse(stdout);
+        resolve(parseFloat(parsed?.format?.duration) || 0);
+      } catch { resolve(0); }
+    });
+  });
+}
+
+const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg']);
+
 export function createAdRouter(deps = {}) {
   const { requireAdAdmin = null } = deps;
   const router = Router();
@@ -42,7 +72,7 @@ export function createAdRouter(deps = {}) {
   router.get('/videos', adminOrAuth, async (req, res) => {
     try {
       const videos = await dbQuery(
-        'SELECT id, name, file_path, duration, is_default, is_active, created_at FROM ad_videos ORDER BY name'
+        'SELECT id, name, file_path, type, duration, display_duration, is_default, is_active, created_at FROM ad_videos ORDER BY name'
       );
       res.json({ videos });
     } catch (err) {
@@ -57,25 +87,33 @@ export function createAdRouter(deps = {}) {
       if (!req.file) {
         return res.status(400).json({ error: 'Файл не загружен' });
       }
-      const { name, duration } = req.body;
+      const { name, display_duration } = req.body;
       if (!name || !name.trim()) {
         if (req.file.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-        return res.status(400).json({ error: 'Название ролика обязательно' });
+        return res.status(400).json({ error: 'Название обязательно' });
       }
       const safeName = name.trim();
       const filePath = req.file.path;
-      const fileDuration = parseFloat(duration) || 0;
+      const ext = path.extname(req.file.originalname).toLowerCase();
+      const isImage = IMAGE_EXTS.has(ext);
+      const type = isImage ? 'image' : 'video';
+
+      let duration = 0;
+      if (!isImage) {
+        duration = await probeDuration(filePath);
+      }
+      const dispDuration = parseFloat(display_duration) || 0;
 
       const result = await dbExec(
-        'INSERT INTO ad_videos (name, file_path, duration) VALUES (?, ?, ?)',
-        [safeName, filePath, fileDuration]
+        'INSERT INTO ad_videos (name, file_path, type, duration, display_duration) VALUES (?, ?, ?, ?, ?)',
+        [safeName, filePath, type, duration, isImage ? dispDuration : 0]
       );
       const newId = result?.lastInsertRowid || result?.insertId || null;
-      logger.info(`[Ad] Video uploaded: ${safeName} (id=${newId})`);
-      res.json({ ok: true, id: newId, name: safeName });
+      logger.info(`[Ad] Uploaded: ${safeName} (id=${newId}, type=${type}, dur=${duration})`);
+      res.json({ ok: true, id: newId, name: safeName, type, duration });
     } catch (err) {
-      logger.error('[Ad] Failed to upload video:', err.message);
-      res.status(500).json({ error: 'Не удалось загрузить ролик' });
+      logger.error('[Ad] Failed to upload:', err.message);
+      res.status(500).json({ error: 'Не удалось загрузить файл' });
     }
   });
 
@@ -83,7 +121,7 @@ export function createAdRouter(deps = {}) {
   router.put('/videos/:id', adminOrAuth, async (req, res) => {
     try {
       const { id } = req.params;
-      const { name, is_default, is_active } = req.body;
+      const { name, display_duration, is_default, is_active } = req.body;
       const existing = await dbGet('SELECT id FROM ad_videos WHERE id = ?', [id]);
       if (!existing) return res.status(404).json({ error: 'Ролик не найден' });
 
@@ -93,6 +131,7 @@ export function createAdRouter(deps = {}) {
       const sets = [];
       const vals = [];
       if (name !== undefined) { sets.push('name = ?'); vals.push(name.trim()); }
+      if (display_duration !== undefined) { sets.push('display_duration = ?'); vals.push(parseFloat(display_duration) || 0); }
       if (is_default !== undefined) { sets.push('is_default = ?'); vals.push(is_default ? 1 : 0); }
       if (is_active !== undefined) { sets.push('is_active = ?'); vals.push(is_active ? 1 : 0); }
       if (sets.length) {
@@ -101,8 +140,8 @@ export function createAdRouter(deps = {}) {
       }
       res.json({ ok: true });
     } catch (err) {
-      logger.error('[Ad] Failed to update video:', err.message);
-      res.status(500).json({ error: 'Не удалось обновить ролик' });
+      logger.error('[Ad] Failed to update:', err.message);
+      res.status(500).json({ error: 'Не удалось обновить' });
     }
   });
 
@@ -116,11 +155,11 @@ export function createAdRouter(deps = {}) {
         fs.unlinkSync(video.file_path);
       }
       await dbExec('DELETE FROM ad_videos WHERE id = ?', [id]);
-      logger.info(`[Ad] Video deleted: id=${id}`);
+      logger.info(`[Ad] Deleted: id=${id}`);
       res.json({ ok: true });
     } catch (err) {
-      logger.error('[Ad] Failed to delete video:', err.message);
-      res.status(500).json({ error: 'Не удалось удалить ролик' });
+      logger.error('[Ad] Failed to delete:', err.message);
+      res.status(500).json({ error: 'Не удалось удалить' });
     }
   });
 
@@ -204,7 +243,7 @@ export function createAdRouter(deps = {}) {
       const { id } = req.params;
       const schedule = await dbQuery(
         `SELECT s.id, s.display_id, s.video_id, s.priority_time, s.weight, s.is_active,
-                v.name as video_name, v.file_path, v.duration, v.is_default
+                v.name as video_name, v.file_path, v.type, v.duration, v.display_duration, v.is_default
          FROM ad_schedules s
          JOIN ad_videos v ON v.id = s.video_id
          WHERE s.display_id = ? AND s.is_active = 1
@@ -222,7 +261,7 @@ export function createAdRouter(deps = {}) {
   router.post('/displays/:id/schedule', adminOrAuth, async (req, res) => {
     try {
       const { id } = req.params;
-      const { video_ids } = req.body; // array of { video_id, priority_time?, weight? }
+      const { video_ids } = req.body;
       if (!Array.isArray(video_ids)) {
         return res.status(400).json({ error: 'video_ids должен быть массивом' });
       }
@@ -246,13 +285,11 @@ export function createAdRouter(deps = {}) {
 
   // ========= PLAYLIST (for ad-display player) =========
 
-  // GET /api/ad/displays/:id/playlist
-  // Returns a computed playlist: ordered list of videos with weights for the player
   router.get('/displays/:id/playlist', async (req, res) => {
     try {
       const { id } = req.params;
       const rows = await dbQuery(
-        `SELECT v.id, v.name, v.file_path, v.duration, v.is_default,
+        `SELECT v.id, v.name, v.file_path, v.type, v.duration, v.display_duration, v.is_default,
                 s.priority_time, s.weight
          FROM ad_schedules s
          JOIN ad_videos v ON v.id = s.video_id
@@ -264,7 +301,9 @@ export function createAdRouter(deps = {}) {
         id: r.id,
         name: r.name,
         file_path: r.file_path,
+        type: r.type,
         duration: r.duration,
+        display_duration: r.display_duration,
         is_default: !!r.is_default,
         priority_time: r.priority_time ? JSON.parse(r.priority_time) : null,
         weight: r.weight
@@ -278,7 +317,6 @@ export function createAdRouter(deps = {}) {
 
   // ========= ANALYTICS =========
 
-  // POST /api/ad/analytics/:displayId/report
   router.post('/analytics/:displayId/report', async (req, res) => {
     try {
       const { displayId } = req.params;
@@ -295,7 +333,6 @@ export function createAdRouter(deps = {}) {
     }
   });
 
-  // GET /api/ad/analytics/stats
   router.get('/analytics/stats', adminOrAuth, async (req, res) => {
     try {
       const { from, to, display_id, video_id } = req.query;
@@ -309,7 +346,7 @@ export function createAdRouter(deps = {}) {
 
       const rows = await dbQuery(
         `SELECT a.id, a.display_id, a.video_id, a.is_default, a.played_at,
-                v.name as video_name, d.name as display_name
+                v.name as video_name, v.type, d.name as display_name
          FROM ad_analytics a
          JOIN ad_videos v ON v.id = a.video_id
          JOIN ad_displays d ON d.id = a.display_id
@@ -333,7 +370,7 @@ export function createAdRouter(deps = {}) {
         const h = r.played_at ? r.played_at.substring(11, 13) : '00';
         const vk = `${r.video_id}|${d}|${h}`;
         const dk = `${r.display_id}|${d}`;
-        if (!perVideoMap[vk]) perVideoMap[vk] = { video_id: r.video_id, video_name: r.video_name, play_date: d, play_hour: h, plays: 0 };
+        if (!perVideoMap[vk]) perVideoMap[vk] = { video_id: r.video_id, video_name: r.video_name, type: r.type, play_date: d, play_hour: h, plays: 0 };
         perVideoMap[vk].plays++;
         if (!perDisplayMap[dk]) perDisplayMap[dk] = { display_id: r.display_id, display_name: r.display_name, play_date: d, total_plays: 0 };
         perDisplayMap[dk].total_plays++;

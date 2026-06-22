@@ -12,11 +12,13 @@
   <header class="toolbar">
     <div style="display:flex; align-items:center; gap:12px;">
       <button id="backBtn" class="meta-lg" type="button" style="padding:8px 12px;">← Назад</button>
-      <strong class="meta">Управление рекламой</strong>
+      <strong class="meta">Реклама</strong>
+      <button id="analyticsBtn" class="meta-lg" type="button" style="margin-left:auto;">📊 Аналитика</button>
     </div>
   </header>
   <main style="flex:1; min-height:0; padding:var(--space-md); overflow-y:auto;">
-    <div id="content"></div>
+    <div id="tabBar" style="display:flex; gap:var(--space-sm); margin-bottom:var(--space-md); flex-wrap:wrap;"></div>
+    <div id="tabContent"></div>
   </main>
 </body>
 </html>

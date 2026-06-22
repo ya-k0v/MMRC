@@ -67,7 +67,9 @@ const MODULES = {
           id ${idCol},
           name TEXT NOT NULL,
           file_path TEXT NOT NULL,
+          type TEXT NOT NULL DEFAULT 'video',
           duration REAL DEFAULT 0,
+          display_duration REAL DEFAULT 0,
           is_default INTEGER DEFAULT 0,
           is_active INTEGER DEFAULT 1,
           created_at ${tsCol} DEFAULT CURRENT_TIMESTAMP
