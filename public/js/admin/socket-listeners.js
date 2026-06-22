@@ -22,6 +22,7 @@ export function setupSocketListeners(socket, callbacks) {
     onPlayerOnline,
     onPlayerOffline,
     onPlayersSnapshot,
+    onPlayerProgress,
     onVolumeBatch,
     onVolumeUpdate
   } = callbacks;
@@ -44,6 +45,11 @@ export function setupSocketListeners(socket, callbacks) {
   // file/progress - Прогресс обработки файла
   socket.on('file/progress', ({ device_id, file, progress }) => {
     if (onFileProgress) onFileProgress(device_id, file, progress);
+  });
+
+  // player/progress - Прогресс воспроизведения (для прогресс-бара в списке файлов)
+  socket.on('player/progress', ({ device_id, type, file, currentTime, duration }) => {
+    if (onPlayerProgress) onPlayerProgress(device_id, file, currentTime, duration);
   });
   
   // file/ready - Файл готов

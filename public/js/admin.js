@@ -95,6 +95,11 @@ setupSocketListeners(socket, {
       updateFileProgress(device_id, file, progress);
     }
   },
+  onPlayerProgress: (device_id, file, currentTime, duration) => {
+    if (currentDeviceId === device_id) {
+      updatePlaybackProgress(device_id, file, currentTime, duration);
+    }
+  },
   onFileReady: (device_id, file) => {
     if (currentDeviceId === device_id) {
       const panel = document.getElementById('filesPanel');
@@ -575,6 +580,9 @@ async function renderFilesPane(deviceId) {
     filePage = updatedPage;
   }
   
+  // Сбрасываем подсветку воспроизведения при перезагрузке списка
+  _lastPlaybackFile = null;
+
   // Обновляем счетчик файлов после загрузки
   const updatedDevice = devicesCache.find(d => d.device_id === deviceId);
   const updatedFilesCount = updatedDevice ? (updatedDevice.files?.length || 0) : filesCount;
@@ -640,6 +648,55 @@ function updateFileProgress(deviceId, fileName, progress) {
         }, 1000);
       }
       
+      break;
+    }
+  }
+}
+
+// Обновление прогресс-бара воспроизведения файла (не путать с оптимизацией)
+let _lastPlaybackFile = null;
+
+function updatePlaybackProgress(device_id, fileName, currentTime, duration) {
+  // Сбрасываем подсветку предыдущего файла, если сменился
+  if (_lastPlaybackFile && _lastPlaybackFile !== fileName) {
+    const prevEls = document.querySelectorAll('.file-item');
+    for (const pel of prevEls) {
+      const pn = pel.querySelector('.file-name');
+      if (pn && pn.textContent === _lastPlaybackFile) {
+        pel.style.background = '';
+        const oldBar = pel.querySelector('.playback-progress');
+        if (oldBar) oldBar.remove();
+        break;
+      }
+    }
+  }
+  _lastPlaybackFile = fileName;
+
+  const fileElements = document.querySelectorAll('.file-item');
+  for (const fileEl of fileElements) {
+    const fileNameEl = fileEl.querySelector('.file-name');
+    if (fileNameEl && fileNameEl.textContent === fileName) {
+      fileEl.style.background = 'var(--bg-active, rgba(59, 130, 246, 0.08))';
+
+      let playbackBar = fileEl.querySelector('.playback-progress');
+      if (!playbackBar) {
+        playbackBar = document.createElement('div');
+        playbackBar.className = 'playback-progress';
+        playbackBar.style.cssText = 'height:3px; background:rgba(255,255,255,0.08); border-radius:2px; margin-top:3px; overflow:hidden;';
+
+        const playbackFill = document.createElement('div');
+        playbackFill.className = 'playback-progress-fill';
+        playbackFill.style.cssText = 'height:100%; background:linear-gradient(90deg, #3b82f6, #8b5cf6); transition:width 0.5s ease; width:0%;';
+
+        playbackBar.appendChild(playbackFill);
+        fileEl.appendChild(playbackBar);
+      }
+
+      const playbackFill = playbackBar.querySelector('.playback-progress-fill');
+      if (playbackFill && duration > 0) {
+        const pct = Math.min(100, Math.round((currentTime / duration) * 100));
+        playbackFill.style.width = pct + '%';
+      }
       break;
     }
   }
