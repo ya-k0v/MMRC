@@ -644,13 +644,20 @@ export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevi
     <div style="display:flex; flex-direction:column; gap:var(--space-md);">
       <div>
         <label style="display:block; margin-bottom:4px; font-weight:500;">ID устройства</label>
-        <input id="modalDeviceId" class="input" placeholder="TV001" required />
+        <input id="modalDeviceId" class="input" placeholder="TV001" />
         <div class="meta" style="margin-top:6px; color:var(--text-secondary); font-size:0.8rem;">Только буквы, цифры, _ и - (без пробелов)</div>
       </div>
       
       <div>
         <label style="display:block; margin-bottom:4px; font-weight:500;">Имя устройства</label>
         <input id="modalDeviceName" class="input" placeholder="001 Комната на первом этаже" />
+      </div>
+
+      <div id="adCheckboxWrap" style="display:none;">
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+          <input type="checkbox" id="modalAdMonitor" />
+          <span>Рекламный монитор</span>
+        </label>
       </div>
       
       <div id="modalError" style="color:var(--danger); font-size:0.875rem; display:none;"></div>
@@ -665,25 +672,67 @@ export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevi
   setTimeout(() => {
     const deviceIdInput = document.getElementById('modalDeviceId');
     const deviceNameInput = document.getElementById('modalDeviceName');
+    const adCheckbox = document.getElementById('modalAdMonitor');
+    const adCheckboxWrap = document.getElementById('adCheckboxWrap');
     const createBtn = document.getElementById('modalCreateDevice');
     const errorEl = document.getElementById('modalError');
+    
+    // Показываем чекбокс если модуль рекламы активен
+    (async () => {
+      try {
+        const mods = await adminFetch('/api/admin/modules');
+        const adMod = (await mods.json()).find(m => m.id === 'ad');
+        if (adMod && adMod.enabled !== false) {
+          adCheckboxWrap.style.display = '';
+        }
+      } catch {}
+    })();
+
+    function generateAdId() {
+      const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+      let hash = 'ad_';
+      for (let i = 0; i < 6; i++) {
+        hash += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return hash;
+    }
+
+    adCheckbox.addEventListener('change', () => {
+      if (adCheckbox.checked) {
+        deviceIdInput.value = generateAdId();
+        deviceIdInput.readOnly = true;
+        deviceIdInput.style.background = 'var(--panel-2)';
+      } else {
+        deviceIdInput.value = '';
+        deviceIdInput.readOnly = false;
+        deviceIdInput.style.background = '';
+      }
+    });
     
     if (!deviceIdInput || !createBtn) return;
     
     const doCreate = async () => {
-      const device_id = deviceIdInput.value.trim();
+      let device_id = deviceIdInput.value.trim();
       const name = deviceNameInput.value.trim();
+      const device_type = adCheckbox && adCheckbox.checked ? 'ad_monitor' : 'browser';
       
-      if (!device_id) {
-        errorEl.textContent = 'Введите ID устройства';
-        errorEl.style.display = 'block';
-        return;
-      }
+      if (adCheckbox && adCheckbox.checked) {
+        if (!device_id.startsWith('ad_')) {
+          device_id = generateAdId();
+          deviceIdInput.value = device_id;
+        }
+      } else {
+        if (!device_id) {
+          errorEl.textContent = 'Введите ID устройства';
+          errorEl.style.display = 'block';
+          return;
+        }
 
-      if (!DEVICE_ID_PATTERN.test(device_id)) {
-        errorEl.textContent = 'ID устройства может содержать только буквы, цифры, _ и - (без пробелов)';
-        errorEl.style.display = 'block';
-        return;
+        if (!DEVICE_ID_PATTERN.test(device_id)) {
+          errorEl.textContent = 'ID устройства может содержать только буквы, цифры, _ и - (без пробелов)';
+          errorEl.style.display = 'block';
+          return;
+        }
       }
       
       createBtn.disabled = true;
@@ -694,7 +743,7 @@ export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevi
         const res = await adminFetch('/api/devices', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ device_id, name })
+          body: JSON.stringify({ device_id, name, device_type })
         });
         
         if (res.ok) {

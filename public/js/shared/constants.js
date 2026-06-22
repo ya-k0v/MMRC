@@ -38,6 +38,7 @@ export function getDeviceIcon(deviceType) {
     case 'VJC':
       return getFilmIcon();
     case 'NATIVE_MPV':
+    case 'ad_monitor':
       return getMonitorIcon();
     default:
       return getTVIcon();
@@ -53,7 +54,8 @@ export const DEVICE_ICONS = {
   'tizen': getTVIcon(),
   'VJC': getFilmIcon(),
   'NATIVE_MEDIAPLAYER': getAndroidIcon(),
-  'NATIVE_MPV': getMonitorIcon()
+  'NATIVE_MPV': getMonitorIcon(),
+  'ad_monitor': getMonitorIcon()
 };
 
 // Названия типов устройств
@@ -65,7 +67,8 @@ export const DEVICE_TYPE_NAMES = {
   'tizen': 'Tizen',
   'VJC': 'Video.js Player',
   'NATIVE_MEDIAPLAYER': 'MMRC Player',
-  'NATIVE_MPV': 'Linux MPV Player'
+  'NATIVE_MPV': 'Linux MPV Player',
+  'ad_monitor': 'Рекламный монитор'
 };
 
 // Расширения файлов по типам

@@ -34,12 +34,13 @@
     const overlay = document.getElementById('overlay');
     const info = document.getElementById('info');
     const params = new URLSearchParams(location.search);
-    const displayId = params.get('display_id') || localStorage.getItem('ad_display_id');
+    const deviceId = params.get('device_id') || localStorage.getItem('ad_device_id');
 
     let player = null;
-    let playlist = [];
+    let fileList = [];
     let currentIndex = 0;
     let imageTimer = null;
+    let registered = false;
 
     function initPlayer() {
       if (!player) {
@@ -52,91 +53,111 @@
       }
     }
 
-    async function fetchPlaylist() {
-      try {
-        const res = await fetch(`/api/ad/displays/${displayId}/playlist`);
-        return (await res.json()).playlist || [];
-      } catch { return []; }
+    function getContentUrl(fileName) {
+      return `/devices/${encodeURIComponent(deviceId)}/${encodeURIComponent(fileName)}`;
     }
 
-    function selectWeighted(entries) {
-      const total = entries.reduce((s, e) => s + (e.weight || 1), 0);
-      let r = Math.random() * total;
-      for (const e of entries) { r -= (e.weight || 1); if (r <= 0) return e; }
-      return entries[0];
+    const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg']);
+
+    function isImageFile(name) {
+      const ext = name.substring(name.lastIndexOf('.')).toLowerCase();
+      return IMAGE_EXTS.has(ext);
     }
 
-    function fileName(p) { return p.split(/[/\\]/).pop(); }
+    function fileNameOnly(p) { return p.split(/[/\\]/).pop(); }
 
-    function showImage(item) {
-      const url = `/ad-content/${fileName(item.file_path)}`;
+    function showImage(fileName) {
+      const url = getContentUrl(fileName);
       imageEl.src = url;
       imageDisplay.style.display = 'flex';
       playerEl.style.display = 'none';
-      info.textContent = `${item.name} (🖼 ${item.display_duration || 10}с)`;
+      info.textContent = `${fileName} (изображение)`;
       overlay.classList.add('hidden');
-      reportImpression(item);
+      reportImpression(fileName);
       clearTimeout(imageTimer);
-      imageTimer = setTimeout(playNext, (item.display_duration || 10) * 1000);
+      imageTimer = setTimeout(playNext, 10000);
     }
 
-    function playVideo(item) {
-      const url = `/ad-content/${fileName(item.file_path)}`;
+    function playVideoFile(fileName) {
+      const url = getContentUrl(fileName);
       imageDisplay.style.display = 'none';
       playerEl.style.display = '';
-      info.textContent = `${item.name} (${Math.round(item.duration || 0)}с)`;
+      info.textContent = fileName;
       overlay.classList.add('hidden');
-      reportImpression(item);
+      reportImpression(fileName);
       try {
-        player.src({ src: url, type: 'video/mp4' });
+        const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
+        const mime = ext === '.webm' ? 'video/webm' : ext === '.ogg' ? 'video/ogg' : 'video/mp4';
+        player.src({ src: url, type: mime });
         player.play();
       } catch { setTimeout(playNext, 3000); }
     }
 
     async function playNext() {
-      if (!playlist.length) {
-        overlay.textContent = 'Плейлист пуст. Ожидание...';
+      if (!fileList.length) {
+        overlay.textContent = 'Нет файлов. Ожидание...';
         overlay.classList.remove('hidden');
-        setTimeout(async () => { playlist = await fetchPlaylist(); playNext(); }, 30000);
+        setTimeout(async () => { await reloadFiles(); playNext(); }, 30000);
         return;
       }
-      const def = playlist.find(v => v.is_default);
-      const reg = playlist.filter(v => !v.is_default);
-      let next;
-      if (!currentIndex && def) {
-        next = def;
-      } else if (reg.length) {
-        next = selectWeighted(reg);
-      } else {
-        next = def || playlist[0];
-      }
+      if (currentIndex >= fileList.length) currentIndex = 0;
+      const fileName = fileList[currentIndex];
       currentIndex++;
-
-      if (next.type === 'image') showImage(next);
-      else playVideo(next);
+      if (isImageFile(fileName)) showImage(fileName);
+      else playVideoFile(fileName);
     }
 
-    async function reportImpression(video) {
+    async function reportImpression(fileName) {
       try {
-        await fetch(`/api/ad/analytics/${displayId}/report`, {
+        await fetch('/api/ad/analytics/report', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ video_id: video.id, is_default: video.is_default })
+          body: JSON.stringify({ device_id: deviceId, file_name: fileName })
         });
       } catch {}
     }
 
+    async function reloadFiles() {
+      try {
+        const res = await fetch(`/api/devices?t=${Date.now()}`);
+        const list = await res.json();
+        const dev = list.find(d => d.device_id === deviceId);
+        if (dev) {
+          fileList = (dev.fileNames || dev.files || []).filter(f => {
+            const ext = f.substring(f.lastIndexOf('.')).toLowerCase();
+            return isImageFile(f) || ['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext);
+          });
+        }
+      } catch {}
+    }
+
     async function start() {
-      if (!displayId) {
-        overlay.textContent = '?display_id=ID в URL';
+      if (!deviceId) {
+        overlay.textContent = '?device_id=ID в URL';
         overlay.classList.remove('hidden');
         return;
       }
-      localStorage.setItem('ad_display_id', displayId);
+      localStorage.setItem('ad_device_id', deviceId);
       initPlayer();
-      playlist = await fetchPlaylist();
-      playNext();
-      setInterval(async () => { playlist = await fetchPlaylist(); }, 60000);
+
+      socket.on('connect', () => {
+        overlay.textContent = 'Регистрация...';
+        socket.emit('player/register', { device_id: deviceId, device_type: 'ad_monitor', platform: 'ad_display' });
+      });
+
+      socket.on('player/reject', (data) => {
+        overlay.textContent = 'Устройство не найдено: ' + (data.reason || 'unknown_device');
+        overlay.classList.remove('hidden');
+      });
+
+      socket.on('player/registered', () => {
+        registered = true;
+        reloadFiles().then(playNext);
+      });
+
+      socket.on('devices/updated', () => {
+        reloadFiles();
+      });
     }
 
     document.addEventListener('DOMContentLoaded', start);

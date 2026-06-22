@@ -63,50 +63,15 @@ const MODULES = {
       const idCol = isPg ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT';
       const tsCol = isPg ? 'TIMESTAMP' : 'DATETIME';
       return `
-        CREATE TABLE IF NOT EXISTS ad_videos (
-          id ${idCol},
-          name TEXT NOT NULL,
-          file_path TEXT NOT NULL,
-          type TEXT NOT NULL DEFAULT 'video',
-          duration REAL DEFAULT 0,
-          display_duration REAL DEFAULT 0,
-          is_default INTEGER DEFAULT 0,
-          is_active INTEGER DEFAULT 1,
-          created_at ${tsCol} DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS ad_displays (
-          id ${idCol},
-          name TEXT NOT NULL,
-          location TEXT,
-          device_id TEXT,
-          rotation_interval INTEGER DEFAULT 30,
-          is_active INTEGER DEFAULT 1,
-          created_at ${tsCol} DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS ad_schedules (
-          id ${idCol},
-          display_id INTEGER NOT NULL REFERENCES ad_displays(id) ON DELETE CASCADE,
-          video_id INTEGER NOT NULL REFERENCES ad_videos(id) ON DELETE CASCADE,
-          priority_time TEXT,
-          weight REAL DEFAULT 1.0,
-          is_active INTEGER DEFAULT 1
-        );
-
         CREATE TABLE IF NOT EXISTS ad_analytics (
           id ${idCol},
-          display_id INTEGER NOT NULL REFERENCES ad_displays(id) ON DELETE CASCADE,
-          video_id INTEGER NOT NULL REFERENCES ad_videos(id) ON DELETE CASCADE,
-          played_at ${tsCol} NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          is_default INTEGER DEFAULT 0
+          device_id TEXT NOT NULL,
+          file_name TEXT NOT NULL,
+          played_at ${tsCol} NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
 
-        CREATE INDEX IF NOT EXISTS idx_ad_analytics_display ON ad_analytics(display_id);
-        CREATE INDEX IF NOT EXISTS idx_ad_analytics_video ON ad_analytics(video_id);
+        CREATE INDEX IF NOT EXISTS idx_ad_analytics_device ON ad_analytics(device_id);
         CREATE INDEX IF NOT EXISTS idx_ad_analytics_date ON ad_analytics(played_at);
-        CREATE INDEX IF NOT EXISTS idx_ad_schedules_display ON ad_schedules(display_id);
-        CREATE INDEX IF NOT EXISTS idx_ad_videos_default ON ad_videos(is_default);
       `;
     }
   }

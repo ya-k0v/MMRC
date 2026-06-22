@@ -135,7 +135,8 @@ export function createDevicesRouter(deps) {
   
   // POST /api/devices - Создать новое устройство (только admin)
   router.post('/', requireAdmin, createLimiter, async (req, res) => {
-    const { device_id, name } = req.body;
+    const { device_id, name, device_type } = req.body;
+    const isAdMonitor = device_type === 'ad_monitor';
     const rawDeviceId = getTrimmedDeviceId(device_id);
     const normalizedDeviceId = normalizeRequestedDeviceId(device_id);
     
@@ -178,7 +179,8 @@ export function createDevicesRouter(deps) {
       name: deviceName,
       folder: normalizedDeviceId,
       files: [], 
-      current: { type: 'idle', file: null, state: 'idle' } 
+      current: { type: 'idle', file: null, state: 'idle' },
+      deviceType: isAdMonitor ? 'ad_monitor' : 'browser'
     };
     
     if (typeof onDeviceCreated === 'function') {

@@ -180,6 +180,10 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
     metaDiv.appendChild(createMetaChip({ text: d.platform }));
   }
 
+  if (d.deviceType === 'ad_monitor') {
+    metaDiv.appendChild(createMetaChip({ text: 'Реклама', tone: 'is-highlight' }));
+  }
+
   if (d.ipAddress) {
     metaDiv.appendChild(createMetaChip({ text: `IP: ${d.ipAddress}` }));
   }

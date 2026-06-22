@@ -278,7 +278,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (adBtn && adModule && adModule.enabled) {
           adBtn.style.display = '';
           adBtn.onclick = () => {
-            window.location.href = '/ad-admin.html';
+            window.location.href = '/ad-analytics.html';
           };
         }
       }).catch(() => {});
