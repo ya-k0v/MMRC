@@ -245,6 +245,7 @@ export function setupDeviceHandlers(socket, deps) {
       socket.emit('player/registered', {
         device_id,
         current: devices[device_id].current,
+        files: devices[device_id].files || [],
         timestamp: Date.now(),
         repeatRegistration: true
       });
@@ -322,6 +323,7 @@ export function setupDeviceHandlers(socket, deps) {
       socket.emit('player/registered', { 
         device_id, 
         current: devices[device_id].current,
+        files: devices[device_id].files || [],
         timestamp: Date.now()
       });
       
@@ -370,6 +372,14 @@ export function setupDeviceHandlers(socket, deps) {
       socket.emit('player/pong');
       if (socket.data) socket.data.lastPing = Date.now();
       logSocket('debug', `Ping from ${device_id}`, { socketId: socket.id });
+    }
+  });
+  
+  // files/request - Запрос списка файлов устройства
+  socket.on('files/request', ({ device_id } = {}) => {
+    const id = device_id || socket.data?.device_id;
+    if (id && devices[id]) {
+      socket.emit('files/list', { device_id: id, files: devices[id].files || [] });
     }
   });
   

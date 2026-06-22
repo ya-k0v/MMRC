@@ -97,7 +97,7 @@
       if (!fileList.length) {
         overlay.textContent = 'Нет файлов. Ожидание...';
         overlay.classList.remove('hidden');
-        setTimeout(async () => { await reloadFiles(); playNext(); }, 30000);
+        setTimeout(() => { socket.emit('files/request', { device_id: deviceId }); playNext(); }, 30000);
         return;
       }
       if (currentIndex >= fileList.length) currentIndex = 0;
@@ -117,18 +117,11 @@
       } catch {}
     }
 
-    async function reloadFiles() {
-      try {
-        const res = await fetch(`/api/devices?t=${Date.now()}`);
-        const list = await res.json();
-        const dev = list.find(d => d.device_id === deviceId);
-        if (dev) {
-          fileList = (dev.fileNames || dev.files || []).filter(f => {
-            const ext = f.substring(f.lastIndexOf('.')).toLowerCase();
-            return isImageFile(f) || ['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext);
-          });
-        }
-      } catch {}
+    function filterPlayableFiles(files) {
+      return (files || []).filter(f => {
+        const ext = f.substring(f.lastIndexOf('.')).toLowerCase();
+        return isImageFile(f) || ['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext);
+      });
     }
 
     async function start() {
@@ -150,13 +143,27 @@
         overlay.classList.remove('hidden');
       });
 
-      socket.on('player/registered', () => {
+      socket.on('player/registered', (data) => {
         registered = true;
-        reloadFiles().then(playNext);
+        fileList = filterPlayableFiles(data.files || []);
+        overlay.classList.add('hidden');
+        playNext();
       });
 
       socket.on('devices/updated', () => {
-        reloadFiles();
+        socket.emit('files/request', { device_id: deviceId });
+      });
+
+      socket.on('files/list', (data) => {
+        if (data.device_id !== deviceId) return;
+        const newFiles = filterPlayableFiles(data.files || []);
+        if (JSON.stringify(newFiles) !== JSON.stringify(fileList)) {
+          fileList = newFiles;
+          currentIndex = 0;
+          if (player) { try { player.pause(); } catch {} }
+          clearTimeout(imageTimer);
+          playNext();
+        }
       });
     }
 
