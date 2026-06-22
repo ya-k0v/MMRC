@@ -7,7 +7,7 @@ import express from 'express';
 import fs from 'node:fs';
 import { access, constants } from 'node:fs/promises';
 import path from 'node:path';
-import { getDevicesPath } from '../config/settings-manager.js';
+import { getDevicesPath, getDataRoot } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { hasDeviceAccess } from '../middleware/device-access.js';
 import { getFolderImages, getFolderImagesCount } from '../converters/folder-converter.js';
@@ -88,28 +88,47 @@ export function createFoldersRouter(deps) {
         return res.status(404).json({ error: 'Изображение не найдено' });
       }
       
-       const imageName = images[index - 1]; // Convert to 0-based
+        const imageName = images[index - 1]; // Convert to 0-based
        const imagePath = folderPath ? path.join(folderPath, imageName) : null;
 
        if (!imagePath) {
          return res.status(404).json({ error: 'Файл изображения не найден' });
        }
 
-       try {
-         await access(imagePath, constants.F_OK);
-       } catch {
+       const fileOnDisk = fs.existsSync(imagePath);
+       if (!fileOnDisk && !storage) {
          return res.status(404).json({ error: 'Файл изображения не найден' });
        }
-      
-      // Отправляем изображение
-      res.sendFile(imagePath, (err) => {
-        if (err) {
-          logger.error('[folders] Error sending image', { error: err.message, stack: err.stack, deviceId: id, folderName, index, imagePath });
-          if (!res.headersSent) {
-            res.status(500).json({ error: 'Не удалось отправить изображение' });
-          }
-        }
-      });
+
+       if (fileOnDisk) {
+         res.sendFile(imagePath, (err) => {
+           if (err) {
+             logger.error('[folders] Error sending image', { error: err.message, stack: err.stack, deviceId: id, folderName, index, imagePath });
+             if (!res.headersSent) {
+               res.status(500).json({ error: 'Не удалось отправить изображение' });
+             }
+           }
+         });
+         return;
+       }
+
+       // Ищем в storage
+       try {
+         const imageExt = path.extname(imageName).toLowerCase();
+         const mimeTypes = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
+         const dataRoot = getDataRoot();
+         const storageKey = path.relative(dataRoot, imagePath);
+         if (storageKey.startsWith('..')) return res.status(403).json({ error: 'Forbidden' });
+
+         const stream = await storage.createReadStream(storageKey);
+         res.setHeader('Content-Type', mimeTypes[imageExt] || 'application/octet-stream');
+         res.setHeader('Cache-Control', 'public, max-age=3600');
+         stream.pipe(res);
+         stream.on('error', () => { if (!res.headersSent) res.status(500).json({ error: 'Stream error' }); });
+       } catch (err) {
+         logger.error('[folders] Storage stream error', { error: err.message, deviceId: id, folderName, index });
+         if (!res.headersSent) res.status(500).json({ error: 'Не удалось отправить изображение' });
+       }
     } catch (error) {
       logger.error('[folders] Error getting folder image', { error: error.message, stack: error.stack, deviceId: id, folderName, index });
       res.status(500).json({ error: 'Не удалось получить изображение из папки' });

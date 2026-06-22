@@ -144,8 +144,12 @@ export class S3Storage extends StorageProvider {
     };
   }
 
-  async createReadStream(key) {
-    const cmd = new S3.GetObjectCommand({ Bucket: this.#bucket, Key: this._key(key) });
+  async createReadStream(key, range) {
+    const input = { Bucket: this.#bucket, Key: this._key(key) };
+    if (range) {
+      input.Range = `bytes=${range.start}-${range.end}`;
+    }
+    const cmd = new S3.GetObjectCommand(input);
     const response = await this.#client.send(cmd);
     return response.Body;
   }

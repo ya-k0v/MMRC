@@ -14,6 +14,7 @@ import { getDataRoot } from '../config/settings-manager.js';
 import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('resolver');
 import { spawnFfmpeg } from '../utils/docker-ffmpeg.js';
+import { getCurrentStorage } from '../storage/current.js';
 
 const router = express.Router();
 
@@ -48,75 +49,48 @@ function isExpectedClientDisconnectError(err) {
  * GET /api/files/resolve/:deviceId/:fileName
  * Резолвит виртуальный путь в физический и отдает файл
  */
-// Универсальная отправка файла с Range и логами
-function sendFileWithRange(res, req, metadata, context = {}) {
-  try {
-    metadata.file_path = validatePath(metadata.file_path, getDataRoot());
-  } catch {
-    logger.error('[Resolver] Path validation failed', { ...context, path: metadata.file_path });
-    if (!res.headersSent) {
-      return res.status(403).send('Forbidden');
-    }
-    return;
-  }
+// Отправка файла через res.sendFile (локальный диск)
+function sendFileFromDisk(res, req, metadata, context = {}) {
+  const { file_path, file_size, mime_type, safe_name, md5_hash } = metadata;
   const options = {
-    root: '/',  // Абсолютный путь
+    root: '/',
     dotfiles: 'allow',
     headers: {
-      'Content-Type': metadata.mime_type || 'application/octet-stream',
+      'Content-Type': mime_type || 'application/octet-stream',
       'Accept-Ranges': 'bytes',
       'X-Accel-Buffering': 'no',
       'Cache-Control': 'public, max-age=3600',
-      'X-File-Hash': metadata.md5_hash?.substring(0, 12) || 'unknown'
+      'X-File-Hash': md5_hash?.substring(0, 12) || 'unknown'
     }
   };
 
-  logger.debug('[Resolver] Serving file', { 
+  logger.debug('[Resolver] Serving from disk', {
     ...context,
-    requestedName: metadata.safe_name || context.fileName,
-    physicalPath: metadata.file_path,
-    size: metadata.file_size
+    requestedName: safe_name || context.fileName,
+    physicalPath: file_path,
+    size: file_size
   });
-
-  if (req.headers.range) {
-    const rangeMatch = req.headers.range.match(/bytes=(\d+)-(\d*)/);
-    const requestedStart = rangeMatch ? parseInt(rangeMatch[1]) : 0;
-    const requestedEnd = rangeMatch && rangeMatch[2] ? parseInt(rangeMatch[2]) : (metadata.file_size ? metadata.file_size - 1 : undefined);
-    
-    logger.info('[Resolver] Range request details', {
-      ...context,
-      range: req.headers.range,
-      requestedStart,
-      requestedEnd,
-      requestedSize: requestedEnd !== undefined ? (requestedEnd - requestedStart + 1) : undefined,
-      fileSize: metadata.file_size,
-      isOutOfRange: metadata.file_size ? (requestedStart >= metadata.file_size || requestedEnd >= metadata.file_size) : undefined
-    });
-  }
 
   let isAborted = false;
   const cleanup = () => { isAborted = true; };
   req.on('close', cleanup);
   req.on('aborted', cleanup);
 
-  res.sendFile(metadata.file_path, options, (err) => {
+  res.sendFile(file_path, options, (err) => {
     req.removeListener('close', cleanup);
     req.removeListener('aborted', cleanup);
-    
+
     if (isAborted) return;
-    
+
     if (err) {
       if (err.message === 'Range Not Satisfiable') {
-        logger.warn('[Resolver] Range not satisfiable', { ...context, range: req.headers.range, fileSize: metadata.file_size });
+        logger.warn('[Resolver] Range not satisfiable', { ...context, range: req.headers.range, fileSize: file_size });
         if (!res.headersSent) {
-          res.status(416).set('Content-Range', `bytes */${metadata.file_size || 0}`).send('Range Not Satisfiable');
+          res.status(416).set('Content-Range', `bytes */${file_size || 0}`).send('Range Not Satisfiable');
         }
       } else if (isExpectedClientDisconnectError(err)) {
         logger.debug('[Resolver] Client disconnected during file send', {
-          ...context,
-          error: err.message,
-          code: err.code,
-          statusCode: err.statusCode || err.status
+          ...context, error: err.message, code: err.code, statusCode: err.statusCode || err.status
         });
       } else {
         logger.error('[Resolver] Error sending file', { error: err.message, ...context, statusCode: err.statusCode || err.status });
@@ -126,6 +100,97 @@ function sendFileWithRange(res, req, metadata, context = {}) {
       }
     }
   });
+}
+
+// Отправка файла через storage (S3 и др.)
+async function sendFileFromStorage(res, req, metadata, context = {}, storage) {
+  const { file_path, file_size, mime_type, safe_name, md5_hash } = metadata;
+  const dataRoot = getDataRoot();
+
+  const storageKey = path.relative(dataRoot, file_path);
+  if (storageKey.startsWith('..')) {
+    logger.error('[Resolver] Storage key traversal detected', { ...context, file_path, storageKey });
+    return res.status(403).send('Forbidden');
+  }
+
+  const totalSize = file_size || 0;
+  let start = 0;
+  let end = totalSize - 1;
+  let statusCode = 200;
+
+  if (req.headers.range) {
+    const parts = req.headers.range.replace(/bytes=/, '').split('-');
+    start = parseInt(parts[0], 10) || 0;
+    end = parts[1] ? parseInt(parts[1], 10) : (totalSize - 1);
+
+    if (start >= totalSize) {
+      logger.warn('[Resolver] Range not satisfiable (storage)', { ...context, range: req.headers.range, fileSize: totalSize });
+      return res.status(416).set('Content-Range', `bytes */${totalSize}`).end();
+    }
+    statusCode = 206;
+
+    logger.info('[Resolver] Range request (storage)', {
+      ...context, range: req.headers.range, start, end,
+      requestedSize: end - start + 1, fileSize: totalSize
+    });
+  }
+
+  res.status(statusCode);
+  res.set({
+    'Content-Type': mime_type || 'application/octet-stream',
+    'Content-Range': `bytes ${start}-${end}/${totalSize}`,
+    'Content-Length': end - start + 1,
+    'Accept-Ranges': 'bytes',
+    'X-Accel-Buffering': 'no',
+    'Cache-Control': 'public, max-age=3600',
+    'X-File-Hash': md5_hash?.substring(0, 12) || 'unknown'
+  });
+
+  try {
+    const stream = await storage.createReadStream(storageKey, { start, end });
+    stream.pipe(res);
+    stream.on('error', (streamErr) => {
+      logger.error('[Resolver] Storage stream error', { error: streamErr.message, ...context });
+      if (!res.headersSent) res.status(500).end();
+    });
+    stream.on('end', () => {
+      logger.debug('[Resolver] Storage stream complete', { ...context, bytes: end - start + 1 });
+    });
+  } catch (err) {
+    logger.error('[Resolver] Storage stream failed', { error: err.message, ...context });
+    if (!res.headersSent) res.status(500).send('Error streaming file');
+  }
+}
+
+// Вспомогательная проверка: файл доступен локально?
+function isFileLocallyAvailable(filePath) {
+  const storage = getCurrentStorage();
+  if (storage) return true;  // storage backend не требует локального файла
+  return filePath && fs.existsSync(filePath);
+}
+
+// Универсальная отправка файла с поддержкой локального диска и S3
+async function sendFileWithRange(res, req, metadata, context = {}) {
+  try {
+    metadata.file_path = validatePath(metadata.file_path, getDataRoot());
+  } catch {
+    logger.error('[Resolver] Path validation failed', { ...context, path: metadata.file_path });
+    if (!res.headersSent) {
+      return res.status(403).send('Forbidden');
+    }
+    return;
+  }
+
+  const storage = getCurrentStorage();
+
+  // Если файла нет локально, но есть storage backend — шлём через storage
+  if (!fs.existsSync(metadata.file_path) && storage) {
+    logger.debug('[Resolver] File not on disk, using storage', { ...context, path: metadata.file_path });
+    return sendFileFromStorage(res, req, metadata, context, storage);
+  }
+
+  // Иначе шлём с диска через res.sendFile
+  sendFileFromDisk(res, req, metadata, context);
 }
 
 // Новый эндпоинт для совместимости: поиск файла без привязки к устройству
@@ -140,41 +205,49 @@ router.get('/resolve-all/*fileName', async (req, res) => {
 
   let metadata = await getAnyFileMetadataBySafeName(fileName);
 
-  if (!metadata || !metadata.file_path || !fs.existsSync(metadata.file_path)) {
-    const devicesPath = getDevicesPath();
-    // Fallback: проверяем корень, затем все device subdirectories
-    const fallbackPaths = [path.join(devicesPath, fileName)];
-    try {
-      const entries = fs.readdirSync(devicesPath, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          fallbackPaths.push(path.join(devicesPath, entry.name, fileName));
+  if (!metadata || !metadata.file_path || !isFileLocallyAvailable(metadata.file_path)) {
+    if (getCurrentStorage()) {
+      // Если есть storage — DB источник истины, отсутствие файла на диске не ошибка
+      if (!metadata || !metadata.file_path) {
+        logger.warn('[Resolver] File not found in DB (resolve-all)', { fileName });
+        return res.status(404).send('File not found');
+      }
+    } else {
+      // Нет storage — файл должен быть на диске, пробуем fallback
+      const devicesPath = getDevicesPath();
+      const fallbackPaths = [path.join(devicesPath, fileName)];
+      try {
+        const entries = fs.readdirSync(devicesPath, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory()) {
+            fallbackPaths.push(path.join(devicesPath, entry.name, fileName));
+          }
+        }
+      } catch {
+        // ignore readdir errors
+      }
+      let foundPath = null;
+      for (const p of fallbackPaths) {
+        if (fs.existsSync(p)) {
+          foundPath = p;
+          break;
         }
       }
-    } catch {
-      // ignore readdir errors
-    }
-    let foundPath = null;
-    for (const p of fallbackPaths) {
-      if (fs.existsSync(p)) {
-        foundPath = p;
-        break;
+      if (foundPath) {
+        const stat = fs.statSync(foundPath);
+        metadata = {
+          device_id: 'shared',
+          safe_name: fileName,
+          file_path: foundPath,
+          file_size: stat.size,
+          mime_type: null,
+          md5_hash: null
+        };
+        logger.info('[Resolver] Resolve-all fallback found file', { fileName, path: foundPath });
+      } else {
+        logger.warn('[Resolver] File not found in DB or filesystem (resolve-all)', { fileName });
+        return res.status(404).send('File not found');
       }
-    }
-    if (foundPath) {
-      const stat = fs.statSync(foundPath);
-      metadata = {
-        device_id: 'shared',
-        safe_name: fileName,
-        file_path: foundPath,
-        file_size: stat.size,
-        mime_type: null,
-        md5_hash: null
-      };
-      logger.info('[Resolver] Resolve-all fallback found file', { fileName, path: foundPath });
-    } else {
-      logger.warn('[Resolver] File not found in DB (resolve-all)', { fileName });
-      return res.status(404).send('File not found');
     }
   }
 
@@ -191,16 +264,23 @@ router.get('/resolve/:deviceId/*fileName', async (req, res) => {
   }
   
   let metadata = await getFileMetadata(deviceId, fileName);
-  
-    if (!metadata || !metadata.file_path || !fs.existsSync(metadata.file_path)) {
+
+  const needsLocalFile = !getCurrentStorage(); // без storage требуем локальный файл
+
+  if (!metadata || !metadata.file_path || (needsLocalFile && !fs.existsSync(metadata.file_path))) {
+    // Если есть storage — DB источник истины, просто шлём что нашли
+    if (!needsLocalFile) {
+      if (!metadata || !metadata.file_path) {
+        logger.warn('[Resolver] File not found in DB', { deviceId, fileName });
+        return res.status(404).send('File not found');
+      }
+      // metadata есть — идём к sendFileWithRange
+    } else {
       logger.warn('[Resolver] Fallback to resolve-all', { deviceId, fileName });
-      // Попробуем без привязки к устройству
       metadata = await getAnyFileMetadataBySafeName(fileName);
       if (!metadata || !metadata.file_path || !fs.existsSync(metadata.file_path)) {
         const devicesPath = getDevicesPath();
         logger.debug('[Resolver] Filesystem fallback', { devicesPath, deviceId, fileName });
-        // Fallback: сначала проверяем поддиректорию устройства, потом корень,
-        // затем все поддиректории (как в resolve-all)
         const candidatePaths = [
           path.join(devicesPath, deviceId, fileName),
           path.join(devicesPath, fileName)
@@ -240,6 +320,7 @@ router.get('/resolve/:deviceId/*fileName', async (req, res) => {
         }
       }
     }
+  }
   
   return sendFileWithRange(res, req, metadata, { deviceId, fileName });
 });
@@ -327,81 +408,100 @@ router.get('/preview/:deviceId/*fileName', async (req, res) => {
   
   // Для обычных файлов отдаем напрямую через Range requests (без ffmpeg)
   if (!isStream) {
-    // Проверяем существование физического файла
-    if (!fs.existsSync(metadata.file_path)) {
-      return res.status(404).send('Physical file not found');
-    }
-    
     try {
       metadata.file_path = validatePath(metadata.file_path, getDataRoot());
     } catch {
       logger.error('[Preview] Path validation failed', { deviceId, fileName, path: metadata.file_path });
       return res.status(403).send('Forbidden');
     }
-    
-    // Отдаем файл напрямую с поддержкой Range requests
-    const options = {
-      root: '/',  // Абсолютный путь
-      dotfiles: 'allow',
-      headers: {
-        'Content-Type': mime || 'video/mp4',
-        'Accept-Ranges': 'bytes',
-        'X-Accel-Buffering': 'no',
-        'Cache-Control': 'public, max-age=3600'
-      }
-    };
-    
-    // КРИТИЧНО: Обрабатываем закрытие соединения клиентом
-    let isAborted = false;
-    const cleanup = () => {
-      isAborted = true;
-    };
-    
-    req.on('close', cleanup);
-    req.on('aborted', cleanup);
-    
-    // Express автоматически обрабатывает Range requests
-    res.sendFile(metadata.file_path, options, (err) => {
-      req.removeListener('close', cleanup);
-      req.removeListener('aborted', cleanup);
-      
-      if (isAborted) {
-        // Клиент отменил запрос - это нормально
-        return;
-      }
-      
-      if (err) {
-        if (err.message === 'Range Not Satisfiable') {
-          logger.warn('[Preview] Range not satisfiable', { 
-            deviceId, 
-            fileName,
-            range: req.headers.range,
-            fileSize: metadata.file_size
-          });
-          if (!res.headersSent) {
-            res.status(416).set('Content-Range', `bytes */${metadata.file_size}`).send('Range Not Satisfiable');
-          }
-        } else if (isExpectedClientDisconnectError(err)) {
-          logger.debug('[Preview] Client disconnected during preview send', {
-            deviceId,
-            fileName,
-            error: err.message,
-            code: err.code,
-            statusCode: err.statusCode || err.status
-          });
-        } else {
-          logger.error('[Preview] Error sending file', { 
-            error: err.message, 
-            deviceId, 
-            fileName,
-            statusCode: err.statusCode || err.status
-          });
-          if (!res.headersSent) {
-            res.status(err.statusCode || err.status || 500).send('Error sending file');
+
+    const storage = getCurrentStorage();
+    const fileOnDisk = fs.existsSync(metadata.file_path);
+
+    if (!fileOnDisk && !storage) {
+      return res.status(404).send('Physical file not found');
+    }
+
+    if (fileOnDisk) {
+      // Отдаем файл напрямую с поддержкой Range requests
+      const options = {
+        root: '/',
+        dotfiles: 'allow',
+        headers: {
+          'Content-Type': mime || 'video/mp4',
+          'Accept-Ranges': 'bytes',
+          'X-Accel-Buffering': 'no',
+          'Cache-Control': 'public, max-age=3600'
+        }
+      };
+
+      let isAborted = false;
+      const cleanup = () => { isAborted = true; };
+      req.on('close', cleanup);
+      req.on('aborted', cleanup);
+
+      res.sendFile(metadata.file_path, options, (err) => {
+        req.removeListener('close', cleanup);
+        req.removeListener('aborted', cleanup);
+        if (isAborted) return;
+        if (err) {
+          if (err.message === 'Range Not Satisfiable') {
+            logger.warn('[Preview] Range not satisfiable', { deviceId, fileName, range: req.headers.range, fileSize: metadata.file_size });
+            if (!res.headersSent) res.status(416).set('Content-Range', `bytes */${metadata.file_size}`).send('Range Not Satisfiable');
+          } else if (isExpectedClientDisconnectError(err)) {
+            logger.debug('[Preview] Client disconnected', { deviceId, fileName, error: err.message });
+          } else {
+            logger.error('[Preview] Error sending file', { error: err.message, deviceId, fileName });
+            if (!res.headersSent) res.status(err.statusCode || err.status || 500).send('Error sending file');
           }
         }
+      });
+      return;
+    }
+
+    // Файл не на диске, но есть storage — шлём через storage
+    const dataRoot = getDataRoot();
+    const storageKey = path.relative(dataRoot, metadata.file_path);
+    if (storageKey.startsWith('..')) {
+      return res.status(403).send('Forbidden');
+    }
+
+    const totalSize = metadata.file_size || 0;
+    let start = 0;
+    let end = totalSize - 1;
+    let statusCode = 200;
+
+    if (req.headers.range) {
+      const parts = req.headers.range.replace(/bytes=/, '').split('-');
+      start = parseInt(parts[0], 10) || 0;
+      end = parts[1] ? parseInt(parts[1], 10) : totalSize - 1;
+      if (start >= totalSize) {
+        return res.status(416).set('Content-Range', `bytes */${totalSize}`).end();
       }
+      statusCode = 206;
+    }
+
+    res.status(statusCode);
+    res.set({
+      'Content-Type': mime || 'video/mp4',
+      'Content-Range': `bytes ${start}-${end}/${totalSize}`,
+      'Content-Length': end - start + 1,
+      'Accept-Ranges': 'bytes',
+      'X-Accel-Buffering': 'no',
+      'Cache-Control': 'public, max-age=3600'
     });
+
+    try {
+      const stream = await storage.createReadStream(storageKey, { start, end });
+      stream.pipe(res);
+      stream.on('error', (streamErr) => {
+        logger.error('[Preview] Storage stream error', { error: streamErr.message, deviceId, fileName });
+        if (!res.headersSent) res.status(500).end();
+      });
+    } catch (err) {
+      logger.error('[Preview] Storage stream failed', { error: err.message, deviceId, fileName });
+      if (!res.headersSent) res.status(500).send('Error streaming file');
+    }
     return;
   }
   

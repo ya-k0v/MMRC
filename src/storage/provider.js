@@ -35,7 +35,7 @@ export class StorageProvider {
     throw new Error('not implemented');
   }
 
-  createReadStream(key) {
+  createReadStream(key, range) {
     throw new Error('not implemented');
   }
 

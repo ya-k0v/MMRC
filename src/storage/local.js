@@ -86,8 +86,13 @@ export class LocalStorage extends StorageProvider {
     };
   }
 
-  createReadStream(key) {
-    return fs.createReadStream(this._resolve(key));
+  createReadStream(key, range) {
+    const opts = {};
+    if (range) {
+      opts.start = range.start;
+      opts.end = range.end;
+    }
+    return fs.createReadStream(this._resolve(key), opts);
   }
 
   createWriteStream(key) {
