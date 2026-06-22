@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5"/>
+  <title>MMRC — Аналитика рекламы</title>
+  <link rel="stylesheet" href="/css/app.css"/>
+  <script type="module" src="/js/admin/ad-analytics.js"></script>
+</head>
+<body class="maintenance-ui">
+  <header class="toolbar">
+    <div style="display:flex; align-items:center; gap:12px;">
+      <button id="backBtn" class="meta-lg" type="button" style="padding:8px 12px;">← Назад</button>
+      <strong class="meta">Аналитика рекламы</strong>
+    </div>
+  </header>
+  <main style="flex:1; min-height:0; padding:var(--space-md); overflow-y:auto;">
+    <div class="card" style="padding:var(--space-md); margin-bottom:var(--space-md);">
+      <div style="display:flex; gap:var(--space-sm); align-items:flex-end; flex-wrap:wrap;">
+        <div>
+          <div class="meta" style="margin-bottom:4px;">С</div>
+          <input id="filterFrom" class="input" type="date" />
+        </div>
+        <div>
+          <div class="meta" style="margin-bottom:4px;">По</div>
+          <input id="filterTo" class="input" type="date" />
+        </div>
+        <div>
+          <div class="meta" style="margin-bottom:4px;">Дисплей</div>
+          <select id="filterDisplay" class="input"><option value="">Все</option></select>
+        </div>
+        <div>
+          <div class="meta" style="margin-bottom:4px;">Ролик</div>
+          <select id="filterVideo" class="input"><option value="">Все</option></select>
+        </div>
+        <button id="loadBtn" class="primary">Загрузить</button>
+        <button id="exportBtn" class="secondary">CSV</button>
+      </div>
+    </div>
+    <div id="results"></div>
+  </main>
+</body>
+</html>
