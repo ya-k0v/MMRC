@@ -51,6 +51,62 @@ const MODULES = {
         END;
       `;
     }
+  },
+  ad: {
+    id: 'ad',
+    name: 'Реклама',
+    description: 'Управление рекламными дисплеями, роликами и аналитикой показов',
+    roles: ['ad_admin'],
+    roleLabels: { ad_admin: 'Ad Admin (управление рекламными кампаниями)' },
+    getSchema() {
+      const isPg = driverType === 'postgres';
+      const idCol = isPg ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT';
+      const tsCol = isPg ? 'TIMESTAMP' : 'DATETIME';
+      return `
+        CREATE TABLE IF NOT EXISTS ad_videos (
+          id ${idCol},
+          name TEXT NOT NULL,
+          file_path TEXT NOT NULL,
+          duration REAL DEFAULT 0,
+          is_default INTEGER DEFAULT 0,
+          is_active INTEGER DEFAULT 1,
+          created_at ${tsCol} DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS ad_displays (
+          id ${idCol},
+          name TEXT NOT NULL,
+          location TEXT,
+          device_id TEXT,
+          rotation_interval INTEGER DEFAULT 30,
+          is_active INTEGER DEFAULT 1,
+          created_at ${tsCol} DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS ad_schedules (
+          id ${idCol},
+          display_id INTEGER NOT NULL REFERENCES ad_displays(id) ON DELETE CASCADE,
+          video_id INTEGER NOT NULL REFERENCES ad_videos(id) ON DELETE CASCADE,
+          priority_time TEXT,
+          weight REAL DEFAULT 1.0,
+          is_active INTEGER DEFAULT 1
+        );
+
+        CREATE TABLE IF NOT EXISTS ad_analytics (
+          id ${idCol},
+          display_id INTEGER NOT NULL REFERENCES ad_displays(id) ON DELETE CASCADE,
+          video_id INTEGER NOT NULL REFERENCES ad_videos(id) ON DELETE CASCADE,
+          played_at ${tsCol} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          is_default INTEGER DEFAULT 0
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ad_analytics_display ON ad_analytics(display_id);
+        CREATE INDEX IF NOT EXISTS idx_ad_analytics_video ON ad_analytics(video_id);
+        CREATE INDEX IF NOT EXISTS idx_ad_analytics_date ON ad_analytics(played_at);
+        CREATE INDEX IF NOT EXISTS idx_ad_schedules_display ON ad_schedules(display_id);
+        CREATE INDEX IF NOT EXISTS idx_ad_videos_default ON ad_videos(is_default);
+      `;
+    }
   }
 };
 
@@ -101,10 +157,19 @@ export async function setModuleEnabled(moduleId, enabled) {
     await initModuleSchema(moduleId);
   }
   const ph = (i) => driverType === 'postgres' ? `$${i}` : '?';
-  await db.run(
-    `UPDATE modules SET enabled = ${ph(1)}, updated_at = CURRENT_TIMESTAMP WHERE id = ${ph(2)}`,
-    [enabled ? (driverType === 'postgres' ? true : 1) : (driverType === 'postgres' ? false : 0), moduleId]
-  );
+  const boolVal = enabled ? (driverType === 'postgres' ? true : 1) : (driverType === 'postgres' ? false : 0);
+  try {
+    await db.run(
+      `INSERT INTO modules (id, enabled, updated_at) VALUES (${ph(1)}, ${ph(2)}, CURRENT_TIMESTAMP)
+       ON CONFLICT(id) DO UPDATE SET enabled = excluded.enabled, updated_at = CURRENT_TIMESTAMP`,
+      [moduleId, boolVal, boolVal]
+    );
+  } catch (err) {
+    await db.run(
+      `UPDATE modules SET enabled = ${ph(1)}, updated_at = CURRENT_TIMESTAMP WHERE id = ${ph(2)}`,
+      [boolVal, moduleId]
+    );
+  }
   logger.info(`[Modules] Module ${moduleId} ${enabled ? 'enabled' : 'disabled'}`);
 }
 

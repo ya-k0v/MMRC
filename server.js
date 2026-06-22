@@ -56,6 +56,7 @@ import { createFoldersRouter } from './src/routes/folders.js';
 import { createAuthRouter } from './src/routes/auth.js';
 import { createDeduplicationRouter } from './src/routes/deduplication.js';
 import { createHeroRouter } from './src/hero/index.js';
+import { createAdRouter } from './src/ad/index.js';
 import { createVolumeRouter } from './src/routes/volume.js';
 import fileResolverRouter from './src/routes/file-resolver.js';
 import { createNotificationsRouter } from './src/routes/notifications.js';
@@ -456,6 +457,7 @@ const deduplicationRouter = createDeduplicationRouter({
 });
 
 const heroRouter = enabledModules.includes('hero') ? createHeroRouter({ requireHeroAdmin }) : null;
+const adRouter = enabledModules.includes('ad') ? createAdRouter({ requireAdAdmin: requireAdmin }) : null;
 const volumeRouter = createVolumeRouter({
   devices,
   getVolumeState,
@@ -472,6 +474,9 @@ app.use('/api/devices', deduplicationRouter);  // Дедупликация (chec
 app.use('/api/devices', volumeRouter);
 if (heroRouter) {
   app.use('/api/hero', heroRouter);
+}
+if (adRouter) {
+  app.use('/api/ad', adRouter);
 }
 app.use('/api/notifications', notificationsRouter);  // Роутер уведомлений
 

@@ -1,7 +1,7 @@
 {
-  "version": "3.4.0",
-  "branch": "v340",
-  "dockerTag": "v340",
+  "version": "3.5.0",
+  "branch": "v350",
+  "dockerTag": "v350",
   "dockerImages": {
     "server": "pingwin1900/mmrc",
     "converter": "pingwin1900/mmrc-converter",
@@ -9,9 +9,9 @@
     "streamer": "pingwin1900/mmrc-streamer"
   },
   "apps": {
-    "server": "3.4.0",
-    "jsPlayer": "3.4.0",
-    "hub": "3.4.0",
+    "server": "3.5.0",
+    "jsPlayer": "3.5.0",
+    "hub": "3.5.0",
     "android": "3.2.0",
     "mcp": "0.2.0"
   }

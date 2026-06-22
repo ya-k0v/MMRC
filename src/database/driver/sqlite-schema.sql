@@ -247,6 +247,7 @@ CREATE TABLE IF NOT EXISTS modules (
 );
 
 INSERT OR IGNORE INTO modules (id, enabled) VALUES ('hero', 0);
+INSERT OR IGNORE INTO modules (id, enabled) VALUES ('ad', 0);
 
 CREATE VIEW IF NOT EXISTS device_storage_stats AS
 SELECT

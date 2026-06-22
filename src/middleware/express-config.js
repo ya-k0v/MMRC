@@ -146,6 +146,21 @@ export function setupStaticFiles(app) {
     }
   }));
   
+  // Рекламные ролики
+  const adUploadsPath = path.resolve(ROOT, 'data', 'ad-uploads');
+  if (fs.existsSync(adUploadsPath)) {
+    app.use('/ad-content', express.static(adUploadsPath, {
+      setHeaders: (res, filePath) => {
+        const type = mime.getType(filePath) || 'application/octet-stream';
+        res.setHeader('Content-Type', type);
+        if (/\.(mp4|webm|ogg|mkv|mov|avi)$/i.test(filePath)) {
+          res.setHeader('Accept-Ranges', 'bytes');
+        }
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+      }
+    }));
+  }
+
   // HLS стримы (рестрим через FFmpeg)
   // КРИТИЧНО: Используем кастомный роутер для HLS, чтобы отключить буферизацию
   // и правильно обрабатывать Range requests для сегментов, которые пишутся в реальном времени

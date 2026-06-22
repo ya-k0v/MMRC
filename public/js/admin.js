@@ -273,6 +273,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             window.open('/hero/admin.html', '_blank');
           };
         }
+        const adModule = (data.modules || []).find(m => m.id === 'ad');
+        const adBtn = document.getElementById('adBtn');
+        if (adBtn && adModule && adModule.enabled) {
+          adBtn.style.display = '';
+          adBtn.onclick = () => {
+            window.location.href = '/ad-admin.html';
+          };
+        }
       }).catch(() => {});
     }
   }

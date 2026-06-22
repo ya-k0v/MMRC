@@ -239,6 +239,8 @@ CREATE TABLE IF NOT EXISTS modules (
 
 INSERT INTO modules (id, enabled) VALUES ('hero', FALSE)
 ON CONFLICT (id) DO NOTHING;
+INSERT INTO modules (id, enabled) VALUES ('ad', FALSE)
+ON CONFLICT (id) DO NOTHING;
 
 CREATE OR REPLACE VIEW device_storage_stats AS
 SELECT
