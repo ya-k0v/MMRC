@@ -11,9 +11,76 @@
   <div style="display:flex; align-items:center; justify-content:center; min-height:100vh; padding:20px;">
     <div class="card" style="max-width:400px; width:100%;">
       <div class="header">
-        <div class="title">Вход в MMRC Hub</div>
+        <div class="title" id="pageTitle">Вход в MMRC Hub</div>
       </div>
       
+      <div id="setupForm" style="display:none;">
+        <div class="meta" style="margin-bottom:16px; color:var(--muted);">
+          Первичная настройка: создайте учётную запись администратора
+        </div>
+        <form id="setupFormEl" style="display:flex; flex-direction:column; gap:16px;">
+          <div>
+            <label style="display:block; margin-bottom:4px; font-weight:500;">Логин</label>
+            <input 
+              type="text" 
+              id="setupUsername" 
+              class="input" 
+              placeholder="admin" 
+              autocomplete="username"
+              required 
+              autofocus
+              minlength="3"
+              maxlength="50"
+            />
+          </div>
+          
+          <div>
+            <label style="display:block; margin-bottom:4px; font-weight:500;">ФИО</label>
+            <input 
+              type="text" 
+              id="setupFullName" 
+              class="input" 
+              placeholder="Администратор" 
+              autocomplete="name"
+              required
+              minlength="1"
+              maxlength="100"
+            />
+          </div>
+          
+          <div>
+            <label style="display:block; margin-bottom:4px; font-weight:500;">Пароль (мин. 12 символов)</label>
+            <input 
+              type="password" 
+              id="setupPassword" 
+              class="input" 
+              placeholder="Введите пароль" 
+              autocomplete="new-password"
+              required
+              minlength="12"
+            />
+          </div>
+          
+          <div>
+            <label style="display:block; margin-bottom:4px; font-weight:500;">Подтвердите пароль</label>
+            <input 
+              type="password" 
+              id="setupPasswordConfirm" 
+              class="input" 
+              placeholder="Повторите пароль" 
+              autocomplete="new-password"
+              required
+            />
+          </div>
+          
+          <div id="setupError" style="color:var(--danger); font-size:0.875rem; display:none;"></div>
+          
+          <button type="submit" class="primary" id="setupBtn" style="width:100%;">
+            Создать администратора
+          </button>
+        </form>
+      </div>
+
       <form id="loginForm" style="display:flex; flex-direction:column; gap:16px;">
         <div>
           <label style="display:block; margin-bottom:4px; font-weight:500;">Логин</label>
@@ -53,16 +120,146 @@
   </div>
 
   <script>
-    const form = document.getElementById('loginForm');
+    const loginForm = document.getElementById('loginForm');
+    const setupForm = document.getElementById('setupForm');
+    const setupFormEl = document.getElementById('setupFormEl');
     const errorEl = document.getElementById('error');
+    const setupErrorEl = document.getElementById('setupError');
     const loginBtn = document.getElementById('loginBtn');
+    const setupBtn = document.getElementById('setupBtn');
+    const pageTitle = document.getElementById('pageTitle');
 
     function setLoginButtonLoading(isLoading) {
       loginBtn.disabled = isLoading;
       loginBtn.textContent = isLoading ? 'Вход...' : 'Войти';
     }
+
+    function setSetupButtonLoading(isLoading) {
+      setupBtn.disabled = isLoading;
+      setupBtn.textContent = isLoading ? 'Создание...' : 'Создать администратора';
+    }
     
-    form.addEventListener('submit', async (e) => {
+    function showError(message) {
+      errorEl.textContent = message;
+      errorEl.style.display = 'block';
+    }
+
+    function showSetupError(message) {
+      setupErrorEl.textContent = message;
+      setupErrorEl.style.display = 'block';
+    }
+
+    async function checkSetupStatus() {
+      try {
+        const response = await fetch('/api/auth/setup/status');
+        if (response.ok) {
+          const data = await response.json();
+          return data.needsSetup;
+        }
+      } catch (err) {
+        console.error('Setup status check failed:', err);
+      }
+      return false;
+    }
+
+    async function initPage() {
+      const needsSetup = await checkSetupStatus();
+      
+      if (needsSetup) {
+        pageTitle.textContent = 'Первичная настройка MMRC Hub';
+        loginForm.style.display = 'none';
+        setupForm.style.display = 'block';
+      } else {
+        pageTitle.textContent = 'Вход в MMRC Hub';
+        setupForm.style.display = 'none';
+        loginForm.style.display = 'flex';
+      }
+      
+      // Check for existing valid token
+      const token = localStorage.getItem('accessToken');
+      const userStr = localStorage.getItem('user');
+      
+      if (token && userStr && !needsSetup) {
+        try {
+          const user = JSON.parse(userStr);
+          const response = await fetch('/api/auth/me', {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          
+          if (response.ok) {
+            if (user.role === 'speaker' || user.role === 'manager') {
+              window.location.replace('/speaker.html');
+            } else if (user.role === 'hero_admin') {
+              window.location.replace('/hero/admin.html');
+            } else {
+              window.location.replace('/admin.html');
+            }
+            return;
+          }
+        } catch (e) {
+          console.error('[Index] Error checking auth:', e);
+        }
+        localStorage.clear();
+      }
+    }
+
+    setupFormEl.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const username = document.getElementById('setupUsername').value.trim();
+      const fullName = document.getElementById('setupFullName').value.trim();
+      const password = document.getElementById('setupPassword').value;
+      const passwordConfirm = document.getElementById('setupPasswordConfirm').value;
+      
+      if (!username || !fullName || !password || !passwordConfirm) {
+        showSetupError('Заполните все поля');
+        return;
+      }
+      
+      if (password !== passwordConfirm) {
+        showSetupError('Пароли не совпадают');
+        return;
+      }
+      
+      if (password.length < 12) {
+        showSetupError('Пароль должен быть не менее 12 символов');
+        return;
+      }
+      
+      setSetupButtonLoading(true);
+      setupErrorEl.style.display = 'none';
+      
+      try {
+        const response = await fetch('/api/auth/setup-first-admin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, full_name: fullName, password })
+        });
+
+        let data = {};
+        try {
+          data = await response.json();
+        } catch (_) {
+          data = {};
+        }
+        
+        if (response.ok) {
+          localStorage.setItem('accessToken', data.accessToken);
+          localStorage.setItem('refreshToken', data.refreshToken);
+          localStorage.setItem('user', JSON.stringify(data.user));
+          window.location.replace('/admin.html');
+        } else {
+          showSetupError(data.error || 'Ошибка создания администратора');
+        }
+      } catch (err) {
+        console.error('Setup error:', err);
+        showSetupError('Ошибка подключения к серверу');
+      } finally {
+        setSetupButtonLoading(false);
+      }
+    });
+
+    loginForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       
       const username = document.getElementById('username').value.trim();
@@ -73,7 +270,6 @@
         return;
       }
       
-      // Блокируем кнопку
       setLoginButtonLoading(true);
       errorEl.style.display = 'none';
       let redirected = false;
@@ -81,9 +277,7 @@
       try {
         const response = await fetch('/api/auth/login', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username, password })
         });
 
@@ -95,27 +289,22 @@
         }
         
         if (response.ok) {
-          // Сохраняем токены
           localStorage.setItem('accessToken', data.accessToken);
           localStorage.setItem('refreshToken', data.refreshToken);
           localStorage.setItem('user', JSON.stringify(data.user));
           
-          // Редирект в зависимости от роли
           if (data.user.role === 'hero_admin') {
             redirected = true;
             window.location.href = '/hero/admin.html';
           } else if (data.user.role === 'admin') {
             redirected = true;
             window.location.href = '/admin.html';
-          } else if (data.user.role === 'speaker') {
-            redirected = true;
-            window.location.href = '/speaker.html';
-          } else if (data.user.role === 'manager') {
+          } else if (data.user.role === 'speaker' || data.user.role === 'manager') {
             redirected = true;
             window.location.href = '/speaker.html';
           } else {
             redirected = true;
-            window.location.href = '/admin.html'; // Fallback
+            window.location.href = '/admin.html';
           }
         } else {
           const blockedByCode = data.code === 'ACCOUNT_DISABLED';
@@ -136,58 +325,8 @@
         }
       }
     });
-    
-    function showError(message) {
-      errorEl.textContent = message;
-      errorEl.style.display = 'block';
-    }
-    
-    // Проверяем авторизацию при загрузке
-    (async function checkAuth() {
-      const token = localStorage.getItem('accessToken');
-      const userStr = localStorage.getItem('user');
-      
-      console.log('[Index] Token exists:', !!token, 'User exists:', !!userStr);
-      
-      // Если есть токен - проверяем его валидность и редиректим
-      if (token && userStr) {
-        try {
-          const user = JSON.parse(userStr);
-          console.log('[Index] User role:', user.role);
-          
-          // Проверяем что токен валидный (быстрая проверка через API)
-          const response = await fetch('/api/auth/me', {
-            headers: {
-              'Authorization': `Bearer ${token}`
-            }
-          });
-          
-          if (response.ok) {
-            // Токен валидный - редирект по роли
-      if (user.role === 'speaker') {
-              window.location.replace('/speaker.html');
-            } else if (user.role === 'manager') {
-              window.location.replace('/speaker.html');
-            } else if (user.role === 'hero_admin') {
-              window.location.replace('/hero/admin.html');
-            } else if (user.role === 'admin') {
-              window.location.replace('/admin.html');
-            } else {
-              window.location.replace('/admin.html');
-            }
-          } else {
-            // Токен невалидный - очищаем и показываем форму
-            console.log('[Index] Token invalid, clearing localStorage');
-            localStorage.clear();
-          }
-        } catch (e) {
-          console.error('[Index] Error checking auth:', e);
-          localStorage.clear();
-        }
-      } else {
-        console.log('[Index] No token - showing login form');
-      }
-    })();
+
+    initPage();
   </script>
 </body>
 </html>

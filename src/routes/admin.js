@@ -5,23 +5,59 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requireAdmin } from '../middleware/auth.js';
 import { longOperationTimeout } from '../middleware/timeout.js';
+import { validate, schemas } from '../middleware/validate.js';
 import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('api');
 import { installAndSetupApk } from '../utils/apk-installer.js';
-import { getSettings } from '../config/settings-manager.js';
+import { getSettings, updateContentRootPath } from '../config/settings-manager.js';
 import { validatePath } from '../utils/path-validator.js';
 
-// Для поддержки __dirname в ES-модулях
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
-const APK_UPLOAD_DIR = path.resolve(process.env.MMRC_APK_UPLOAD_DIR || '/tmp/mmrc-apk-upload');
+
+const APK_UPLOAD_DIR = path.resolve(
+  process.env.MMRC_APK_UPLOAD_DIR || 
+  path.join(PROJECT_ROOT, 'data', 'apk-uploads')
+);
 
 if (!fs.existsSync(APK_UPLOAD_DIR)) {
   fs.mkdirSync(APK_UPLOAD_DIR, { recursive: true, mode: 0o700 });
 }
 
-const router = express.Router();
+async function validateApkFile(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext !== '.apk') {
+    throw new Error('Файл должен иметь расширение .apk');
+  }
+
+  const { fileTypeFromFile } = await import('file-type');
+  const fileType = await fileTypeFromFile(filePath);
+  
+  if (!fileType) {
+    throw new Error('Не удалось определить тип файла');
+  }
+  
+  const allowedMimes = [
+    'application/vnd.android.package-archive',
+    'application/zip',
+    'application/x-zip-compressed'
+  ];
+  
+  if (!allowedMimes.includes(fileType.mime)) {
+    throw new Error(`Недопустимый тип файла: ${fileType.mime}. Ожидается APK.`);
+  }
+
+  const AdmZip = (await import('adm-zip')).default;
+  const zip = new AdmZip(filePath);
+  const entries = zip.getEntries().map(e => e.entryName);
+  
+  if (!entries.some(e => e === 'AndroidManifest.xml')) {
+    throw new Error('Неверная структура APK: отсутствует AndroidManifest.xml');
+  }
+  
+  return true;
+}
 
 async function doFetch(url, options) {
   if (typeof globalThis.fetch === 'function') {
@@ -38,7 +74,6 @@ async function doFetch(url, options) {
   }
 }
 
-// Хранилище для временного сохранения APK
 const upload = multer({ dest: APK_UPLOAD_DIR, limits: { fileSize: 200 * 1024 * 1024 } });
 
 function resolveUploadedApkPath(file) {
@@ -80,7 +115,6 @@ function parseApiErrorMessage(rawBody, fallback = 'Неизвестная оши
       return parsed.error.trim();
     }
   } catch {
-    // Body may be plain text.
   }
 
   return String(rawBody).trim() || fallback;
@@ -140,7 +174,6 @@ async function createDeviceViaApi({ deviceId, deviceName, incomingAuthHeader }) 
   throw error;
 }
 
-// Fallback для случаев, когда route вызван без Bearer токена.
 async function getAdminAccessToken(apiBaseUrl) {
   const username = process.env.ADMIN_USERNAME || 'admin';
   const password = process.env.ADMIN_PASSWORD || 'admin123';
@@ -237,7 +270,6 @@ function parseRequestedDeviceIds(rawValue) {
           .filter(Boolean);
       }
     } catch {
-      // Fallback to comma-separated parsing.
     }
   }
 
@@ -295,209 +327,430 @@ async function listDevicesViaApi({ incomingAuthHeader }) {
   return Array.isArray(payload) ? payload : [];
 }
 
-// POST /api/admin/install-apk
-router.post('/install-apk', longOperationTimeout(), requireAdmin, upload.single('apk'), async (req, res) => {
-  const ip = req.body.ip;
-  const deviceId = req.body.deviceId;
-  const deviceName = req.body.deviceName;
+export function createAdminRouter(deps = {}) {
+  const {
+    io = null,
+    devices = {},
+    fileNamesMap = {},
+    storage = null,
+    getDriverType = () => 'sqlite',
+    getEnabledModules = async () => [],
+    performWalCheckpoint = () => ({}),
+    saveDevicesToDB = async () => {},
+    updateDeviceFilesFromDB = () => {},
+    scheduleServiceRestart = () => false
+  } = deps;
 
-  // Получаем serverUrl из настроек
-  const settings = getSettings();
-  // Можно хранить serverUrl в app-settings.json или .env, либо задать явно здесь:
-  // Например, если сервер работает на 80 порту и доступен по IP сервера:
-  const serverUrl = settings.serverUrl || process.env.SERVER_URL || `http://${req.headers.host || '127.0.0.1:3000'}`;
+  const router = express.Router();
 
-  let uploadedApkPath = null;
-  if (req.file) {
-    try {
-      uploadedApkPath = resolveUploadedApkPath(req.file);
-    } catch (error) {
-      logger.warn('Некорректный путь загруженного APK', { error: error.message });
-      return res.status(400).json({ ok: false, error: 'Некорректный путь загруженного APK файла' });
-    }
-  }
+  // POST /api/admin/install-apk
+  router.post('/install-apk', longOperationTimeout(), requireAdmin, upload.single('apk'), async (req, res) => {
+    const ip = req.body.ip;
+    const deviceId = req.body.deviceId;
+    const deviceName = req.body.deviceName;
 
-  // Если файл не загружен через multipart, ищем APK в стандартных путях и build output.
-  let apkPath = uploadedApkPath || resolveDefaultApkPath();
+    const settings = getSettings();
+    const serverUrl = settings.serverUrl || process.env.SERVER_URL || `http://${req.headers.host || '127.0.0.1:3000'}`;
 
-  if (!ip || !deviceId || !deviceName) {
-    return res.status(400).json({ ok: false, error: 'IP, ID и имя устройства обязательны' });
-  }
-
-  if (!apkPath) {
-    return res.status(400).json({
-      ok: false,
-      error: 'APK файл не найден. Загрузите APK вручную или соберите Android клиент (app-release.apk).'
-    });
-  }
-
-  let installCompleted = false;
-  try {
-    // Вся логика установки и настройки APK вынесена в отдельную функцию
-    await installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl });
-    installCompleted = true;
-
-    // После успешной настройки устройство должно быть создано так же, как при ручном добавлении через Devices.
-    const incomingAuthHeader = req.get('authorization');
-    const { deviceAdded, deviceAlreadyExists } = await createDeviceViaApi({
-      deviceId,
-      deviceName,
-      incomingAuthHeader
-    });
-
-    // 6. Возвращаем успешный ответ
-    // Обновляем панели
-    const { default: getIO } = await import('../socket/index.js');
-    const io = getIO && typeof getIO === 'function' ? getIO() : (global.io || null);
-    if (io && io.emit) {
-      io.emit('devices/updated');
-    }
-    return res.json({ ok: true, deviceAdded, deviceAlreadyExists });
-  } catch (e) {
-    logger.error('Ошибка при установке APK', { error: e?.message, stack: e?.stack });
-    if (installCompleted) {
-      const statusCode = e?.status === 409 ? 409 : 500;
-      return res.status(statusCode).json({
-        ok: false,
-        error: `APK установлен, но устройство создать не удалось: ${e?.message || 'неизвестная ошибка'}`
-      });
-    }
-
-    return res.status(500).json({ ok: false, error: e?.message || 'Ошибка при установке APK на устройство' });
-  } finally {
-    // Удаляем временный файл, если он был загружен
-    if (uploadedApkPath && fs.existsSync(uploadedApkPath)) {
+    let uploadedApkPath = null;
+    if (req.file) {
       try {
-        fs.unlinkSync(uploadedApkPath);
-      } catch {
-        // Ignore cleanup errors for temporary uploads.
+        uploadedApkPath = resolveUploadedApkPath(req.file);
+        await validateApkFile(uploadedApkPath);
+      } catch (error) {
+        logger.warn('APK validation failed', { error: error.message, filename: req.file?.originalname });
+        if (uploadedApkPath && fs.existsSync(uploadedApkPath)) {
+          try { fs.unlinkSync(uploadedApkPath); } catch {}
+        }
+        return res.status(400).json({ ok: false, error: `Невалидный APK файл: ${error.message}` });
       }
     }
-  }
-});
 
-// POST /api/admin/install-apk-bound
-// Массовое обновление APK на Android-устройствах с привязанным IP.
-router.post('/install-apk-bound', longOperationTimeout(), requireAdmin, upload.single('apk'), async (req, res) => {
-  const settings = getSettings();
-  const serverUrl = settings.serverUrl || process.env.SERVER_URL || `http://${req.headers.host || '127.0.0.1:3000'}`;
+    let apkPath = uploadedApkPath || resolveDefaultApkPath();
 
-  let uploadedApkPath = null;
-  if (req.file) {
-    try {
-      uploadedApkPath = resolveUploadedApkPath(req.file);
-    } catch (error) {
-      logger.warn('Некорректный путь загруженного APK для массового обновления', { error: error.message });
-      return res.status(400).json({ ok: false, error: 'Некорректный путь загруженного APK файла' });
-    }
-  }
-
-  const apkPath = uploadedApkPath || resolveDefaultApkPath();
-  if (!apkPath) {
-    return res.status(400).json({
-      ok: false,
-      error: 'APK файл не найден. Загрузите APK вручную или соберите Android клиент (app-release.apk).'
-    });
-  }
-
-  const incomingAuthHeader = req.get('authorization');
-  const requestedDeviceIds = parseRequestedDeviceIds(req.body?.deviceIds);
-  const requestedDeviceIdsSet = new Set(requestedDeviceIds);
-
-  try {
-    const devices = await listDevicesViaApi({ incomingAuthHeader });
-    let targets = devices
-      .filter((device) => isAndroidDeviceCandidate(device))
-      .filter((device) => typeof device?.ipAddress === 'string' && device.ipAddress.trim());
-
-    if (requestedDeviceIdsSet.size > 0) {
-      targets = targets.filter((device) => requestedDeviceIdsSet.has(device.device_id));
+    if (!ip || !deviceId || !deviceName) {
+      return res.status(400).json({ ok: false, error: 'IP, ID и имя устройства обязательны' });
     }
 
-    if (!targets.length) {
+    if (!apkPath) {
       return res.status(400).json({
         ok: false,
-        error: 'Не найдено Android-устройств с привязанным IP адресом для обновления.'
+        error: 'APK файл не найден. Загрузите APK вручную или соберите Android клиент (app-release.apk).'
       });
     }
 
-    const results = [];
-    let updated = 0;
-
-    for (const target of targets) {
-      const deviceId = String(target.device_id || '').trim();
-      const deviceName = String(target.name || deviceId).trim() || deviceId;
-      const ip = String(target.ipAddress || '').trim();
-
-      if (!deviceId || !ip) {
-        results.push({
-          deviceId,
-          deviceName,
-          ip,
-          ok: false,
-          error: 'Некорректные данные устройства (deviceId/ip)'
-        });
-        continue;
-      }
-
+    if (!uploadedApkPath && apkPath) {
       try {
-        await installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl });
-        updated += 1;
-        results.push({ deviceId, deviceName, ip, ok: true });
+        await validateApkFile(apkPath);
       } catch (error) {
-        logger.error('Ошибка массового обновления APK', {
-          deviceId,
-          ip,
-          error: error?.message,
-          stack: error?.stack
-        });
-        results.push({
-          deviceId,
-          deviceName,
-          ip,
-          ok: false,
-          error: error?.message || 'Ошибка установки APK'
-        });
+        logger.warn('Default APK validation failed', { error: error.message, apkPath });
+        return res.status(400).json({ ok: false, error: `Невалидный APK файл: ${error.message}` });
       }
     }
 
-    const total = results.length;
-    const failed = total - updated;
+    let installCompleted = false;
+    try {
+      await installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl });
+      installCompleted = true;
 
-    if (updated > 0) {
+      const incomingAuthHeader = req.get('authorization');
+      const { deviceAdded, deviceAlreadyExists } = await createDeviceViaApi({
+        deviceId,
+        deviceName,
+        incomingAuthHeader
+      });
+
       const { default: getIO } = await import('../socket/index.js');
-      const io = getIO && typeof getIO === 'function' ? getIO() : (global.io || null);
+      const socketIO = getIO && typeof getIO === 'function' ? getIO() : (io || global.io || null);
+      if (socketIO && socketIO.emit) {
+        socketIO.emit('devices/updated');
+      }
+      return res.json({ ok: true, deviceAdded, deviceAlreadyExists });
+    } catch (e) {
+      logger.error('Ошибка при установке APK', { error: e?.message, stack: e?.stack });
+      if (installCompleted) {
+        const statusCode = e?.status === 409 ? 409 : 500;
+        return res.status(statusCode).json({
+          ok: false,
+          error: `APK установлен, но устройство создать не удалось: ${e?.message || 'неизвестная ошибка'}`
+        });
+      }
+
+      return res.status(500).json({ ok: false, error: e?.message || 'Ошибка при установке APK на устройство' });
+    } finally {
+      if (uploadedApkPath && fs.existsSync(uploadedApkPath)) {
+        try {
+          fs.unlinkSync(uploadedApkPath);
+        } catch {
+        }
+      }
+    }
+  });
+
+  // POST /api/admin/install-apk-bound
+  router.post('/install-apk-bound', longOperationTimeout(), requireAdmin, upload.single('apk'), async (req, res) => {
+    const settings = getSettings();
+    const serverUrl = settings.serverUrl || process.env.SERVER_URL || `http://${req.headers.host || '127.0.0.1:3000'}`;
+
+    let uploadedApkPath = null;
+    if (req.file) {
+      try {
+        uploadedApkPath = resolveUploadedApkPath(req.file);
+      } catch (error) {
+        logger.warn('Некорректный путь загруженного APK для массового обновления', { error: error.message });
+        return res.status(400).json({ ok: false, error: 'Некорректный путь загруженного APK файла' });
+      }
+    }
+
+    const apkPath = uploadedApkPath || resolveDefaultApkPath();
+    if (!apkPath) {
+      return res.status(400).json({
+        ok: false,
+        error: 'APK файл не найден. Загрузите APK вручную или соберите Android клиент (app-release.apk).'
+      });
+    }
+
+    const incomingAuthHeader = req.get('authorization');
+    const requestedDeviceIds = parseRequestedDeviceIds(req.body?.deviceIds);
+    const requestedDeviceIdsSet = new Set(requestedDeviceIds);
+
+    try {
+      const devices = await listDevicesViaApi({ incomingAuthHeader });
+      let targets = devices
+        .filter((device) => isAndroidDeviceCandidate(device))
+        .filter((device) => typeof device?.ipAddress === 'string' && device.ipAddress.trim());
+
+      if (requestedDeviceIdsSet.size > 0) {
+        targets = targets.filter((device) => requestedDeviceIdsSet.has(device.device_id));
+      }
+
+      if (!targets.length) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Не найдено Android-устройств с привязанным IP адресом для обновления.'
+        });
+      }
+
+      const results = [];
+      let updated = 0;
+
+      for (const target of targets) {
+        const deviceId = String(target.device_id || '').trim();
+        const deviceName = String(target.name || deviceId).trim() || deviceId;
+        const ip = String(target.ipAddress || '').trim();
+
+        if (!deviceId || !ip) {
+          results.push({
+            deviceId,
+            deviceName,
+            ip,
+            ok: false,
+            error: 'Некорректные данные устройства (deviceId/ip)'
+          });
+          continue;
+        }
+
+        try {
+          await installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl });
+          updated += 1;
+          results.push({ deviceId, deviceName, ip, ok: true });
+        } catch (error) {
+          logger.error('Ошибка массового обновления APK', {
+            deviceId,
+            ip,
+            error: error?.message,
+            stack: error?.stack
+          });
+          results.push({
+            deviceId,
+            deviceName,
+            ip,
+            ok: false,
+            error: error?.message || 'Ошибка установки APK'
+          });
+        }
+      }
+
+      const total = results.length;
+      const failed = total - updated;
+
+      if (updated > 0) {
+        const { default: getIO } = await import('../socket/index.js');
+        const socketIO = getIO && typeof getIO === 'function' ? getIO() : (io || global.io || null);
+        if (socketIO && socketIO.emit) {
+          socketIO.emit('devices/updated');
+        }
+      }
+
+      const statusCode = failed > 0 ? 207 : 200;
+      return res.status(statusCode).json({
+        ok: failed === 0,
+        total,
+        updated,
+        failed,
+        results
+      });
+    } catch (error) {
+      logger.error('Ошибка при подготовке массового обновления APK', {
+        error: error?.message,
+        stack: error?.stack
+      });
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || 'Ошибка при массовом обновлении APK'
+      });
+    } finally {
+      if (uploadedApkPath && fs.existsSync(uploadedApkPath)) {
+        try {
+          fs.unlinkSync(uploadedApkPath);
+        } catch {
+        }
+      }
+    }
+  });
+
+  // GET /api/admin/export-database
+  router.get('/export-database', requireAdmin, (req, res) => {
+    if (process.env.DB_TYPE === 'postgres') {
+      return res.status(400).json({ error: 'Export is not available in PostgreSQL mode. Use pg_dump instead.' });
+    }
+    try {
+      const dbFilePath = path.join(PROJECT_ROOT, 'config', 'main.db');
+      
+      if (!fs.existsSync(dbFilePath)) {
+        return res.status(404).json({ error: 'Database file not found' });
+      }
+      
+      const stats = fs.statSync(dbFilePath);
+      const filename = `main_${new Date().toISOString().split('T')[0]}.db`;
+      
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', stats.size);
+      
+      const fileStream = fs.createReadStream(dbFilePath);
+      fileStream.pipe(res);
+      
+      logger.info(`[Admin] Database exported by user: ${req.user?.username || 'unknown'}`);
+    } catch (error) {
+      logger.error('[Admin] Error exporting database:', error);
+      res.status(500).json({ error: 'Failed to export database' });
+    }
+  });
+
+  // GET /api/admin/settings
+  router.get('/settings', requireAdmin, async (req, res) => {
+    try {
+      const settings = getSettings();
+      const availableModules = (await import('../modules/index.js')).getAvailableModules();
+      const enabled = await getEnabledModules();
+      const enabledSet = new Set(enabled);
+      settings.modules = availableModules.map(m => ({
+        ...m,
+        enabled: enabledSet.has(m.id)
+      }));
+      settings.dbType = getDriverType();
+      res.json(settings);
+    } catch (error) {
+      logger.error('[Admin] Failed to load settings:', error);
+      res.status(500).json({ error: 'Не удалось загрузить настройки' });
+    }
+  });
+
+  // POST /api/admin/settings/content-root
+  router.post('/settings/content-root', requireAdmin, validate(schemas.contentRoot), async (req, res) => {
+    try {
+      const { path: newPath } = req.body || {};
+      if (!newPath) {
+        return res.status(400).json({ error: 'Укажите путь' });
+      }
+
+      logger.info('[Admin] Updating content root path', { newPath });
+      const normalizedPath = await updateContentRootPath(newPath);
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      logger.info('[Admin] Rescanning devices after path migration', { deviceCount: Object.keys(devices).length });
+      Object.keys(devices).forEach((deviceId) => {
+        updateDeviceFilesFromDB(deviceId, devices, fileNamesMap);
+      });
+      await saveDevicesToDB(devices);
       if (io && io.emit) {
         io.emit('devices/updated');
       }
-    }
+      logger.info('[Admin] Content root path updated successfully', { newPath: normalizedPath });
 
-    const statusCode = failed > 0 ? 207 : 200;
-    return res.status(statusCode).json({
-      ok: failed === 0,
-      total,
-      updated,
-      failed,
-      results
-    });
-  } catch (error) {
-    logger.error('Ошибка при подготовке массового обновления APK', {
-      error: error?.message,
-      stack: error?.stack
-    });
-    return res.status(500).json({
-      ok: false,
-      error: error?.message || 'Ошибка при массовом обновлении APK'
-    });
-  } finally {
-    if (uploadedApkPath && fs.existsSync(uploadedApkPath)) {
-      try {
-        fs.unlinkSync(uploadedApkPath);
-      } catch {
-        // Ignore cleanup errors for temporary uploads.
+      res.json({
+        ok: true,
+        contentRoot: normalizedPath
+      });
+    } catch (error) {
+      logger.error('[Admin] Failed to update content root:', error);
+      res.status(400).json({ error: error.message || 'Не удалось обновить путь' });
+    }
+  });
+
+  // GET /api/admin/database/check-files
+  router.get('/database/check-files', requireAdmin, async (req, res) => {
+    try {
+      const { cleanupMissingFiles } = await import('../database/files-metadata.js');
+      
+      const result = await cleanupMissingFiles({ deviceId: null, dryRun: true });
+      
+      res.json({
+        checked: result.checked,
+        missingOnDisk: result.missing,
+        missingInDB: 0,
+        errors: result.errors
+      });
+    } catch (error) {
+      logger.error('[Admin] Failed to check files:', error);
+      res.status(500).json({ error: error.message || 'Не удалось проверить файлы' });
+    }
+  });
+
+  // POST /api/admin/database/wal-checkpoint
+  router.post('/database/wal-checkpoint', requireAdmin, validate(schemas.walCheckpoint), (req, res) => {
+    try {
+      const { force } = req.body || {};
+      
+      logger.info('[Admin] Manual WAL checkpoint requested', { 
+        forced: Boolean(force),
+        userId: req.user.userId,
+        username: req.user.username 
+      });
+      
+      const result = performWalCheckpoint(Boolean(force));
+      
+      if (result.success) {
+        res.json({
+          success: true,
+          message: result.message,
+          walSizeMB: result.walSize,
+          oldSizeMB: result.oldSize,
+          reducedMB: result.reduced
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          error: result.message || 'WAL checkpoint failed'
+        });
       }
+    } catch (error) {
+      logger.error('[Admin] Failed to perform WAL checkpoint:', error);
+      res.status(500).json({ error: error.message || 'Не удалось выполнить WAL checkpoint' });
     }
-  }
-});
+  });
 
-export default router;
+  // POST /api/admin/database/cleanup-missing-files
+  router.post('/database/cleanup-missing-files', requireAdmin, validate(schemas.cleanupMissing), async (req, res) => {
+    try {
+      const { deviceId } = req.body || {};
+      const { cleanupMissingFiles } = await import('../database/files-metadata.js');
+      
+      logger.info('[Admin] Starting database cleanup', { deviceId: deviceId || 'all' });
+      
+      const dbResult = await cleanupMissingFiles({ deviceId: deviceId || null, dryRun: false });
+      
+      logger.info('[Admin] Database cleanup completed', {
+        checked: dbResult.checked,
+        missing: dbResult.missing,
+        deleted: dbResult.deleted,
+        errors: dbResult.errors
+      });
+      
+      if (dbResult.deleted > 0) {
+        const deviceIds = deviceId ? [deviceId] : Object.keys(devices);
+        deviceIds.forEach((id) => {
+          if (devices[id]) {
+            updateDeviceFilesFromDB(id, devices, fileNamesMap);
+          }
+        });
+        await saveDevicesToDB(devices);
+        if (io && io.emit) {
+          io.emit('devices/updated');
+        }
+      }
+      
+      res.json({
+        checked: dbResult.checked,
+        missingOnDisk: dbResult.missing,
+        deletedFromDB: dbResult.deleted,
+        errors: dbResult.errors
+      });
+    } catch (error) {
+      logger.error('[Admin] Failed to cleanup files:', error);
+      res.status(500).json({ error: error.message || 'Не удалось очистить файлы' });
+    }
+  });
+
+  // POST /api/admin/database/cleanup-orphaned-files
+  router.post('/database/cleanup-orphaned-files', requireAdmin, validate(schemas.cleanupOrphaned), async (req, res) => {
+    try {
+      const { dryRun = false, excludeExtensions = [] } = req.body || {};
+      const { cleanupOrphanedFiles } = await import('../database/cleanup-orphaned-files.js');
+      
+      logger.info('[Admin] Starting orphaned files cleanup', { dryRun, excludeExtensions });
+      
+      const result = await cleanupOrphanedFiles({ dryRun, excludeExtensions }, storage);
+      
+      logger.info('[Admin] Orphaned files cleanup completed', result);
+      
+      res.json({
+        checked: result.checked,
+        orphaned: result.orphaned,
+        deleted: result.deleted,
+        errors: result.errors,
+        totalSizeMB: result.totalSizeMB,
+        dryRun
+      });
+    } catch (error) {
+      logger.error('[Admin] Failed to cleanup orphaned files:', error);
+      res.status(500).json({ error: error.message || 'Не удалось очистить осиротевшие файлы' });
+    }
+  });
+
+  return router;
+}
+
+export default createAdminRouter({});

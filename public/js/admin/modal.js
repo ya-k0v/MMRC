@@ -625,6 +625,11 @@ export function closeModal() {
     document.removeEventListener('keydown', activeModalEscHandler);
     activeModalEscHandler = null;
   }
+
+  if (typeof window.__importConfirmResolve === 'function') {
+    window.__importConfirmResolve(false);
+    delete window.__importConfirmResolve;
+  }
 }
 
 // Глобальные функции для onclick
@@ -2524,8 +2529,6 @@ async function loadSettingsContent(adminFetch) {
 
     // Импорт базы данных
     importBtn.onclick = async () => {
-      if (!confirm('Импорт базы данных перезапишет текущую базу. Продолжить?')) return;
-      // Открываем диалог выбора файла
       importFileEl.value = null;
       importFileEl.click();
     };
@@ -2535,27 +2538,135 @@ async function loadSettingsContent(adminFetch) {
       if (!file) return;
 
       importBtn.disabled = true;
-      importBtn.textContent = 'Импорт...';
+      importBtn.textContent = 'Проверка...';
 
       try {
-        const form = new FormData();
-        form.append('file', file);
-
-        // Используем adminFetch — он может добавлять CSRF/авторизацию
-        const resp = await adminFetch('/api/admin/import-database', {
+        // 1. Получаем CSRF токен
+        const tokenResp = await adminFetch('/api/auth/csrf-token', {
           method: 'POST',
-          body: form
+          headers: { 'Content-Type': 'application/json' }
+        });
+        if (!tokenResp.ok) throw new Error('Не удалось получить CSRF токен');
+        const { csrfToken } = await tokenResp.json();
+
+        // 2. Сухая проверка (dry-run)
+        const dryForm = new FormData();
+        dryForm.append('file', file);
+
+        const dryResp = await adminFetch('/api/admin/import-database?dryRun=true', {
+          method: 'POST',
+          headers: { 'X-CSRF-Token': csrfToken },
+          body: dryForm
         });
 
-        if (!resp.ok) {
-          const error = await resp.json().catch(() => ({ error: 'Ошибка импорта' }));
-          throw new Error(error.error || 'Ошибка импорта');
+        if (!dryResp.ok) {
+          const errData = await dryResp.json().catch(() => ({ error: 'Ошибка проверки файла' }));
+          throw new Error(errData.error || 'Файл не прошёл проверку');
         }
 
-        const result = await resp.json().catch(() => ({ ok: true }));
+        const dryResult = await dryResp.json();
+        const preview = dryResult.preview;
 
-        if (result.ok || resp.ok) {
-          const restartScheduled = !!result.restartScheduled;
+        // 3. Показываем диалог подтверждения с информацией о файле
+        const fileSizeStr = preview.fileSize >= 1048576
+          ? (preview.fileSize / 1048576).toFixed(1) + ' MB'
+          : (preview.fileSize / 1024).toFixed(1) + ' KB';
+
+        const migrationsList = preview.migrations && preview.migrations.length
+          ? `<div style="margin-top:8px; font-size:13px; color:var(--text-secondary);">
+               Миграции (${preview.migrations.length}): ${preview.migrations.join(', ')}
+             </div>`
+          : '';
+
+        const confirmed = await new Promise((resolve) => {
+          const importPasswordInputId = 'importPasswordInput';
+
+          window.__importConfirmResolve = resolve;
+
+          showModal(`
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+              <span style="font-size:20px;">⚠️</span>
+              <span style="font-weight:600;">Подтверждение импорта БД</span>
+            </div>
+            <div style="color:var(--text-secondary); font-size:14px; margin-bottom:16px;">
+              <div>Файл: <strong>${escapeHtml(preview.fileName)}</strong></div>
+              <div>Размер: <strong>${fileSizeStr}</strong></div>
+              <div>Таблиц: <strong>${preview.tableCount}</strong></div>
+              <div>Версия схемы: ${preview.schemaVersion?.userVersion || 'N/A'}</div>
+              ${migrationsList}
+              <div style="margin-top:12px; padding:10px; background:var(--bg-secondary); border-radius:8px; font-size:13px;">
+                Импорт перезапишет текущую базу данных.
+                Резервная копия будет создана автоматически.
+              </div>
+            </div>
+            <div style="margin-bottom:12px;">
+              <label style="display:block; margin-bottom:4px; font-weight:500;">
+                Введите ваш пароль для подтверждения
+              </label>
+              <input type="password" id="${importPasswordInputId}" class="input"
+                     placeholder="Пароль администратора" autocomplete="off"
+                     style="width:100%; box-sizing:border-box;" />
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button onclick="closeModal(); window.__importConfirmResolve(false);" class="secondary" style="flex:1;">
+                Отмена
+              </button>
+              <button id="confirmImportBtn" class="danger" style="flex:1;">
+                Импортировать
+              </button>
+            </div>
+          `);
+
+          const btn = document.getElementById('confirmImportBtn');
+          const pwInput = document.getElementById(importPasswordInputId);
+
+          const doConfirm = () => {
+            const pw = pwInput.value.trim();
+            if (!pw) { pwInput.focus(); return; }
+            window.__importConfirmPw = pw;
+            closeModal();
+            resolve(true);
+          };
+
+          btn.addEventListener('click', doConfirm);
+          pwInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') doConfirm();
+          });
+          pwInput.focus();
+        });
+
+        const confirmPassword = window.__importConfirmPw || '';
+        delete window.__importConfirmResolve;
+        delete window.__importConfirmPw;
+
+        if (!confirmed || !confirmPassword) {
+          importBtn.disabled = false;
+          importBtn.innerHTML = `${getUpDownloadIcon(16)} Импорт`;
+          return;
+        }
+
+        // 4. Выполняем импорт с CSRF токеном и паролем
+        importBtn.textContent = 'Импорт...';
+
+        const importForm = new FormData();
+        importForm.append('file', file);
+        importForm.append('confirmPassword', confirmPassword);
+
+        const importResp = await adminFetch('/api/admin/import-database', {
+          method: 'POST',
+          headers: { 'X-CSRF-Token': csrfToken },
+          body: importForm
+        });
+
+        if (!importResp.ok) {
+          const errData = await importResp.json().catch(() => ({ error: 'Ошибка импорта' }));
+          throw new Error(errData.error || 'Ошибка импорта');
+        }
+
+        const importResult = await importResp.json().catch(() => ({ ok: true }));
+
+        if (importResult.ok || importResp.ok) {
+          const restartScheduled = !!importResult.restartScheduled;
           const statusText = restartScheduled
             ? 'Импорт базы данных завершён успешно. Сервис перезапускается, подождите 3-10 секунд.'
             : 'Импорт базы данных завершён успешно.';
@@ -2570,7 +2681,7 @@ async function loadSettingsContent(adminFetch) {
           await reportModalNotification({
             type: 'database_import_error',
             title: 'Ошибка импорта базы данных',
-            message: result.error || 'Ошибка импорта'
+            message: importResult.error || 'Ошибка импорта'
           });
         }
       } catch (err) {

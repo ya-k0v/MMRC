@@ -6,9 +6,9 @@ import { getDatabase } from '../database/database.js';
 import { getLdapAuthSettings } from '../config/settings-manager.js';
 import { authenticateAgainstLdap } from '../auth/ldap-auth.js';
 import {
-  generateAccessToken, generateRefreshToken, requireAuth, requireAdmin, requireManager
+  generateAccessToken, generateRefreshToken, requireAuth, requireAdmin, requireManager, generateCsrfToken, requireCsrfToken
 } from '../middleware/auth.js';
-import { authLimiter, createLimiter, deleteLimiter } from '../middleware/rate-limit.js';
+import { authLimiter, createLimiter, deleteLimiter, setupLimiter, adminLimiter } from '../middleware/rate-limit.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import { createModuleLogger, logAuth, logSecurity } from '../utils/logger.js';
 const logger = createModuleLogger('auth');
@@ -237,6 +237,81 @@ router.post('/login',
   }
 );
 
+async function checkAdminExists(db) {
+  const admin = await db.get(`SELECT 1 FROM users WHERE role = 'admin' AND is_active = 1 LIMIT 1`);
+  return !!admin;
+}
+
+router.get('/setup/status', async (req, res) => {
+  const db = getDatabase();
+  try {
+    const needsSetup = !(await checkAdminExists(db));
+    res.json({ needsSetup });
+  } catch (err) {
+    logger.error('Setup status check error', { error: err.message });
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+  }
+});
+
+router.post('/setup-first-admin',
+  setupLimiter,
+  body('username').trim().isLength({ min: 3, max: 50 }),
+  body('full_name').trim().isLength({ min: 1, max: 100 }),
+  body('password').isLength({ min: 12 }),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+    const db = getDatabase();
+
+    try {
+      if (await checkAdminExists(db)) {
+        return res.status(403).json({ error: 'Администратор уже существует. Настройка не требуется.' });
+      }
+
+      const { username, full_name, password } = req.body;
+
+      const existing = await db.get('SELECT id FROM users WHERE username = ?', [username]);
+      if (existing) return res.status(409).json({ error: 'Пользователь с таким логином уже существует' });
+
+      const passwordHash = await bcrypt.hash(password, 12);
+      const result = await db.run(
+        `INSERT INTO users (username, full_name, password_hash, auth_source, role, is_active)
+         VALUES (?, ?, ?, 'local', 'admin', 1)`,
+        [username, full_name, passwordHash]
+      );
+
+      const newUserId = result.lastInsertRowid;
+
+      await auditLog({
+        userId: newUserId, action: AuditAction.USER_CREATE, resource: `user:${newUserId}`,
+        details: { username, full_name, role: 'admin', setup: true },
+        ipAddress: req.ip, userAgent: req.get('user-agent'), status: 'success'
+      });
+      logAuth('info', 'First admin created via setup', { newUserId, username, ip: req.ip });
+
+      const accessToken = generateAccessToken(newUserId, username, 'admin');
+      const refreshToken = generateRefreshToken(newUserId);
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 7);
+
+      await db.run(
+        `INSERT INTO refresh_tokens (user_id, token, expires_at, ip_address, user_agent)
+         VALUES (?, ?, ?, ?, ?)`,
+        [newUserId, refreshToken, expiresAt.toISOString(), req.ip, req.get('user-agent')]
+      );
+
+      res.status(201).json({
+        accessToken, refreshToken,
+        user: { id: newUserId, username, full_name, role: 'admin', auth_source: 'local' }
+      });
+    } catch (err) {
+      logger.error('Setup first admin error', { error: err.message, stack: err.stack });
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+    }
+  }
+);
+
 router.post('/refresh',
   body('refreshToken').notEmpty(),
   async (req, res) => {
@@ -310,6 +385,16 @@ router.get('/me', requireAuth, async (req, res) => {
   } catch (err) {
     logger.error('Me error', { error: err.message, stack: err.stack });
     res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+  }
+});
+
+router.post('/csrf-token', requireAuth, async (req, res) => {
+  try {
+    const token = await generateCsrfToken(req.user.userId);
+    res.json({ csrfToken: token });
+  } catch (err) {
+    logger.error('CSRF token generation error', { error: err.message });
+    res.status(500).json({ error: 'Ошибка генерации CSRF токена' });
   }
 });
 

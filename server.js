@@ -61,8 +61,9 @@ import fileResolverRouter from './src/routes/file-resolver.js';
 import { createNotificationsRouter } from './src/routes/notifications.js';
 import multer from 'multer';
 import { createUploadMiddleware, validateUploadSize } from './src/middleware/multer-config.js';
-import { requireAuth, requireAdmin, requireManager, requireHeroAdmin, requireSpeaker } from './src/middleware/auth.js';
-import { globalLimiter, apiSpeedLimiter } from './src/middleware/rate-limit.js';
+import { requireAuth, requireAdmin, requireManager, requireHeroAdmin, requireSpeaker, requireCsrfToken } from './src/middleware/auth.js';
+import bcrypt from 'bcrypt';
+import { globalLimiter, apiSpeedLimiter, adminLimiter } from './src/middleware/rate-limit.js';
 import { setupExpressMiddleware, setupStaticFiles } from './src/middleware/express-config.js';
 import { setupSocketHandlers } from './src/socket/index.js';
 import { setupNotificationsHandler } from './src/socket/notifications-handler.js';
@@ -71,15 +72,15 @@ import { initSystemMonitor, stopSystemMonitor } from './src/utils/system-monitor
 import logger, { httpLoggerMiddleware } from './src/utils/logger.js';
 import { cleanupResolutionCache, getResolutionCacheSize } from './src/video/resolution-cache.js';
 import { circuitBreakers } from './src/utils/circuit-breaker.js';
-import { getSettings, updateContentRootPath, getDataRoot, getDevicesPath, getStreamsOutputDir, getConvertedCache, getLogsDir, getTempDir } from './src/config/settings-manager.js';
+import { getDataRoot, getDevicesPath, getStreamsOutputDir, getConvertedCache, getLogsDir, getTempDir } from './src/config/settings-manager.js';
 import { validatePath } from './src/utils/path-validator.js';
 import { getMetrics } from './src/utils/metrics.js';
 import { timerRegistry } from './src/utils/timer-registry.js';
 import { createUpdateManager } from './src/utils/update-manager.js';
 import { createDockerUpdateManager } from './src/utils/docker-update-manager.js';
-import adminRouter from './src/routes/admin.js';
+import { createAdminRouter } from './src/routes/admin.js';
 import { createModulesRouter } from './src/routes/modules.js';
-import { initEnabledModules, getEnabledModules } from './src/modules/index.js';
+import { initEnabledModules } from './src/modules/index.js';
 import { createStorage } from './src/storage/factory.js';
 
 const app = express();
@@ -164,8 +165,11 @@ if (!isPostgres) {
     thresholdMB: process.env.WAL_CHECKPOINT_THRESHOLD_MB || '100'
   });
   if (process.env.REDIS_URL || process.env.MMRC_HA_MODE) {
-    logger.warn('[Server] ⚠️ SQLite + Redis/HA is unstable with multiple processes.');
-    logger.warn('[Server]    Set DB_TYPE=postgres in .env for production/HA deployments.');
+    logger.error('[Server] 🚫 SQLite + Redis/HA is NOT SUPPORTED.');
+    logger.error('[Server]    SQLite is unsafe with multiple processes — data corruption will occur.');
+    logger.error('[Server]    Set DB_TYPE=postgres in .env and use PostgreSQL for HA deployments.');
+    logger.error('[Server]    Server will exit. Fix .env and restart.');
+    process.exit(1);
   }
 }
 
@@ -496,8 +500,19 @@ app.get('/internal/metrics', (req, res) => {
   }
 });
 
-// Admin API (установка APK и др.)
-app.use('/api/admin', adminRouter);
+// Admin API (установка APK, настройки, обслуживание БД и др.)
+const adminRouter = createAdminRouter({
+  io,
+  devices,
+  fileNamesMap,
+  storage,
+  getDriverType,
+  getEnabledModules,
+  performWalCheckpoint,
+  saveDevicesToDB,
+  updateDeviceFilesFromDB
+});
+app.use('/api/admin', adminLimiter, adminRouter);
 
 // ========================================
 // FAVICON HANDLING
@@ -937,37 +952,9 @@ app.get('/api/admin/service-logs', requireAuth, requireAdmin, (req, res) => {
   }
 });
 
-// Экспорт базы данных (только для админов)
-app.get('/api/admin/export-database', requireAuth, requireAdmin, (req, res) => {
-  if (process.env.DB_TYPE === 'postgres') {
-    return res.status(400).json({ error: 'Export is not available in PostgreSQL mode. Use pg_dump instead.' });
-  }
-  try {
-    const dbFilePath = path.join(ROOT, 'config', 'main.db');
-    
-    if (!fs.existsSync(dbFilePath)) {
-      return res.status(404).json({ error: 'Database file not found' });
-    }
-    
-    const stats = fs.statSync(dbFilePath);
-    const filename = `main_${new Date().toISOString().split('T')[0]}.db`;
-    
-    res.setHeader('Content-Type', 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Length', stats.size);
-    
-    const fileStream = fs.createReadStream(dbFilePath);
-    fileStream.pipe(res);
-    
-    logger.info(`[Admin] Database exported by user: ${req.user?.username || 'unknown'}`);
-  } catch (error) {
-    logger.error('[Admin] Error exporting database:', error);
-    res.status(500).json({ error: 'Failed to export database' });
-  }
-});
-
 // Импорт базы данных (замена текущей БД). Принимает FormData с полем `file` (.db).
-app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUploadSize, async (req, res) => {
+// Безопасность: требует CSRF токен (X-CSRF-Token), подтверждение пароля, проверку версии схемы
+app.post('/api/admin/import-database', requireAuth, requireAdmin, requireCsrfToken, validateUploadSize, async (req, res) => {
   if (process.env.DB_TYPE === 'postgres') {
     return res.status(400).json({ error: 'Import is not available in PostgreSQL mode. Use pg_restore instead.' });
   }
@@ -1009,11 +996,14 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
       }
 
       // Быстрая проверка сигнатуры SQLite файла
+      let importDbSize = 0;
       try {
         const fd = fs.openSync(uploadedPath, 'r');
         const headerBuffer = Buffer.alloc(16);
         try {
           fs.readSync(fd, headerBuffer, 0, 16, 0);
+          const stats = fs.fstatSync(fd);
+          importDbSize = stats.size;
         } finally {
           fs.closeSync(fd);
         }
@@ -1026,6 +1016,109 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
       } catch (signatureError) {
         try { fs.unlinkSync(uploadedPath); } catch (_) {}
         return res.status(400).json({ error: signatureError.message || 'Failed to validate file' });
+      }
+
+      // Проверка версии схемы SQLite (PRAGMA user_version / schema_version)
+      let uploadedSchemaVersion = null;
+      let uploadedTableCount = 0;
+      let uploadedMigrationIds = [];
+      try {
+        const { default: betterSqlite3 } = await import('better-sqlite3');
+        const tmpDb = new betterSqlite3(uploadedPath, { readonly: true, fileMustExist: true });
+
+        const schemaVersion = tmpDb.pragma('schema_version', { simple: true });
+        const userVersion = tmpDb.pragma('user_version', { simple: true });
+        uploadedSchemaVersion = { schemaVersion: Number(schemaVersion) || 0, userVersion: Number(userVersion) || 0 };
+
+        const tables = tmpDb.prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).all();
+        uploadedTableCount = tables.length;
+
+        if (tmpDb.tableExists('schema_migrations')) {
+          uploadedMigrationIds = tmpDb.prepare(
+            'SELECT id FROM schema_migrations ORDER BY executed_at'
+          ).all().map(r => r.id);
+        }
+
+        tmpDb.close();
+      } catch (schemaErr) {
+        try { fs.unlinkSync(uploadedPath); } catch (_) {}
+        return res.status(400).json({ error: `Failed to read SQLite schema: ${schemaErr.message}` });
+      }
+
+      // Проверка: импортируемая БД не должна быть старше текущей (по миграциям)
+      try {
+        const { default: betterSqlite3 } = await import('better-sqlite3');
+        if (fs.existsSync(DB_PATH)) {
+          const currentDb = new betterSqlite3(DB_PATH, { readonly: true, fileMustExist: true });
+          let currentMigrationIds = [];
+          if (currentDb.tableExists('schema_migrations')) {
+            currentMigrationIds = currentDb.prepare(
+              'SELECT id FROM schema_migrations ORDER BY executed_at'
+            ).all().map(r => r.id);
+          }
+          currentDb.close();
+
+          // Проверяем что каждая миграция текущей БД присутствует в импортируемой
+          const missingMigrations = currentMigrationIds.filter(id => !uploadedMigrationIds.includes(id));
+          if (missingMigrations.length > 0) {
+            try { fs.unlinkSync(uploadedPath); } catch (_) {}
+            return res.status(400).json({
+              error: 'Импортируемая БД содержит устаревшую схему. Отсутствуют миграции: ' + missingMigrations.join(', ')
+            });
+          }
+        }
+      } catch (schemaCheckErr) {
+        // Если не можем прочитать текущую БД, пропускаем проверку (возможно первый запуск)
+        logger.warn('[Admin] Could not compare schema versions', { error: schemaCheckErr.message });
+      }
+
+      // Подтверждение паролем
+      const confirmPassword = String(req.body?.confirmPassword || '');
+      if (!confirmPassword) {
+        try { fs.unlinkSync(uploadedPath); } catch (_) {}
+        return res.status(400).json({ error: 'Требуется подтверждение пароля (confirmPassword)' });
+      }
+
+      try {
+        const db = getDatabase();
+        const userRecord = await db.get(
+          'SELECT password_hash FROM users WHERE id = ?',
+          [req.user.userId]
+        );
+
+        if (!userRecord) {
+          try { fs.unlinkSync(uploadedPath); } catch (_) {}
+          return res.status(403).json({ error: 'Пользователь не найден' });
+        }
+
+        const passwordValid = await bcrypt.compare(confirmPassword, userRecord.password_hash);
+        if (!passwordValid) {
+          try { fs.unlinkSync(uploadedPath); } catch (_) {}
+          return res.status(403).json({ error: 'Неверный пароль. Импорт отменён.' });
+        }
+      } catch (pwErr) {
+        try { fs.unlinkSync(uploadedPath); } catch (_) {}
+        return res.status(500).json({ error: 'Ошибка проверки пароля' });
+      }
+
+      const isDryRun = req.query.dryRun === 'true' || req.query.dry_run === 'true';
+
+      if (isDryRun) {
+        try { fs.unlinkSync(uploadedPath); } catch (_) {}
+        return res.json({
+          ok: true,
+          dryRun: true,
+          preview: {
+            fileName: file.originalname,
+            fileSize: importDbSize,
+            schemaVersion: uploadedSchemaVersion,
+            tableCount: uploadedTableCount,
+            migrations: uploadedMigrationIds
+          },
+          message: 'Dry-run: файл прошёл все проверки, импорт не выполнялся.'
+        });
       }
 
       const backupPath = `${DB_PATH}.bak.${Date.now()}`;
@@ -1158,186 +1251,6 @@ app.post('/api/admin/import-database', requireAuth, requireAdmin, validateUpload
 // Модули (только admin)
 const modulesRouter = createModulesRouter();
 app.use('/api/admin/modules', requireAuth, requireAdmin, modulesRouter);
-
-// Настройки администратора
-app.get('/api/admin/settings', requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const settings = getSettings();
-    const availableModules = (await import('./src/modules/index.js')).getAvailableModules();
-    const enabled = await getEnabledModules();
-    const enabledSet = new Set(enabled);
-    settings.modules = availableModules.map(m => ({
-      ...m,
-      enabled: enabledSet.has(m.id)
-    }));
-    settings.dbType = getDriverType();
-    res.json(settings);
-  } catch (error) {
-    logger.error('[Admin] Failed to load settings:', error);
-    res.status(500).json({ error: 'Не удалось загрузить настройки' });
-  }
-});
-
-app.post('/api/admin/settings/content-root', requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const { path: newPath } = req.body || {};
-    if (!newPath) {
-      return res.status(400).json({ error: 'Укажите путь' });
-    }
-
-    // КРИТИЧНО: updateContentRootPath теперь async и мигрирует пути в БД
-    logger.info('[Admin] Updating content root path', { newPath });
-    const normalizedPath = await updateContentRootPath(newPath);
-
-    // Ждем небольшую задержку для завершения всех операций миграции в БД
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    // Пересканируем устройства, чтобы обновить список файлов после миграции
-    logger.info('[Admin] Rescanning devices after path migration', { deviceCount: Object.keys(devices).length });
-    Object.keys(devices).forEach((deviceId) => {
-      updateDeviceFilesFromDB(deviceId, devices, fileNamesMap);
-    });
-    await saveDevicesToDB(devices);
-    io.emit('devices/updated');
-    logger.info('[Admin] Content root path updated successfully', { newPath: normalizedPath });
-
-    res.json({
-      ok: true,
-      contentRoot: normalizedPath
-    });
-  } catch (error) {
-    logger.error('[Admin] Failed to update content root:', error);
-    res.status(400).json({ error: error.message || 'Не удалось обновить путь' });
-  }
-});
-
-// ========================================
-// DATABASE CLEANUP ENDPOINTS
-// ========================================
-
-// GET /api/admin/database/check-files - Проверить файлы из БД на наличие на диске
-app.get('/api/admin/database/check-files', requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const { cleanupMissingFiles } = await import('./src/database/files-metadata.js');
-    
-    // КРИТИЧНО: Проверяем только файлы из БД на наличие на диске
-    // НЕ сканируем файлы на диске - это может показать папки с фото и другие файлы, которых нет в БД
-    const result = await cleanupMissingFiles({ deviceId: null, dryRun: true });
-    
-    res.json({
-      checked: result.checked,
-      missingOnDisk: result.missing,
-      missingInDB: 0, // Больше не проверяем файлы на диске
-      errors: result.errors
-    });
-  } catch (error) {
-    logger.error('[Admin] Failed to check files:', error);
-    res.status(500).json({ error: error.message || 'Не удалось проверить файлы' });
-  }
-});
-
-// POST /api/admin/database/wal-checkpoint - Выполнить WAL checkpoint вручную
-app.post('/api/admin/database/wal-checkpoint', requireAuth, requireAdmin, (req, res) => {
-  try {
-    const { force } = req.body || {};
-    
-    logger.info('[Admin] Manual WAL checkpoint requested', { 
-      forced: Boolean(force),
-      userId: req.user.userId,
-      username: req.user.username 
-    });
-    
-    const result = performWalCheckpoint(Boolean(force));
-    
-    if (result.success) {
-      res.json({
-        success: true,
-        message: result.message,
-        walSizeMB: result.walSize,
-        oldSizeMB: result.oldSize,
-        reducedMB: result.reduced
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        error: result.message || 'WAL checkpoint failed'
-      });
-    }
-  } catch (error) {
-    logger.error('[Admin] Failed to perform WAL checkpoint:', error);
-    res.status(500).json({ error: error.message || 'Не удалось выполнить WAL checkpoint' });
-  }
-});
-
-// POST /api/admin/database/cleanup-missing-files - Удалить записи о несуществующих файлах из БД
-app.post('/api/admin/database/cleanup-missing-files', requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const { deviceId } = req.body || {};
-    const { cleanupMissingFiles } = await import('./src/database/files-metadata.js');
-    
-    logger.info('[Admin] Starting database cleanup', { deviceId: deviceId || 'all' });
-    
-    // КРИТИЧНО: Удаляем только записи из БД для файлов, которых нет на диске
-    // НЕ сканируем и НЕ удаляем файлы с диска - это может удалить папки с фото и другие файлы
-    const dbResult = await cleanupMissingFiles({ deviceId: deviceId || null, dryRun: false });
-    
-    logger.info('[Admin] Database cleanup completed', {
-      checked: dbResult.checked,
-      missing: dbResult.missing,
-      deleted: dbResult.deleted,
-      errors: dbResult.errors
-    });
-    
-    // Обновляем список файлов для устройств после очистки
-    if (dbResult.deleted > 0) {
-      const deviceIds = deviceId ? [deviceId] : Object.keys(devices);
-      deviceIds.forEach((id) => {
-        if (devices[id]) {
-          updateDeviceFilesFromDB(id, devices, fileNamesMap);
-        }
-      });
-      await saveDevicesToDB(devices);
-      io.emit('devices/updated');
-    }
-    
-    res.json({
-      checked: dbResult.checked,
-      missingOnDisk: dbResult.missing,
-      deletedFromDB: dbResult.deleted,
-      errors: dbResult.errors
-    });
-  } catch (error) {
-    logger.error('[Admin] Failed to cleanup files:', error);
-    res.status(500).json({ error: error.message || 'Не удалось очистить файлы' });
-  }
-});
-
-// POST /api/admin/database/cleanup-orphaned-files - Удалить осиротевшие файлы из /content/
-app.post('/api/admin/database/cleanup-orphaned-files', requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const { dryRun = false, excludeExtensions = [] } = req.body || {};
-    const { cleanupOrphanedFiles } = await import('./src/database/cleanup-orphaned-files.js');
-    
-    logger.info('[Admin] Starting orphaned files cleanup', { dryRun, excludeExtensions });
-    
-    // Удаляем файлы в /content/ корне, которые не имеют записей в БД
-    const result = await cleanupOrphanedFiles({ dryRun, excludeExtensions }, storage);
-    
-    logger.info('[Admin] Orphaned files cleanup completed', result);
-    
-    res.json({
-      checked: result.checked,
-      orphaned: result.orphaned,
-      deleted: result.deleted,
-      errors: result.errors,
-      totalSizeMB: result.totalSizeMB,
-      dryRun
-    });
-  } catch (error) {
-    logger.error('[Admin] Failed to cleanup orphaned files:', error);
-    res.status(500).json({ error: error.message || 'Не удалось очистить осиротевшие файлы' });
-  }
-});
 
 // ========================================
 // VERSION ENDPOINT

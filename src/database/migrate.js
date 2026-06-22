@@ -48,6 +48,39 @@ const MIGRATIONS = [
       }
       await driver.exec('CREATE INDEX IF NOT EXISTS idx_refresh_tokens_last_used ON refresh_tokens(last_used)');
     }
+  },
+  {
+    id: '2026-06-22-csrf-tokens',
+    description: 'Create csrf_tokens table for CSRF protection',
+    async up(driver) {
+      if (!(await driver.tableExists('csrf_tokens'))) {
+        if (driver.dialect === 'postgres') {
+          await driver.exec(`
+            CREATE TABLE csrf_tokens (
+              id SERIAL PRIMARY KEY,
+              user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              token TEXT UNIQUE NOT NULL,
+              expires_at TIMESTAMP NOT NULL,
+              used INTEGER DEFAULT 0,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+          `);
+        } else {
+          await driver.exec(`
+            CREATE TABLE IF NOT EXISTS csrf_tokens (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              token TEXT UNIQUE NOT NULL,
+              expires_at DATETIME NOT NULL,
+              used INTEGER DEFAULT 0,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+          `);
+        }
+        await driver.exec('CREATE INDEX IF NOT EXISTS idx_csrf_tokens_token ON csrf_tokens(token)');
+        await driver.exec('CREATE INDEX IF NOT EXISTS idx_csrf_tokens_user_id ON csrf_tokens(user_id)');
+      }
+    }
   }
 ];
 
