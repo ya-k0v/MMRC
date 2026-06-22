@@ -80,7 +80,7 @@ import { createUpdateManager } from './src/utils/update-manager.js';
 import { createDockerUpdateManager } from './src/utils/docker-update-manager.js';
 import { createAdminRouter } from './src/routes/admin.js';
 import { createModulesRouter } from './src/routes/modules.js';
-import { initEnabledModules } from './src/modules/index.js';
+import { initEnabledModules, getEnabledModules } from './src/modules/index.js';
 import { createStorage } from './src/storage/factory.js';
 
 const app = express();
