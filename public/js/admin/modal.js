@@ -677,15 +677,18 @@ export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevi
     const createBtn = document.getElementById('modalCreateDevice');
     const errorEl = document.getElementById('modalError');
     
-    // Показываем чекбокс если модуль рекламы активен
+    // Показываем чекбокс если модуль рекламы доступен
     (async () => {
       try {
-        const mods = await adminFetch('/api/admin/modules');
-        const adMod = (await mods.json()).find(m => m.id === 'ad');
-        if (adMod && adMod.enabled !== false) {
+        const res = await adminFetch('/api/admin/modules');
+        const data = await res.json();
+        const adMod = (data.modules || []).find(m => m.id === 'ad');
+        if (adMod) {
           adCheckboxWrap.style.display = '';
         }
-      } catch {}
+      } catch (e) {
+        console.warn('[Modal] Failed to check ad module:', e);
+      }
     })();
 
     function generateAdId() {
@@ -697,17 +700,19 @@ export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevi
       return hash;
     }
 
-    adCheckbox.addEventListener('change', () => {
-      if (adCheckbox.checked) {
-        deviceIdInput.value = generateAdId();
-        deviceIdInput.readOnly = true;
-        deviceIdInput.style.background = 'var(--panel-2)';
-      } else {
-        deviceIdInput.value = '';
-        deviceIdInput.readOnly = false;
-        deviceIdInput.style.background = '';
-      }
-    });
+    if (adCheckbox) {
+      adCheckbox.addEventListener('change', () => {
+        if (adCheckbox.checked) {
+          deviceIdInput.value = generateAdId();
+          deviceIdInput.readOnly = true;
+          deviceIdInput.style.background = 'var(--panel-2)';
+        } else {
+          deviceIdInput.value = '';
+          deviceIdInput.readOnly = false;
+          deviceIdInput.style.background = '';
+        }
+      });
+    }
     
     if (!deviceIdInput || !createBtn) return;
     
