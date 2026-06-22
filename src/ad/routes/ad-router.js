@@ -87,8 +87,8 @@ export function createAdRouter(deps = {}) {
     }
   });
 
-  // GET /api/ad/weights/:deviceId — get file weights for a device
-  router.get('/weights/:deviceId', adminOrAuth, async (req, res) => {
+  // GET /api/ad/weights/:deviceId — get file weights for a device (без аутентификации — читает плеер)
+  router.get('/weights/:deviceId', async (req, res) => {
     try {
       const { deviceId } = req.params;
       const rows = await dbQuery(
