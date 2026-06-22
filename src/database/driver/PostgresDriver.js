@@ -164,6 +164,13 @@ export class PostgresDriver extends DatabaseDriver {
             notNull: r.not_null,
             defaultValue: r.default_value
           }));
+        },
+        tableExists: async (name) => {
+          const row = await client.query(
+            `SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1`,
+            [name]
+          );
+          return row.rows.length > 0;
         }
       });
       await client.query('COMMIT');
