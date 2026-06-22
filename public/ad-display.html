@@ -53,7 +53,6 @@
     const imageDisplay = document.getElementById('imageDisplay');
     const imageEl = document.getElementById('imageEl');
     const overlay = document.getElementById('overlay');
-    const info = document.getElementById('info');
     const params = new URLSearchParams(location.search);
     const deviceId = params.get('device_id') || localStorage.getItem('ad_device_id');
 
@@ -105,7 +104,6 @@
       imageEl.src = url;
       imageDisplay.style.display = 'flex';
       playerEl.style.display = 'none';
-      info.textContent = `${fileName} (изображение)`;
       overlay.classList.add('hidden');
       reportImpression(fileName);
       sendProgress(fileName, 0, 10);
@@ -117,7 +115,6 @@
       const url = getContentUrl(fileName);
       imageDisplay.style.display = 'none';
       playerEl.style.display = '';
-      info.textContent = fileName;
       overlay.classList.add('hidden');
       reportImpression(fileName);
       try {
@@ -182,10 +179,8 @@
       localStorage.setItem('ad_device_id', deviceId);
       initPlayer();
 
-      fetch('/version.json').then(r => r.json()).then(v => {
-        const badge = document.getElementById('playerBadge');
-        if (badge) badge.textContent = deviceId + ' • v' + (v.version || '');
-      }).catch(() => {});
+      const badge = document.getElementById('playerBadge');
+      if (badge) badge.textContent = deviceId;
 
       socket.on('connect', () => {
         overlay.textContent = 'Регистрация...';
