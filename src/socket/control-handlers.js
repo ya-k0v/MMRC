@@ -385,7 +385,7 @@ export function setupControlHandlers(socket, deps) {
             startDelayMs: normalizedStartDelayMs || undefined
           });
           emitDeviceVolumeState(device_id, 'control_play');
-          io.emit('preview/refresh', { device_id });
+          socket.emit('preview/refresh', { device_id });
         }, 150);
         return; // Выходим, запуск нового контента произойдет в setTimeout
       }
@@ -809,7 +809,7 @@ export function setupControlHandlers(socket, deps) {
             startDelayMs: normalizedStartDelayMs || undefined
           });
           emitDeviceVolumeState(device_id, 'control_play');
-          io.emit('preview/refresh', { device_id });
+          socket.emit('preview/refresh', { device_id });
         }, 100);
         return; // Выходим, запуск нового контента произойдет в setTimeout
       }
@@ -894,7 +894,7 @@ export function setupControlHandlers(socket, deps) {
             startDelayMs: normalizedStartDelayMs || undefined
           });
       emitDeviceVolumeState(device_id, 'control_play');
-      io.emit('preview/refresh', { device_id });
+      socket.emit('preview/refresh', { device_id });
     } else {
       // КРИТИЧНО: Если файл не указан - это RESUME после паузы
       // Отправляем команду player/resume чтобы плеер продолжил с места паузы
@@ -976,7 +976,7 @@ export function setupControlHandlers(socket, deps) {
     d.current.state = 'playing';
     saveDevice(device_id, d).catch(e => logger.warn('[Control] saveDevice failed', { deviceId: device_id, error: e.message }));
     io.to(`device:${device_id}`).emit('player/restart');
-    io.emit('preview/refresh', { device_id });
+    socket.emit('preview/refresh', { device_id });
   });
 
   // control/seek - Перемотка медиа (видео/аудио)
@@ -1018,7 +1018,7 @@ export function setupControlHandlers(socket, deps) {
     d.current = { type: 'idle', file: null, state: 'idle' };
     saveDevice(device_id, d).catch(e => logger.warn('[Control] saveDevice failed', { deviceId: device_id, error: e.message }));
     io.to(`device:${device_id}`).emit('player/stop', { reason: 'manual_stop' });
-    io.emit('preview/refresh', { device_id });
+    socket.emit('preview/refresh', { device_id });
     stopServerPlaylistLoop(device_id, 'control stop');
   });
   
@@ -1081,7 +1081,7 @@ export function setupControlHandlers(socket, deps) {
     // Если страница уже показывается - не моргаем, просто начинаем отсчет таймера
     if (initialPage !== currentShowingPage || !d.current.page) {
       io.to(`device:${device_id}`).emit('player/folderPage', initialPage);
-      io.emit('preview/refresh', { device_id });
+      socket.emit('preview/refresh', { device_id });
     }
     
     // Рассылаем состояние плейлиста всем панелям для синхронизации
@@ -1091,7 +1091,7 @@ export function setupControlHandlers(socket, deps) {
       file,
       intervalSeconds: d.current.playlistInterval
     });
-    io.emit('devices/updated', { device_id });
+    socket.emit('devices/updated', { device_id });
 
     try {
       await startServerPlaylistLoop(device_id, file, d.current.playlistInterval, initialPage, devices, io);
@@ -1117,7 +1117,7 @@ export function setupControlHandlers(socket, deps) {
       device_id,
       active: false
     });
-    io.emit('devices/updated', { device_id });
+    socket.emit('devices/updated', { device_id });
     stopServerPlaylistLoop(device_id, 'manual stop');
   });
 
@@ -1141,11 +1141,11 @@ export function setupControlHandlers(socket, deps) {
     if (d.current.type === 'pdf') {
       d.current.page = Math.max(1, (d.current.page || 1) - 1);
       io.to(`device:${device_id}`).emit('player/pdfPage', d.current.page);
-      io.emit('player/pdfPage', d.current.page); // Для спикера
+      socket.emit('player/pdfPage', d.current.page);
     } else if (d.current.type === 'pptx') {
       d.current.page = Math.max(1, (d.current.page || 1) - 1);
       io.to(`device:${device_id}`).emit('player/pptxPage', d.current.page);
-      io.emit('player/pptxPage', d.current.page); // Для спикера
+      socket.emit('player/pptxPage', d.current.page);
     } else if (d.current.type === 'folder' && d.current.file) {
       // Получаем количество изображений в папке для проверки границ
       // КРИТИЧНО: Используем originDeviceId если есть (для файлов из "Все файлы"), иначе device_id
@@ -1160,9 +1160,7 @@ export function setupControlHandlers(socket, deps) {
           d.current.page = prevImage;
           logger.info(`[Control] 📁 Folder prev: ${device_id} -> page ${prevImage}/${maxImages}`, { deviceId: device_id, page: prevImage, maxImages, file: d.current.file });
           io.to(`device:${device_id}`).emit('player/folderPage', d.current.page);
-          // КРИТИЧНО: НЕ отправляем всем - только конкретному устройству!
-          // Спикер обновится через preview/refresh
-          io.emit('preview/refresh', { device_id });
+          socket.emit('preview/refresh', { device_id });
         } else {
           logger.warn(`[Control] pdfPrev folder: maxImages is 0`, { deviceId: device_id, folderName });
         }
@@ -1200,7 +1198,7 @@ export function setupControlHandlers(socket, deps) {
         if (nextPage !== d.current.page) {
           d.current.page = nextPage;
           io.to(`device:${device_id}`).emit('player/pdfPage', d.current.page);
-          io.emit('player/pdfPage', d.current.page); // Для спикера
+          socket.emit('player/pdfPage', d.current.page);
         }
       }
     } else if (d.current.type === 'pptx' && d.current.file) {
@@ -1210,7 +1208,7 @@ export function setupControlHandlers(socket, deps) {
         if (nextSlide !== d.current.page) {
           d.current.page = nextSlide;
           io.to(`device:${device_id}`).emit('player/pptxPage', d.current.page);
-          io.emit('player/pptxPage', d.current.page); // Для спикера
+          socket.emit('player/pptxPage', d.current.page);
         }
       }
     } else if (d.current.type === 'folder' && d.current.file) {
@@ -1225,9 +1223,7 @@ export function setupControlHandlers(socket, deps) {
           d.current.page = nextImage;
           logger.info(`[Control] 📁 Folder next: ${device_id} -> page ${nextImage}/${maxImages}`, { deviceId: device_id, page: nextImage, maxImages, file: d.current.file });
           io.to(`device:${device_id}`).emit('player/folderPage', d.current.page);
-          // КРИТИЧНО: НЕ отправляем всем - только конкретному устройству!
-          // Спикер обновится через preview/refresh
-          io.emit('preview/refresh', { device_id });
+          socket.emit('preview/refresh', { device_id });
         } else {
           logger.warn(`[Control] pdfNext folder: maxImages is 0`, { deviceId: device_id, folderName });
         }

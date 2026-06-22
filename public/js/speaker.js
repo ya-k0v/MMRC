@@ -4919,13 +4919,12 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
 
   if (!device_id) return;
   const device = devices.find(d => d.device_id === device_id);
-  if (!device || !device.current) {
+  if (!device || !device.current || !device.current.file) {
     // Если устройство не воспроизводит ничего, очищаем прогресс и состояние
     playbackProgressByDevice.delete(device_id);
     playerStateByDevice.set(device_id, { type: null, file: null, page: 1 });
-    // КРИТИЧНО: Если показана сетка миниатюр — очищаем и показываем заглушку
-    if (device_id === currentDevice && filePreview.querySelector('.thumbnail-preview')) {
-      filePreview.innerHTML = '';
+    // КРИТИЧНО: Показываем заглушку (очищает и iframe, и сетку миниатюр)
+    if (device_id === currentDevice) {
       showLivePreviewForTV(currentDevice, true);
     }
     if (device_id === currentDevice) {
