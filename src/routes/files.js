@@ -4315,7 +4315,9 @@ export function createFilesRouter(deps) {
       const resolvedDeviceFolder = validatePath(path.resolve(safeDevicesPath, safeDeviceFolderName), safeDevicesPath);
       deviceFolder = validatePath(fs.realpathSync(resolvedDeviceFolder), safeDevicesPath);
     } catch (error) {
-      return res.status(404).json({ error: 'Устройство не найдено' });
+      logger.warn('[download] Device folder not found on disk, will try metadata fallback', {
+        deviceId: id, folder: safeDeviceFolderName, error: error.message
+      });
     }
 
     const metadata = await getFileMetadata(id, name);
@@ -4325,16 +4327,16 @@ export function createFilesRouter(deps) {
     }
 
     let entries = [];
-    try {
-      const safeFolderForRead = validatePath(deviceFolder, safeDevicesPath);
-      entries = fs.readdirSync(safeFolderForRead, { withFileTypes: true });
-    } catch (error) {
-      logger.error('[download] Failed to read device folder', {
-        deviceId: id,
-        deviceFolder,
-        error: error.message
-      });
-      return res.status(500).json({ error: 'Не удалось прочитать содержимое устройства' });
+    if (deviceFolder) {
+      try {
+        const safeFolderForRead = validatePath(deviceFolder, safeDevicesPath);
+        entries = fs.readdirSync(safeFolderForRead, { withFileTypes: true });
+      } catch (error) {
+        logger.error('[download] Failed to read device folder', {
+          deviceId: id, deviceFolder, error: error.message
+        });
+        return res.status(500).json({ error: 'Не удалось прочитать содержимое устройства' });
+      }
     }
 
     const allowedDownloadPaths = new Map();
