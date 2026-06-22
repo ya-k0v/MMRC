@@ -59,8 +59,10 @@
 
     let player = null;
     let fileList = [];
+    let fileWeights = {};
     let currentIndex = 0;
     let imageTimer = null;
+    let progressTimer = null;
     let registered = false;
 
     function initPlayer() {
@@ -87,6 +89,17 @@
 
     function fileNameOnly(p) { return p.split(/[/\\]/).pop(); }
 
+    function sendProgress(fileName, currentTime, duration) {
+      if (!registered) return;
+      socket.emit('player/progress', {
+        device_id: deviceId,
+        type: 'video',
+        file: fileName,
+        currentTime: currentTime || 0,
+        duration: duration || 0
+      });
+    }
+
     function showImage(fileName) {
       const url = getContentUrl(fileName);
       imageEl.src = url;
@@ -95,6 +108,7 @@
       info.textContent = `${fileName} (изображение)`;
       overlay.classList.add('hidden');
       reportImpression(fileName);
+      sendProgress(fileName, 0, 10);
       clearTimeout(imageTimer);
       imageTimer = setTimeout(playNext, 10000);
     }
@@ -111,19 +125,33 @@
         const mime = ext === '.webm' ? 'video/webm' : ext === '.ogg' ? 'video/ogg' : 'video/mp4';
         player.src({ src: url, type: mime });
         player.play();
+        progressTimer = setInterval(() => {
+          if (player && !player.paused()) {
+            sendProgress(fileName, player.currentTime(), player.duration());
+          }
+        }, 2000);
       } catch { setTimeout(playNext, 3000); }
     }
 
+    function pickWeightedFile() {
+      if (!fileList.length) return null;
+      const candidates = [];
+      for (const f of fileList) {
+        const w = fileWeights[f] || 1;
+        for (let i = 0; i < w; i++) candidates.push(f);
+      }
+      return candidates.length ? candidates[Math.floor(Math.random() * candidates.length)] : fileList[0];
+    }
+
     async function playNext() {
+      clearInterval(progressTimer);
       if (!fileList.length) {
         overlay.textContent = 'Нет файлов. Ожидание...';
         overlay.classList.remove('hidden');
         setTimeout(() => { socket.emit('files/request', { device_id: deviceId }); playNext(); }, 30000);
         return;
       }
-      if (currentIndex >= fileList.length) currentIndex = 0;
-      const fileName = fileList[currentIndex];
-      currentIndex++;
+      const fileName = pickWeightedFile();
       if (isImageFile(fileName)) showImage(fileName);
       else playVideoFile(fileName);
     }
@@ -169,10 +197,15 @@
         overlay.classList.remove('hidden');
       });
 
-      socket.on('player/registered', (data) => {
+      socket.on('player/registered', async (data) => {
         registered = true;
         fileList = filterPlayableFiles(data.files || []);
         overlay.classList.add('hidden');
+        try {
+          const r = await fetch(`/api/ad/weights/${encodeURIComponent(deviceId)}`);
+          const wd = await r.json();
+          if (wd.weights) fileWeights = wd.weights;
+        } catch {}
         playNext();
       });
 

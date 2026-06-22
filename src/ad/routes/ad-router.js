@@ -87,6 +87,53 @@ export function createAdRouter(deps = {}) {
     }
   });
 
+  // GET /api/ad/weights/:deviceId — get file weights for a device
+  router.get('/weights/:deviceId', adminOrAuth, async (req, res) => {
+    try {
+      const { deviceId } = req.params;
+      const rows = await dbQuery(
+        'SELECT file_name, weight FROM ad_file_weights WHERE device_id = ? ORDER BY file_name',
+        [deviceId]
+      );
+      const weights = {};
+      for (const r of rows) weights[r.file_name] = r.weight;
+      res.json({ device_id: deviceId, weights });
+    } catch (err) {
+      logger.error('[Ad] Failed to get weights:', err.message);
+      res.status(500).json({ error: 'Ошибка загрузки весов' });
+    }
+  });
+
+  // PUT /api/ad/weights/:deviceId — save file weights for a device
+  router.put('/weights/:deviceId', adminOrAuth, async (req, res) => {
+    try {
+      const { deviceId } = req.params;
+      const { weights } = req.body; // { file_name: weight, ... }
+      if (!weights || typeof weights !== 'object') {
+        return res.status(400).json({ error: 'weights object required' });
+      }
+
+      const ph = (i) => driverType === 'postgres' ? `$${i}` : '?';
+
+      // Delete existing weights for this device
+      await dbExec('DELETE FROM ad_file_weights WHERE device_id = ?', [deviceId]);
+
+      // Insert new weights
+      for (const [file_name, weight] of Object.entries(weights)) {
+        const w = Math.max(1, Math.min(100, Math.round(Number(weight) || 1)));
+        await dbExec(
+          `INSERT INTO ad_file_weights (device_id, file_name, weight) VALUES (${ph(1)}, ${ph(2)}, ${ph(3)})`,
+          [deviceId, file_name, w]
+        );
+      }
+
+      res.json({ ok: true, device_id: deviceId });
+    } catch (err) {
+      logger.error('[Ad] Failed to save weights:', err.message);
+      res.status(500).json({ error: 'Ошибка сохранения весов' });
+    }
+  });
+
   return router;
 }
 

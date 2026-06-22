@@ -63,20 +63,26 @@ const MODULES = {
       const idCol = isPg ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT';
       const tsCol = isPg ? 'TIMESTAMP' : 'DATETIME';
       return `
-        DROP TABLE IF EXISTS ad_videos;
-        DROP TABLE IF EXISTS ad_displays;
-        DROP TABLE IF EXISTS ad_schedules;
-        DROP TABLE IF EXISTS ad_analytics;
-
-        CREATE TABLE ad_analytics (
+        CREATE TABLE IF NOT EXISTS ad_analytics (
           id ${idCol},
           device_id TEXT NOT NULL,
           file_name TEXT NOT NULL,
           played_at ${tsCol} NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS ad_file_weights (
+          id ${idCol},
+          device_id TEXT NOT NULL,
+          file_name TEXT NOT NULL,
+          weight INTEGER NOT NULL DEFAULT 1,
+          created_at ${tsCol} DEFAULT CURRENT_TIMESTAMP,
+          updated_at ${tsCol} DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(device_id, file_name)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_ad_analytics_device ON ad_analytics(device_id);
         CREATE INDEX IF NOT EXISTS idx_ad_analytics_date ON ad_analytics(played_at);
+        CREATE INDEX IF NOT EXISTS idx_ad_weights_device ON ad_file_weights(device_id);
       `;
     }
   }

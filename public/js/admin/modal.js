@@ -2469,6 +2469,44 @@ async function loadSettingsContent(adminFetch) {
   modulesSection.appendChild(modulesList);
   mainDiv.appendChild(modulesDivider);
   mainDiv.appendChild(modulesSection);
+
+  // --- Ad file weights section ---
+  const adDivider = document.createElement('div');
+  adDivider.style.cssText = 'border-top:1px solid var(--border-color, rgba(255,255,255,0.1));';
+
+  const adSection = document.createElement('div');
+  adSection.style.cssText = 'padding:var(--space-md) 0;';
+
+  const adTitle = document.createElement('div');
+  adTitle.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary); margin-bottom:var(--space-sm);';
+  adTitle.textContent = 'Веса файлов рекламы';
+
+  const adDeviceSelect = document.createElement('select');
+  adDeviceSelect.className = 'input';
+  adDeviceSelect.style.cssText = 'width:100%; margin-bottom:var(--space-sm);';
+
+  const adWeightsContainer = document.createElement('div');
+  adWeightsContainer.id = 'adWeightsContainer';
+  adWeightsContainer.style.cssText = 'display:flex; flex-direction:column; gap:var(--space-xs); max-height:400px; overflow-y:auto;';
+
+  const adSaveBtn = document.createElement('button');
+  adSaveBtn.id = 'adWeightsSaveBtn';
+  adSaveBtn.className = 'primary';
+  adSaveBtn.style.cssText = 'display:none; width:100%;';
+  adSaveBtn.textContent = 'Сохранить веса';
+
+  const adStatus = document.createElement('div');
+  adStatus.id = 'adWeightsStatus';
+  adStatus.className = 'meta';
+  adStatus.style.cssText = 'min-height:1.2em; font-size:0.85rem;';
+
+  adSection.appendChild(adTitle);
+  adSection.appendChild(adDeviceSelect);
+  adSection.appendChild(adWeightsContainer);
+  adSection.appendChild(adSaveBtn);
+  adSection.appendChild(adStatus);
+  mainDiv.appendChild(adDivider);
+  mainDiv.appendChild(adSection);
   mainDiv.appendChild(cleanupContainer);
   container.appendChild(mainDiv);
   
@@ -2980,5 +3018,142 @@ async function loadSettingsContent(adminFetch) {
       cleanupOrphanedBtn.innerHTML = '🗑️';
     }
   };
+
+  // Ad file weights
+  const adSelect = document.getElementById('adWeightsContainer') && document.getElementById('adDeviceSelect');
+  if (adSelect) {
+    const adWeightsContainer = document.getElementById('adWeightsContainer');
+    const adSaveBtn = document.getElementById('adWeightsSaveBtn');
+    const adStatus = document.getElementById('adWeightsStatus');
+
+    (async () => {
+      try {
+        const devRes = await adminFetch('/api/devices');
+        const allDevices = await devRes.json();
+        const adDevices = Array.isArray(allDevices)
+          ? allDevices.filter(d => d.deviceType === 'ad_monitor')
+          : [];
+
+        if (adDevices.length === 0) {
+          adSelect.innerHTML = '<option value="">Нет рекламных мониторов</option>';
+          return;
+        }
+
+        adDevices.forEach(d => {
+          const opt = document.createElement('option');
+          opt.value = d.device_id;
+          opt.textContent = `${d.device_id}${d.name ? ' (' + d.name + ')' : ''}`;
+          adSelect.appendChild(opt);
+        });
+
+        let currentWeights = {};
+        let changed = false;
+
+        async function loadWeights(deviceId) {
+          adWeightsContainer.innerHTML = '<div class="meta" style="color:var(--text-secondary);">Загрузка...</div>';
+          adSaveBtn.style.display = 'none';
+          changed = false;
+          try {
+            const r = await adminFetch(`/api/ad/weights/${encodeURIComponent(deviceId)}`);
+            const data = await r.json();
+            currentWeights = data.weights || {};
+            renderWeights(deviceId);
+          } catch (e) {
+            adWeightsContainer.innerHTML = '<div class="meta" style="color:var(--danger);">Ошибка загрузки</div>';
+          }
+        }
+
+        function renderWeights(deviceId) {
+          adWeightsContainer.innerHTML = '';
+          const files = currentWeights;
+          const fileNames = Object.keys(files);
+          if (fileNames.length === 0) {
+            adWeightsContainer.innerHTML = '<div class="meta" style="color:var(--text-secondary);">Нет файлов с весами. Откройте файлы устройства через основную панель.</div>';
+            return;
+          }
+          for (const fname of fileNames.sort()) {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex; align-items:center; gap:var(--space-sm); padding:4px 0;';
+
+            const nameSpan = document.createElement('span');
+            nameSpan.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:0.9rem;';
+            nameSpan.textContent = fname;
+
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.min = 1;
+            input.max = 100;
+            input.value = files[fname] || 1;
+            input.style.cssText = 'width:60px; padding:4px 6px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--bg-input); color:var(--text-primary); font-size:0.85rem; text-align:center;';
+            input.onchange = () => {
+              const v = Math.max(1, Math.min(100, Math.round(Number(input.value) || 1)));
+              input.value = v;
+              if (v !== (currentWeights[fname] || 1)) {
+                changed = true;
+                adSaveBtn.style.display = '';
+              }
+            };
+
+            row.appendChild(nameSpan);
+            row.appendChild(input);
+            adWeightsContainer.appendChild(row);
+          }
+        }
+
+        adSelect.onchange = () => {
+          if (adSelect.value) loadWeights(adSelect.value);
+        };
+
+        adSaveBtn.onclick = async () => {
+          const deviceId = adSelect.value;
+          if (!deviceId) return;
+          adSaveBtn.disabled = true;
+          adSaveBtn.textContent = 'Сохранение...';
+          adStatus.textContent = '';
+          try {
+            const newWeights = {};
+            const rows = adWeightsContainer.querySelectorAll('div');
+            rows.forEach(row => {
+              const nameSpan = row.querySelector('span');
+              const input = row.querySelector('input');
+              if (nameSpan && input) {
+                newWeights[nameSpan.textContent] = Math.max(1, Math.min(100, Math.round(Number(input.value) || 1)));
+              }
+            });
+            const r = await adminFetch(`/api/ad/weights/${encodeURIComponent(deviceId)}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ weights: newWeights })
+            });
+            if (r.ok) {
+              currentWeights = newWeights;
+              changed = false;
+              adSaveBtn.style.display = 'none';
+              adStatus.textContent = 'Сохранено';
+              adStatus.style.color = 'var(--success)';
+              setTimeout(() => { adStatus.textContent = ''; }, 2000);
+            } else {
+              const err = await r.json();
+              adStatus.textContent = 'Ошибка: ' + (err.error || 'неизвестная');
+              adStatus.style.color = 'var(--danger)';
+            }
+          } catch (e) {
+            adStatus.textContent = 'Ошибка соединения';
+            adStatus.style.color = 'var(--danger)';
+          }
+          adSaveBtn.disabled = false;
+          adSaveBtn.textContent = 'Сохранить веса';
+        };
+
+        // Select first device
+        if (adDevices.length > 0) {
+          adSelect.value = adDevices[0].device_id;
+          await loadWeights(adDevices[0].device_id);
+        }
+      } catch (e) {
+        adSelect.innerHTML = '<option value="">Ошибка загрузки устройств</option>';
+      }
+    })();
+  }
 }
 
