@@ -1391,8 +1391,6 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
     btn.onclick = async () => {
       const safeName = decodeURIComponent(btn.getAttribute('data-safe'));
       const originalName = decodeURIComponent(btn.getAttribute('data-original') || safeName);
-      const hasTrailer = btn.getAttribute('data-has-trailer') === '1';
-      const trailerUrl = btn.getAttribute('data-trailer-url') || '';
       const previewContainer = document.querySelector('#detailPane .previewHolder');
       if (!previewContainer) return;
       closeImageViewer();
@@ -1549,9 +1547,6 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           u += `&type=image&page=1`;
         } else if (normalizedType === 'video' || VIDEO_EXTENSIONS.includes(getFileExtension(safeName))) {
           u += '&type=video';
-          if (hasTrailer && trailerUrl) {
-            u += `&trailerUrl=${encodeURIComponent(trailerUrl)}`;
-          }
         }
 
         u += `&t=${Date.now()}`;

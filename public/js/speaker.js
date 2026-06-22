@@ -2752,12 +2752,11 @@ async function loadFiles(stabilizeAttempt = 0) {
         currentPreviewContext = { deviceId: currentDevice, file: safeName, page: null };
         
         // Универсальная функция формирования src для превью
-        function buildPreviewSrc({ deviceId, fileName, type, trailerUrl, page, startTime }) {
+        function buildPreviewSrc({ deviceId, fileName, type, page, startTime }) {
           let src = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&file=${encodeURIComponent(fileName)}&preview=1&muted=1`;
           if (type) src += `&type=${encodeURIComponent(type)}`;
           if (typeof page !== 'undefined') src += `&page=${encodeURIComponent(page)}`;
           if (typeof startTime !== 'undefined' && startTime !== null) src += `&startTime=${encodeURIComponent(startTime)}`;
-          if (trailerUrl) src += `&trailerUrl=${encodeURIComponent(trailerUrl)}`;
           src += `&t=${Date.now()}`;
           return src;
         }
@@ -2765,14 +2764,10 @@ async function loadFiles(stabilizeAttempt = 0) {
         const ext = getFileExtension(safeName);
         let type = null;
         let page = undefined;
-        let trailerUrl = null;
         if (normalizedType === 'image' || IMAGE_EXTENSIONS.includes(ext)) {
           type = 'image';
           page = 1;
         } else if (normalizedType === 'video' || VIDEO_EXTENSIONS.includes(ext)) {
-          const hasTrailer = item.getAttribute('data-has-trailer') === '1';
-          trailerUrl = item.getAttribute('data-trailer-url');
-          if (!(hasTrailer && trailerUrl)) trailerUrl = null;
           type = 'video';
         } else if (normalizedType === 'audio') {
           type = 'audio';
@@ -2784,7 +2779,6 @@ async function loadFiles(stabilizeAttempt = 0) {
           deviceId: currentDevice,
           fileName: safeName,
           type,
-          trailerUrl,
           page,
           startTime
         });
@@ -2916,27 +2910,21 @@ async function loadFiles(stabilizeAttempt = 0) {
       // Видео/изображения — показываем корректное превью выбранного файла (или трейлера)
       setTimeout(() => {
         // Универсальная функция формирования src для превью (дублирует buildPreviewSrc выше)
-        function buildPreviewSrc({ deviceId, fileName, type, trailerUrl, page, startTime }) {
+        function buildPreviewSrc({ deviceId, fileName, type, page, startTime }) {
           let src = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&file=${encodeURIComponent(fileName)}&preview=1&muted=1`;
           if (type) src += `&type=${encodeURIComponent(type)}`;
           if (typeof page !== 'undefined') src += `&page=${encodeURIComponent(page)}`;
           if (typeof startTime !== 'undefined' && startTime !== null) src += `&startTime=${encodeURIComponent(startTime)}`;
-          if (trailerUrl) src += `&trailerUrl=${encodeURIComponent(trailerUrl)}`;
           src += `&t=${Date.now()}`;
           return src;
         }
         let type = null;
         let page = undefined;
-        let trailerUrl = null;
         const ext = getFileExtension(safeName);
         if (IMAGE_EXTENSIONS.includes(ext)) {
           type = 'image';
           page = 1;
         } else if (VIDEO_EXTENSIONS.includes(ext)) {
-          // Проверяем наличие трейлера
-          const hasTrailer = containerItem.getAttribute('data-has-trailer') === '1';
-          trailerUrl = containerItem.getAttribute('data-trailer-url');
-          if (!(hasTrailer && trailerUrl)) trailerUrl = null;
           type = 'video';
         }
         const startTime = getStartTimeForFile(targetDeviceId, safeName);
@@ -2944,7 +2932,6 @@ async function loadFiles(stabilizeAttempt = 0) {
           deviceId: targetDeviceId,
           fileName: safeName,
           type,
-          trailerUrl,
           page,
           startTime
         });

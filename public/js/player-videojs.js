@@ -29,7 +29,6 @@ const previewFile = url.searchParams.get('file');
 const previewOriginalName = url.searchParams.get('originalName'); // Оригинальное имя для отображения
 const previewStreamProtocol = url.searchParams.get('protocol');
 const previewStreamUrl = url.searchParams.get('stream_url'); // Прямой URL стрима для превью
-const previewTrailerUrl = url.searchParams.get('trailerUrl');
 const previewClientVersionParam = url.searchParams.get('clientVersion');
 const previewStartTime = url.searchParams.get('startTime');
 
@@ -1079,7 +1078,7 @@ if (!device_id || !device_id.trim()) {
                 console.log('[Player] 🎬 Preview видео:', previewFile);
                 vjsPlayer.muted(true);
                 vjsPlayer.volume(0);
-                const previewVideoUrl = previewTrailerUrl || content(previewFile);
+                const previewVideoUrl = content(previewFile);
                 if (videoContainer) {
                   videoContainer.style.display = 'block';
                   videoContainer.style.visibility = 'visible';
