@@ -17,7 +17,9 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   card.style.flexDirection = 'column';
   card.style.minHeight = '0';
   const name = d.name || nodeNames[d.device_id] || d.device_id;
-  const playerUrl = `${window.location.origin}/player-videojs.html?device_id=${did}`;
+  const playerUrl = d.deviceType === 'ad_monitor'
+    ? `${window.location.origin}/ad-display.html?device_id=${did}`
+    : `${window.location.origin}/player-videojs.html?device_id=${did}`;
   const safeName = escapeHtml(name);
   const safeDeviceType = escapeHtml(DEVICE_TYPE_NAMES[d.deviceType] || d.deviceType || 'Browser');
   const safePlatform = escapeHtml(d.platform || '');

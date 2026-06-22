@@ -54,7 +54,7 @@
     }
 
     function getContentUrl(fileName) {
-      return `/devices/${encodeURIComponent(deviceId)}/${encodeURIComponent(fileName)}`;
+      return `/content/${encodeURIComponent(deviceId)}/${encodeURIComponent(fileName)}`;
     }
 
     const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg']);

@@ -63,7 +63,12 @@ const MODULES = {
       const idCol = isPg ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT';
       const tsCol = isPg ? 'TIMESTAMP' : 'DATETIME';
       return `
-        CREATE TABLE IF NOT EXISTS ad_analytics (
+        DROP TABLE IF EXISTS ad_videos;
+        DROP TABLE IF EXISTS ad_displays;
+        DROP TABLE IF EXISTS ad_schedules;
+        DROP TABLE IF EXISTS ad_analytics;
+
+        CREATE TABLE ad_analytics (
           id ${idCol},
           device_id TEXT NOT NULL,
           file_name TEXT NOT NULL,
