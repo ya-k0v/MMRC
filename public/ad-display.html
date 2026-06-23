@@ -27,9 +27,6 @@
       border-radius: 4px;
       display: none;
     }
-    @media (max-width: 767px) {
-      #playerBadge { bottom: 8px; right: 8px; font-size: 10px; }
-    }
   </style>
 </head>
 <body>
@@ -65,6 +62,30 @@
     let preloadTimer = null;
     let offline = false;
     let statsQueue = [];
+
+    const LS_FILE_LIST = 'ad_file_list';
+    const LS_FILE_WEIGHTS = 'ad_file_weights';
+
+    function saveFileList(files) {
+      try { localStorage.setItem(LS_FILE_LIST, JSON.stringify(files)); } catch {}
+    }
+    function loadCachedFileList() {
+      try {
+        const v = localStorage.getItem(LS_FILE_LIST);
+        if (v) return JSON.parse(v);
+      } catch {}
+      return null;
+    }
+    function saveWeights(w) {
+      try { localStorage.setItem(LS_FILE_WEIGHTS, JSON.stringify(w)); } catch {}
+    }
+    function loadCachedWeights() {
+      try {
+        const v = localStorage.getItem(LS_FILE_WEIGHTS);
+        if (v) return JSON.parse(v);
+      } catch {}
+      return null;
+    }
 
     if (isPreview) {
       document.getElementById('offlineBadge')?.remove();
@@ -198,6 +219,7 @@
       imageDisplay.style.display = 'none';
       playerEl.style.display = '';
       overlay.classList.add('hidden');
+      clearTimeout(imageTimer);
       currentFileName = fileName;
       try {
         const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
@@ -232,6 +254,7 @@
 
     async function playNext() {
       clearInterval(progressTimer);
+      clearTimeout(imageTimer);
       if (!fileList.length) {
         if (offline) {
           setTimeout(playNext, 10000);
@@ -282,6 +305,13 @@
       if (!isPreview) {
         overlay.classList.add('hidden');
         startPing();
+        const cached = loadCachedFileList();
+        if (cached && cached.length) {
+          fileList = cached;
+          const w = loadCachedWeights();
+          if (w) fileWeights = w;
+          playNext();
+        }
       } else {
         overlay.textContent = 'Загрузка превью...';
       }
@@ -310,6 +340,14 @@
       socket.on('connect_error', () => {
         offline = true;
         if (offlineBadge) offlineBadge.style.display = 'block';
+        if (!fileList.length) {
+          const cached = loadCachedFileList();
+          if (cached && cached.length) {
+            fileList = cached;
+            const w = loadCachedWeights();
+            if (w) fileWeights = w;
+          }
+        }
         if (fileList.length) {
           overlay.classList.add('hidden');
           if (!currentFileName) playNext();
@@ -342,6 +380,7 @@
 
       function onFilesReady(files) {
         fileList = filterPlayableFiles(files || []);
+        saveFileList(fileList);
         registered = true;
         overlay.classList.add('hidden');
         playNext();
@@ -353,7 +392,7 @@
         try {
           const r = await fetch(`/api/ad/weights/${encodeURIComponent(deviceId)}`);
           const wd = await r.json();
-          if (wd.weights) fileWeights = wd.weights;
+          if (wd.weights) { fileWeights = wd.weights; saveWeights(fileWeights); }
         } catch {}
       });
 
@@ -366,6 +405,7 @@
         const newFiles = filterPlayableFiles(data.files || []);
         if (JSON.stringify(newFiles) !== JSON.stringify(fileList)) {
           fileList = newFiles;
+          saveFileList(fileList);
           currentIndex = 0;
           if (player) { try { player.pause(); } catch {} }
           clearTimeout(imageTimer);
