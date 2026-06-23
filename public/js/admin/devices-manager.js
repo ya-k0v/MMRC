@@ -90,6 +90,7 @@ export function renderTVList(devicesCache, readyDevices, currentDeviceId, nodeNa
     content.appendChild(header);
     content.appendChild(metaDiv);
     content.appendChild(filesDiv);
+
     li.appendChild(content);
     tvList.appendChild(li);
   });

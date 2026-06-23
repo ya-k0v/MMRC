@@ -422,8 +422,11 @@ export function setupDeviceHandlers(socket, deps) {
         if (type === 'video' && file) {
           const prev = device.current || {};
           if (prev.type !== 'video' || prev.file !== file || prev.state !== 'playing') {
-            device.current = { type: 'video', file, state: 'playing', currentTime };
+            device.current = { type: 'video', file, state: 'playing', currentTime, duration };
             stateChanged = true;
+          }
+          if (duration && device.current) {
+            device.current.duration = duration;
           }
         } else if (type === 'audio' && file) {
           const prev = device.current || {};

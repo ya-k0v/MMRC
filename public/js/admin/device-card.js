@@ -16,6 +16,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   card.style.display = 'flex';
   card.style.flexDirection = 'column';
   card.style.minHeight = '0';
+  card.dataset.deviceId = d.device_id;
   const name = d.name || nodeNames[d.device_id] || d.device_id;
   const playerUrl = d.deviceType === 'ad_monitor'
     ? `${window.location.origin}/ad-display.html?device_id=${did}`
@@ -213,6 +214,9 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   card.appendChild(metaDiv);
   
   function buildDevicePreviewUrl(device) {
+    if (device.deviceType === 'ad_monitor') {
+      return `/ad-display.html?device_id=${did}`;
+    }
     let url = `/player-videojs.html?device_id=${did}&preview=1&muted=1`;
     const cur = device.current;
     if (cur && cur.file) {
@@ -260,7 +264,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   previewContainer.appendChild(previewCompact);
   previewContainer.appendChild(previewExpanded);
   card.appendChild(previewContainer);
-  
+
   // Управление воспроизведением
   const deviceControlsRow = document.createElement('div');
   deviceControlsRow.className = 'device-controls-row';
@@ -752,5 +756,9 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   }
 
   return card;
+}
+
+export function updateDeviceCardPlayback(_deviceId, _file, _currentTime, _duration) {
+  // не используется
 }
 

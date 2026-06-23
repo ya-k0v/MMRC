@@ -55,6 +55,7 @@
     const overlay = document.getElementById('overlay');
     const params = new URLSearchParams(location.search);
     const deviceId = params.get('device_id') || localStorage.getItem('ad_device_id');
+    const isPreview = params.get('preview') === '1';
 
     let player = null;
     let fileList = [];
@@ -70,8 +71,16 @@
           controls: false, autoplay: true, muted: true, preload: 'auto',
           html5: { nativeAudioTracks: false, nativeVideoTracks: false }
         });
-        player.on('ended', playNext);
-        player.on('error', () => { setTimeout(playNext, 5000); });
+        player.on('ended', () => {
+          if (currentFileName) markCompleted(currentFileName);
+          currentFileName = null;
+          playNext();
+        });
+        player.on('error', () => {
+          if (currentFileName) logDeviceEvent('playback_error', currentFileName);
+          currentFileName = null;
+          setTimeout(playNext, 5000);
+        });
       }
     }
 
@@ -89,7 +98,7 @@
     function fileNameOnly(p) { return p.split(/[/\\]/).pop(); }
 
     function sendProgress(fileName, currentTime, duration) {
-      if (!registered) return;
+      if (!registered || isPreview) return;
       socket.emit('player/progress', {
         device_id: deviceId,
         type: 'video',
@@ -99,35 +108,69 @@
       });
     }
 
+    function logDeviceEvent(event, detail) {
+      if (isPreview) return;
+      fetch('/api/ad/analytics/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_id: deviceId, event, detail: detail || null })
+      }).catch(() => {});
+    }
+
+    function markCompleted(fileName) {
+      if (isPreview) return;
+      fetch('/api/ad/analytics/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_id: deviceId, file_name: fileName })
+      }).catch(() => {});
+    }
+
+    const IMAGE_DURATION = 10;
+
     function showImage(fileName) {
       const url = getContentUrl(fileName);
-      imageEl.src = url;
       imageDisplay.style.display = 'flex';
       playerEl.style.display = 'none';
       overlay.classList.add('hidden');
-      reportImpression(fileName);
-      sendProgress(fileName, 0, 10);
+      currentFileName = fileName;
+      imageEl.src = url;
+      reportImpression(fileName, IMAGE_DURATION, 1);
+      sendProgress(fileName, 0, IMAGE_DURATION);
       clearTimeout(imageTimer);
-      imageTimer = setTimeout(playNext, 10000);
+      imageTimer = setTimeout(() => {
+        markCompleted(fileName);
+        currentFileName = null;
+        playNext();
+      }, IMAGE_DURATION * 1000);
     }
+
+    let currentFileName = null;
 
     function playVideoFile(fileName) {
       const url = getContentUrl(fileName);
       imageDisplay.style.display = 'none';
       playerEl.style.display = '';
       overlay.classList.add('hidden');
-      reportImpression(fileName);
+      currentFileName = fileName;
       try {
         const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
         const mime = ext === '.webm' ? 'video/webm' : ext === '.ogg' ? 'video/ogg' : 'video/mp4';
         player.src({ src: url, type: mime });
         player.play();
+        player.one('loadedmetadata', () => {
+          const dur = Math.round(player.duration() || 0);
+          reportImpression(fileName, dur, 0);
+        });
         progressTimer = setInterval(() => {
           if (player && !player.paused()) {
             sendProgress(fileName, player.currentTime(), player.duration());
           }
         }, 2000);
-      } catch { setTimeout(playNext, 3000); }
+      } catch {
+        logDeviceEvent('playback_error', fileName);
+        setTimeout(playNext, 3000);
+      }
     }
 
     function pickWeightedFile() {
@@ -153,12 +196,18 @@
       else playVideoFile(fileName);
     }
 
-    async function reportImpression(fileName) {
+    async function reportImpression(fileName, durationSec, completed) {
+      if (isPreview) return;
       try {
         await fetch('/api/ad/analytics/report', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ device_id: deviceId, file_name: fileName })
+          body: JSON.stringify({
+            device_id: deviceId,
+            file_name: fileName,
+            duration_sec: durationSec || null,
+            completed: completed ? 1 : 0
+          })
         });
       } catch {}
     }
@@ -180,36 +229,55 @@
       initPlayer();
 
       const badge = document.getElementById('playerBadge');
-      if (badge) badge.textContent = deviceId;
+      if (badge) badge.textContent = isPreview ? 'Превью: ' + deviceId : deviceId;
+      if (isPreview) {
+        overlay.textContent = 'Загрузка превью...';
+      }
 
       socket.on('connect', () => {
-        overlay.textContent = 'Регистрация...';
-        socket.emit('player/register', { device_id: deviceId, device_type: 'ad_monitor', platform: 'ad_display' });
+        if (isPreview) {
+          overlay.textContent = 'Загрузка файлов...';
+          socket.emit('files/request', { device_id: deviceId });
+        } else {
+          overlay.textContent = 'Регистрация...';
+          logDeviceEvent('online', 'socket_connected');
+          socket.emit('player/register', { device_id: deviceId, device_type: 'ad_monitor', platform: 'ad_display' });
+        }
+      });
+
+      socket.on('disconnect', () => {
+        if (!isPreview) logDeviceEvent('offline', 'socket_disconnected');
       });
 
       socket.on('player/reject', (data) => {
+        if (!isPreview) logDeviceEvent('reject', data.reason || 'unknown_device');
         overlay.textContent = 'Устройство не найдено: ' + (data.reason || 'unknown_device');
         overlay.classList.remove('hidden');
       });
 
-      socket.on('player/registered', async (data) => {
+      function onFilesReady(files) {
+        fileList = filterPlayableFiles(files || []);
         registered = true;
-        fileList = filterPlayableFiles(data.files || []);
         overlay.classList.add('hidden');
+        playNext();
+      }
+
+      socket.on('player/registered', async (data) => {
+        if (isPreview) return;
+        onFilesReady(data.files);
         try {
           const r = await fetch(`/api/ad/weights/${encodeURIComponent(deviceId)}`);
           const wd = await r.json();
           if (wd.weights) fileWeights = wd.weights;
         } catch {}
-        playNext();
-      });
-
-      socket.on('devices/updated', () => {
-        socket.emit('files/request', { device_id: deviceId });
       });
 
       socket.on('files/list', (data) => {
         if (data.device_id !== deviceId) return;
+        if (isPreview && !registered) {
+          onFilesReady(data.files);
+          return;
+        }
         const newFiles = filterPlayableFiles(data.files || []);
         if (JSON.stringify(newFiles) !== JSON.stringify(fileList)) {
           fileList = newFiles;
@@ -218,6 +286,10 @@
           clearTimeout(imageTimer);
           playNext();
         }
+      });
+
+      socket.on('devices/updated', () => {
+        socket.emit('files/request', { device_id: deviceId });
       });
     }
 

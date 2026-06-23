@@ -67,7 +67,9 @@ const MODULES = {
           id ${idCol},
           device_id TEXT NOT NULL,
           file_name TEXT NOT NULL,
-          played_at ${tsCol} NOT NULL DEFAULT CURRENT_TIMESTAMP
+          played_at ${tsCol} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          duration_sec INTEGER DEFAULT NULL,
+          completed INTEGER DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS ad_file_weights (
@@ -80,9 +82,23 @@ const MODULES = {
           UNIQUE(device_id, file_name)
         );
 
+        CREATE TABLE IF NOT EXISTS ad_device_log (
+          id ${idCol},
+          device_id TEXT NOT NULL,
+          event TEXT NOT NULL,
+          detail TEXT DEFAULT NULL,
+          created_at ${tsCol} NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE INDEX IF NOT EXISTS idx_ad_analytics_device ON ad_analytics(device_id);
         CREATE INDEX IF NOT EXISTS idx_ad_analytics_date ON ad_analytics(played_at);
         CREATE INDEX IF NOT EXISTS idx_ad_weights_device ON ad_file_weights(device_id);
+        CREATE INDEX IF NOT EXISTS idx_ad_device_log_device ON ad_device_log(device_id);
+        CREATE INDEX IF NOT EXISTS idx_ad_device_log_date ON ad_device_log(created_at);
+
+        -- Migrations for existing databases
+        ALTER TABLE ad_analytics ADD COLUMN duration_sec INTEGER DEFAULT NULL;
+        ALTER TABLE ad_analytics ADD COLUMN completed INTEGER DEFAULT 0;
       `;
     }
   }

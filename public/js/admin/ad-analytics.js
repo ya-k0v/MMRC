@@ -56,6 +56,8 @@ function renderResults(data) {
       <div><div class="meta">Показов</div><div style="font-size:1.5rem;font-weight:600;">${s.total_plays || 0}</div></div>
       <div><div class="meta">Устройств</div><div style="font-size:1.5rem;font-weight:600;">${s.unique_devices || 0}</div></div>
       <div><div class="meta">Файлов</div><div style="font-size:1.5rem;font-weight:600;">${s.unique_files || 0}</div></div>
+      <div><div class="meta">Завершено</div><div style="font-size:1.5rem;font-weight:600;">${s.completed_plays || 0} <span class="meta" style="font-size:0.85rem;">(${s.completion_rate || 0}%)</span></div></div>
+      <div><div class="meta">Средняя длит.</div><div style="font-size:1.2rem;font-weight:600;">${s.avg_duration_sec || 0}с</div></div>
       ${s.last_date ? `<div><div class="meta">Последний показ</div><div style="font-size:1rem;">${s.last_date.substring(0, 10)}</div></div>` : ''}
     </div>
   </div>`;
@@ -70,12 +72,16 @@ function renderResults(data) {
             <th style="text-align:left;padding:6px 8px;">Дата</th>
             <th style="text-align:left;padding:6px 8px;">Час</th>
             <th style="text-align:right;padding:6px 8px;">Показы</th>
+            <th style="text-align:right;padding:6px 8px;">Заверш.</th>
+            <th style="text-align:right;padding:6px 8px;">Ср.длит.</th>
           </tr></thead>
           <tbody>${data.perFile.map(r => `<tr style="border-bottom:1px solid var(--border);">
             <td style="padding:6px 8px;">${escapeHtml(r.file_name)}</td>
             <td style="padding:6px 8px;">${r.play_date}</td>
             <td style="padding:6px 8px;">${r.play_hour}:00</td>
             <td style="padding:6px 8px;text-align:right;">${r.plays}</td>
+            <td style="padding:6px 8px;text-align:right;">${r.completion_rate || 0}%</td>
+            <td style="padding:6px 8px;text-align:right;">${r.avg_duration || 0}с</td>
           </tr>`).join('')}</tbody>
         </table>
       </div>

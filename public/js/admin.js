@@ -9,7 +9,7 @@ import { loadFilesWithStatus, refreshFilesPanel as refreshFilesPanelModule } fro
 import { previewFile, makeDefault, renameFile, deleteFile } from './admin/file-actions.js';
 import { uploadFiles, copyFile } from './admin/upload-manager.js';
 import { clearDetail, clearFilesPane, openDevice as openDeviceHelper } from './admin/ui-helpers.js';
-import { renderDeviceCard as renderDeviceCardModule } from './admin/device-card.js';
+import { renderDeviceCard as renderDeviceCardModule, updateDeviceCardPlayback } from './admin/device-card.js';
 import { setupUploadUI as setupUploadUIModule } from './admin/upload-ui.js';
 import { showDevicesModal, showUsersModal, showSettingsModal } from './admin/modal.js';
 import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon } from './shared/svg-icons.js';
@@ -96,6 +96,7 @@ setupSocketListeners(socket, {
     }
   },
   onPlayerProgress: (device_id, file, currentTime, duration) => {
+    updateDeviceCardPlayback(device_id, file, currentTime, duration);
     if (currentDeviceId === device_id) {
       updatePlaybackProgress(device_id, file, currentTime, duration);
     }
@@ -653,19 +654,16 @@ function updateFileProgress(deviceId, fileName, progress) {
   }
 }
 
-// Обновление прогресс-бара воспроизведения файла (не путать с оптимизацией)
+// Обновление фона файла по прогрессу воспроизведения
 let _lastPlaybackFile = null;
 
 function updatePlaybackProgress(device_id, fileName, currentTime, duration) {
-  // Сбрасываем подсветку предыдущего файла, если сменился
   if (_lastPlaybackFile && _lastPlaybackFile !== fileName) {
     const prevEls = document.querySelectorAll('.file-item');
     for (const pel of prevEls) {
       const pn = pel.querySelector('.file-name');
       if (pn && pn.textContent === _lastPlaybackFile) {
         pel.style.background = '';
-        const oldBar = pel.querySelector('.playback-progress');
-        if (oldBar) oldBar.remove();
         break;
       }
     }
@@ -676,26 +674,11 @@ function updatePlaybackProgress(device_id, fileName, currentTime, duration) {
   for (const fileEl of fileElements) {
     const fileNameEl = fileEl.querySelector('.file-name');
     if (fileNameEl && fileNameEl.textContent === fileName) {
-      fileEl.style.background = 'var(--bg-active, rgba(59, 130, 246, 0.08))';
-
-      let playbackBar = fileEl.querySelector('.playback-progress');
-      if (!playbackBar) {
-        playbackBar = document.createElement('div');
-        playbackBar.className = 'playback-progress';
-        playbackBar.style.cssText = 'height:3px; background:rgba(255,255,255,0.08); border-radius:2px; margin-top:3px; overflow:hidden;';
-
-        const playbackFill = document.createElement('div');
-        playbackFill.className = 'playback-progress-fill';
-        playbackFill.style.cssText = 'height:100%; background:linear-gradient(90deg, #3b82f6, #8b5cf6); transition:width 0.5s ease; width:0%;';
-
-        playbackBar.appendChild(playbackFill);
-        fileEl.appendChild(playbackBar);
-      }
-
-      const playbackFill = playbackBar.querySelector('.playback-progress-fill');
-      if (playbackFill && duration > 0) {
-        const pct = Math.min(100, Math.round((currentTime / duration) * 100));
-        playbackFill.style.width = pct + '%';
+      if (duration > 0) {
+        const pct = Math.min(100, Math.max(0, Math.round((currentTime / duration) * 100)));
+        fileEl.style.background = `linear-gradient(90deg, rgba(0,0,0,0.1) ${pct}%, transparent ${pct}%)`;
+      } else {
+        fileEl.style.background = 'var(--bg-active, rgba(59, 130, 246, 0.08))';
       }
       break;
     }

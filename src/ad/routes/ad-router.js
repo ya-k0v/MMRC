@@ -21,18 +21,58 @@ export function createAdRouter(deps = {}) {
   // POST /api/ad/analytics/report — log an ad impression
   router.post('/analytics/report', async (req, res) => {
     try {
-      const { device_id, file_name } = req.body;
+      const { device_id, file_name, duration_sec, completed } = req.body;
       if (!device_id || !file_name) {
         return res.status(400).json({ error: 'device_id и file_name обязательны' });
       }
+      const dur = duration_sec != null ? Math.round(Number(duration_sec)) : null;
+      const comp = completed ? 1 : 0;
       await dbExec(
-        'INSERT INTO ad_analytics (device_id, file_name) VALUES (?, ?)',
-        [device_id.trim(), file_name.trim()]
+        'INSERT INTO ad_analytics (device_id, file_name, duration_sec, completed) VALUES (?, ?, ?, ?)',
+        [device_id.trim(), file_name.trim(), dur, comp]
       );
       res.json({ ok: true });
     } catch (err) {
       logger.error('[Ad] Failed to report analytics:', err.message);
       res.status(500).json({ error: 'Ошибка записи аналитики' });
+    }
+  });
+
+  // POST /api/ad/analytics/complete — mark last impression as completed
+  router.post('/analytics/complete', async (req, res) => {
+    try {
+      const { device_id, file_name } = req.body;
+      if (!device_id || !file_name) {
+        return res.status(400).json({ error: 'device_id и file_name обязательны' });
+      }
+      await dbExec(
+        `UPDATE ad_analytics SET completed = 1
+         WHERE device_id = ? AND file_name = ? AND completed = 0
+         ORDER BY id DESC LIMIT 1`,
+        [device_id.trim(), file_name.trim()]
+      );
+      res.json({ ok: true });
+    } catch (err) {
+      logger.error('[Ad] Failed to mark completion:', err.message);
+      res.status(500).json({ error: 'Ошибка отметки завершения' });
+    }
+  });
+
+  // POST /api/ad/analytics/log — device event log
+  router.post('/analytics/log', async (req, res) => {
+    try {
+      const { device_id, event, detail } = req.body;
+      if (!device_id || !event) {
+        return res.status(400).json({ error: 'device_id и event обязательны' });
+      }
+      await dbExec(
+        'INSERT INTO ad_device_log (device_id, event, detail) VALUES (?, ?, ?)',
+        [device_id.trim(), event.trim(), detail ? String(detail).trim() : null]
+      );
+      res.json({ ok: true });
+    } catch (err) {
+      logger.error('[Ad] Failed to log device event:', err.message);
+      res.status(500).json({ error: 'Ошибка логирования' });
     }
   });
 
@@ -48,19 +88,28 @@ export function createAdRouter(deps = {}) {
       const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
 
       const rows = await dbQuery(
-        `SELECT a.id, a.device_id, a.file_name, a.played_at
+        `SELECT a.id, a.device_id, a.file_name, a.played_at, a.duration_sec, a.completed
          FROM ad_analytics a
          ${where}
          ORDER BY a.played_at DESC`,
         params
       );
 
+      const completedRows = rows.filter(r => r.completed);
+      const withDuration = rows.filter(r => r.duration_sec != null);
+      const avgDuration = withDuration.length
+        ? Math.round(withDuration.reduce((s, r) => s + Number(r.duration_sec), 0) / withDuration.length)
+        : 0;
+
       const summary = {
         total_plays: rows.length,
         unique_devices: new Set(rows.map(r => r.device_id)).size,
         unique_files: new Set(rows.map(r => r.file_name)).size,
         first_date: rows.length ? rows[rows.length - 1].played_at : null,
-        last_date: rows.length ? rows[0].played_at : null
+        last_date: rows.length ? rows[0].played_at : null,
+        completed_plays: completedRows.length,
+        completion_rate: rows.length ? Math.round((completedRows.length / rows.length) * 100) : 0,
+        avg_duration_sec: avgDuration
       };
 
       const perDeviceMap = {};
@@ -72,8 +121,16 @@ export function createAdRouter(deps = {}) {
         const fk = `${r.file_name}|${d}|${h}`;
         if (!perDeviceMap[dk]) perDeviceMap[dk] = { device_id: r.device_id, play_date: d, total_plays: 0 };
         perDeviceMap[dk].total_plays++;
-        if (!perFileMap[fk]) perFileMap[fk] = { file_name: r.file_name, play_date: d, play_hour: h, plays: 0 };
+        if (!perFileMap[fk]) perFileMap[fk] = { file_name: r.file_name, play_date: d, play_hour: h, plays: 0, completed: 0, total_duration: 0 };
         perFileMap[fk].plays++;
+        if (r.completed) perFileMap[fk].completed++;
+        if (r.duration_sec != null) perFileMap[fk].total_duration += Number(r.duration_sec);
+      }
+      for (const k of Object.keys(perFileMap)) {
+        const f = perFileMap[k];
+        f.avg_duration = f.plays ? Math.round(f.total_duration / f.plays) : 0;
+        f.completion_rate = f.plays ? Math.round((f.completed / f.plays) * 100) : 0;
+        delete f.total_duration;
       }
 
       res.json({
