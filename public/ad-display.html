@@ -30,29 +30,43 @@
       user-select: none;
       max-width: min(60vw, 480px);
     }
+    #offlineBadge {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      z-index: 9999;
+      background: rgba(220, 38, 38, 0.85);
+      color: #fff;
+      font: 11px sans-serif;
+      padding: 3px 8px;
+      border-radius: 4px;
+      display: none;
+    }
     @media (max-width: 767px) {
-      #playerBadge {
-        bottom: 8px;
-        right: 8px;
-        font-size: 10px;
-      }
+      #playerBadge { bottom: 8px; right: 8px; font-size: 10px; }
     }
   </style>
 </head>
 <body>
   <div id="overlay">Подключение к серверу...</div>
   <div id="playerBadge" aria-hidden="true"></div>
+  <div id="offlineBadge">Нет соединения</div>
   <div id="imageDisplay"><img id="imageEl" /></div>
   <video id="player" class="video-js vjs-default-skin" autoplay muted playsinline></video>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="https://vjs.zencdn.net/8.16.1/video.min.js"></script>
   <script>
-    const socket = io();
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw-ad-display.js').catch(() => {});
+    }
+
+    const socket = io({ reconnection: true, reconnectionDelay: 2000, reconnectionAttempts: Infinity });
     const playerEl = document.getElementById('player');
     const imageDisplay = document.getElementById('imageDisplay');
     const imageEl = document.getElementById('imageEl');
     const overlay = document.getElementById('overlay');
+    const offlineBadge = document.getElementById('offlineBadge');
     const params = new URLSearchParams(location.search);
     const deviceId = params.get('device_id') || localStorage.getItem('ad_device_id');
     const isPreview = params.get('preview') === '1';
@@ -64,6 +78,14 @@
     let imageTimer = null;
     let progressTimer = null;
     let registered = false;
+    let pingTimer = null;
+    let preloadTimer = null;
+    let offline = false;
+    let statsQueue = [];
+
+    if (isPreview) {
+      document.getElementById('offlineBadge')?.remove();
+    }
 
     function initPlayer() {
       if (!player) {
@@ -77,7 +99,7 @@
           playNext();
         });
         player.on('error', () => {
-          if (currentFileName) logDeviceEvent('playback_error', currentFileName);
+          if (currentFileName) sendStats('/api/ad/analytics/log', { device_id: deviceId, event: 'playback_error', detail: currentFileName });
           currentFileName = null;
           setTimeout(playNext, 5000);
         });
@@ -108,25 +130,69 @@
       });
     }
 
-    function logDeviceEvent(event, detail) {
-      if (isPreview) return;
-      fetch('/api/ad/analytics/log', {
+    function sendStats(url, body) {
+      if (offline) {
+        statsQueue.push({ url, body });
+        return Promise.resolve();
+      }
+      return fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ device_id: deviceId, event, detail: detail || null })
-      }).catch(() => {});
+        body: JSON.stringify(body)
+      }).catch(() => {
+        statsQueue.push({ url, body });
+      });
     }
 
-    function markCompleted(fileName) {
-      if (isPreview) return;
-      fetch('/api/ad/analytics/complete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ device_id: deviceId, file_name: fileName })
-      }).catch(() => {});
+    async function flushStatsQueue() {
+      if (!statsQueue.length || offline) return;
+      const items = statsQueue.splice(0);
+      for (const item of items) {
+        try {
+          await fetch(item.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(item.body)
+          });
+        } catch {
+          statsQueue.push(item);
+          break;
+        }
+      }
     }
 
     const IMAGE_DURATION = 10;
+
+    function preloadNext() {
+      clearTimeout(preloadTimer);
+      preloadTimer = setTimeout(() => {
+        if (!fileList.length) return;
+        const next = pickNextFile();
+        if (!next) return;
+        const url = getContentUrl(next);
+        if (isImageFile(next)) {
+          const img = new Image();
+          img.src = url;
+        } else {
+          const link = document.createElement('link');
+          link.rel = 'preload';
+          link.as = 'video';
+          link.href = url;
+          document.head.appendChild(link);
+          setTimeout(() => link.remove(), 10000);
+        }
+      }, 3000);
+    }
+
+    function pickNextFile() {
+      if (!fileList.length) return null;
+      const candidates = [];
+      for (const f of fileList) {
+        const w = fileWeights[f] || 1;
+        for (let i = 0; i < w; i++) candidates.push(f);
+      }
+      return candidates.length ? candidates[Math.floor(Math.random() * candidates.length)] : fileList[0];
+    }
 
     function showImage(fileName) {
       const url = getContentUrl(fileName);
@@ -135,9 +201,10 @@
       overlay.classList.add('hidden');
       currentFileName = fileName;
       imageEl.src = url;
-      reportImpression(fileName, IMAGE_DURATION, 1);
+      sendStats('/api/ad/analytics/report', { device_id: deviceId, file_name: fileName, duration_sec: IMAGE_DURATION, completed: 1 });
       sendProgress(fileName, 0, IMAGE_DURATION);
       clearTimeout(imageTimer);
+      preloadNext();
       imageTimer = setTimeout(() => {
         markCompleted(fileName);
         currentFileName = null;
@@ -160,15 +227,16 @@
         player.play();
         player.one('loadedmetadata', () => {
           const dur = Math.round(player.duration() || 0);
-          reportImpression(fileName, dur, 0);
+          sendStats('/api/ad/analytics/report', { device_id: deviceId, file_name: fileName, duration_sec: dur, completed: 0 });
         });
         progressTimer = setInterval(() => {
           if (player && !player.paused()) {
             sendProgress(fileName, player.currentTime(), player.duration());
           }
         }, 2000);
+        preloadNext();
       } catch {
-        logDeviceEvent('playback_error', fileName);
+        sendStats('/api/ad/analytics/log', { device_id: deviceId, event: 'playback_error', detail: fileName });
         setTimeout(playNext, 3000);
       }
     }
@@ -186,6 +254,10 @@
     async function playNext() {
       clearInterval(progressTimer);
       if (!fileList.length) {
+        if (offline) {
+          setTimeout(playNext, 10000);
+          return;
+        }
         overlay.textContent = 'Нет файлов. Ожидание...';
         overlay.classList.remove('hidden');
         setTimeout(() => { socket.emit('files/request', { device_id: deviceId }); playNext(); }, 30000);
@@ -196,20 +268,19 @@
       else playVideoFile(fileName);
     }
 
-    async function reportImpression(fileName, durationSec, completed) {
+    function reportImpression(fileName, durationSec, completed) {
       if (isPreview) return;
-      try {
-        await fetch('/api/ad/analytics/report', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            device_id: deviceId,
-            file_name: fileName,
-            duration_sec: durationSec || null,
-            completed: completed ? 1 : 0
-          })
-        });
-      } catch {}
+      sendStats('/api/ad/analytics/report', {
+        device_id: deviceId,
+        file_name: fileName,
+        duration_sec: durationSec || null,
+        completed: completed ? 1 : 0
+      });
+    }
+
+    function markCompleted(fileName) {
+      if (isPreview) return;
+      sendStats('/api/ad/analytics/complete', { device_id: deviceId, file_name: fileName });
     }
 
     function filterPlayableFiles(files) {
@@ -217,6 +288,13 @@
         const ext = f.substring(f.lastIndexOf('.')).toLowerCase();
         return isImageFile(f) || ['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext);
       });
+    }
+
+    function startPing() {
+      clearInterval(pingTimer);
+      pingTimer = setInterval(() => {
+        socket.emit('player/ping', { device_id: deviceId });
+      }, 30000);
     }
 
     async function start() {
@@ -234,23 +312,41 @@
         overlay.textContent = 'Загрузка превью...';
       }
 
+      if (!isPreview) startPing();
+
       socket.on('connect', () => {
+        offline = false;
+        offlineBadge.style.display = 'none';
+        flushStatsQueue();
         if (isPreview) {
           overlay.textContent = 'Загрузка файлов...';
           socket.emit('files/request', { device_id: deviceId });
         } else {
           overlay.textContent = 'Регистрация...';
-          logDeviceEvent('online', 'socket_connected');
+          sendStats('/api/ad/analytics/log', { device_id: deviceId, event: 'online', detail: 'socket_connected' });
           socket.emit('player/register', { device_id: deviceId, device_type: 'ad_monitor', platform: 'ad_display' });
         }
       });
 
       socket.on('disconnect', () => {
-        if (!isPreview) logDeviceEvent('offline', 'socket_disconnected');
+        offline = true;
+        offlineBadge.style.display = 'block';
+        if (!isPreview) {
+          statsQueue.push({ url: '/api/ad/analytics/log', body: { device_id: deviceId, event: 'offline', detail: 'socket_disconnected' } });
+        }
+      });
+
+      socket.on('connect_error', () => {
+        offline = true;
+        offlineBadge.style.display = 'block';
+        if (fileList.length) {
+          overlay.classList.add('hidden');
+          if (!currentFileName) playNext();
+        }
       });
 
       socket.on('player/reject', (data) => {
-        if (!isPreview) logDeviceEvent('reject', data.reason || 'unknown_device');
+        sendStats('/api/ad/analytics/log', { device_id: deviceId, event: 'reject', detail: data.reason || 'unknown_device' });
         overlay.textContent = 'Устройство не найдено: ' + (data.reason || 'unknown_device');
         overlay.classList.remove('hidden');
       });

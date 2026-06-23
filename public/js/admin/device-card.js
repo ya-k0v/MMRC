@@ -195,13 +195,16 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   metaDiv.appendChild(createMetaChip({ text: `Файлов: ${d.files?.length || 0}` }));
 
   const isReadyDevice = readyDevices.has(d.device_id);
-  const readyIcon = isReadyDevice
+  const isPlaying = isReadyDevice && d.current && d.current.file && d.current.state === 'playing';
+  const statusText = isPlaying ? 'Играет' : (isReadyDevice ? 'Ожидает' : 'Не в сети');
+  const statusTone = isPlaying ? 'is-success' : (isReadyDevice ? 'is-warning' : 'is-danger');
+  const statusIcon = isPlaying
     ? getCheckIcon(14, 'var(--success)')
-    : getCrossIcon(14, 'var(--danger)');
+    : (isReadyDevice ? getCheckIcon(14, 'var(--warning)') : getCrossIcon(14, 'var(--danger)'));
   metaDiv.appendChild(createMetaChip({
-    text: isReadyDevice ? 'Готов' : 'Не готов',
-    tone: isReadyDevice ? 'is-success' : 'is-danger',
-    iconSvg: readyIcon
+    text: statusText,
+    tone: statusTone,
+    iconSvg: statusIcon
   }));
 
   const playerLink = document.createElement('a');

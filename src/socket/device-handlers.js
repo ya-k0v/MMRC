@@ -413,8 +413,9 @@ export function setupDeviceHandlers(socket, deps) {
       let stateChanged = false;
       const device = devices[device_id];
       const page = typeof payload?.page === 'number' ? payload.page : (type !== 'video' ? currentTime : undefined);
-      
+
       if (device) {
+        device.lastProgress = Date.now();
         // Всегда сохраняем currentTime для видео/аудио на каждом тике прогресса
         if (device.current && (type === 'video' || type === 'audio')) {
           device.current.currentTime = currentTime;
