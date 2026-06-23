@@ -179,7 +179,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
     iconSvg: iconHtml
   }));
 
-  if (d.platform && d.platform !== 'Unknown') {
+  if (d.platform && d.platform !== 'Unknown' && d.deviceType !== 'ad_monitor') {
     metaDiv.appendChild(createMetaChip({ text: d.platform }));
   }
 
