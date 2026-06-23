@@ -1804,7 +1804,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Инициализация загрузчика файлов (admin/manager)
   if (user.role === 'admin' || user.role === 'manager') {
     import('./speaker/upload-modal.js').then(mod => {
-      mod.setupUploadModal(() => currentDevice, () => socket);
+      mod.setupUploadModal(() => currentDevice, () => socket, () => loadFiles());
     }).catch(e => console.warn('[Speaker] Upload modal init error:', e));
   }
   
@@ -2400,8 +2400,6 @@ async function loadFiles(stabilizeAttempt = 0) {
         const itemSafeName = item.name || item.safeName || item.originalName;
         return { 
           safeName: itemSafeName, 
-          // КРИТИЧНО: Не используем safeName как fallback
-          // Если originalName нет или равен safeName, оставляем null, чтобы resolveFileDisplayData мог найти его из device.fileNames
           originalName: (item.originalName && item.originalName !== itemSafeName) ? item.originalName : null,
           resolution: item.resolution || null,
           durationSeconds: typeof item.durationSeconds === 'number' ? item.durationSeconds : null,
@@ -2414,7 +2412,10 @@ async function loadFiles(stabilizeAttempt = 0) {
           trailerUrl: item.trailerUrl || null,
           sourceDeviceId: currentDevice,
           isPlaceholder: !!item.isPlaceholder,
-          uploadedBy: item.uploadedBy || null
+          uploadedBy: item.uploadedBy || null,
+          status: item.status || 'ready',
+          progress: typeof item.progress === 'number' ? item.progress : 100,
+          canPlay: item.canPlay !== false
         };
       });
 
@@ -2450,7 +2451,7 @@ async function loadFiles(stabilizeAttempt = 0) {
   const end = Math.min(start + pageSize, allFiles.length);
   const files = allFiles.slice(start, end);
 
-    fileList.innerHTML = files.map(({ safeName, originalName, resolution, durationSeconds, folderImageCount, contentType, streamProtocol, hasTrailer, trailerUrl, uploadedBy }) => {
+    fileList.innerHTML = files.map(({ safeName, originalName, resolution, durationSeconds, folderImageCount, contentType, streamProtocol, hasTrailer, trailerUrl, uploadedBy, status, progress, canPlay }) => {
     // КРИТИЧНО: Используем resolveFileDisplayData для получения правильного оригинального имени
     // Это гарантирует, что будет использовано оригинальное имя из всех доступных источников
     const { displayName: resolvedDisplayName } = resolveFileDisplayData(currentDevice, safeName);
@@ -2504,7 +2505,11 @@ async function loadFiles(stabilizeAttempt = 0) {
     // resolvedDisplayName уже должен содержать правильное оригинальное имя из resolveFileDisplayData
     const displayName = resolvedDisplayName || (effectiveOriginalName ? effectiveOriginalName.replace(/\.[^.]+$/, '') : '');
     
+    const isProcessing = status === 'processing' || status === 'checking';
     const metaBadges = [];
+    if (isProcessing) {
+      metaBadges.push(`обработка ${progress > 0 ? Math.round(progress) + '%' : '...'}`);
+    }
     if (type === 'FOLDER' && typeof folderImageCount === 'number') {
       metaBadges.push(`${folderImageCount} фото`);
     }
@@ -2603,28 +2608,27 @@ async function loadFiles(stabilizeAttempt = 0) {
         </div>
         
         <!-- Правая часть: Play зона (25%) - часть карточки -->
-        <div class="playBtn" 
+        <div class="playBtn ${isProcessing ? 'processing' : ''}" 
              data-safe="${encodeURIComponent(safeName)}" 
              data-original="${encodeURIComponent(originalName)}"
              data-stream-protocol="${streamProtocol || ''}"
              style="
-               background:var(--brand);
+               background:${isProcessing ? 'var(--muted,#666)' : 'var(--brand)'};
                color:white;
                display:flex;
                align-items:center;
                justify-content:center;
                font-size:var(--speaker-play-icon-size, 2rem);
                min-width:var(--speaker-play-min-width,72px);
-               cursor:pointer;
+               cursor:${isProcessing ? 'default' : 'pointer'};
                transition:background 0.2s;
                user-select:none;
              "
-             onmouseover="this.style.background='var(--brand-hover)'"
-             onmouseout="this.style.background='var(--brand)'"
+             ${isProcessing ? '' : `onmouseover="this.style.background='var(--brand-hover)'" onmouseout="this.style.background='var(--brand)'"`}
              role="button"
-             tabindex="0"
-              aria-label="Воспроизвести ${displayName}">
-          ▶
+             tabindex="${isProcessing ? '-1' : '0'}"
+              aria-label="${isProcessing ? 'Обработка...' : `Воспроизвести ${displayName}`}">
+          ${isProcessing ? '⏳' : '▶'}
         </div>
       </li>
     `;
@@ -2661,7 +2665,9 @@ async function loadFiles(stabilizeAttempt = 0) {
   // Клик по карточке файла (кроме кнопки) - показать превью
   fileList.querySelectorAll('.file-item').forEach(item => {
     item.onclick = async (e) => {
-      // Если кликнули по кнопке "Воспроизвести" - не обрабатываем (у кнопки свой обработчик)
+      if (e.target.closest('.playBtn')?.classList.contains('processing')) {
+        return;
+      }
       if (e.target.closest('.playBtn')) return;
       
       // Если кликнули по кнопке "Удалить"
@@ -2794,11 +2800,13 @@ async function loadFiles(stabilizeAttempt = 0) {
     };
   });
 
-  fileList.querySelectorAll('.playBtn').forEach(btn => {
-    btn.onclick = (e) => {
-      e.stopPropagation(); // Останавливаем всплытие, чтобы не вызвался клик по карточке
-      
-      const safeName = decodeURIComponent(btn.getAttribute('data-safe'));
+   fileList.querySelectorAll('.playBtn').forEach(btn => {
+     btn.onclick = (e) => {
+       e.stopPropagation();
+
+       if (btn.classList.contains('processing')) return;
+       
+       const safeName = decodeURIComponent(btn.getAttribute('data-safe'));
       const containerItem = btn.closest('.file-item');
       const contentType = containerItem?.getAttribute('data-content-type') || null;
       const streamProtocol = btn.getAttribute('data-stream-protocol') || containerItem?.getAttribute('data-stream-protocol') || '';
@@ -4848,6 +4856,30 @@ socket.on('playlist/state', ({ device_id, active, file, intervalSeconds }) => {
 });
 
 socket.on('devices/updated', onDevicesUpdated);
+
+// Live-обновление статуса обработки файлов (прогресс)
+socket.on('file/progress', debounce((data) => {
+  if (fileListMode !== 'device') return;
+  const idx = allFiles.findIndex(f => f.safeName === data.file);
+  if (idx === -1) return;
+  allFiles[idx].progress = typeof data.progress === 'number' ? data.progress : allFiles[idx].progress;
+  allFiles[idx].status = data.status || allFiles[idx].status;
+  if (data.status === 'ready' || data.progress >= 100) {
+    allFiles[idx].status = 'ready';
+    allFiles[idx].canPlay = true;
+  }
+  if (typeof loadFiles === 'function') loadFiles();
+}, 300));
+
+// Файл готов (обработка завершена)
+socket.on('file/ready', debounce((data) => {
+  if (fileListMode === 'device' && data.device_id === currentDevice) {
+    if (typeof loadFiles === 'function') loadFiles();
+  }
+  if (fileListMode === 'all') {
+    if (typeof loadAllFilesAggregated === 'function') loadAllFilesAggregated();
+  }
+}, 300));
 
 // Обработчик обновления устройств пользователя (для спикеров)
 socket.on('user/devices/updated', async ({ userId }) => {

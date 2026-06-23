@@ -1061,7 +1061,7 @@ export function createFilesRouter(deps) {
 
     setGlobalFileStatus(deviceId, safeName, {
       status: 'processing',
-      progress: 1,
+      progress: 0,
       canPlay: false
     });
   }
@@ -5029,8 +5029,12 @@ export function createFilesRouter(deps) {
 
       if (readyOnly) {
         const state = String(fileStatus.status || '').toLowerCase();
-        if (state === 'checking' || state === 'processing' || fileStatus.canPlay === false) {
-          continue;
+        const isProcessing = state === 'checking' || state === 'processing';
+        const isLocked = fileStatus.canPlay === false;
+        if (isProcessing || isLocked) {
+          if (!(isProcessing && req.user?.role === 'manager')) {
+            continue;
+          }
         }
       }
       
