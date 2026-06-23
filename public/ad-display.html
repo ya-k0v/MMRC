@@ -131,6 +131,7 @@
     }
 
     function sendStats(url, body) {
+      if (isPreview) return Promise.resolve();
       if (offline) {
         statsQueue.push({ url, body });
         return Promise.resolve();
@@ -261,16 +262,6 @@
       const fileName = pickWeightedFile();
       if (isImageFile(fileName)) showImage(fileName);
       else playVideoFile(fileName);
-    }
-
-    function reportImpression(fileName, durationSec, completed) {
-      if (isPreview) return;
-      sendStats('/api/ad/analytics/report', {
-        device_id: deviceId,
-        file_name: fileName,
-        duration_sec: durationSec || null,
-        completed: completed ? 1 : 0
-      });
     }
 
     function markCompleted(fileName) {
