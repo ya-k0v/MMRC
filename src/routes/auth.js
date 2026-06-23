@@ -186,7 +186,7 @@ router.post('/login',
 
           const result = await db.run(
             `INSERT INTO users (username, full_name, password_hash, auth_source, ldap_dn, role, is_active)
-             VALUES (?, ?, ?, 'ldap', ?, ?, 1)`,
+             VALUES (?, ?, ?, 'ldap', ?, ?, TRUE)`,
             [ldapUsername, ldapFullName, passwordHash, ldapDn, effectiveRole]
           );
 
@@ -277,7 +277,7 @@ router.post('/setup-first-admin',
       const passwordHash = await bcrypt.hash(password, 12);
       const result = await db.run(
         `INSERT INTO users (username, full_name, password_hash, auth_source, role, is_active)
-         VALUES (?, ?, ?, 'local', 'admin', 1)`,
+         VALUES (?, ?, ?, 'local', 'admin', TRUE)`,
         [username, full_name, passwordHash]
       );
 
