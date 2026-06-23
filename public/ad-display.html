@@ -65,6 +65,7 @@
 
     const LS_FILE_LIST = 'ad_file_list';
     const LS_FILE_WEIGHTS = 'ad_file_weights';
+    const LS_STATS_QUEUE = 'ad_stats_queue';
 
     function saveFileList(files) {
       try { localStorage.setItem(LS_FILE_LIST, JSON.stringify(files)); } catch {}
@@ -86,9 +87,20 @@
       } catch {}
       return null;
     }
+    function persistStatsQueue() {
+      try { localStorage.setItem(LS_STATS_QUEUE, JSON.stringify(statsQueue)); } catch {}
+    }
+    function loadPersistedStatsQueue() {
+      try {
+        const v = localStorage.getItem(LS_STATS_QUEUE);
+        if (v) { statsQueue = JSON.parse(v); }
+      } catch {}
+    }
 
     if (isPreview) {
       document.getElementById('offlineBadge')?.remove();
+    } else {
+      loadPersistedStatsQueue();
     }
 
     function initPlayer() {
@@ -138,6 +150,7 @@
       if (isPreview) return Promise.resolve();
       if (offline) {
         statsQueue.push({ url, body });
+        persistStatsQueue();
         return Promise.resolve();
       }
       return fetch(url, {
@@ -146,12 +159,14 @@
         body: JSON.stringify(body)
       }).catch(() => {
         statsQueue.push({ url, body });
+        persistStatsQueue();
       });
     }
 
     async function flushStatsQueue() {
       if (!statsQueue.length || offline) return;
       const items = statsQueue.splice(0);
+      persistStatsQueue();
       for (const item of items) {
         try {
           await fetch(item.url, {
@@ -161,8 +176,12 @@
           });
         } catch {
           statsQueue.push(item);
+          persistStatsQueue();
           break;
         }
+      }
+      if (!statsQueue.length) {
+        try { localStorage.removeItem(LS_STATS_QUEUE); } catch {}
       }
     }
 
@@ -334,6 +353,7 @@
         if (offlineBadge) offlineBadge.style.display = 'block';
         if (!isPreview) {
           statsQueue.push({ url: '/api/ad/analytics/log', body: { device_id: deviceId, event: 'offline', detail: 'socket_disconnected' } });
+          persistStatsQueue();
         }
       });
 
