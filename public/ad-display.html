@@ -104,6 +104,25 @@
       } catch {}
     }
 
+    async function isFileCached(url) {
+      if (!('caches' in window)) return false;
+      try {
+        const cache = await caches.open('ad-display-v1');
+        const match = await cache.match(url);
+        return !!match;
+      } catch { return false; }
+    }
+
+    async function findAvailableFile() {
+      if (!fileList.length) return null;
+      if (!offline) return pickWeightedFile();
+      for (let attempt = 0; attempt < fileList.length * 2; attempt++) {
+        const f = pickWeightedFile();
+        if (await isFileCached(getContentUrl(f))) return f;
+      }
+      return null;
+    }
+
     let viewW = displayW;
     let viewH = displayH;
     if (!viewW || !viewH) {
@@ -239,6 +258,11 @@
       playerEl.style.display = 'none';
       overlay.classList.add('hidden');
       currentFileName = fileName;
+      imageEl.onerror = () => {
+        currentFileName = null;
+        sendStats('/api/ad/analytics/log', { device_id: deviceId, event: 'playback_error', detail: fileName });
+        playNext();
+      };
       imageEl.src = url;
       sendStats('/api/ad/analytics/report', { device_id: deviceId, file_name: fileName, duration_sec: IMAGE_DURATION, completed: 1 });
       sendProgress(fileName, 0, IMAGE_DURATION);
@@ -265,7 +289,13 @@
         const mime = ext === '.webm' ? 'video/webm' : ext === '.ogg' ? 'video/ogg' : 'video/mp4';
         player.src({ src: url, type: mime });
         player.play();
+        let loadTimeout = setTimeout(() => {
+          sendStats('/api/ad/analytics/log', { device_id: deviceId, event: 'playback_error', detail: fileName + ' (timeout)' });
+          currentFileName = null;
+          playNext();
+        }, 15000);
         player.one('loadedmetadata', () => {
+          clearTimeout(loadTimeout);
           const dur = Math.round(player.duration() || 0);
           sendStats('/api/ad/analytics/report', { device_id: deviceId, file_name: fileName, duration_sec: dur, completed: 0 });
         });
@@ -306,7 +336,17 @@
         setTimeout(() => { socket.emit('files/request', { device_id: deviceId }); playNext(); }, 30000);
         return;
       }
-      const fileName = pickWeightedFile();
+      const fileName = await findAvailableFile();
+      if (!fileName) {
+        if (offline) {
+          setTimeout(playNext, 30000);
+          return;
+        }
+        const f = pickWeightedFile();
+        if (isImageFile(f)) showImage(f);
+        else playVideoFile(f);
+        return;
+      }
       if (isImageFile(fileName)) showImage(fileName);
       else playVideoFile(fileName);
     }
