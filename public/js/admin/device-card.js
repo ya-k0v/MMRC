@@ -220,7 +220,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   
   function buildDevicePreviewUrl(device) {
     if (device.deviceType === 'ad_monitor') {
-      return `/ad-display.html?device_id=${did}`;
+      return `/ad-display.html?device_id=${did}&preview=1`;
     }
     let url = `/player-videojs.html?device_id=${did}&preview=1&muted=1`;
     const cur = device.current;
