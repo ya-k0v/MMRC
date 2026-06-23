@@ -122,7 +122,6 @@ export async function reconnectDatabase() {
     await ensureFilesMetadataStreamingColumns();
     await ensureUsersAuthColumns();
     await ensureUserDevicesTable();
-    await ensureDefaultAdminUser();
     await ensureHeroAdminMigration();
     await ensureManagerRoleMigration();
     await ensureFileUploadedByColumn();
