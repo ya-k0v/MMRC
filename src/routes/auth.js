@@ -238,7 +238,7 @@ router.post('/login',
 );
 
 async function checkAdminExists(db) {
-  const admin = await db.get(`SELECT 1 FROM users WHERE role = 'admin' AND is_active = 1 LIMIT 1`);
+  const admin = await db.get(`SELECT 1 FROM users WHERE role = 'admin' AND is_active IS TRUE LIMIT 1`);
   return !!admin;
 }
 
