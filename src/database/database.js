@@ -60,7 +60,6 @@ export async function initDatabase(initialDbPath) {
     await ensureFilesMetadataStreamingColumns();
     await ensureUsersAuthColumns();
     await ensureUserDevicesTable();
-    await ensureDefaultAdminUser();
     await ensureHeroAdminMigration();
     await ensureManagerRoleMigration();
     await ensureFileUploadedByColumn();
@@ -123,7 +122,6 @@ export async function reconnectDatabase() {
     await ensureFilesMetadataStreamingColumns();
     await ensureUsersAuthColumns();
     await ensureUserDevicesTable();
-    await ensureDefaultAdminUser();
     await ensureHeroAdminMigration();
     await ensureManagerRoleMigration();
     await ensureFileUploadedByColumn();
@@ -235,35 +233,6 @@ async function ensureFilesMetadataStreamingColumns() {
     await addIfMissing('pages_count', 'pages_count INTEGER');
   } catch (err) {
     logger.warn('[DB] Failed to ensure streaming columns (non-critical)', { error: err.message });
-  }
-}
-
-async function ensureDefaultAdminUser() {
-  try {
-    const hasTable = await driver.tableExists('users');
-    if (!hasTable) return;
-
-    const count = await driver.get('SELECT COUNT(*) as count FROM users');
-    if (Number(count.count) === 0) {
-      const hash = '$2b$10$jgHKNtHUKUhkftKlOfDqOulY9LFBVi/AirOu0YSKfzDlvFD60QI/W';
-      if (driverType === 'postgres') {
-        await driver.run(
-          `INSERT INTO users (username, full_name, password_hash, role, is_active)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (username) DO NOTHING`,
-          ['admin', 'Администратор', hash, 'admin', true]
-        );
-      } else {
-        await driver.run(
-          `INSERT OR IGNORE INTO users (username, full_name, password_hash, role, is_active)
-           VALUES (?, ?, ?, ?, ?)`,
-          ['admin', 'Администратор', hash, 'admin', 1]
-        );
-      }
-      logger.info('[DB] Default admin user created (admin/admin123)');
-    }
-  } catch (err) {
-    logger.warn('[DB] Failed to ensure default admin user (non-critical):', err.message);
   }
 }
 
