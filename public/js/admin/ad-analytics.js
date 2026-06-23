@@ -4,6 +4,8 @@ import { escapeHtml } from '../shared/utils.js';
 
 let adDevices = [];
 let _lastData = null;
+let refreshTimer = null;
+let refreshEnabled = true;
 
 document.addEventListener('DOMContentLoaded', async () => {
   const themeBtn = document.getElementById('themeBtn');
@@ -21,10 +23,33 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('filterFrom').value = weekAgo.toISOString().substring(0, 10);
 
   await loadAdDevices();
-  document.getElementById('loadBtn').onclick = loadStats;
+  document.getElementById('loadBtn').onclick = () => { loadStats(); startAutoRefresh(); };
   document.getElementById('exportBtn').onclick = exportCsv;
+  const refreshBtn = document.getElementById('refreshBtn');
+  if (refreshBtn) refreshBtn.onclick = toggleAutoRefresh;
+  startAutoRefresh();
   loadStats();
 });
+
+function startAutoRefresh() {
+  stopAutoRefresh();
+  const btn = document.getElementById('refreshBtn');
+  if (btn) { btn.textContent = '⏸ Пауза'; btn.classList.add('is-active'); }
+  refreshEnabled = true;
+  refreshTimer = setInterval(loadStats, 30000);
+}
+
+function stopAutoRefresh() {
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+  const btn = document.getElementById('refreshBtn');
+  if (btn) { btn.textContent = '▶ Автообновление'; btn.classList.remove('is-active'); }
+  refreshEnabled = false;
+}
+
+function toggleAutoRefresh() {
+  if (refreshEnabled) stopAutoRefresh();
+  else startAutoRefresh();
+}
 
 async function loadAdDevices() {
   try {

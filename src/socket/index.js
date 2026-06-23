@@ -44,7 +44,7 @@ export function setupSocketHandlers(io, deps) {
 
     // Отправляем snapshot онлайн устройств при подключении
     try {
-      const snapshot = getOnlineDevices();
+      const snapshot = getOnlineDevices(io);
       socket.emit('players/onlineSnapshot', snapshot);
     } catch (e) {
       logger.error(`[Socket.IO] ❌ Ошибка отправки snapshot`, { error: e.message, stack: e.stack, socketId: socket.id });

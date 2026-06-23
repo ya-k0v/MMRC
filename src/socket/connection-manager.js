@@ -42,12 +42,29 @@ export function updateDeviceStatus(device_id) {
 
 /**
  * Получить список онлайн устройств
+ * @param {Object} [io] - Socket.IO сервер (для проверки живых сокетов)
  * @returns {string[]} Массив ID онлайн устройств
  */
-export function getOnlineDevices() {
+export function getOnlineDevices(io) {
   const onlineSet = new Set();
-  for (const device_id of deviceSockets.keys()) {
-    if (deviceSockets.get(device_id) && deviceSockets.get(device_id).size > 0) {
+  const now = Date.now();
+  for (const [device_id, sockets] of deviceSockets) {
+    if (!sockets || sockets.size === 0) continue;
+    if (!io) {
+      onlineSet.add(device_id);
+      continue;
+    }
+    let hasRecentPing = false;
+    for (const socketId of sockets) {
+      const socket = io.sockets?.sockets?.get(socketId);
+      if (socket?.data && typeof socket.data.lastPing === 'number') {
+        if (now - socket.data.lastPing < 90000) {
+          hasRecentPing = true;
+          break;
+        }
+      }
+    }
+    if (hasRecentPing) {
       onlineSet.add(device_id);
     }
   }
