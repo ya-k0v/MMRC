@@ -201,11 +201,13 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   const statusIcon = isPlaying
     ? getCheckIcon(14, 'var(--success)')
     : (isReadyDevice ? getCheckIcon(14, 'var(--warning)') : getCrossIcon(14, 'var(--danger)'));
-  metaDiv.appendChild(createMetaChip({
+  const statusChip = createMetaChip({
     text: statusText,
     tone: statusTone,
     iconSvg: statusIcon
-  }));
+  });
+  statusChip.className = (statusChip.className || '') + ' device-status-chip';
+  metaDiv.appendChild(statusChip);
 
   const playerLink = document.createElement('a');
   playerLink.href = '#';
@@ -761,6 +763,25 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   return card;
 }
 
+const STATUS_MAP = {
+  playing: { text: 'Играет', tone: 'is-success', icon: (s) => getCheckIcon(14, 'var(--success)') },
+  idle: { text: 'Ожидает', tone: 'is-warning', icon: () => getCheckIcon(14, 'var(--warning)') },
+  offline: { text: 'Не в сети', tone: 'is-danger', icon: () => getCrossIcon(14, 'var(--danger)') }
+};
+
+export function updateDeviceCardStatus(deviceId, status) {
+  const card = document.querySelector(`.device-card[data-device-id="${deviceId}"]`);
+  if (!card) return;
+  const s = STATUS_MAP[status] || STATUS_MAP.offline;
+  const chip = card.querySelector('.device-status-chip');
+  if (!chip) return;
+  const textEl = chip.querySelector('.device-meta-chip-text');
+  if (textEl) textEl.textContent = s.text;
+  chip.className = `device-meta-chip ${s.tone} device-status-chip`;
+  const iconWrap = chip.querySelector('.device-meta-chip-icon');
+  if (iconWrap) iconWrap.innerHTML = s.icon(14);
+}
+
 export function updateDeviceCardPlayback(deviceId, file, currentTime, duration) {
   const card = document.querySelector(`.device-card[data-device-id="${deviceId}"]`);
   if (!card) return;
@@ -774,5 +795,6 @@ export function updateDeviceCardPlayback(deviceId, file, currentTime, duration) 
   }
   const pct = duration > 0 ? Math.round((currentTime / duration) * 100) : 0;
   el.textContent = `${file}  ${pct}%`;
+  updateDeviceCardStatus(deviceId, 'playing');
 }
 

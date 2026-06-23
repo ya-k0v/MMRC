@@ -9,7 +9,7 @@ import { loadFilesWithStatus, refreshFilesPanel as refreshFilesPanelModule } fro
 import { previewFile, makeDefault, renameFile, deleteFile } from './admin/file-actions.js';
 import { uploadFiles, copyFile } from './admin/upload-manager.js';
 import { clearDetail, clearFilesPane, openDevice as openDeviceHelper } from './admin/ui-helpers.js';
-import { renderDeviceCard as renderDeviceCardModule, updateDeviceCardPlayback } from './admin/device-card.js';
+import { renderDeviceCard as renderDeviceCardModule, updateDeviceCardPlayback, updateDeviceCardStatus } from './admin/device-card.js';
 import { setupUploadUI as setupUploadUIModule } from './admin/upload-ui.js';
 import { showDevicesModal, showUsersModal, showSettingsModal } from './admin/modal.js';
 import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon } from './shared/svg-icons.js';
@@ -137,11 +137,13 @@ setupSocketListeners(socket, {
   onPlayerOnline: (device_id) => {
     readyDevices.add(device_id);
     renderTVList();
+    updateDeviceCardStatus(device_id, 'idle');
     if (currentDeviceId === device_id) openDevice(device_id);
   },
   onPlayerOffline: (device_id) => {
     readyDevices.delete(device_id);
     renderTVList();
+    updateDeviceCardStatus(device_id, 'offline');
     if (currentDeviceId === device_id) openDevice(device_id);
   },
   onPlayersSnapshot: (list) => {
