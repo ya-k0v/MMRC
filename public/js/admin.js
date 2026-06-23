@@ -676,7 +676,8 @@ function updatePlaybackProgress(device_id, fileName, currentTime, duration) {
     if (fileNameEl && fileNameEl.textContent === fileName) {
       if (duration > 0) {
         const pct = Math.min(100, Math.max(0, Math.round((currentTime / duration) * 100)));
-        fileEl.style.background = `linear-gradient(90deg, rgba(0,0,0,0.1) ${pct}%, transparent ${pct}%)`;
+        fileEl.style.background = `linear-gradient(90deg, var(--accent, rgba(59,130,246,0.18)) ${pct}%, transparent ${pct}%)`;
+        fileEl.style.borderLeft = `3px solid var(--accent, rgba(59,130,246,0.6))`;
       } else {
         fileEl.style.background = 'var(--bg-active, rgba(59, 130, 246, 0.08))';
       }

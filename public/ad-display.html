@@ -174,12 +174,7 @@
           const img = new Image();
           img.src = url;
         } else {
-          const link = document.createElement('link');
-          link.rel = 'preload';
-          link.as = 'video';
-          link.href = url;
-          document.head.appendChild(link);
-          setTimeout(() => link.remove(), 10000);
+          fetch(url).catch(() => {});
         }
       }, 3000);
     }
@@ -342,6 +337,22 @@
         if (fileList.length) {
           overlay.classList.add('hidden');
           if (!currentFileName) playNext();
+        }
+      });
+
+      socket.on('player/progress', (data) => {
+        if (!isPreview || data.device_id !== deviceId) return;
+        if (data.file && data.file !== currentFileName) {
+          currentFileName = data.file;
+          if (isImageFile(data.file)) {
+            showImage(data.file);
+          } else {
+            playVideoFile(data.file);
+          }
+        }
+        if (player && data.type === 'video' && data.currentTime != null) {
+          const diff = Math.abs(player.currentTime() - data.currentTime);
+          if (diff > 2) player.currentTime(data.currentTime);
         }
       });
 

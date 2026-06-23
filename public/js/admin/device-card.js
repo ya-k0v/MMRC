@@ -761,7 +761,18 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   return card;
 }
 
-export function updateDeviceCardPlayback(_deviceId, _file, _currentTime, _duration) {
-  // не используется
+export function updateDeviceCardPlayback(deviceId, file, currentTime, duration) {
+  const card = document.querySelector(`.device-card[data-device-id="${deviceId}"]`);
+  if (!card) return;
+  let el = card.querySelector('.device-current-file');
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'device-current-file meta';
+    el.style.cssText = 'font-size:0.8rem;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    const metaDiv = card.querySelector('.device-service-meta');
+    if (metaDiv) metaDiv.appendChild(el);
+  }
+  const pct = duration > 0 ? Math.round((currentTime / duration) * 100) : 0;
+  el.textContent = `${file}  ${pct}%`;
 }
 
