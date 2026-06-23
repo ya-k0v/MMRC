@@ -324,6 +324,8 @@ export function setupDeviceHandlers(socket, deps) {
         device_id, 
         current: devices[device_id].current,
         files: devices[device_id].files || [],
+        resolutionWidth: devices[device_id].resolutionWidth || null,
+        resolutionHeight: devices[device_id].resolutionHeight || null,
         timestamp: Date.now()
       });
       

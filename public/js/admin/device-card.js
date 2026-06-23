@@ -216,7 +216,11 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   
   function buildDevicePreviewUrl(device) {
     if (device.deviceType === 'ad_monitor') {
-      return `/ad-display.html?device_id=${did}&preview=1`;
+      let url = `/ad-display.html?device_id=${did}&preview=1`;
+      if (device.resolutionWidth && device.resolutionHeight) {
+        url += `&w=${device.resolutionWidth}&h=${device.resolutionHeight}`;
+      }
+      return url;
     }
     let url = `/player-videojs.html?device_id=${did}&preview=1&muted=1`;
     const cur = device.current;
@@ -240,7 +244,8 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   
   const previewCompact = document.createElement('div');
   previewCompact.className = 'preview panel preview-compact';
-  previewCompact.style.cssText = 'display:block; aspect-ratio:16/9; max-height:120px; width:100%; position:relative; border-radius:var(--radius-md); overflow:hidden; background:var(--panel-2);';
+  const compactAr = d.resolutionWidth && d.resolutionHeight ? `${d.resolutionWidth}/${d.resolutionHeight}` : '16/9';
+  previewCompact.style.cssText = `display:block; aspect-ratio:${compactAr}; max-height:120px; width:100%; position:relative; border-radius:var(--radius-md); overflow:hidden; background:var(--panel-2);`;
   const previewHolderCompact = document.createElement('div');
   previewHolderCompact.className = 'previewHolder';
   previewHolderCompact.style.cssText = 'width:100%; height:100%; border-radius:var(--radius-md); overflow:hidden;';
@@ -252,7 +257,8 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   
   const previewExpanded = document.createElement('div');
   previewExpanded.className = 'preview panel preview-expanded';
-  previewExpanded.style.cssText = 'display:none; flex:1 1 auto; min-height:0; aspect-ratio:16/9; max-height:380px; position:relative; border-radius:var(--radius-md); overflow:hidden; background:var(--panel-2);';
+  const expandedAr = d.resolutionWidth && d.resolutionHeight ? `${d.resolutionWidth}/${d.resolutionHeight}` : '16/9';
+  previewExpanded.style.cssText = `display:none; flex:1 1 auto; min-height:0; aspect-ratio:${expandedAr}; max-height:380px; position:relative; border-radius:var(--radius-md); overflow:hidden; background:var(--panel-2);`;
   const previewHolderExpanded = document.createElement('div');
   previewHolderExpanded.className = 'previewHolder';
   previewHolderExpanded.style.cssText = 'width:100%; height:100%; border-radius:var(--radius-md); overflow:hidden';

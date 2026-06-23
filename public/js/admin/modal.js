@@ -659,6 +659,24 @@ export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevi
           <span>Рекламный монитор</span>
         </label>
       </div>
+
+      <div id="resolutionWrap" style="display:none;">
+        <label style="display:block; margin-bottom:4px; font-weight:500;">Разрешение дисплея</label>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <input id="modalResWidth" class="input" type="number" min="1" max="7680" placeholder="1920" style="width:100px;" />
+          <span style="color:var(--text-secondary);">×</span>
+          <input id="modalResHeight" class="input" type="number" min="1" max="7680" placeholder="1080" style="width:100px;" />
+          <span id="modalArDisplay" class="meta" style="font-size:0.8rem;">16:9</span>
+        </div>
+        <div style="display:flex; gap:4px; flex-wrap:wrap; margin-top:6px;">
+          <button class="meta-lg res-preset" data-w="1920" data-h="1080">1920×1080</button>
+          <button class="meta-lg res-preset" data-w="1080" data-h="1920">1080×1920</button>
+          <button class="meta-lg res-preset" data-w="3840" data-h="2160">3840×2160</button>
+          <button class="meta-lg res-preset" data-w="1920" data-h="1200">1920×1200</button>
+          <button class="meta-lg res-preset" data-w="1280" data-h="720">1280×720</button>
+          <button class="meta-lg res-preset" data-w="720" data-h="1280">720×1280</button>
+        </div>
+      </div>
       
       <div id="modalError" style="color:var(--danger); font-size:0.875rem; display:none;"></div>
       
@@ -700,16 +718,50 @@ export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevi
       return hash;
     }
 
+    const resWidth = document.getElementById('modalResWidth');
+    const resHeight = document.getElementById('modalResHeight');
+    const arDisplay = document.getElementById('modalArDisplay');
+    const resolutionWrap = document.getElementById('resolutionWrap');
+
+    function gcd(a, b) { while (b) { const t = b; b = a % b; a = t; } return a; }
+    function formatAspectRatio(w, h) {
+      if (!w || !h) return '';
+      const g = gcd(w, h);
+      return `${w / g}:${h / g}`;
+    }
+    function updateArDisplay() {
+      const w = parseInt(resWidth.value);
+      const h = parseInt(resHeight.value);
+      if (w > 0 && h > 0) {
+        arDisplay.textContent = formatAspectRatio(w, h);
+      } else {
+        arDisplay.textContent = '—';
+      }
+    }
+    resWidth.addEventListener('input', updateArDisplay);
+    resHeight.addEventListener('input', updateArDisplay);
+
+    document.querySelectorAll('.res-preset').forEach(btn => {
+      btn.addEventListener('click', () => {
+        resWidth.value = btn.dataset.w;
+        resHeight.value = btn.dataset.h;
+        updateArDisplay();
+      });
+    });
+
     if (adCheckbox) {
       adCheckbox.addEventListener('change', () => {
         if (adCheckbox.checked) {
           deviceIdInput.value = generateAdId();
           deviceIdInput.readOnly = true;
           deviceIdInput.style.background = 'var(--panel-2)';
+          resolutionWrap.style.display = '';
+          if (!resWidth.value) { resWidth.value = 1920; resHeight.value = 1080; updateArDisplay(); }
         } else {
           deviceIdInput.value = '';
           deviceIdInput.readOnly = false;
           deviceIdInput.style.background = '';
+          resolutionWrap.style.display = 'none';
         }
       });
     }
@@ -720,12 +772,15 @@ export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevi
       let device_id = deviceIdInput.value.trim();
       const name = deviceNameInput.value.trim();
       const device_type = adCheckbox && adCheckbox.checked ? 'ad_monitor' : 'browser';
+      let resolution_width, resolution_height;
       
       if (adCheckbox && adCheckbox.checked) {
         if (!device_id.startsWith('ad_')) {
           device_id = generateAdId();
           deviceIdInput.value = device_id;
         }
+        resolution_width = parseInt(resWidth.value) || null;
+        resolution_height = parseInt(resHeight.value) || null;
       } else {
         if (!device_id) {
           errorEl.textContent = 'Введите ID устройства';
@@ -748,7 +803,7 @@ export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevi
         const res = await adminFetch('/api/devices', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ device_id, name, device_type })
+          body: JSON.stringify({ device_id, name, device_type, resolution_width, resolution_height })
         });
         
         if (res.ok) {

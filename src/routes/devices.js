@@ -109,6 +109,9 @@ export function createDevicesRouter(deps) {
       fileMetadata: d.fileMetadata || [],
       current: d.current,
       deviceType: d.deviceType || 'browser',
+      resolutionWidth: d.resolutionWidth || null,
+      resolutionHeight: d.resolutionHeight || null,
+      aspectRatio: d.aspectRatio || null,
       capabilities: d.capabilities || { 
         video: true, 
         audio: true, 
@@ -135,7 +138,7 @@ export function createDevicesRouter(deps) {
   
   // POST /api/devices - Создать новое устройство (только admin)
   router.post('/', requireAdmin, createLimiter, async (req, res) => {
-    const { device_id, name, device_type } = req.body;
+    const { device_id, name, device_type, resolution_width, resolution_height } = req.body;
     const isAdMonitor = device_type === 'ad_monitor';
     const rawDeviceId = getTrimmedDeviceId(device_id);
     const normalizedDeviceId = normalizeRequestedDeviceId(device_id);
@@ -175,12 +178,18 @@ export function createDevicesRouter(deps) {
       logDevice('warn', `Failed to set permissions on device folder`, { deviceId: normalizedDeviceId, path: devicePath, error: e.message });
     }
     
+    const resW = isAdMonitor && Number.isFinite(resolution_width) && resolution_width > 0 ? Math.round(resolution_width) : null;
+    const resH = isAdMonitor && Number.isFinite(resolution_height) && resolution_height > 0 ? Math.round(resolution_height) : null;
+
     devices[normalizedDeviceId] = { 
       name: deviceName,
       folder: normalizedDeviceId,
       files: [], 
       current: { type: 'idle', file: null, state: 'idle' },
-      deviceType: isAdMonitor ? 'ad_monitor' : 'browser'
+      deviceType: isAdMonitor ? 'ad_monitor' : 'browser',
+      resolutionWidth: resW,
+      resolutionHeight: resH,
+      aspectRatio: resW && resH ? resW / resH : null
     };
     
     if (typeof onDeviceCreated === 'function') {
