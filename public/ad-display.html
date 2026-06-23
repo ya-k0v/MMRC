@@ -288,7 +288,7 @@
 
       socket.on('connect', () => {
         offline = false;
-        offlineBadge.style.display = 'none';
+        if (offlineBadge) offlineBadge.style.display = 'none';
         flushStatsQueue();
         if (isPreview) {
           overlay.textContent = 'Загрузка файлов...';
@@ -301,7 +301,7 @@
 
       socket.on('disconnect', () => {
         offline = true;
-        offlineBadge.style.display = 'block';
+        if (offlineBadge) offlineBadge.style.display = 'block';
         if (!isPreview) {
           statsQueue.push({ url: '/api/ad/analytics/log', body: { device_id: deviceId, event: 'offline', detail: 'socket_disconnected' } });
         }
@@ -309,7 +309,7 @@
 
       socket.on('connect_error', () => {
         offline = true;
-        offlineBadge.style.display = 'block';
+        if (offlineBadge) offlineBadge.style.display = 'block';
         if (fileList.length) {
           overlay.classList.add('hidden');
           if (!currentFileName) playNext();
