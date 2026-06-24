@@ -1,237 +1,194 @@
 #!/bin/bash
-# VideoControl MPV Client - Quick Install Script
-# Быстрая установка без клонирования всего репозитория
-#
-# Использование:
-#   curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/v340/clients/mpv/quick-install.sh | bash -s -- --server http://SERVER_IP --device mpv-001
-#
-# Или локально:
-#   ./quick-install.sh --server http://192.168.1.100 --device mpv-001
-
+# VideoControl MPV — Quick Install (auto-detect platform, optimal config)
 set -e
 
-VERSION="1.0"
 INSTALL_DIR="$HOME/videocontrol-mpv"
 REPO_URL="https://raw.githubusercontent.com/ya-k0v/MMRC/v340/clients/mpv"
-
-echo "=========================================="
-echo "VideoControl MPV Client - Quick Install"
-echo "Version: $VERSION"
-echo "=========================================="
-echo ""
-
-# Парсинг аргументов
 SERVER_URL=""
 DEVICE_ID=""
 INSTALL_SYSTEMD=true
 SKIP_MPV=false
+FULLSCREEN=false
+
+usage() { cat <<'EOF'
+Usage: curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/v340/clients/mpv/quick-install.sh | bash -s -- --server URL --device ID [--fullscreen]
+
+Options:
+  --server URL   http://192.168.1.100
+  --device ID    mpv-001
+  --fullscreen   Fullscreen by default
+  --no-systemd   Skip systemd service
+  --skip-mpv     Skip MPV install
+EOF
+exit 0; }
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --server)
-            SERVER_URL="$2"
-            shift 2
-            ;;
-        --device)
-            DEVICE_ID="$2"
-            shift 2
-            ;;
-        --no-systemd)
-            INSTALL_SYSTEMD=false
-            shift
-            ;;
-        --skip-mpv)
-            SKIP_MPV=true
-            shift
-            ;;
-        --help|-h)
-            echo "Использование:"
-            echo "  $0 --server URL --device ID [OPTIONS]"
-            echo ""
-            echo "Обязательные:"
-            echo "  --server URL    Server URL (http://192.168.1.100)"
-            echo "  --device ID     Device ID (mpv-001)"
-            echo ""
-            echo "Опциональные:"
-            echo "  --no-systemd    Не устанавливать systemd service"
-            echo "  --skip-mpv      Не устанавливать MPV (уже установлен)"
-            echo ""
-            echo "Примеры:"
-            echo "  # Через curl:"
-            echo "  curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/v340/clients/mpv/quick-install.sh | bash -s -- --server http://192.168.1.100 --device mpv-001"
-            echo ""
-            echo "  # Локально:"
-            echo "  ./quick-install.sh --server http://192.168.1.100 --device mpv-001"
-            exit 0
-            ;;
-        *)
-            echo "❌ Неизвестная опция: $1"
-            echo "Используйте --help для справки"
-            exit 1
-            ;;
+        --server) SERVER_URL="$2"; shift 2 ;;
+        --device) DEVICE_ID="$2"; shift 2 ;;
+        --fullscreen) FULLSCREEN=true; shift ;;
+        --no-systemd) INSTALL_SYSTEMD=false; shift ;;
+        --skip-mpv) SKIP_MPV=true; shift ;;
+        *) usage ;;
     esac
 done
 
-# Определение ОС
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    OS=$ID
-else
-    echo "❌ Не удалось определить ОС"
-    exit 1
+[ -z "$SERVER_URL" ] || [ -z "$DEVICE_ID" ] && usage
+
+# ── Platform detection ──────────────────────────────────────────────────
+ARCH=$(uname -m)
+[ -f /etc/os-release ] && . /etc/os-release
+PLATFORM="x86_linux"
+
+if grep -qi "Raspberry Pi" /proc/cpuinfo 2>/dev/null; then
+    PLATFORM="raspberry_pi"
+elif [[ "$ARCH" == aarch64* || "$ARCH" == armv7* || "$ARCH" == arm* ]]; then
+    PLATFORM="arm_linux"
 fi
 
-echo "📋 Обнаружена ОС: $OS"
+echo "=== VideoControl MPV Install ==="
+echo " OS:  $ID ($ARCH)  Platform: $PLATFORM"
 echo ""
 
-# Установка MPV
+# ── Install MPV ─────────────────────────────────────────────────────────
 if [ "$SKIP_MPV" = false ]; then
-    echo "📦 Установка MPV и зависимостей..."
-    
-    if [ "$OS" = "ubuntu" ] || [ "$OS" = "debian" ] || [ "$OS" = "raspbian" ]; then
-        sudo apt-get update -qq
-        sudo apt-get install -y mpv python3 python3-pip curl
-        
-        # Аппаратное ускорение Intel/AMD
-        sudo apt-get install -y vainfo libva-drm2 mesa-va-drivers 2>/dev/null || true
-        
-        # Аппаратное ускорение NVIDIA
-        if lspci 2>/dev/null | grep -qi nvidia; then
-            sudo apt-get install -y vdpauinfo libvdpau1 2>/dev/null || true
-        fi
-        
-    elif [ "$OS" = "centos" ] || [ "$OS" = "rhel" ]; then
-        sudo yum install -y epel-release
-        sudo yum install -y mpv python3 python3-pip curl
-        
-    elif [ "$OS" = "arch" ] || [ "$OS" = "manjaro" ]; then
-        sudo pacman -S --noconfirm mpv python python-pip curl
-    else
-        echo "⚠️ Неизвестная ОС: $OS"
-        echo "Попробуйте установить вручную: mpv python3 python3-pip"
-    fi
-    
-    echo "✅ MPV установлен: $(mpv --version | head -1)"
-else
-    echo "⏭️ Пропускаем установку MPV"
+    echo "== Install MPV =="
+    case "$ID" in
+        ubuntu|debian|raspbian)
+            sudo apt-get update -qq
+            sudo apt-get install -y mpv python3 python3-pip curl pciutils
+            sudo apt-get install -y vainfo libva-drm2 mesa-va-drivers 2>/dev/null || true
+            lspci 2>/dev/null | grep -qi nvidia && \
+                sudo apt-get install -y vdpauinfo libvdpau1 2>/dev/null || true
+            ;;
+        centos|rhel)
+            sudo yum install -y epel-release mpv python3 python3-pip curl pciutils
+            ;;
+        arch|manjaro)
+            sudo pacman -S --noconfirm mpv python python-pip curl pciutils
+            ;;
+        *) echo "⚠ Unknown OS: $ID — install mpv manually" ;;
+    esac
+    echo "✅ $(mpv --version | head -1)"
 fi
 
-echo ""
-
-# Установка Python зависимостей
-echo "📦 Установка Python зависимостей..."
+# ── Python ──────────────────────────────────────────────────────────────
 pip3 install --user --quiet python-socketio[client]==5.14.0 requests==2.32.4
-echo "✅ Python зависимости установлены"
-echo ""
 
-# Создание директории
-echo "📁 Создание директории: $INSTALL_DIR"
+# ── Client files ────────────────────────────────────────────────────────
 mkdir -p "$INSTALL_DIR"
-cd "$INSTALL_DIR"
-
-# Скачивание файлов клиента
-echo "📥 Скачивание файлов клиента..."
-
-# Проверяем локальный или удаленный запуск
 if [ -f "$(dirname "$0")/mpv_client.py" ]; then
-    # Локальный запуск - копируем файлы
-    echo "📋 Копирование из локального репозитория..."
     cp "$(dirname "$0")/mpv_client.py" "$INSTALL_DIR/"
-    cp "$(dirname "$0")/requirements.txt" "$INSTALL_DIR/"
-    [ -f "$(dirname "$0")/videocontrol-mpv@.service" ] && cp "$(dirname "$0")/videocontrol-mpv@.service" "$INSTALL_DIR/"
+    cp "$(dirname "$0")/requirements.txt" "$INSTALL_DIR/" 2>/dev/null || true
 else
-    # Удаленный запуск - скачиваем с GitHub
-    echo "🌐 Скачивание с GitHub..."
-    curl -fsSL "$REPO_URL/mpv_client.py" -o mpv_client.py
-    curl -fsSL "$REPO_URL/requirements.txt" -o requirements.txt
-    curl -fsSL "$REPO_URL/videocontrol-mpv@.service" -o videocontrol-mpv@.service || true
+    curl -fsSL "$REPO_URL/mpv_client.py" -o "$INSTALL_DIR/mpv_client.py"
+    curl -fsSL "$REPO_URL/requirements.txt" -o "$INSTALL_DIR/requirements.txt" || true
 fi
+chmod +x "$INSTALL_DIR/mpv_client.py"
 
-chmod +x mpv_client.py
-echo "✅ Файлы скачаны"
-echo ""
+# ── Generate mpv.conf ──────────────────────────────────────────────────
+echo "== Generating mpv.conf =="
+mkdir -p ~/.config/mpv
 
-# Установка systemd service
+case "$PLATFORM" in
+    raspberry_pi)
+        cat > ~/.config/mpv/mpv.conf << 'CONF'
+hwdec=v4l2m2m-copy
+vo=gpu
+gpu-context=drm
+hwdec-codecs=h264,hevc,vp8,vp9
+cache=yes
+cache-secs=30
+demuxer-max-bytes=150M
+network-timeout=60
+no-osc
+no-osd-bar
+idle=yes
+force-window=yes
+keep-open=yes
+cursor-autohide=always
+CONF
+        groups "$USER" | grep -qv video && sudo usermod -aG video "$USER" 2>/dev/null || true
+        ;;
+    arm_linux)
+        cat > ~/.config/mpv/mpv.conf << 'CONF'
+hwdec=auto
+cache=yes
+cache-secs=10
+network-timeout=60
+no-osc
+no-osd-bar
+idle=yes
+force-window=yes
+keep-open=yes
+cursor-autohide=always
+CONF
+        ;;
+    *)
+        if mpv --version 2>/dev/null | grep -qE "mpv [0-9]+\.[3-9][0-9]"; then
+            cat > ~/.config/mpv/mpv.conf << 'CONF'
+hwdec=auto
+vo=gpu-next
+cache=yes
+cache-secs=10
+demuxer-max-bytes=200M
+network-timeout=60
+no-osc
+no-osd-bar
+idle=yes
+force-window=yes
+keep-open=yes
+cursor-autohide=always
+CONF
+        else
+            cat > ~/.config/mpv/mpv.conf << 'CONF'
+hwdec=auto
+vo=x11
+cache=yes
+cache-secs=10
+demuxer-max-bytes=200M
+network-timeout=60
+no-osc
+no-osd-bar
+idle=yes
+force-window=yes
+keep-open=yes
+cursor-autohide=always
+CONF
+        fi
+        ;;
+esac
+echo "✅ mpv.conf -> ~/.config/mpv/mpv.conf"
+
+# ── systemd ─────────────────────────────────────────────────────────────
 if [ "$INSTALL_SYSTEMD" = true ]; then
-    if [ -z "$SERVER_URL" ] || [ -z "$DEVICE_ID" ]; then
-        echo "⚠️ Для systemd нужны --server и --device"
-        echo "Запустите с параметрами или используйте --no-systemd"
-        echo ""
-        INSTALL_SYSTEMD=false
-    fi
-fi
-
-if [ "$INSTALL_SYSTEMD" = true ]; then
-    echo "⚙️ Установка systemd service..."
-    
-    # Создаем service файл
+    echo "== systemd service =="
+    FS=""; [ "$FULLSCREEN" = true ] && FS="--fullscreen"
     sudo tee /etc/systemd/system/videocontrol-mpv@.service > /dev/null << EOF
 [Unit]
-Description=VideoControl MPV Client for %i
-After=network-online.target sound.target
-Wants=network-online.target
-
+Description=VideoControl MPV for %i
+After=network-online.target
 [Service]
 Type=simple
 User=$USER
-Group=$USER
 Environment="DISPLAY=:0"
 WorkingDirectory=$INSTALL_DIR
-ExecStart=/usr/bin/python3 $INSTALL_DIR/mpv_client.py --server $SERVER_URL --device %i --display :0
+ExecStart=/usr/bin/python3 $INSTALL_DIR/mpv_client.py --server $SERVER_URL --device %i --display :0 $FS
 Restart=always
 RestartSec=5
-MemoryMax=512M
-CPUQuota=80%
 StandardOutput=journal
-StandardError=journal
 SyslogIdentifier=videocontrol-mpv-%i
 NoNewPrivileges=yes
 PrivateTmp=yes
-
 [Install]
 WantedBy=multi-user.target
 EOF
-    
     sudo systemctl daemon-reload
-    sudo systemctl enable videocontrol-mpv@${DEVICE_ID}.service
-    sudo systemctl start videocontrol-mpv@${DEVICE_ID}.service
-    
-    echo "✅ Systemd service установлен и запущен"
-    echo ""
-fi
-
-echo "=========================================="
-echo "✅ Установка завершена!"
-echo "=========================================="
-echo ""
-echo "📁 Установлено в: $INSTALL_DIR"
-echo ""
-
-if [ "$INSTALL_SYSTEMD" = true ]; then
-    echo "🎬 Управление через systemd:"
-    echo "  Статус:  sudo systemctl status videocontrol-mpv@${DEVICE_ID}"
-    echo "  Логи:    sudo journalctl -u videocontrol-mpv@${DEVICE_ID} -f"
-    echo "  Стоп:    sudo systemctl stop videocontrol-mpv@${DEVICE_ID}"
-    echo "  Старт:   sudo systemctl start videocontrol-mpv@${DEVICE_ID}"
-    echo "  Рестарт: sudo systemctl restart videocontrol-mpv@${DEVICE_ID}"
-else
-    echo "🚀 Ручной запуск:"
-    echo "  cd $INSTALL_DIR"
-    echo "  python3 mpv_client.py --server <SERVER_URL> --device <DEVICE_ID>"
-    echo ""
-    if [ -n "$SERVER_URL" ] && [ -n "$DEVICE_ID" ]; then
-        echo "💡 Для этого устройства:"
-        echo "  python3 mpv_client.py --server $SERVER_URL --device $DEVICE_ID"
-    fi
+    sudo systemctl enable --now "videocontrol-mpv@${DEVICE_ID}.service"
+    echo "✅ service started"
 fi
 
 echo ""
-echo "📊 MPV vs Video.js:"
-echo "  ✅ Память: ~60 MB vs ~350 MB"
-echo "  ✅ CPU: ~10% vs ~40%"
-echo "  ✅ Большие файлы: без проблем vs проблемы"
-echo "  ✅ Стабильность 24/7: отлично vs плохо"
-echo ""
-echo "🎯 MPV = ExoPlayer для Linux!"
-echo ""
-
+echo "=== Done ==="
+echo "Files: $INSTALL_DIR"
+echo "Logs: journalctl -u videocontrol-mpv@${DEVICE_ID} -f"
