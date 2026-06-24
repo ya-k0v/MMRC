@@ -879,12 +879,13 @@ class MPVClient:
                     
                     result = self.send_command('get_property', 'pause')
                     if result is not None:
+                        self._loading_since = 0.0
                         last_response = time.time()
                         failed = 0
-                    elif time.time() - self._loading_since < 30 or time.time() < self._grace_until:
+                    elif time.time() - self._loading_since < 45 or time.time() < self._grace_until:
                         if self._loading_since > 0:
                             logger.info("MPV загружает файл, ждём...")
-                        else:
+                        elif self._grace_until > 0:
                             logger.info("MPV стартует, ждём...")
                         last_response = time.time()
                     else:
@@ -999,8 +1000,7 @@ class MPVClient:
         result = self.send_command('loadfile', stream_url, 'replace')
         
         if result and result.get('error') == 'success':
-            self._loading_since = 0.0
-            self._grace_until = time.time() + 15
+            self._grace_until = time.time() + 45
             self.isSwitchingFromPlaceholder = False
             self.skipPlaceholderOnVideoEnd = False
             time.sleep(0.1)
@@ -1039,8 +1039,7 @@ class MPVClient:
             result = self.send_command('loadfile', url, 'replace')
             
             if result and result.get('error') == 'success':
-                self._loading_since = 0.0
-                self._grace_until = time.time() + 15
+                self._grace_until = time.time() + 45
                 if is_placeholder:
                     self.send_command('set_property', 'loop-file', 'inf')
                 else:
@@ -1092,8 +1091,7 @@ class MPVClient:
             result = self.send_command('loadfile', url, 'replace')
             
             if result and result.get('error') == 'success':
-                self._loading_since = 0.0
-                self._grace_until = time.time() + 15
+                self._grace_until = time.time() + 45
                 time.sleep(0.05)
                 self.send_command('set_property', 'pause', False)
                 self.is_playing_placeholder = is_placeholder
@@ -1139,8 +1137,7 @@ class MPVClient:
             result = self.send_command('loadfile', url, 'replace')
             
             if result and result.get('error') == 'success':
-                self._loading_since = 0.0
-                self._grace_until = time.time() + 15
+                self._grace_until = time.time() + 45
                 time.sleep(0.05)
                 self.send_command('set_property', 'pause', False)
                 
