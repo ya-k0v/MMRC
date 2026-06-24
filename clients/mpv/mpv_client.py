@@ -397,7 +397,8 @@ class MPVClient:
     def _show_badge(self):
         device = self.content_device_id or self.device_id
         text = f"{device} | v{APP_VERSION}"
-        self.send_command('show_text', text, 0, 0)
+        self.send_command('show_text', text, 0)
+        self.send_command('set_property', 'window-title', text)
     
     # ── Socket.IO события ──
     def _setup_socket_events(self):
@@ -997,6 +998,7 @@ class MPVClient:
             self._start_progress_updates()
             self._cancel_retry()
             logger.info("Стрим запущен: %s", stream_protocol)
+            self._show_badge()
         else:
             self._loading_since = 0.0
             self._grace_until = 0.0
@@ -1046,6 +1048,7 @@ class MPVClient:
                     self._cancel_retry()
                 
                 logger.info("Видео загружено (loop=%s)", is_placeholder)
+                self._show_badge()
             else:
                 self._loading_since = 0.0
                 self._grace_until = 0.0
@@ -1092,6 +1095,7 @@ class MPVClient:
                     self._cancel_retry()
                 
                 logger.info("Изображение загружено")
+                self._show_badge()
             else:
                 self._loading_since = 0.0
                 self._grace_until = 0.0
@@ -1145,6 +1149,7 @@ class MPVClient:
                 self._preload_adjacent_slides(filename, page, max_pages or 999, content_type)
                 
                 logger.info("%s страница %d показана", content_type.upper(), page)
+                self._show_badge()
             else:
                 self._loading_since = 0.0
                 self._grace_until = 0.0
