@@ -35,6 +35,9 @@ from typing import Optional, Dict, Any, List
 from urllib.parse import quote
 from threading import Lock, Event
 
+# ── Константы ───────────────────────────────────────────────────────────
+APP_VERSION = '3.4.0'
+
 # ── Логгер ──────────────────────────────────────────────────────────────
 logger = logging.getLogger('mpv_client')
 _handler = logging.StreamHandler()
@@ -108,6 +111,14 @@ class DeviceDetector:
             '--autofit=1280x720',
             '--autofit-smaller=1280x720',
             '--no-keepaspect-window',
+            '--osd-align-x=right',
+            '--osd-align-y=bottom',
+            '--osd-margin-x=16',
+            '--osd-margin-y=16',
+            '--osd-font-size=14',
+            '--osd-color=#C8C8C8',
+            '--osd-shadow-offset=1',
+            '--osd-shadow-color=#000000',
         ]
         
         if platform_type == 'raspberry_pi':
@@ -225,7 +236,7 @@ class MPVClient:
         
         # ── File loading guard ──
         self._loading_since = 0.0
-        self._last_loadfile = 0.0
+        self._grace_until = 0.0
 
         # ── Preload ──
         self._preload_executor = ThreadPoolExecutor(max_workers=4)
@@ -383,6 +394,11 @@ class MPVClient:
         encoded = quote(folder_name, safe='')
         return f"{self.server_url}/api/devices/{device}/folder/{encoded}/image/{image_num}"
     
+    def _show_badge(self):
+        device = self.content_device_id or self.device_id
+        text = f"{device} | v{APP_VERSION}"
+        self.send_command('show_text', text, 0, 0)
+    
     # ── Socket.IO события ──
     def _setup_socket_events(self):
         
@@ -433,6 +449,7 @@ class MPVClient:
             self.is_registered = True
             self.missed_pong_count = 0
             self._start_ping_timer()
+            self._show_badge()
             self.sio.emit('player/volumeState', {
                 'device_id': self.device_id,
                 'level': 25,
@@ -853,9 +870,12 @@ class MPVClient:
                     if result is not None:
                         last_response = time.time()
                         failed = 0
-                    elif time.time() - self._loading_since < 30:
+                    elif time.time() - self._loading_since < 30 or time.time() < self._grace_until:
+                        if self._loading_since > 0:
+                            logger.info("MPV загружает файл, ждём...")
+                        else:
+                            logger.info("MPV стартует, ждём...")
                         last_response = time.time()
-                        logger.info("MPV загружает файл, ждём...")
                     else:
                         failed += 1
                         logger.warning("MPV не отвечает (%d/%d)", failed, max_failed)
@@ -969,6 +989,7 @@ class MPVClient:
         
         if result and result.get('error') == 'success':
             self._loading_since = 0.0
+            self._grace_until = time.time() + 15
             self.isSwitchingFromPlaceholder = False
             self.skipPlaceholderOnVideoEnd = False
             time.sleep(0.1)
@@ -978,6 +999,7 @@ class MPVClient:
             logger.info("Стрим запущен: %s", stream_protocol)
         else:
             self._loading_since = 0.0
+            self._grace_until = 0.0
             logger.error("Ошибка загрузки стрима: %s", result.get('error', 'unknown') if result else 'no response')
             self._load_placeholder()
     
@@ -1006,6 +1028,7 @@ class MPVClient:
             
             if result and result.get('error') == 'success':
                 self._loading_since = 0.0
+                self._grace_until = time.time() + 15
                 if is_placeholder:
                     self.send_command('set_property', 'loop-file', 'inf')
                 else:
@@ -1025,10 +1048,12 @@ class MPVClient:
                 logger.info("Видео загружено (loop=%s)", is_placeholder)
             else:
                 self._loading_since = 0.0
+                self._grace_until = 0.0
                 err = result.get('error', 'unknown') if result else 'no response'
                 self._handle_load_error(filename, is_placeholder, err)
         except Exception as e:
             self._loading_since = 0.0
+            self._grace_until = 0.0
             logger.error("Exception в _play_video: %s", e)
             self._handle_load_error(filename, is_placeholder, str(e))
     
@@ -1055,6 +1080,7 @@ class MPVClient:
             
             if result and result.get('error') == 'success':
                 self._loading_since = 0.0
+                self._grace_until = time.time() + 15
                 time.sleep(0.05)
                 self.send_command('set_property', 'pause', False)
                 self.is_playing_placeholder = is_placeholder
@@ -1068,10 +1094,12 @@ class MPVClient:
                 logger.info("Изображение загружено")
             else:
                 self._loading_since = 0.0
+                self._grace_until = 0.0
                 err = result.get('error', 'unknown') if result else 'no response'
                 self._handle_load_error(filename, is_placeholder, err)
         except Exception as e:
             self._loading_since = 0.0
+            self._grace_until = 0.0
             logger.error("Exception в _play_image: %s", e)
             self._handle_load_error(filename, is_placeholder, str(e))
     
@@ -1098,6 +1126,7 @@ class MPVClient:
             
             if result and result.get('error') == 'success':
                 self._loading_since = 0.0
+                self._grace_until = time.time() + 15
                 time.sleep(0.05)
                 self.send_command('set_property', 'pause', False)
                 
@@ -1118,10 +1147,12 @@ class MPVClient:
                 logger.info("%s страница %d показана", content_type.upper(), page)
             else:
                 self._loading_since = 0.0
+                self._grace_until = 0.0
                 logger.error("Ошибка загрузки %s: %s", content_type,
                              result.get('error', 'unknown') if result else 'no response')
         except Exception as e:
             self._loading_since = 0.0
+            self._grace_until = 0.0
             logger.error("Exception в _show_static_content: %s", e)
     
     def _show_pdf_page(self, filename: str, page: int):
