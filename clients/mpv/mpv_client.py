@@ -129,11 +129,15 @@ class DeviceDetector:
                 '--demuxer-max-bytes=150M',
                 '--demuxer-readahead-secs=30',
                 '--network-timeout=60',
-                '--vo=x11',
-                '--hwdec=v4l2m2m',
+                '--vo=gpu',
+                '--gpu-context=drm',
+                '--hwdec=v4l2m2m-copy',
                 '--hwdec-codecs=h264,hevc,vp8,vp9',
                 '--vd-lavc-threads=4',
                 '--framedrop=vo',
+                '--no-osc',
+                '--no-osd-bar',
+                '--audio-device=alsa/default',
             ])
             return params
         
@@ -238,47 +242,18 @@ class MPVClient:
         self._loading_since = 0.0
         self._grace_until = 0.0
 
+        # ── MPV restart ──
+        self.mpv_process: Optional[subprocess.Popen] = None
+
         # ── Preload ──
         self._preload_executor = ThreadPoolExecutor(max_workers=4)
         
-        # ── Удаляем старый socket ──
-        if os.path.exists(self.ipc_socket):
-            os.unlink(self.ipc_socket)
+        # ── Определяем платформу ──
+        self._platform_type = DeviceDetector.detect_platform()
+        self._mpv_version = DeviceDetector.get_mpv_version()
         
-        # ── Платформа и параметры ──
-        platform_type = DeviceDetector.detect_platform()
-        mpv_version = DeviceDetector.get_mpv_version()
-        optimal_params = DeviceDetector.get_optimal_params(platform_type, mpv_version)
-        
-        mpv_cmd = ['mpv'] + optimal_params + [f'--input-ipc-server={self.ipc_socket}']
-        
-        # ── Persistent badge OSD ──
-        badge_text = f"{device_id} | v{APP_VERSION}"
-        mpv_cmd.append(f'--osd-msg3={badge_text}')
-        mpv_cmd.append(f'--osd-msg2={badge_text}')
-        mpv_cmd.append('--osd-level=3')
-        
-        if fullscreen:
-            mpv_cmd.append('--fullscreen')
-            mpv_cmd.append('--no-border')
-        
-        logger.info("Запуск MPV: %s ...", ' '.join(mpv_cmd[:5]))
-        
-        self.mpv_process = subprocess.Popen(
-            mpv_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            env={**os.environ, 'DISPLAY': display}
-        )
-        
-        # ── Ждём IPC socket (до 10 сек) ──
-        self._wait_for_ipc()
-        
-        # ── Сохранение пропорций ──
-        try:
-            self.send_command('set_property', 'video-aspect', '-1')
-        except Exception:
-            logger.warning("Не удалось установить video-aspect")
+        # ── Запуск MPV ──
+        self._start_mpv()
         
         self._check_hardware_acceleration()
         
@@ -293,6 +268,65 @@ class MPVClient:
         self._setup_socket_events()
         self._setup_signal_handlers()
         self._setup_mpv_monitor()
+    
+    def _start_mpv(self):
+        if os.path.exists(self.ipc_socket):
+            os.unlink(self.ipc_socket)
+        
+        optimal_params = DeviceDetector.get_optimal_params(self._platform_type, self._mpv_version)
+        
+        mpv_cmd = ['mpv'] + optimal_params + [f'--input-ipc-server={self.ipc_socket}']
+        
+        # ── Persistent badge OSD ──
+        badge_text = f"{self.device_id} | v{APP_VERSION}"
+        mpv_cmd.append(f'--osd-msg3={badge_text}')
+        mpv_cmd.append(f'--osd-msg2={badge_text}')
+        mpv_cmd.append('--osd-level=3')
+        
+        if self.fullscreen:
+            mpv_cmd.append('--fullscreen')
+            mpv_cmd.append('--no-border')
+        
+        logger.info("Запуск MPV: %s ...", ' '.join(mpv_cmd[:5]))
+        
+        self.mpv_process = subprocess.Popen(
+            mpv_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env={**os.environ, 'DISPLAY': self.display}
+        )
+        
+        self._wait_for_ipc()
+        
+        try:
+            self.send_command('set_property', 'video-aspect', '-1')
+        except Exception:
+            logger.warning("Не удалось установить video-aspect")
+    
+    def _restart_mpv(self):
+        logger.info("Перезапуск MPV...")
+        if self.mpv_process and self.mpv_process.poll() is None:
+            try:
+                self.send_command('quit')
+            except Exception:
+                pass
+            self.mpv_process.terminate()
+            try:
+                self.mpv_process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self.mpv_process.kill()
+                self.mpv_process.wait(timeout=1)
+        else:
+            # Если MPV уже не работает, ждём немного перед перезапуском
+            time.sleep(1)
+        
+        self._loading_since = 0.0
+        self._grace_until = 0.0
+        self._start_mpv()
+        self.is_playing_placeholder = False
+        self.currentFileState = {'type': None, 'file': None, 'page': 1}
+        self._load_placeholder()
+        logger.info("MPV перезапущен")
     
     def _wait_for_ipc(self):
         for i in range(100):
@@ -422,7 +456,7 @@ class MPVClient:
                 'device_id': self.device_id,
                 'device_type': 'NATIVE_MPV',
                 'platform': 'Linux MPV',
-                'app_version': '2.0',
+                'app_version': APP_VERSION,
                 'capabilities': {
                     'video': True,
                     'audio': True,
@@ -449,7 +483,10 @@ class MPVClient:
             self.is_registered = False
             self.missed_pong_count = 0
             
-            if not self.is_playing_placeholder:
+            if self.is_streaming:
+                logger.info("Disconnect во время стрима — возврат к заглушке")
+                self._load_placeholder()
+            elif not self.is_playing_placeholder:
                 logger.info("Connection lost: контент продолжает воспроизведение...")
             else:
                 logger.info("Connection lost: заглушка продолжает крутиться (loop mode)...")
@@ -893,10 +930,9 @@ class MPVClient:
                         logger.warning("MPV не отвечает (%d/%d)", failed, max_failed)
                         if failed >= max_failed:
                             logger.error("MPV завис! Принудительное завершение...")
-                            if self.mpv_process:
-                                self.mpv_process.kill()
-                            self.running = False
-                            break
+                            self._restart_mpv()
+                            failed = 0
+                            last_response = time.time()
                     
                     if time.time() - last_eof_check > 10.0:
                         eof_result = self.send_command('get_property', 'eof-reached')
@@ -933,9 +969,10 @@ class MPVClient:
                                 self._load_placeholder()
                     
                     if self.mpv_process.poll() is not None:
-                        logger.error("MPV процесс завершился!")
-                        self.running = False
-                        break
+                        logger.error("MPV процесс завершился! Перезапуск...")
+                        self._restart_mpv()
+                        failed = 0
+                        last_response = time.time()
                         
                 except Exception as e:
                     if self.running:
@@ -1328,7 +1365,7 @@ class MPVClient:
                                 'device_id': self.device_id,
                                 'device_type': 'NATIVE_MPV',
                                 'platform': 'Linux MPV',
-                                'app_version': '2.0',
+                                'app_version': APP_VERSION,
                                 'capabilities': {
                                     'video': True,
                                     'audio': True,
@@ -1340,9 +1377,8 @@ class MPVClient:
                             })
                 
                 if self.mpv_process.poll() is not None:
-                    logger.error("MPV процесс завершился!")
-                    self.running = False
-                    break
+                    logger.error("Heartbeat: MPV процесс завершился!")
+                    self._restart_mpv()
             except Exception as e:
                 if self.running:
                     logger.warning("Heartbeat error: %s", e)
@@ -1352,6 +1388,31 @@ class MPVClient:
     
     def _stop_ping_timer(self):
         self.missed_pong_count = 0
+    
+    def _socket_watchdog(self):
+        while self.running and not self._stop_heartbeat.is_set():
+            if self._stop_heartbeat.wait(timeout=5):
+                break
+            try:
+                if self.sio.connected and not self.is_registered:
+                    logger.info("Watchdog: не зарегистрированы, повторная регистрация")
+                    self.sio.emit('player/register', {
+                        'device_id': self.device_id,
+                        'device_type': 'NATIVE_MPV',
+                        'platform': 'Linux MPV',
+                        'app_version': APP_VERSION,
+                        'capabilities': {
+                            'video': True,
+                            'audio': True,
+                            'images': True,
+                            'pdf': True,
+                            'pptx': True,
+                            'streaming': True,
+                        }
+                    })
+            except Exception as e:
+                if self.running:
+                    logger.debug("Watchdog error: %s", e)
     
     def _connect_with_retry(self):
         retry_delay = 2
@@ -1373,6 +1434,9 @@ class MPVClient:
         heartbeat_thread = threading.Thread(target=self._heartbeat, daemon=True)
         heartbeat_thread.start()
         
+        watchdog_thread = threading.Thread(target=self._socket_watchdog, daemon=True)
+        watchdog_thread.start()
+        
         if not self._connect_with_retry():
             self.cleanup()
             return
@@ -1386,8 +1450,8 @@ class MPVClient:
                 if self._stop_heartbeat.wait(timeout=1):
                     break
                 if self.mpv_process.poll() is not None:
-                    logger.error("MPV процесс завершился!")
-                    break
+                    logger.error("Основной цикл: MPV процесс завершился!")
+                    self._restart_mpv()
         except KeyboardInterrupt:
             logger.info("Остановка...")
         finally:
