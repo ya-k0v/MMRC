@@ -251,6 +251,13 @@ class MPVClient:
         optimal_params = DeviceDetector.get_optimal_params(platform_type, mpv_version)
         
         mpv_cmd = ['mpv'] + optimal_params + [f'--input-ipc-server={self.ipc_socket}']
+        
+        # ── Persistent badge OSD ──
+        badge_text = f"{device_id} | v{APP_VERSION}"
+        mpv_cmd.append(f'--osd-msg3={badge_text}')
+        mpv_cmd.append(f'--osd-msg2={badge_text}')
+        mpv_cmd.append('--osd-level=3')
+        
         if fullscreen:
             mpv_cmd.append('--fullscreen')
             mpv_cmd.append('--no-border')
@@ -397,7 +404,10 @@ class MPVClient:
     def _show_badge(self):
         device = self.content_device_id or self.device_id
         text = f"{device} | v{APP_VERSION}"
-        self.send_command('show_text', text, 0)
+        # osd-msg3 is set at startup via --osd-msg3 for reliability;
+        # update it at runtime in case content_device_id changed
+        self.send_command('set_property', 'options/osd-msg3', text)
+        self.send_command('set_property', 'options/osd-msg2', text)
         self.send_command('set_property', 'window-title', text)
     
     # ── Socket.IO события ──
