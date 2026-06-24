@@ -884,9 +884,7 @@ class MPVClient:
                                 continue
                             
                             if is_looping and actually_ended:
-                                logger.info("Loop видео, начинаем сначала")
-                                self.send_command('seek', 0, 'absolute')
-                                self.send_command('set_property', 'pause', False)
+                                logger.info("Loop видео — MPV уже обрабатывает loop, пропускаем ручной seek")
                                 continue
                             
                             is_video = self.currentFileState.get('type') in ('video', None)
