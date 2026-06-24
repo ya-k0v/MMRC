@@ -268,13 +268,16 @@ router.get('/resolve/:deviceId/*fileName', async (req, res) => {
   const needsLocalFile = !getCurrentStorage(); // без storage требуем локальный файл
 
   if (!metadata || !metadata.file_path || (needsLocalFile && !fs.existsSync(metadata.file_path))) {
-    // Если есть storage — DB источник истины, просто шлём что нашли
     if (!needsLocalFile) {
       if (!metadata || !metadata.file_path) {
-        logger.warn('[Resolver] File not found in DB', { deviceId, fileName });
-        return res.status(404).send('File not found');
+        // Сначала глобальный поиск по safeName (для All Files с originDeviceId)
+        metadata = await getAnyFileMetadataBySafeName(fileName);
+        if (!metadata || !metadata.file_path) {
+          logger.warn('[Resolver] File not found in DB (storage mode)', { deviceId, fileName });
+          return res.status(404).send('File not found');
+        }
+        logger.info('[Resolver] Found via getAnyFileMetadataBySafeName', { deviceId, fileName, actualDevice: metadata.device_id });
       }
-      // metadata есть — идём к sendFileWithRange
     } else {
       logger.warn('[Resolver] Fallback to resolve-all', { deviceId, fileName });
       metadata = await getAnyFileMetadataBySafeName(fileName);

@@ -31,6 +31,7 @@ const previewStreamProtocol = url.searchParams.get('protocol');
 const previewStreamUrl = url.searchParams.get('stream_url'); // Прямой URL стрима для превью
 const previewClientVersionParam = url.searchParams.get('clientVersion');
 const previewStartTime = url.searchParams.get('startTime');
+const originDeviceIdParam = url.searchParams.get('originDeviceId');
 
 const APP_VERSION = '3.4.0';
 fetch('/api/version').then(r => r.json()).then(v => { if (v.apps?.jsPlayer) setPlayerBadge(v.apps.jsPlayer); }).catch(() => {});
@@ -186,7 +187,7 @@ function showMusicLogo(show = true) {
 }
 
 let currentFileState = { type: null, file: null, page: 1, originDeviceId: null };
-let contentDeviceId = device_id; // Устройство, с которого берем контент (важно для All Files)
+let contentDeviceId = originDeviceIdParam || device_id; // Устройство, с которого берем контент (важно для All Files)
 let soundUnlocked = false;
 let vjsPlayer = null;
 let isSwitchingFromPlaceholder = false; // Флаг переключения с заглушки (аналог skipPlaceholderOnVideoEnd в Android)

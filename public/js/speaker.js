@@ -2255,6 +2255,9 @@ function showLivePreviewForTV(deviceId, force = false) {
       if (typeof cur.page === 'number' && cur.page > 0) {
         url += `&page=${encodeURIComponent(cur.page)}`;
       }
+      if (cur.originDeviceId && cur.originDeviceId !== deviceId) {
+        url += `&originDeviceId=${encodeURIComponent(cur.originDeviceId)}`;
+      }
     }
     return url;
   }
@@ -4614,9 +4617,14 @@ if (videoProgressBar) {
         let seekUrl = `/player-videojs.html?device_id=${encodeURIComponent(currentDevice)}&preview=1&muted=1`;
         seekUrl += `&file=${encodeURIComponent(seekDevice.current.file)}`;
         if (seekDevice.current.type) seekUrl += `&type=${encodeURIComponent(seekDevice.current.type)}`;
-        seekUrl += `&startTime=${encodeURIComponent(targetTime)}`;
+        if (typeof seekDevice.current.currentTime === 'number' && seekDevice.current.currentTime > 0) {
+          seekUrl += `&startTime=${encodeURIComponent(targetTime)}`;
+        }
         if (typeof seekDevice.current.page === 'number' && seekDevice.current.page > 0) {
           seekUrl += `&page=${encodeURIComponent(seekDevice.current.page)}`;
+        }
+        if (seekDevice.current.originDeviceId && seekDevice.current.originDeviceId !== currentDevice) {
+          seekUrl += `&originDeviceId=${encodeURIComponent(seekDevice.current.originDeviceId)}`;
         }
         seekUrl += `&_=${Date.now()}`;
         seekIframe.src = seekUrl;

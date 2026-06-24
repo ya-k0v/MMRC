@@ -3,7 +3,7 @@
 # Быстрая установка без клонирования всего репозитория
 #
 # Использование:
-#   curl -fsSL https://raw.githubusercontent.com/ya-k0v/VideoControl/v330/clients/mpv/quick-install.sh | bash -s -- --server http://SERVER_IP --device mpv-001
+#   curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/v340/clients/mpv/quick-install.sh | bash -s -- --server http://SERVER_IP --device mpv-001
 #
 # Или локально:
 #   ./quick-install.sh --server http://192.168.1.100 --device mpv-001
@@ -12,7 +12,7 @@ set -e
 
 VERSION="1.0"
 INSTALL_DIR="$HOME/videocontrol-mpv"
-REPO_URL="https://raw.githubusercontent.com/ya-k0v/VideoControl/v330/clients/mpv"
+REPO_URL="https://raw.githubusercontent.com/ya-k0v/MMRC/v340/clients/mpv"
 
 echo "=========================================="
 echo "VideoControl MPV Client - Quick Install"
@@ -58,7 +58,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Примеры:"
             echo "  # Через curl:"
-            echo "  curl -fsSL https://raw.githubusercontent.com/ya-k0v/VideoControl/v330/clients/mpv/quick-install.sh | bash -s -- --server http://192.168.1.100 --device mpv-001"
+            echo "  curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/v340/clients/mpv/quick-install.sh | bash -s -- --server http://192.168.1.100 --device mpv-001"
             echo ""
             echo "  # Локально:"
             echo "  ./quick-install.sh --server http://192.168.1.100 --device mpv-001"
@@ -120,7 +120,7 @@ echo ""
 
 # Установка Python зависимостей
 echo "📦 Установка Python зависимостей..."
-pip3 install --user --quiet python-socketio[client]==5.10.0 requests==2.31.0
+pip3 install --user --quiet python-socketio[client]==5.14.0 requests==2.32.4
 echo "✅ Python зависимости установлены"
 echo ""
 
