@@ -36,7 +36,7 @@ from urllib.parse import quote
 from threading import Lock, Event
 
 # ── Константы ───────────────────────────────────────────────────────────
-APP_VERSION = '3.4.0'
+APP_VERSION = '3.4.0'  # default; overridden by server /api/version
 
 # ── Логгер ──────────────────────────────────────────────────────────────
 logger = logging.getLogger('mpv_client')
@@ -242,6 +242,9 @@ class MPVClient:
         self._loading_since = 0.0
         self._grace_until = 0.0
 
+        # ── Server version (fetched from /api/version) ──
+        self._server_app_version: Optional[str] = None
+
         # ── MPV restart ──
         self.mpv_process: Optional[subprocess.Popen] = None
 
@@ -256,6 +259,7 @@ class MPVClient:
         self._start_mpv()
         
         self._check_hardware_acceleration()
+        self._fetch_server_version()
         
         # ── Socket.IO ──
         self.sio = socketio.Client(
@@ -364,6 +368,20 @@ class MPVClient:
         except Exception as e:
             logger.info("Не удалось проверить hwdec: %s", e)
     
+    def _fetch_server_version(self):
+        def fetch():
+            try:
+                resp = requests.get(f"{self.server_url}/api/version", timeout=5)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    server_ver = data.get('apps', {}).get('jsPlayer')
+                    if server_ver:
+                        self._server_app_version = server_ver
+                        logger.info("Версия с сервера: %s", server_ver)
+            except Exception as e:
+                logger.debug("Не удалось получить версию с сервера: %s", e)
+        threading.Thread(target=fetch, daemon=True).start()
+    
     @staticmethod
     def _detect_primary_monitor():
         try:
@@ -437,9 +455,8 @@ class MPVClient:
     
     def _show_badge(self):
         device = self.content_device_id or self.device_id
-        text = f"{device} | v{APP_VERSION}"
-        # osd-msg3 is set at startup via --osd-msg3 for reliability;
-        # update it at runtime in case content_device_id changed
+        ver = self._server_app_version or APP_VERSION
+        text = f"{device} | v{ver}"
         self.send_command('set_property', 'options/osd-msg3', text)
         self.send_command('set_property', 'options/osd-msg2', text)
         self.send_command('set_property', 'window-title', text)
