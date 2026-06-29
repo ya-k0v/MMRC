@@ -29,12 +29,10 @@ const moveFileIfExists = (source, destination) => {
 };
 
 const migrateLegacyDb = () => {
-  // Try multiple legacy locations
   const legacyPaths = [LEGACY_DB_PATH, LEGACY_DB_PATH2].filter(p => p && fs.existsSync(p));
 
   if (legacyPaths.length === 0) return;
 
-  // Ensure target directory exists
   const targetDir = path.dirname(DB_PATH);
   if (!fs.existsSync(targetDir)) {
     fs.mkdirSync(targetDir, { recursive: true });
@@ -46,7 +44,6 @@ const migrateLegacyDb = () => {
       moveFileIfExists(legacyPath, DB_PATH);
     }
 
-    // Migrate wal/shm files
     ['-wal', '-shm'].forEach((suffix) => {
       const legacyFile = `${legacyPath}${suffix}`;
       const newFile = `${DB_PATH}${suffix}`;
@@ -70,9 +67,9 @@ const ensureHeroesDb = () => {
   initDb.close();
 };
 
-const isPostgres = process.env.DB_TYPE === 'postgres';
+export function initHeroDb() {
+  if (process.env.DB_TYPE === 'postgres') return;
 
-if (!isPostgres) {
   migrateLegacyDb();
 
   if (!fs.existsSync(DB_PATH)) {
@@ -83,17 +80,6 @@ if (!isPostgres) {
     ensureHeroesDb();
   }
 }
-
-const applyHeroDbPragmas = (db) => {
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-};
-
-const openHeroDbConnection = () => {
-  const db = new Database(DB_PATH);
-  applyHeroDbPragmas(db);
-  return db;
-};
 
 export let heroDb = null;
 
@@ -119,5 +105,5 @@ export async function reloadHeroDb() {
   return getHeroDb();
 }
 
-export const HERO_DB_PATH = null;
-export const LEGACY_HERO_DB_PATH = null;
+export const HERO_DB_PATH = DB_PATH;
+export const LEGACY_HERO_DB_PATH = LEGACY_DB_PATH;

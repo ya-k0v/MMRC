@@ -55,7 +55,7 @@ import { createAnalyticsRouter } from './src/routes/analytics.js';
 import { createFoldersRouter } from './src/routes/folders.js';
 import { createAuthRouter } from './src/routes/auth.js';
 import { createDeduplicationRouter } from './src/routes/deduplication.js';
-import { createHeroRouter } from './src/hero/index.js';
+import { createHeroRouter, initHeroDb } from './src/hero/index.js';
 import { createVolumeRouter } from './src/routes/volume.js';
 import fileResolverRouter from './src/routes/file-resolver.js';
 import { createNotificationsRouter } from './src/routes/notifications.js';
@@ -455,6 +455,9 @@ const deduplicationRouter = createDeduplicationRouter({
   updateDeviceFilesFromDB
 });
 
+if (enabledModules.includes('hero')) {
+  initHeroDb();
+}
 const heroRouter = enabledModules.includes('hero') ? createHeroRouter({ requireHeroAdmin }) : null;
 const volumeRouter = createVolumeRouter({
   devices,

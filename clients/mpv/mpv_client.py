@@ -105,7 +105,6 @@ class DeviceDetector:
         params = [
             '--idle=yes',
             '--force-window=yes',
-            '--keep-open=yes',
             '--no-input-default-bindings',
             '--cursor-autohide=always',
             '--autofit=1280x720',
@@ -439,6 +438,8 @@ class MPVClient:
     
     # ── URL helper ──
     def _content_url(self, filename: str) -> str:
+        if filename.startswith('/') or filename.startswith('file://'):
+            return filename
         device = self.content_device_id or self.device_id
         encoded = quote(filename, safe='')
         return f"{self.server_url}/api/files/resolve/{device}/{encoded}"
@@ -457,9 +458,11 @@ class MPVClient:
         device = self.content_device_id or self.device_id
         ver = self._server_app_version or APP_VERSION
         text = f"{device} | v{ver}"
-        self.send_command('set_property', 'options/osd-msg3', text)
-        self.send_command('set_property', 'options/osd-msg2', text)
-        self.send_command('set_property', 'window-title', text)
+        for prop in ('osd-msg3', 'osd-msg2', 'window-title'):
+            try:
+                self.send_command('set_property', prop, text)
+            except Exception:
+                pass
     
     # ── Socket.IO события ──
     def _setup_socket_events(self):
@@ -933,18 +936,24 @@ class MPVClient:
                     
                     result = self.send_command('get_property', 'pause')
                     if result is not None:
-                        self._loading_since = 0.0
+                        if self.is_playing_placeholder:
+                            self._loading_since = time.time()
                         last_response = time.time()
                         failed = 0
                     elif time.time() - self._loading_since < 45 or time.time() < self._grace_until:
                         if self._loading_since > 0:
-                            logger.info("MPV загружает файл, ждём...")
+                            logger.info("MPV загружает файл, ждём... (guard: %.0fs/%d, grace: %.0fs/%d)",
+                                        time.time() - self._loading_since, 45,
+                                        self._grace_until - time.time() if self._grace_until > 0 else 0, 45)
                         elif self._grace_until > 0:
-                            logger.info("MPV стартует, ждём...")
+                            logger.info("MPV стартует, ждём... (grace: %.0fs/%d)",
+                                        self._grace_until - time.time(), 45)
                         last_response = time.time()
                     else:
                         failed += 1
-                        logger.warning("MPV не отвечает (%d/%d)", failed, max_failed)
+                        logger.warning("MPV не отвечает (%d/%d) [loading_since=%.1f grace_until=%.1f now=%.1f]",
+                                       failed, max_failed,
+                                       self._loading_since, self._grace_until, time.time())
                         if failed >= max_failed:
                             logger.error("MPV завис! Принудительное завершение...")
                             self._restart_mpv()
@@ -1325,21 +1334,38 @@ class MPVClient:
                         logger.info("Placeholder: %s", placeholder_file)
                         ext = placeholder_file.split('.')[-1].lower()
                         
-                        self.cached_placeholder_file = placeholder_file
+                        # ── Download locally for off-line loop ──
+                        local_dir = '/tmp/mmrc'
+                        os.makedirs(local_dir, exist_ok=True)
+                        local_path = os.path.join(local_dir, placeholder_file)
+                        
                         if ext in ('mp4', 'webm', 'ogg', 'mkv', 'mov', 'avi'):
                             self.cached_placeholder_type = 'video'
                         elif ext in ('png', 'jpg', 'jpeg', 'gif', 'webp'):
                             self.cached_placeholder_type = 'image'
                         
-                        logger.info("Cached: %s (%s)", self.cached_placeholder_file,
-                                     self.cached_placeholder_type)
+                        file_url = self._content_url(placeholder_file)
+                        try:
+                            dl = requests.get(file_url, timeout=30, stream=True)
+                            if dl.status_code == 200:
+                                with open(local_path, 'wb') as f:
+                                    for chunk in dl.iter_content(8192):
+                                        f.write(chunk)
+                                self.cached_placeholder_file = local_path
+                                logger.info("Downloaded to %s (%s)", local_path, self.cached_placeholder_type)
+                            else:
+                                self.cached_placeholder_file = placeholder_file
+                                logger.warning("Download failed HTTP %d, fallback to HTTP play", dl.status_code)
+                        except requests.RequestException as e:
+                            self.cached_placeholder_file = placeholder_file
+                            logger.warning("Download error %s, fallback to HTTP play", e)
                         
                         if not self.running:
                             return
                         if self.cached_placeholder_type == 'video':
-                            self._play_video(placeholder_file, is_placeholder=True)
+                            self._play_video(self.cached_placeholder_file, is_placeholder=True)
                         elif self.cached_placeholder_type == 'image':
-                            self._play_image(placeholder_file, is_placeholder=True)
+                            self._play_image(self.cached_placeholder_file, is_placeholder=True)
                     else:
                         logger.info("No placeholder — idle mode")
                         self.is_playing_placeholder = True
