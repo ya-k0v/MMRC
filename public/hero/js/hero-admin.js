@@ -1108,7 +1108,7 @@ function startInlineEdit(node, hero) {
         const cleaned = editor.value.replace(/\D/g, '').substring(0, 8);
         let formatted = '';
         for (let i = 0; i < cleaned.length; i++) {
-          if (i === 2 || i === 5) formatted += '.';
+          if (i === 2 || i === 4) formatted += '.';
           formatted += cleaned[i];
         }
         if (formatted !== editor.value) editor.value = formatted;

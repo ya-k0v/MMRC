@@ -879,7 +879,7 @@ if (searchInput) {
         return;
       }
       hideKeyboard();
-    }, 200);
+    }, 150);
     
     // Возвращаем обычное поведение после потери фокуса
     const scrollY = document.body.style.top;
@@ -898,10 +898,13 @@ if (searchInput) {
   });
 }
 
+// Скрываем клавиатуру при касании саджестов (до blur/click)
+suggestions.addEventListener('mousedown', () => hideKeyboard());
+suggestions.addEventListener('touchstart', () => hideKeyboard(), { passive: true });
+
 suggestions.addEventListener('click', (event) => {
   const item = event.target.closest('.suggestion-item');
   if (!item || !item.dataset.id) return;
-  // Останавливаем таймер при ручном выборе
   if (autoChangeTimer) {
     clearTimeout(autoChangeTimer);
     autoChangeTimer = null;
