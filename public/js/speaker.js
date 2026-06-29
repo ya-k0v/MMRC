@@ -3303,13 +3303,46 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
         }
 
         // Видео / изображения — превью через iframe плеера
-        const iframeSrcBase = `/player-videojs.html?device_id=${encodeURIComponent(sourceDeviceId || '')}&preview=1&muted=1&file=${encodeURIComponent(safeName)}`;
-        const src = `${iframeSrcBase}&t=${Date.now()}`;
+        // На мобильных отключаем превью для видео и изображений (только папки/PPTX/PDF)
+        if (window.innerWidth <= 767) {
+          return;
+        }
+
+        // КРИТИЧНО: Останавливаем отслеживание превью стрима если было активно
+        if (currentPreviewContext.deviceId && currentPreviewContext.file) {
+          const prevFileData = allFiles.find(f => f.safeName === currentPreviewContext.file);
+          if (prevFileData && prevFileData.contentType === 'streaming' &&
+              currentPreviewContext.deviceId === sourceDeviceId &&
+              currentPreviewContext.file !== safeName) {
+            stopPreviewStreamTracking(currentPreviewContext.file);
+          }
+        }
+
+        // КРИТИЧНО: Обновляем контекст превью
+        currentPreviewContext = { deviceId: sourceDeviceId, file: safeName, page: null };
+
+        const ext = getFileExtension(safeName);
+        let type = null;
+        let page = undefined;
+        if (normalizedType === 'image' || IMAGE_EXTENSIONS.includes(ext)) {
+          type = 'image';
+          page = 1;
+        } else if (normalizedType === 'video' || VIDEO_EXTENSIONS.includes(ext)) {
+          type = 'video';
+        } else if (normalizedType === 'audio') {
+          type = 'audio';
+        }
+        const startTime = getStartTimeForFile(sourceDeviceId, safeName);
+        let previewUrl = `/player-videojs.html?device_id=${encodeURIComponent(sourceDeviceId || '')}&file=${encodeURIComponent(safeName)}&preview=1&muted=1`;
+        if (type) previewUrl += `&type=${encodeURIComponent(type)}`;
+        if (typeof page !== 'undefined') previewUrl += `&page=${encodeURIComponent(page)}`;
+        if (typeof startTime !== 'undefined' && startTime !== null) previewUrl += `&startTime=${encodeURIComponent(startTime)}`;
+        previewUrl += `&t=${Date.now()}`;
         const frame = filePreview.querySelector('iframe');
         if (frame) {
-          frame.src = src;
+          frame.src = previewUrl;
         } else {
-          filePreview.innerHTML = `<iframe src="${src}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
+          filePreview.innerHTML = `<iframe src="${previewUrl}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
         }
         setTimeout(() => updatePreviewControlButtons(), 10);
       };
@@ -3451,6 +3484,28 @@ async function handlePlayAggregated({ sourceDeviceId, safeName, contentType, str
       originDeviceId: sourceDeviceId
     });
     return;
+  }
+
+  // Видео/аудио — показываем превью через iframe
+  if (normalizedType === 'video' || normalizedType === 'audio') {
+    // На мобильных отключаем превью для видео
+    if (window.innerWidth > 767 || normalizedType === 'audio') {
+      setTimeout(() => {
+        const previewDeviceId = sourceDeviceId || readyTargetDeviceIds[0];
+        currentPreviewContext = { deviceId: previewDeviceId, file: safeName, page: null };
+        let previewUrl = `/player-videojs.html?device_id=${encodeURIComponent(previewDeviceId)}&file=${encodeURIComponent(safeName)}&preview=1&muted=1`;
+        if (normalizedType === 'audio') previewUrl += `&type=audio`;
+        if (normalizedType === 'video') previewUrl += `&type=video`;
+        previewUrl += `&t=${Date.now()}`;
+        const frame = filePreview.querySelector('iframe');
+        if (frame) {
+          frame.src = previewUrl;
+        } else {
+          filePreview.innerHTML = `<iframe src="${previewUrl}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
+        }
+        updatePreviewControlButtons();
+      }, 300);
+    }
   }
 
   // Видео по умолчанию (без копирования)
@@ -4050,19 +4105,20 @@ function buildPreviewPlaybackInfo(device) {
   }
 }
 
-function updatePlaybackInfoUI() {
+function updatePlaybackInfoUI(deviceId) {
   const infoEl = document.getElementById('previewPlaybackInfo');
   const progressContainer = document.getElementById('videoProgressContainer');
   const progressBar = document.getElementById('videoProgressBar');
+  const targetDeviceId = deviceId || currentDevice;
 
-  if (!infoEl || !currentDevice) {
+  if (!infoEl || !targetDeviceId) {
     if (infoEl) infoEl.innerHTML = '';
     if (progressContainer) progressContainer.style.display = 'none';
     updatePreviewControlButtons();
     return;
   }
 
-  const device = devices.find(d => d.device_id === currentDevice);
+  const device = devices.find(d => d.device_id === targetDeviceId);
   const playbackInfo = buildPreviewPlaybackInfo(device);
 
   if (!device || !device.current) {
@@ -4141,7 +4197,7 @@ function updatePlaybackInfoUI() {
   }
 
   updatePreviewControlButtons();
-  refreshTvTilePlaybackInfo(currentDevice);
+  refreshTvTilePlaybackInfo(targetDeviceId);
   // Обновляем состояние кнопок с учетом информации о воспроизведении
   updateVolumeUI();
 }
@@ -4291,8 +4347,8 @@ socket.on('player/progress', ({ device_id, type, file, currentTime, duration, pa
     }
     
     refreshTvTilePlaybackInfo(device_id);
-    if (device_id === currentDevice) {
-      updatePlaybackInfoUI();
+    if (device_id === currentDevice || device_id === currentPreviewContext.deviceId) {
+      updatePlaybackInfoUI(device_id);
     }
     return;
   }
@@ -4309,8 +4365,8 @@ socket.on('player/progress', ({ device_id, type, file, currentTime, duration, pa
       if (stream_protocol) device.current.streamProtocol = stream_protocol;
     }
     refreshTvTilePlaybackInfo(device_id);
-    if (device_id === currentDevice) {
-      updatePlaybackInfoUI();
+    if (device_id === currentDevice || device_id === currentPreviewContext.deviceId) {
+      updatePlaybackInfoUI(device_id);
     }
     return;
   }
@@ -4377,8 +4433,8 @@ socket.on('player/progress', ({ device_id, type, file, currentTime, duration, pa
       }
     }
     refreshTvTilePlaybackInfo(device_id);
-    if (device_id === currentDevice) {
-      updatePlaybackInfoUI();
+    if (device_id === currentDevice || device_id === currentPreviewContext.deviceId) {
+      updatePlaybackInfoUI(device_id);
     }
     return;
   }
@@ -4444,8 +4500,8 @@ socket.on('player/progress', ({ device_id, type, file, currentTime, duration, pa
       }
     }
     refreshTvTilePlaybackInfo(device_id);
-    if (device_id === currentDevice) {
-      updatePlaybackInfoUI();
+    if (device_id === currentDevice || device_id === currentPreviewContext.deviceId) {
+      updatePlaybackInfoUI(device_id);
     }
     return;
   }
@@ -4454,8 +4510,8 @@ socket.on('player/progress', ({ device_id, type, file, currentTime, duration, pa
   if (type === 'idle' || type === 'placeholder') {
     playbackProgressByDevice.delete(device_id);
     refreshTvTilePlaybackInfo(device_id);
-    if (device_id === currentDevice) {
-      updatePlaybackInfoUI();
+    if (device_id === currentDevice || device_id === currentPreviewContext.deviceId) {
+      updatePlaybackInfoUI(device_id);
     }
   }
 });
