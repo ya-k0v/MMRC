@@ -169,11 +169,16 @@ function validateHeroData(data, isUpdate = false) {
 export function createHeroRouter({ requireHeroAdmin }) {
   const router = Router();
 
-  router.get('/', async (_req, res) => {
+  router.get('/', async (req, res) => {
     try {
-      res.json(await heroQueries.getAll());
+      const filter = req.query.filter;
+      if (filter && !['all', 'live', 'dead'].includes(filter)) {
+        return res.status(400).json({ error: 'Invalid filter value. Must be "all", "live", or "dead"' });
+      }
+      res.json(await heroQueries.getAll(filter === 'all' ? undefined : filter || undefined));
     } catch (error) {
       logger.error('[Hero Router] Error in GET /', {
+        filter: req.query.filter,
         error: error.message,
         stack: error.stack
       });
@@ -214,8 +219,8 @@ export function createHeroRouter({ requireHeroAdmin }) {
         CREATE TABLE heroes (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           full_name TEXT NOT NULL,
-          birth_year INTEGER,
-          death_year INTEGER,
+          birth_year TEXT,
+          death_year TEXT,
           rank TEXT,
           photo_base64 TEXT,
           biography TEXT,
@@ -331,7 +336,7 @@ export function createHeroRouter({ requireHeroAdmin }) {
 
         probeDb.close();
       } finally {
-        if (!probeDb._closed) probeDb.close();
+        try { probeDb.close(); } catch { /* already closed */ }
       }
 
       return res.json({
@@ -345,6 +350,98 @@ export function createHeroRouter({ requireHeroAdmin }) {
     } finally {
       if (uploadedPath && fs.existsSync(uploadedPath)) {
         try { fs.unlinkSync(uploadedPath); } catch { /* ignore */ }
+      }
+    }
+  });
+
+  // CSV шаблон для импорта
+  router.get('/export-template', requireHeroAdmin, async (_req, res) => {
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="heroes-template.csv"');
+    res.send('\uFEFFfull_name;birth_year;death_year;rank;biography\n');
+  });
+
+  // Экспорт всех героев в CSV
+  router.get('/export-csv', requireHeroAdmin, async (_req, res) => {
+    try {
+      const heroes = await heroQueries.getAll();
+      const esc = (v) => {
+        if (v == null) return '';
+        const s = String(v);
+        if (s.includes(';') || s.includes('"') || s.includes('\n')) {
+          return '"' + s.replace(/"/g, '""') + '"';
+        }
+        return s;
+      };
+      const rows = ['full_name;birth_year;death_year;rank;biography'];
+      for (const h of heroes) {
+        rows.push([esc(h.full_name), esc(h.birth_year), esc(h.death_year), esc(h.rank), esc(h.biography)].join(';'));
+      }
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="heroes-export.csv"');
+      res.send('\uFEFF' + rows.join('\n'));
+    } catch (error) {
+      logger.error('[Hero Router] Error in GET /export-csv', { error: error.message });
+      res.status(500).json({ error: 'Ошибка экспорта CSV' });
+    }
+  });
+
+  // Импорт героев из CSV
+  router.post('/import', requireHeroAdmin, heroDbImportUpload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'Файл не загружен' });
+      const content = fs.readFileSync(req.file.path, 'utf8');
+
+      // Удаляем BOM если есть
+      const clean = content.replace(/^\uFEFF/, '');
+      const lines = clean.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+      if (lines.length < 2) return res.json({ added: 0, updated: 0, errors: 0, errorMessages: [] });
+
+      // Парсим заголовок
+      const header = parseCsvLine(lines[0]);
+      const colIndex = {};
+      header.forEach((name, i) => { colIndex[name.toLowerCase().trim()] = i; });
+
+      const fullNameIdx = colIndex['full_name'];
+      if (fullNameIdx === undefined) {
+        return res.status(400).json({ error: 'CSV должен содержать колонку "full_name"' });
+      }
+
+      let added = 0, updated = 0, errors = 0;
+      const errorMessages = [];
+
+      for (let i = 1; i < lines.length; i++) {
+        try {
+          const cols = parseCsvLine(lines[i]);
+          const fullName = (cols[fullNameIdx] || '').trim();
+          if (!fullName) { errors++; continue; }
+
+          const birthYear = colIndex['birth_year'] !== undefined ? (cols[colIndex['birth_year']] || '').trim() || null : null;
+          const deathYear = colIndex['death_year'] !== undefined ? (cols[colIndex['death_year']] || '').trim() || null : null;
+          const rank = colIndex['rank'] !== undefined ? (cols[colIndex['rank']] || '').trim() || null : null;
+          const biography = colIndex['biography'] !== undefined ? (cols[colIndex['biography']] || '').trim() || null : null;
+
+          await heroQueries.create({
+            full_name: fullName,
+            birth_year: birthYear,
+            death_year: deathYear,
+            rank,
+            biography
+          });
+          added++;
+        } catch (err) {
+          errors++;
+          errorMessages.push(`Строка ${i + 1}: ${err.message}`);
+        }
+      }
+
+      res.json({ added, updated, errors, errorMessages });
+    } catch (error) {
+      logger.error('[Hero Router] Error in POST /import', { error: error.message });
+      res.status(500).json({ error: 'Ошибка импорта CSV' });
+    } finally {
+      if (req.file && fs.existsSync(req.file.path)) {
+        try { fs.unlinkSync(req.file.path); } catch { /* ignore */ }
       }
     }
   });
@@ -378,26 +475,28 @@ export function createHeroRouter({ requireHeroAdmin }) {
         validateMediaSize(req.body.photo_base64, 10 * 1024 * 1024);
       }
       
-      const id = await heroQueries.create(req.body);
-
-      if (Array.isArray(req.body.media)) {
-        for (const item of req.body.media) {
-          if (!item.type || !item.media_base64) {
-            throw new Error('Media items must have type and media_base64');
-          }
-          if (!['photo', 'video'].includes(item.type)) {
-            throw new Error('Media type must be "photo" or "video"');
-          }
-          const limit = (item.type === 'video' ? 200 : 10) * 1024 * 1024;
-          validateMediaSize(item.media_base64, limit);
-          await heroQueries.addMedia(id, {
-            type: item.type || 'photo',
-            media_base64: item.media_base64,
-            caption: item.caption || '',
-            order_index: item.order_index || 0
-          });
+      const media = Array.isArray(req.body.media) ? req.body.media : [];
+      for (const item of media) {
+        if (!item.type || !item.media_base64) {
+          throw new Error('Media items must have type and media_base64');
         }
+        if (!['photo', 'video'].includes(item.type)) {
+          throw new Error('Media type must be "photo" or "video"');
+        }
+        const limit = (item.type === 'video' ? 200 : 10) * 1024 * 1024;
+        validateMediaSize(item.media_base64, limit);
       }
+
+      const id = await heroQueries.createWithMedia(req.body, (item) => {
+        if (!item.type || !item.media_base64) {
+          throw new Error('Media items must have type and media_base64');
+        }
+        if (!['photo', 'video'].includes(item.type)) {
+          throw new Error('Media type must be "photo" or "video"');
+        }
+        const limit = (item.type === 'video' ? 200 : 10) * 1024 * 1024;
+        validateMediaSize(item.media_base64, limit);
+      });
 
       res.json({ id, success: true });
     } catch (error) {
@@ -518,6 +617,38 @@ export function createHeroRouter({ requireHeroAdmin }) {
   });
 
   return router;
+}
+
+function parseCsvLine(line) {
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (i + 1 < line.length && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        current += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ';') {
+        result.push(current);
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+  }
+  result.push(current);
+  return result;
 }
 
 

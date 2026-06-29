@@ -81,6 +81,47 @@ const MIGRATIONS = [
         await driver.exec('CREATE INDEX IF NOT EXISTS idx_csrf_tokens_user_id ON csrf_tokens(user_id)');
       }
     }
+  },
+  {
+    id: '2026-06-29-heroes-dates-text',
+    description: 'Change heroes.birth_year/death_year from INTEGER to TEXT for full date support',
+    async up(driver) {
+      if (!(await driver.tableExists('heroes'))) return;
+
+      const cols = await driver.columns('heroes');
+      const birthCol = cols.find(c => c.name === 'birth_year');
+      const deathCol = cols.find(c => c.name === 'death_year');
+
+      const isInteger = (type) => type && type.toUpperCase() === 'INTEGER';
+
+      if (!isInteger(birthCol?.type) && !isInteger(deathCol?.type)) return;
+
+      if (driver.dialect === 'postgres') {
+        if (isInteger(birthCol?.type)) {
+          await driver.exec('ALTER TABLE heroes ALTER COLUMN birth_year TYPE TEXT');
+        }
+        if (isInteger(deathCol?.type)) {
+          await driver.exec('ALTER TABLE heroes ALTER COLUMN death_year TYPE TEXT');
+        }
+      } else {
+        await driver.exec('ALTER TABLE heroes RENAME TO heroes_old');
+        await driver.exec(`
+          CREATE TABLE heroes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            full_name TEXT NOT NULL,
+            birth_year TEXT,
+            death_year TEXT,
+            rank TEXT,
+            photo_base64 TEXT,
+            biography TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+        await driver.exec('INSERT INTO heroes SELECT * FROM heroes_old');
+        await driver.exec('DROP TABLE heroes_old');
+      }
+    }
   }
 ];
 

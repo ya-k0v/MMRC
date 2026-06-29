@@ -31,8 +31,9 @@ const state = {
   searchEl: null,
   displayedCount: 30, // Количество отображаемых карточек
   loadMoreStep: 10, // Сколько карточек загружать за раз
-  activeEditor: null, // Информация об активном редакторе { field, node }
-  savingFields: new Map(), // Очередь сохранений полей для предотвращения race condition
+  activeEditor: null,
+  savingFields: new Map(),
+  filter: 'all',
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -53,6 +54,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   cacheElements();
   initToolbar();
+  initFilters();
   bindSearch();
   initLightbox();
   await loadHeroes();
@@ -117,10 +119,6 @@ function initToolbar() {
   if (addHeroBtn) {
     addHeroBtn.addEventListener('click', () => createNewHero());
   }
-  const exportDbBtn = document.getElementById('exportDbBtn');
-  if (exportDbBtn) {
-    exportDbBtn.addEventListener('click', () => exportDatabase());
-  }
   const importBtn = document.getElementById('importBtn');
   const importFileInput = document.getElementById('importFileInput');
   if (importBtn && importFileInput) {
@@ -139,21 +137,37 @@ function initToolbar() {
       }
     });
   }
-  const importDbBtn = document.getElementById('importDbBtn');
-  const importDbFileInput = document.getElementById('importDbFileInput');
-  if (importDbBtn && importDbFileInput) {
-    importDbBtn.addEventListener('click', () => {
-      importDbFileInput.click();
-    });
-    importDbFileInput.addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
+
+  const csvTemplateBtn = document.getElementById('csvTemplateBtn');
+  if (csvTemplateBtn) {
+    csvTemplateBtn.addEventListener('click', async () => {
       try {
-        await importDatabaseFile(file);
+        const blob = await (await adminFetch('/api/hero/export-template')).blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'heroes-template.csv';
+        a.click();
+        URL.revokeObjectURL(url);
       } catch (error) {
-        showStatus(`Ошибка импорта БД: ${error.message}`, true);
-      } finally {
-        importDbFileInput.value = '';
+        showStatus(`Ошибка: ${error.message}`, true);
+      }
+    });
+  }
+
+  const exportCsvBtn = document.getElementById('exportCsvBtn');
+  if (exportCsvBtn) {
+    exportCsvBtn.addEventListener('click', async () => {
+      try {
+        const blob = await (await adminFetch('/api/hero/export-csv')).blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'heroes-export.csv';
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (error) {
+        showStatus(`Ошибка экспорта CSV: ${error.message}`, true);
       }
     });
   }
@@ -278,9 +292,39 @@ async function exportDatabase() {
   }
 }
 
+function initFilters() {
+  const params = new URLSearchParams(window.location.search);
+  const filterParam = params.get('filter');
+  if (filterParam && ['all', 'live', 'dead'].includes(filterParam)) {
+    state.filter = filterParam;
+  }
+  const filterContainer = document.querySelector('.hero-admin-filter');
+  if (!filterContainer) return;
+  filterContainer.querySelectorAll('.filter-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const filter = btn.dataset.filter;
+      if (filter === state.filter) return;
+      state.filter = filter;
+      filterContainer.querySelectorAll('.filter-btn').forEach((b) => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+      const url = new URL(window.location);
+      if (filter === 'all') {
+        url.searchParams.delete('filter');
+      } else {
+        url.searchParams.set('filter', filter);
+      }
+      window.history.replaceState(null, '', url.toString());
+      loadHeroes();
+    });
+  });
+  const activeBtn = filterContainer.querySelector(`[data-filter="${state.filter}"]`);
+  if (activeBtn) activeBtn.classList.add('is-active');
+}
+
 async function loadHeroes() {
   try {
-    const res = await adminFetch('/api/hero');
+    const filterParam = state.filter !== 'all' ? `?filter=${state.filter}` : '';
+    const res = await adminFetch(`/api/hero${filterParam}`);
     state.heroes = await res.json();
     state.filtered = [...state.heroes];
     state.displayedCount = 30; // Сбрасываем счетчик при загрузке
@@ -1057,6 +1101,21 @@ function startInlineEdit(node, hero) {
     
     // Вызываем adjustSize сразу для установки правильного размера при открытии
     adjustSize();
+
+    // Date mask для полей дат: ДД.ММ.ГГГГ
+    if (field === 'birth_year' || field === 'death_year') {
+      const applyDateMask = () => {
+        const cleaned = editor.value.replace(/\D/g, '').substring(0, 8);
+        let formatted = '';
+        for (let i = 0; i < cleaned.length; i++) {
+          if (i === 2 || i === 5) formatted += '.';
+          formatted += cleaned[i];
+        }
+        if (formatted !== editor.value) editor.value = formatted;
+      };
+      editor.addEventListener('input', applyDateMask);
+      editor._dateMaskHandler = applyDateMask;
+    }
   }
 
   // Флаг для предотвращения закрытия при клике внутри редактора
@@ -1077,6 +1136,9 @@ function startInlineEdit(node, hero) {
     }
     if (editor._onMouseDownHandler) {
       document.removeEventListener('mousedown', editor._onMouseDownHandler);
+    }
+    if (editor._dateMaskHandler) {
+      editor.removeEventListener('input', editor._dateMaskHandler);
     }
     wrapper.remove();
     node.style.display = '';
@@ -1447,17 +1509,12 @@ function validateHeroField(field, value) {
   }
   
   if (field === 'birth_year' || field === 'death_year') {
-    // Пустые значения допустимы для дат
-    if (!trimmed) {
-      return { valid: true };
-    }
-    // Проверяем формат года (может быть "1480" или "12.12.1480" или "н.в.")
-    if (trimmed !== 'н.в.' && trimmed !== '?' && trimmed.length > 50) {
-      return { valid: false, error: 'Дата слишком длинная (максимум 50 символов)' };
-    }
-    // Проверяем, что если это не "н.в." или "?", то содержит хотя бы одну цифру
-    if (trimmed !== 'н.в.' && trimmed !== '?' && !/\d/.test(trimmed)) {
-      return { valid: false, error: 'Дата должна содержать хотя бы одну цифру' };
+    if (!trimmed) return { valid: true };
+    if (field === 'death_year' && /^н\.в\.$/i.test(trimmed)) return { valid: true };
+    if (/^\d{2}\.\d{2}\.\d{4}$/.test(trimmed)) return { valid: true };
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return { valid: true };
+    if (!/^\d+$/.test(trimmed)) {
+      return { valid: false, error: 'Год должен быть числом или датой (ДД.ММ.ГГГГ / ГГГГ-ММ-ДД)' };
     }
   }
   

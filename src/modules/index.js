@@ -17,8 +17,8 @@ const MODULES = {
         CREATE TABLE IF NOT EXISTS heroes (
           id ${idCol},
           full_name TEXT NOT NULL,
-          birth_year INTEGER,
-          death_year INTEGER,
+          birth_year TEXT,
+          death_year TEXT,
           rank TEXT,
           photo_base64 TEXT,
           biography TEXT,
@@ -41,16 +41,31 @@ const MODULES = {
       `;
     },
     getIndexes() {
-      if (driverType !== 'sqlite') return '';
-      return `
-        CREATE TRIGGER IF NOT EXISTS trg_heroes_updated
-        AFTER UPDATE ON heroes
-        FOR EACH ROW
-        BEGIN
-          UPDATE heroes SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
-        END;
-      `;
-    }
+      if (driverType === 'sqlite') {
+        return `
+          CREATE TRIGGER IF NOT EXISTS trg_heroes_updated
+          AFTER UPDATE ON heroes
+          FOR EACH ROW
+          BEGIN
+            UPDATE heroes SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+          END;
+        `;
+      }
+      if (driverType === 'postgres') {
+        return `
+          CREATE TRIGGER IF NOT EXISTS trg_heroes_updated
+          BEFORE UPDATE ON heroes
+          FOR EACH ROW
+          EXECUTE FUNCTION update_updated_at_column();
+
+          ALTER TABLE heroes ADD COLUMN IF NOT EXISTS fts_search tsvector
+            GENERATED ALWAYS AS (to_tsvector('russian', coalesce(full_name, '') || ' ' || coalesce(rank, ''))) STORED;
+
+          CREATE INDEX IF NOT EXISTS idx_heroes_fts ON heroes USING GIN(fts_search);
+        `;
+      }
+      return '';
+    },
   }
 };
 

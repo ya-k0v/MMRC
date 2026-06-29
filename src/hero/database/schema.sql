@@ -1,8 +1,8 @@
 CREATE TABLE IF NOT EXISTS heroes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   full_name TEXT NOT NULL,
-  birth_year INTEGER,
-  death_year INTEGER,
+  birth_year TEXT,
+  death_year TEXT,
   rank TEXT,
   photo_base64 TEXT,
   biography TEXT,

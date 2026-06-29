@@ -9,6 +9,7 @@ import {
   showLoadingState,
   showErrorState
 } from './hero-utils.js';
+import { attachKeyboard, showKeyboard, hideKeyboard, isKeyboardActive, resetKeyboardInteraction } from './hero-keyboard.js';
 
 const searchInput = document.getElementById('searchInput');
 const suggestions = document.getElementById('suggestions');
@@ -309,7 +310,11 @@ function pauseAutoChangeTimer(reason = '') {
 
 async function loadAllHeroes() {
   try {
-    allHeroes = await fetchJSON('/api/hero');
+    const params = new URLSearchParams(window.location.search);
+    const filterParam = params.get('filter');
+    const filter = (filterParam && ['all', 'live', 'dead'].includes(filterParam)) ? filterParam : undefined;
+    const queryStr = filter && filter !== 'all' ? `?filter=${filter}` : '';
+    allHeroes = await fetchJSON(`/api/hero${queryStr}`);
     // Выбираем случайного героя для показа (первая загрузка без анимации)
     const randomHero = getRandomHero();
     if (randomHero) {
@@ -823,6 +828,8 @@ document.addEventListener('keydown', (event) => {
 });
 
 if (searchInput) {
+  attachKeyboard(searchInput);
+
   searchInput.addEventListener(
     'input',
     debounce((e) => {
@@ -860,9 +867,20 @@ if (searchInput) {
       document.body.scrollTop = 0;
       document.documentElement.scrollTop = 0;
     }, 50);
+
+    showKeyboard();
   });
 
   searchInput.addEventListener('blur', () => {
+    // Даём время на клик по клавиатуре
+    setTimeout(() => {
+      if (isKeyboardActive()) {
+        resetKeyboardInteraction();
+        return;
+      }
+      hideKeyboard();
+    }, 200);
+    
     // Возвращаем обычное поведение после потери фокуса
     const scrollY = document.body.style.top;
     document.body.style.position = '';
@@ -891,6 +909,7 @@ suggestions.addEventListener('click', (event) => {
   loadHero(item.dataset.id);
   suggestions.style.display = 'none';
   searchInput.value = '';
+  hideKeyboard();
 });
 
 // Инициализация при загрузке страницы

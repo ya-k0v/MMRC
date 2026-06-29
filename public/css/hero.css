@@ -917,6 +917,62 @@ body.hero-page {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.filter-btn {
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1.6;
+}
+
+.filter-btn:hover {
+  border-color: rgba(255,255,255,0.3);
+  color: var(--text);
+}
+
+.filter-btn.is-active {
+  background: rgba(59,130,246,0.2);
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.toolbar-btn:hover {
+  border-color: rgba(255,255,255,0.3);
+  color: var(--text);
+  background: rgba(255,255,255,0.04);
+}
+
+.toolbar-btn--primary {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.toolbar-btn--primary:hover {
+  background: rgba(59,130,246,0.15);
 }
 
 .hero-admin-search input {
@@ -1496,5 +1552,135 @@ body.hero-page {
   right: 0;
   font-size: 10px;
   color: var(--muted);
+}
+
+/* ========================================
+   VIRTUAL KEYBOARD (touch screen)
+   ======================================== */
+
+.hero-keyboard {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: rgba(20, 20, 25, 0.97);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 8px 4px env(safe-area-inset-bottom, 16px) 4px;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  transform: translateY(100%);
+  transition: transform 0.25s ease-out;
+}
+
+.hero-keyboard.kb-visible {
+  transform: translateY(0);
+}
+
+.kb-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.kb-row {
+  display: flex;
+  justify-content: center;
+  gap: 5px;
+}
+
+.kb-row-bottom {
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.kb-key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
+  height: 54px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #f0f0f0;
+  font-family: inherit;
+  font-size: 1.2rem;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background 0.1s, transform 0.05s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.kb-key:active,
+.kb-key:focus-visible {
+  background: rgba(255, 255, 255, 0.18);
+  transform: scale(0.95);
+  outline: none;
+}
+
+.kb-key-letter {
+  flex: 1;
+  max-width: 68px;
+  font-weight: 500;
+}
+
+.kb-key-shift,
+.kb-key-lang {
+  min-width: 58px;
+  font-size: 0.95rem;
+}
+
+.kb-key-space {
+  flex: 4;
+  min-width: 120px;
+  font-size: 0.95rem;
+  letter-spacing: 0.5px;
+}
+
+.kb-key-bspace {
+  min-width: 60px;
+  font-size: 1.3rem;
+}
+
+.kb-key-clear {
+  min-width: 72px;
+  font-size: 0.85rem;
+  background: rgba(200, 60, 60, 0.25);
+  color: #f88;
+}
+
+.kb-key-clear:active {
+  background: rgba(200, 60, 60, 0.45);
+}
+
+@media (max-width: 600px) {
+  .kb-key {
+    height: 44px;
+    font-size: 1rem;
+    min-width: 36px;
+    padding: 0 6px;
+  }
+  .kb-key-letter {
+    max-width: 48px;
+  }
+  .kb-key-space {
+    min-width: 80px;
+  }
+}
+
+@media (min-width: 1200px) {
+  .kb-key {
+    height: 56px;
+    font-size: 1.3rem;
+  }
+  .kb-key-letter {
+    max-width: 72px;
+  }
 }
 
