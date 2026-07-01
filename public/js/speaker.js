@@ -1685,7 +1685,8 @@ async function showStaticPreview(deviceId, safeName, contentType, { initiatedByU
 
 async function syncPreviewWithPlayerState() {
   if (!currentDevice || previewManuallyClosed) return;
-  const state = playerStateByDevice.get(currentDevice);
+  const previewDeviceId = currentPreviewContext.deviceId || currentDevice;
+  const state = playerStateByDevice.get(previewDeviceId) || playerStateByDevice.get(currentDevice);
   
   // КРИТИЧНО: Если показывается превью папки (миниатюры), не перезаписывать заглушкой
   // Пользователь только что открыл папку через playBtn - даем время на обновление состояния
@@ -1701,7 +1702,7 @@ async function syncPreviewWithPlayerState() {
     if (state.file === currentPreviewFile && isStaticContent(state.type)) {
       // КРИТИЧНО: Активируем thumbnail только если есть данные от плеера (state.page)
       if (state.page) {
-        highlightCurrentThumbnail(state.page, { deviceId: currentDevice, file: state.file });
+        highlightCurrentThumbnail(state.page, { deviceId: previewDeviceId, file: state.file });
       }
       return;
     }
@@ -1720,7 +1721,7 @@ async function syncPreviewWithPlayerState() {
       const existingFrame = filePreview.querySelector('iframe');
       const frameSrc = existingFrame?.src || '';
       if (!existingFrame || !frameSrc.includes('preview=1')) {
-        showLivePreviewForTV(currentDevice, true);
+        showLivePreviewForTV(previewDeviceId, true);
       }
     }
     return;
@@ -1736,8 +1737,10 @@ async function syncPreviewWithPlayerState() {
   if (!isStaticContent(state.type)) {
     const existingFrame = filePreview.querySelector('iframe');
     const frameSrc = existingFrame?.src || '';
-    if (!existingFrame || !frameSrc.includes(encodeURIComponent(currentDevice))) {
-      showLivePreviewForTV(currentDevice, true);
+    const previewDeviceEncoded = encodeURIComponent(previewDeviceId);
+    const currentDeviceEncoded = encodeURIComponent(currentDevice);
+    if (!existingFrame || (!frameSrc.includes(previewDeviceEncoded) && !frameSrc.includes(currentDeviceEncoded))) {
+      showLivePreviewForTV(previewDeviceId, true);
     }
     return;
   }
@@ -1749,12 +1752,12 @@ async function syncPreviewWithPlayerState() {
 
   const currentPreviewFile = filePreview.querySelector('.thumbnail-preview')?.getAttribute('data-file');
   if (currentPreviewFile !== state.file) {
-    await showStaticPreview(currentDevice, state.file, state.type);
+    await showStaticPreview(previewDeviceId, state.file, state.type);
     // КРИТИЧНО: После открытия превью заново получаем актуальный state из playerStateByDevice
     // так как он мог обновиться пока открывалось превью (например, пришел player/progress)
-    const updatedState = playerStateByDevice.get(currentDevice);
+    const updatedState = playerStateByDevice.get(previewDeviceId);
     if (updatedState && updatedState.file === state.file && updatedState.page) {
-      highlightCurrentThumbnail(updatedState.page, { deviceId: currentDevice, file: updatedState.file });
+      highlightCurrentThumbnail(updatedState.page, { deviceId: previewDeviceId, file: updatedState.file });
       return;
     }
   }
@@ -1762,7 +1765,7 @@ async function syncPreviewWithPlayerState() {
   // КРИТИЧНО: Активируем thumbnail только если есть данные от плеера (state.page)
   // Не устанавливаем is-active автоматически - ждем данные от плеера через player/progress
   if (state.page) {
-    highlightCurrentThumbnail(state.page, { deviceId: currentDevice, file: state.file });
+    highlightCurrentThumbnail(state.page, { deviceId: previewDeviceId, file: state.file });
   }
 }
 
@@ -4326,13 +4329,13 @@ socket.on('player/progress', ({ device_id, type, file, currentTime, duration, pa
       deviceForPreview.current.currentTime = numCurrentTime;
     }
 
-    if (type === 'audio') {
+    if (type === 'video' || type === 'audio') {
       const device = devices.find(d => d.device_id === device_id);
       if (device) {
         if (!device.current) {
-          device.current = { type: 'audio', file, page: 1, state: 'playing' };
+          device.current = { type, file, page: 1, state: 'playing' };
         } else {
-          device.current.type = 'audio';
+          device.current.type = type;
           device.current.file = file;
           device.current.page = 1;
           device.current.state = device.current.state || 'playing';
@@ -4340,10 +4343,12 @@ socket.on('player/progress', ({ device_id, type, file, currentTime, duration, pa
       }
 
       const state = playerStateByDevice.get(device_id) || {};
-      state.type = 'audio';
+      state.type = type;
       state.file = file;
       state.page = 1;
       playerStateByDevice.set(device_id, state);
+      
+      requestPreviewSync();
     }
     
     refreshTvTilePlaybackInfo(device_id);
@@ -4364,6 +4369,15 @@ socket.on('player/progress', ({ device_id, type, file, currentTime, duration, pa
       if (stream_url) device.current.streamUrl = stream_url;
       if (stream_protocol) device.current.streamProtocol = stream_protocol;
     }
+    
+    const state = playerStateByDevice.get(device_id) || {};
+    state.type = 'streaming';
+    state.file = file;
+    state.page = 1;
+    playerStateByDevice.set(device_id, state);
+    
+    requestPreviewSync();
+    
     refreshTvTilePlaybackInfo(device_id);
     if (device_id === currentDevice || device_id === currentPreviewContext.deviceId) {
       updatePlaybackInfoUI(device_id);
@@ -5020,11 +5034,11 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
     playbackProgressByDevice.delete(device_id);
     playerStateByDevice.set(device_id, { type: null, file: null, page: 1 });
     // КРИТИЧНО: Показываем заглушку (очищает и iframe, и сетку миниатюр)
-    if (device_id === currentDevice) {
-      showLivePreviewForTV(currentDevice, true);
+    if (device_id === currentDevice || device_id === currentPreviewContext.deviceId) {
+      showLivePreviewForTV(device_id, true);
     }
-    if (device_id === currentDevice) {
-      updatePlaybackInfoUI();
+    if (device_id === currentDevice || device_id === currentPreviewContext.deviceId) {
+      updatePlaybackInfoUI(device_id);
     }
     return;
   }
@@ -5033,8 +5047,8 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
   const oldState = playerStateByDevice.get(device_id);
   if (oldState && (oldState.type !== device.current.type || oldState.file !== device.current.file)) {
     playbackProgressByDevice.delete(device_id);
-    if (device_id === currentDevice) {
-      updatePlaybackInfoUI();
+    if (device_id === currentDevice || device_id === currentPreviewContext.deviceId) {
+      updatePlaybackInfoUI(device_id);
     }
   }
 
@@ -5054,8 +5068,8 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
       streamUrl: device.current.streamUrl
     });
     refreshTvTilePlaybackInfo(device_id);
-    if (device_id === currentDevice) {
-      updatePlaybackInfoUI();
+    if (device_id === currentDevice || device_id === currentPreviewContext.deviceId) {
+      updatePlaybackInfoUI(device_id);
     }
   }
 

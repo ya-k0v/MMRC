@@ -10,12 +10,18 @@ const logger = createModuleLogger('hero');
 import { createLimiter, deleteLimiter } from '../../middleware/rate-limit.js';
 import { validatePath } from '../../utils/path-validator.js';
 import { getHeroDb } from '../database/hero-db.js';
+import { getCurrentStorage } from '../../storage/current.js';
 
 const HERO_DB_UPLOAD_DIR = path.resolve('/tmp');
 
 const heroDbImportUpload = multer({
   dest: HERO_DB_UPLOAD_DIR,
   limits: { fileSize: 200 * 1024 * 1024 }
+});
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }
 });
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
@@ -223,6 +229,7 @@ export function createHeroRouter({ requireHeroAdmin }) {
           death_year TEXT,
           rank TEXT,
           photo_base64 TEXT,
+          photo_key TEXT,
           biography TEXT,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -477,25 +484,29 @@ export function createHeroRouter({ requireHeroAdmin }) {
       
       const media = Array.isArray(req.body.media) ? req.body.media : [];
       for (const item of media) {
-        if (!item.type || !item.media_base64) {
-          throw new Error('Media items must have type and media_base64');
+        if (!item.type) {
+          throw newError('Media items must have type');
         }
         if (!['photo', 'video'].includes(item.type)) {
           throw new Error('Media type must be "photo" or "video"');
         }
-        const limit = (item.type === 'video' ? 200 : 10) * 1024 * 1024;
-        validateMediaSize(item.media_base64, limit);
+        if (item.media_base64) {
+          const limit = (item.type === 'video' ? 200 : 10) * 1024 * 1024;
+          validateMediaSize(item.media_base64, limit);
+        }
       }
 
       const id = await heroQueries.createWithMedia(req.body, (item) => {
-        if (!item.type || !item.media_base64) {
-          throw new Error('Media items must have type and media_base64');
+        if (!item.type) {
+          throw new Error('Media items must have type');
         }
         if (!['photo', 'video'].includes(item.type)) {
           throw new Error('Media type must be "photo" or "video"');
         }
-        const limit = (item.type === 'video' ? 200 : 10) * 1024 * 1024;
-        validateMediaSize(item.media_base64, limit);
+        if (item.media_base64) {
+          const limit = (item.type === 'video' ? 200 : 10) * 1024 * 1024;
+          validateMediaSize(item.media_base64, limit);
+        }
       });
 
       res.json({ id, success: true });
@@ -520,14 +531,16 @@ export function createHeroRouter({ requireHeroAdmin }) {
       }
       
       await heroQueries.updateWithMedia(id, req.body, (item) => {
-        if (!item.type || !item.media_base64) {
-          throw new Error('Media items must have type and media_base64');
+        if (!item.type) {
+          throw new Error('Media items must have type');
         }
         if (!['photo', 'video'].includes(item.type)) {
           throw new Error('Media type must be "photo" or "video"');
         }
-        const limit = (item.type === 'video' ? 200 : 10) * 1024 * 1024;
-        validateMediaSize(item.media_base64, limit);
+        if (item.media_base64) {
+          const limit = (item.type === 'video' ? 200 : 10) * 1024 * 1024;
+          validateMediaSize(item.media_base64, limit);
+        }
       });
 
       res.json({ success: true });
@@ -564,43 +577,17 @@ export function createHeroRouter({ requireHeroAdmin }) {
     }
   });
 
-  router.post('/:id/media', requireHeroAdmin, async (req, res) => {
-    try {
-      const id = validateId(req.params.id, 'hero id');
-      
-      if (!req.body || typeof req.body !== 'object') {
-        return res.status(400).json({ error: 'Invalid request body' });
-      }
-      
-      if (!req.body.media_base64 || typeof req.body.media_base64 !== 'string') {
-        return res.status(400).json({ error: 'media_base64 is required and must be a string' });
-      }
-      
-      if (!req.body.type || !['photo', 'video'].includes(req.body.type)) {
-        return res.status(400).json({ error: 'type is required and must be "photo" or "video"' });
-      }
-      
-      const limit = (req.body.type === 'video' ? 200 : 10) * 1024 * 1024;
-      validateMediaSize(req.body.media_base64, limit);
-      
-      const mediaId = await heroQueries.addMedia(id, req.body);
-      res.json({ id: mediaId, success: true });
-    } catch (error) {
-      if (error.message.includes('Invalid')) {
-        return res.status(400).json({ error: error.message });
-      }
-      logger.error('[Hero Router] Error in POST /:id/media', {
-        id: req.params.id,
-        error: error.message,
-        stack: error.stack
-      });
-      res.status(400).json({ error: error.message });
-    }
-  });
-
   router.delete('/media/:mediaId', requireHeroAdmin, deleteLimiter, async (req, res) => {
     try {
       const mediaId = validateId(req.params.mediaId, 'media id');
+      const db = await getHeroDb();
+      const media = await db.get('SELECT media_key FROM hero_media WHERE id = ?', [mediaId]);
+      if (media?.media_key) {
+        const storage = getCurrentStorage();
+        if (storage) {
+          try { await storage.rm(media.media_key); } catch {}
+        }
+      }
       await heroQueries.deleteMedia(mediaId);
       res.json({ success: true });
     } catch (error) {
@@ -613,6 +600,152 @@ export function createHeroRouter({ requireHeroAdmin }) {
         stack: error.stack
       });
       res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Upload hero photo to storage
+  router.post('/:id/photo', requireHeroAdmin, upload.single('photo'), async (req, res) => {
+    try {
+      const id = validateId(req.params.id, 'hero id');
+      const hero = await heroQueries.getById(id);
+      if (!hero) return res.status(404).json({ error: 'Герой не найден' });
+
+      if (!req.file) return res.status(400).json({ error: 'Файл не загружен' });
+
+      const storage = getCurrentStorage();
+      if (!storage) return res.status(500).json({ error: 'Storage не настроен' });
+
+      const ext = path.extname(req.file.originalname) || '.jpg';
+      const key = `heroes/${id}/photo${ext}`;
+
+      await storage.write(key, req.file.buffer);
+
+      // Delete old photo from storage if exists
+      if (hero.photo_key && hero.photo_key !== key) {
+        try { await storage.rm(hero.photo_key); } catch {}
+      }
+
+      await heroQueries.update(id, { photo_key: key });
+
+      res.json({ success: true, key });
+    } catch (error) {
+      logger.error('[Hero Router] Error in POST /:id/photo', { error: error.message, stack: error.stack });
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Upload hero media to storage
+  router.post('/:id/media', requireHeroAdmin, upload.single('media'), async (req, res) => {
+    try {
+      const id = validateId(req.params.id, 'hero id');
+      const hero = await heroQueries.getById(id);
+      if (!hero) return res.status(404).json({ error: 'Герой не найден' });
+
+      if (!req.file) return res.status(400).json({ error: 'Файл не загружен' });
+
+      const storage = getCurrentStorage();
+      if (!storage) return res.status(500).json({ error: 'Storage не настроен' });
+
+      const type = req.body.type || 'photo';
+      const ext = path.extname(req.file.originalname) || (type === 'video' ? '.mp4' : '.jpg');
+      const key = `heroes/${id}/media/${Date.now()}${ext}`;
+
+      await storage.write(key, req.file.buffer);
+
+      const mediaId = await heroQueries.addMedia(id, {
+        type,
+        media_key: key,
+        caption: req.body.caption || '',
+        order_index: parseInt(req.body.order_index) || 0
+      });
+
+      res.json({ success: true, id: mediaId, key });
+    } catch (error) {
+      logger.error('[Hero Router] Error in POST /:id/media', { error: error.message, stack: error.stack });
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Serve hero photo from storage
+  router.get('/:id/photo', async (req, res) => {
+    try {
+      const id = validateId(req.params.id, 'hero id');
+      const hero = await heroQueries.getById(id);
+      if (!hero) return res.status(404).json({ error: 'Герой не найден' });
+
+      const key = hero.photo_key;
+      if (!key) return res.status(404).json({ error: 'Фото не найдено' });
+
+      const storage = getCurrentStorage();
+      if (!storage) return res.status(500).json({ error: 'Storage не настроен' });
+
+      const stream = await storage.createReadStream(key);
+      const stat = await storage.stat(key);
+
+      const ext = path.extname(key).toLowerCase();
+      const mimeTypes = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp' };
+      res.setHeader('Content-Type', mimeTypes[ext] || 'application/octet-stream');
+      res.setHeader('Content-Length', stat.size);
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+
+      stream.pipe(res);
+    } catch (error) {
+      logger.error('[Hero Router] Error in GET /:id/photo', { error: error.message });
+      res.status(404).json({ error: 'Фото не найдено' });
+    }
+  });
+
+  // Delete hero photo from storage
+  router.delete('/:id/photo', requireHeroAdmin, deleteLimiter, async (req, res) => {
+    try {
+      const id = validateId(req.params.id, 'hero id');
+      const hero = await heroQueries.getById(id);
+      if (!hero) return res.status(404).json({ error: 'Герой не найден' });
+
+      if (hero.photo_key) {
+        const storage = getCurrentStorage();
+        if (storage) {
+          try { await storage.rm(hero.photo_key); } catch {}
+        }
+      }
+
+      await heroQueries.update(id, { photo_key: null });
+      res.json({ success: true });
+    } catch (error) {
+      logger.error('[Hero Router] Error in DELETE /:id/photo', { error: error.message });
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Serve hero media from storage
+  router.get('/:id/media/:mediaId', async (req, res) => {
+    try {
+      const id = validateId(req.params.id, 'hero id');
+      const mediaId = validateId(req.params.mediaId, 'media id');
+
+      const db = await getHeroDb();
+      const media = await db.get('SELECT * FROM hero_media WHERE id = ? AND hero_id = ?', [mediaId, id]);
+      if (!media) return res.status(404).json({ error: 'Медиа не найдено' });
+
+      const key = media.media_key;
+      if (!key) return res.status(404).json({ error: 'Медиа не найдено' });
+
+      const storage = getCurrentStorage();
+      if (!storage) return res.status(500).json({ error: 'Storage не настроен' });
+
+      const stream = await storage.createReadStream(key);
+      const stat = await storage.stat(key);
+
+      const ext = path.extname(key).toLowerCase();
+      const mimeTypes = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.mp4': 'video/mp4', '.webm': 'video/webm' };
+      res.setHeader('Content-Type', mimeTypes[ext] || 'application/octet-stream');
+      res.setHeader('Content-Length', stat.size);
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+
+      stream.pipe(res);
+    } catch (error) {
+      logger.error('[Hero Router] Error in GET /:id/media/:mediaId', { error: error.message, stack: error.stack, heroId: req.params.id, mediaId: req.params.mediaId });
+      res.status(404).json({ error: 'Медиа не найдено' });
     }
   });
 

@@ -3,6 +3,7 @@ import {
   normalizeString, 
   formatBiography, 
   renderMediaThumbnail,
+  getMediaSrc,
   setHTML,
   debounce,
   safeFetch,
@@ -440,17 +441,23 @@ function renderHero(hero) {
   const mediaThumbnails = hero.media?.length
     ? `
         <div class="hero-media-thumbnails">
-          ${hero.media.map((item, idx) => renderMediaThumbnail(item, idx)).join('')}
+          ${hero.media.map((item, idx) => renderMediaThumbnail(item, idx, hero.id)).join('')}
         </div>
       `
     : '';
+
+  const photoSrc = hero.photo_key ? `/api/hero/${hero.id}/photo` : hero.photo_base64;
+  const ox = hero.photo_offset_x ?? 0;
+  const oy = hero.photo_offset_y ?? 0;
+  const sc = hero.photo_scale ?? 1;
+  const objPos = `calc(50% + ${ox}px) calc(50% + ${oy}px)`;
 
   const html = `
     <div class="hero-view">
       <div class="hero-layout">
         <div class="hero-portrait">
-          ${hero.photo_base64
-            ? `<img src="${hero.photo_base64}" class="hero-photo" alt="${hero.full_name}"/>`
+          ${photoSrc
+            ? `<img src="${photoSrc}" class="hero-photo" alt="${hero.full_name}" style="object-position: ${objPos}; transform: scale(${sc});"/>`
             : `<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--muted); height: 100%; min-height: 520px;">
                  <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.5;">
                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
@@ -493,7 +500,7 @@ function renderHero(hero) {
 
 
 function openAvatarLightbox() {
-  if (!currentHero || !currentHero.photo_base64) return;
+  if (!currentHero || (!currentHero.photo_key && !currentHero.photo_base64)) return;
   
   // Скрываем страницу героя перед открытием лайтбокса
   const heroContainer = document.querySelector('.hero-container');
@@ -512,7 +519,7 @@ function openAvatarLightbox() {
     <div class="lightbox-overlay" data-action="close">
       <button class="lightbox-close" data-action="close" title="Закрыть">✕</button>
       <div class="lightbox-content" data-action="close">
-        <img src="${currentHero.photo_base64}" alt="${escapeHtml(currentHero.full_name || '')}" style="max-width: ${maxWidth}px; max-height: ${maxHeight}px; width: auto; height: auto; object-fit: contain;"/>
+        <img src="${currentHero.photo_key ? `/api/hero/${currentHero.id}/photo` : currentHero.photo_base64}" alt="${escapeHtml(currentHero.full_name || '')}" style="max-width: ${maxWidth}px; max-height: ${maxHeight}px; width: auto; height: auto; object-fit: contain;"/>
       </div>
     </div>
   `;
@@ -631,8 +638,8 @@ function openLightbox(index) {
       <div class="lightbox-content" data-action="${isLast ? 'close' : 'next'}">
         ${
           media.type === 'photo'
-            ? `<img src="${media.media_base64}" alt="${media.caption || ''}" style="max-width: ${maxWidth}px; max-height: ${maxHeight}px; width: auto; height: auto; object-fit: contain;"/>`
-            : `<video src="${media.media_base64}" controls autoplay style="max-width: ${maxWidth}px; max-height: ${maxHeight}px; width: auto; height: auto; object-fit: contain;"></video>`
+            ? `<img src="${getMediaSrc(media, currentHero.id)}" alt="${media.caption || ''}" style="max-width: ${maxWidth}px; max-height: ${maxHeight}px; width: auto; height: auto; object-fit: contain;"/>`
+            : `<video src="${getMediaSrc(media, currentHero.id)}" controls autoplay style="max-width: ${maxWidth}px; max-height: ${maxHeight}px; width: auto; height: auto; object-fit: contain;"></video>`
         }
         ${media.caption ? `<div class="lightbox-caption">${media.caption}</div>` : ''}
       </div>

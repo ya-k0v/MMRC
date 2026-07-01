@@ -1,5 +1,6 @@
 import { getHeroDb, setHeroDb } from './hero-db.js';
 import { driverType } from '../../database/database.js';
+import { getCurrentStorage } from '../../storage/current.js';
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 
@@ -128,8 +129,8 @@ export const heroQueries = {
 
     const db = await getDb();
     const result = await db.run(
-      'INSERT INTO heroes (full_name, birth_year, death_year, rank, photo_base64, biography) VALUES (?, ?, ?, ?, ?, ?)',
-      [trimmedName, parseYear(data.birth_year), parseYear(data.death_year), data.rank || null, data.photo_base64 || null, data.biography || null]
+      'INSERT INTO heroes (full_name, birth_year, death_year, rank, photo_base64, photo_key, photo_offset_x, photo_offset_y, photo_scale, biography) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [trimmedName, parseYear(data.birth_year), parseYear(data.death_year), data.rank || null, data.photo_base64 || null, data.photo_key || null, data.photo_offset_x ?? 0, data.photo_offset_y ?? 0, data.photo_scale ?? 1, data.biography || null]
     );
     return result.lastInsertRowid;
   },
@@ -155,14 +156,18 @@ export const heroQueries = {
     const death_year = hasOwn(data, 'death_year') ? parseYear(data.death_year) : current.death_year;
     const rank = hasOwn(data, 'rank') ? (data.rank ?? null) : current.rank;
     const photo_base64 = hasOwn(data, 'photo_base64') ? (data.photo_base64 ?? null) : current.photo_base64;
+    const photo_key = hasOwn(data, 'photo_key') ? (data.photo_key ?? null) : current.photo_key;
+    const photo_offset_x = hasOwn(data, 'photo_offset_x') ? (data.photo_offset_x ?? 0) : current.photo_offset_x;
+    const photo_offset_y = hasOwn(data, 'photo_offset_y') ? (data.photo_offset_y ?? 0) : current.photo_offset_y;
+    const photo_scale = hasOwn(data, 'photo_scale') ? (data.photo_scale ?? 1) : current.photo_scale;
     const biography = hasOwn(data, 'biography') ? (data.biography ?? null) : current.biography;
 
     if (rank && rank.length > 100) throw new Error('rank is too long');
     if (biography && biography.length > 1024 * 1024) throw new Error('biography is too long');
 
     await db.run(
-      'UPDATE heroes SET full_name = ?, birth_year = ?, death_year = ?, rank = ?, photo_base64 = ?, biography = ? WHERE id = ?',
-      [full_name, birth_year, death_year, rank, photo_base64, biography, id]
+      'UPDATE heroes SET full_name = ?, birth_year = ?, death_year = ?, rank = ?, photo_base64 = ?, photo_key = ?, photo_offset_x = ?, photo_offset_y = ?, photo_scale = ?, biography = ? WHERE id = ?',
+      [full_name, birth_year, death_year, rank, photo_base64, photo_key, photo_offset_x, photo_offset_y, photo_scale, biography, id]
     );
   },
 
@@ -179,16 +184,16 @@ export const heroQueries = {
     return await db.transaction(async (tx) => {
       const d = tx || db;
       const result = await d.run(
-        'INSERT INTO heroes (full_name, birth_year, death_year, rank, photo_base64, biography) VALUES (?, ?, ?, ?, ?, ?)',
-        [trimmedName, parseYear(data.birth_year), parseYear(data.death_year), data.rank || null, data.photo_base64 || null, data.biography || null]
+        'INSERT INTO heroes (full_name, birth_year, death_year, rank, photo_base64, photo_key, photo_offset_x, photo_offset_y, photo_scale, biography) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [trimmedName, parseYear(data.birth_year), parseYear(data.death_year), data.rank || null, data.photo_base64 || null, data.photo_key || null, data.photo_offset_x ?? 0, data.photo_offset_y ?? 0, data.photo_scale ?? 1, data.biography || null]
       );
       const heroId = result.lastInsertRowid;
       if (Array.isArray(data.media)) {
         for (const item of data.media) {
           if (validateMediaItem) validateMediaItem(item);
           await d.run(
-            'INSERT INTO hero_media (hero_id, type, media_base64, caption, order_index) VALUES (?, ?, ?, ?, ?)',
-            [heroId, item.type || 'photo', item.media_base64, item.caption || '', item.order_index || 0]
+            'INSERT INTO hero_media (hero_id, type, media_base64, media_key, caption, order_index) VALUES (?, ?, ?, ?, ?, ?)',
+            [heroId, item.type || 'photo', item.media_base64 || null, item.media_key || null, item.caption || '', item.order_index || 0]
           );
         }
       }
@@ -202,11 +207,10 @@ export const heroQueries = {
   },
 
   async addMedia(heroId, media) {
-    if (!media.type || !media.media_base64) throw new Error('Type and media_base64 are required');
     const db = await getDb();
     const result = await db.run(
-      'INSERT INTO hero_media (hero_id, type, media_base64, caption, order_index) VALUES (?, ?, ?, ?, ?)',
-      [heroId, media.type, media.media_base64, media.caption || null, media.order_index || 0]
+      'INSERT INTO hero_media (hero_id, type, media_base64, media_key, caption, order_index) VALUES (?, ?, ?, ?, ?, ?)',
+      [heroId, media.type, media.media_base64 || null, media.media_key || null, media.caption || null, media.order_index || 0]
     );
     return result.lastInsertRowid;
   },
@@ -242,6 +246,10 @@ export const heroQueries = {
     const death_year = hasOwn(data, 'death_year') ? parseYear(data.death_year) : current.death_year;
     const rank = hasOwn(data, 'rank') ? (data.rank ?? null) : current.rank;
     const photo_base64 = hasOwn(data, 'photo_base64') ? (data.photo_base64 ?? null) : current.photo_base64;
+    const photo_key = hasOwn(data, 'photo_key') ? (data.photo_key ?? null) : current.photo_key;
+    const photo_offset_x = hasOwn(data, 'photo_offset_x') ? (data.photo_offset_x ?? 0) : current.photo_offset_x;
+    const photo_offset_y = hasOwn(data, 'photo_offset_y') ? (data.photo_offset_y ?? 0) : current.photo_offset_y;
+    const photo_scale = hasOwn(data, 'photo_scale') ? (data.photo_scale ?? 1) : current.photo_scale;
     const biography = hasOwn(data, 'biography') ? (data.biography ?? null) : current.biography;
 
     if (rank && rank.length > 100) throw new Error('rank is too long');
@@ -250,16 +258,16 @@ export const heroQueries = {
     await db.transaction(async (tx) => {
       const d = tx || db;
       await d.run(
-        'UPDATE heroes SET full_name = ?, birth_year = ?, death_year = ?, rank = ?, photo_base64 = ?, biography = ? WHERE id = ?',
-        [full_name, birth_year, death_year, rank, photo_base64, biography, id]
+        'UPDATE heroes SET full_name = ?, birth_year = ?, death_year = ?, rank = ?, photo_base64 = ?, photo_key = ?, photo_offset_x = ?, photo_offset_y = ?, photo_scale = ?, biography = ? WHERE id = ?',
+        [full_name, birth_year, death_year, rank, photo_base64, photo_key, photo_offset_x, photo_offset_y, photo_scale, biography, id]
       );
       if (Array.isArray(data.media)) {
         await d.run('DELETE FROM hero_media WHERE hero_id = ?', [id]);
         for (const item of data.media) {
           if (validateMediaItem) validateMediaItem(item);
           await d.run(
-            'INSERT INTO hero_media (hero_id, type, media_base64, caption, order_index) VALUES (?, ?, ?, ?, ?)',
-            [id, item.type || 'photo', item.media_base64, item.caption || '', item.order_index || 0]
+            'INSERT INTO hero_media (hero_id, type, media_base64, media_key, caption, order_index) VALUES (?, ?, ?, ?, ?, ?)',
+            [id, item.type || 'photo', item.media_base64 || null, item.media_key || null, item.caption || '', item.order_index || 0]
           );
         }
       }
@@ -300,6 +308,7 @@ function normalizeMedia(row) {
     hero_id: row.hero_id,
     type,
     media_base64,
+    media_key: row.media_key || null,
     caption,
     order_index: row.order_index || 0,
     created_at: row.created_at

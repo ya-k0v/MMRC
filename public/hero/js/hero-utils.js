@@ -59,15 +59,25 @@ export function formatBiography(bio) {
 }
 
 /**
+ * Получение URL для медиа (storage key → API endpoint, base64 → data URL)
+ */
+export function getMediaSrc(media, heroId) {
+  if (media.media_key) {
+    return `/api/hero/${heroId}/media/${media.id}`;
+  }
+  return media.media_base64 || media.url || '';
+}
+
+/**
  * Рендеринг миниатюры медиа
  */
-export function renderMediaThumbnail(media, index) {
+export function renderMediaThumbnail(media, index, heroId) {
   return `
     <div class="media-thumbnail" data-index="${index}">
       ${
         media.type === 'photo'
-          ? `<img src="${media.media_base64 || media.url}" alt="${escapeHtml(media.caption || '')}" loading="lazy"/>`
-          : `<video src="${media.media_base64 || media.url}" preload="metadata"></video>`
+          ? `<img src="${getMediaSrc(media, heroId)}" alt="${escapeHtml(media.caption || '')}" loading="lazy"/>`
+          : `<video src="${getMediaSrc(media, heroId)}" preload="metadata"></video>`
       }
     </div>
   `;

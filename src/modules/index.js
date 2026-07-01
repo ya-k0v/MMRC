@@ -21,6 +21,10 @@ const MODULES = {
           death_year TEXT,
           rank TEXT,
           photo_base64 TEXT,
+          photo_key TEXT,
+          photo_offset_x REAL DEFAULT 0,
+          photo_offset_y REAL DEFAULT 0,
+          photo_scale REAL DEFAULT 1,
           biography TEXT,
           created_at ${tsCol} DEFAULT CURRENT_TIMESTAMP,
           updated_at ${tsCol} DEFAULT CURRENT_TIMESTAMP
@@ -30,7 +34,8 @@ const MODULES = {
           id ${idCol},
           hero_id INTEGER NOT NULL REFERENCES heroes(id) ON DELETE CASCADE,
           type TEXT CHECK(type IN ('photo','video')),
-          media_base64 TEXT NOT NULL,
+          media_base64 TEXT,
+          media_key TEXT,
           caption TEXT,
           order_index INTEGER DEFAULT 0,
           created_at ${tsCol} DEFAULT CURRENT_TIMESTAMP

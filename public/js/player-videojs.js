@@ -2703,6 +2703,19 @@ if (!device_id || !device_id.trim()) {
             showOnly(videoContainer);
           }
           
+          // КРИТИЧНО: Немедленно отправляем прогресс при resume (как в Android)
+          if (!preview && device_id && socket?.connected) {
+            const cur = Number.isFinite(vjsPlayer.currentTime()) ? vjsPlayer.currentTime() : 0;
+            const dur = Number.isFinite(vjsPlayer.duration()) ? vjsPlayer.duration() : 0;
+            socket.emit('player/progress', {
+              device_id,
+              type: currentFileState?.type || 'video',
+              file: currentFileState?.file || null,
+              currentTime: Math.max(0, Math.floor(cur)),
+              duration: Math.max(0, Math.floor(dur))
+            });
+          }
+          
           if (vjsPlayer.paused()) {
             vjsPlayer.play().then(() => {
               console.log('[Player] ✅ Resume с позиции:', vjsPlayer.currentTime());
@@ -2777,6 +2790,17 @@ if (!device_id || !device_id.trim()) {
                   show(videoContainer);
                   
                   console.log('[Player] ✅ Видео показано');
+                  
+                  // КРИТИЧНО: Немедленно отправляем прогресс ДО play() (как в Android startProgressUpdates)
+                  if (!preview && device_id && socket?.connected) {
+                    socket.emit('player/progress', {
+                      device_id,
+                      type: currentFileState?.type || 'video',
+                      file: currentFileState?.file || null,
+                      currentTime: 0,
+                      duration: 0
+                    });
+                  }
                   
                   // Запускаем воспроизведение
                   vjsPlayer.play().then(() => {
@@ -3132,6 +3156,12 @@ if (!device_id || !device_id.trim()) {
 
     destroyHlsPlayer('player_stop');
     destroyDashPlayer('player_stop');
+    
+    // КРИТИЧНО: В preview режиме stop не должен показывать заглушку — превью управляется спикером
+    if (preview) {
+      console.log('[Player] ⏹️ Stop в preview режиме игнорируется');
+      return;
+    }
     
     // КРИТИЧНО: Заглушка НЕ реагирует на stop (кроме placeholder_refresh, как в Android)
     const reason = payload?.reason || '';

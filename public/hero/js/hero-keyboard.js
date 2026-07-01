@@ -39,21 +39,33 @@ function renderLayout() {
 
   let html = '<div class="kb-rows">';
 
-  for (const row of letters) {
-    html += '<div class="kb-row">';
-    for (const ch of row) {
-      const display = isShifted ? ch.toUpperCase() : ch;
-      html += `<button class="kb-key kb-key-letter" data-char="${ch}">${display}</button>`;
-    }
-    html += '</div>';
+  html += '<div class="kb-row kb-row-1">';
+  for (const ch of letters[0]) {
+    const d = isShifted ? ch.toUpperCase() : ch;
+    html += `<button class="kb-key kb-key-letter" data-char="${ch}">${d}</button>`;
   }
+  html += '</div>';
 
-  html += '<div class="kb-row kb-row-bottom">';
-  html += `<button class="kb-key kb-key-shift" data-action="shift">${isShifted ? '⇧' : 'Shift'}</button>`;
+  html += '<div class="kb-row kb-row-2">';
+  for (const ch of letters[1]) {
+    const d = isShifted ? ch.toUpperCase() : ch;
+    html += `<button class="kb-key kb-key-letter" data-char="${ch}">${d}</button>`;
+  }
+  html += '</div>';
+
+  html += '<div class="kb-row kb-row-3">';
+  html += `<button class="kb-key kb-key-shift" data-action="shift">${isShifted ? '⇧' : '⇧'}</button>`;
+  for (const ch of letters[2]) {
+    const d = isShifted ? ch.toUpperCase() : ch;
+    html += `<button class="kb-key kb-key-letter" data-char="${ch}">${d}</button>`;
+  }
+  html += '<button class="kb-key kb-key-bspace" data-action="bspace">⌫</button>';
+  html += '</div>';
+
+  html += '<div class="kb-row kb-row-4">';
   html += `<button class="kb-key kb-key-lang" data-action="lang">${currentLayout === 'ru' ? 'EN' : 'RU'}</button>`;
-  html += `<button class="kb-key kb-key-space" data-action="space">Пробел</button>`;
-  html += `<button class="kb-key kb-key-bspace" data-action="bspace">⌫</button>`;
-  html += `<button class="kb-key kb-key-clear" data-action="clear">Очистить</button>`;
+  html += '<button class="kb-key kb-key-space" data-action="space">Пробел</button>';
+  html += '<button class="kb-key kb-key-enter" data-action="enter">ВВОД</button>';
   html += '</div>';
 
   html += '</div>';
@@ -113,6 +125,14 @@ function handleKeyPress(btn) {
     }
   } else if (action === 'clear') {
     inputElement.value = '';
+  } else if (action === 'enter') {
+    inputElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+    inputElement.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+    inputElement.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+    inputElement.dispatchEvent(new Event('change', { bubbles: true }));
+    inputElement.blur();
+    hideKeyboard();
+    return;
   }
 
   inputElement.dispatchEvent(new Event('input', { bubbles: true }));

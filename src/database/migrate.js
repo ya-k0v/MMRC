@@ -113,14 +113,57 @@ const MIGRATIONS = [
             death_year TEXT,
             rank TEXT,
             photo_base64 TEXT,
+            photo_key TEXT,
             biography TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
           )
         `);
-        await driver.exec('INSERT INTO heroes SELECT * FROM heroes_old');
+        await driver.exec('INSERT INTO heroes SELECT id, full_name, birth_year, death_year, rank, photo_base64, NULL, biography, created_at, updated_at FROM heroes_old');
         await driver.exec('DROP TABLE heroes_old');
       }
+    }
+  },
+  {
+    id: '2026-06-29-heroes-storage-keys',
+    description: 'Add photo_key/media_key columns for S3 storage',
+    async up(driver) {
+      if (!(await driver.tableExists('heroes'))) return;
+
+      const heroesCols = await driver.columns('heroes');
+      const hasPhotoKey = heroesCols.some(c => c.name === 'photo_key');
+      if (!hasPhotoKey) {
+        await driver.exec('ALTER TABLE heroes ADD COLUMN photo_key TEXT');
+      }
+
+      if (await driver.tableExists('hero_media')) {
+        const mediaCols = await driver.columns('hero_media');
+        const hasMediaKey = mediaCols.some(c => c.name === 'media_key');
+        if (!hasMediaKey) {
+          await driver.exec('ALTER TABLE hero_media ADD COLUMN media_key TEXT');
+        }
+        // Allow media_base64 to be NULL (was NOT NULL)
+        if (driver.dialect === 'postgres') {
+          await driver.exec('ALTER TABLE hero_media ALTER COLUMN media_base64 DROP NOT NULL');
+        }
+      }
+    }
+  },
+  {
+    id: '2026-07-01-heroes-photo-position',
+    description: 'Add photo_offset_x/photo_offset_y/photo_scale for avatar positioning',
+    async up(driver) {
+      if (!(await driver.tableExists('heroes'))) return;
+
+      const heroesCols = await driver.columns('heroes');
+      const addCol = async (name, def) => {
+        if (!heroesCols.some(c => c.name === name)) {
+          await driver.exec(`ALTER TABLE heroes ADD COLUMN ${name} ${def}`);
+        }
+      };
+      await addCol('photo_offset_x', 'REAL DEFAULT 0');
+      await addCol('photo_offset_y', 'REAL DEFAULT 0');
+      await addCol('photo_scale', 'REAL DEFAULT 1');
     }
   }
 ];

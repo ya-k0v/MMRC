@@ -4,6 +4,7 @@ import {
   normalizeString, 
   formatBiography, 
   renderMediaThumbnail,
+  getMediaSrc,
   setHTML,
   showLoadingState,
   showErrorState,
@@ -625,14 +626,21 @@ function renderHeroDetail(hero, previousHeroId = null) {
       `
     : '';
 
+  const photoSrc = hero.photo_key ? `/api/hero/${hero.id}/photo` : hero.photo_base64;
+  const ox = hero.photo_offset_x ?? 0;
+  const oy = hero.photo_offset_y ?? 0;
+  const sc = hero.photo_scale ?? 1;
+  const objPos = `calc(50% + ${ox}px) calc(50% + ${oy}px)`;
+
   const detailHTML = `
     <div class="hero-view">
       <div class="hero-layout">
         <div class="hero-portrait">
           <div data-avatar style="cursor: pointer; position: relative;">
-            ${hero.photo_base64
-              ? `<img src="${hero.photo_base64}" class="hero-photo" alt="${escapeHtml(hero.full_name || '')}"/>
-                 <button class="hero-avatar-delete" data-action="delete-avatar" title="Удалить фото">×</button>`
+            ${photoSrc
+              ? `<img src="${photoSrc}" class="hero-photo" alt="${escapeHtml(hero.full_name || '')}" style="object-position: ${objPos}; transform: scale(${sc});"/>
+                 <button class="hero-avatar-delete" data-action="delete-avatar" title="Удалить фото">×</button>
+                 <button class="hero-avatar-position" data-action="position-photo" title="Настроить позицию" style="position: absolute; bottom: 8px; right: 8px; z-index: 5; background: rgba(0,0,0,0.6); color: #fff; border: none; border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 12px;">&#9998;</button>`
               : `<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--muted); height: 100%; min-height: clamp(320px, 60vh, 520px);">
                    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.5;">
                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
@@ -705,6 +713,7 @@ function renderHeroDetail(hero, previousHeroId = null) {
 
   attachInlineEditors(hero);
   attachAvatarUploader(hero);
+  attachAvatarPosition(hero);
   attachMediaUploader(hero);
   attachLightboxHandlers(hero);
   attachAvatarDelete(hero);
@@ -818,8 +827,8 @@ function openLightbox(index) {
       <div class="lightbox-content" data-action="${isLast ? 'close' : 'next'}">
         ${
           media.type === 'photo'
-            ? `<img src="${media.media_base64 || media.url}" alt="${escapeHtml(media.caption || '')}" style="max-width: ${maxWidth}px; max-height: ${maxHeight}px; width: auto; height: auto; object-fit: contain;"/>`
-            : `<video src="${media.media_base64 || media.url}" controls autoplay style="max-width: ${maxWidth}px; max-height: ${maxHeight}px; width: auto; height: auto; object-fit: contain;"></video>`
+            ? `<img src="${getMediaSrc(media, hero.id)}" alt="${escapeHtml(media.caption || '')}" style="max-width: ${maxWidth}px; max-height: ${maxHeight}px; width: auto; height: auto; object-fit: contain;"/>`
+            : `<video src="${getMediaSrc(media, hero.id)}" controls autoplay style="max-width: ${maxWidth}px; max-height: ${maxHeight}px; width: auto; height: auto; object-fit: contain;"></video>`
         }
         ${media.caption ? `<div class="lightbox-caption">${escapeHtml(media.caption)}</div>` : ''}
       </div>
@@ -1536,6 +1545,12 @@ function normalizeFieldValue(field, value) {
     return value;
   }
   
+  // Для числовых полей позиции возвращаем число
+  if (['photo_offset_x', 'photo_offset_y', 'photo_scale'].includes(field)) {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : 0;
+  }
+  
   // Для всех остальных полей делаем trim
   const trimmed = value?.toString().trim() ?? '';
   
@@ -1559,13 +1574,15 @@ function normalizeFieldValue(field, value) {
 function buildPayload(hero, overrides = {}, changedField) {
   const payload = {
     id: hero.id,
-    // Используем hasOwnProperty для проверки, что значение явно передано
     full_name: overrides.hasOwnProperty('full_name') ? (overrides.full_name || '') : (hero.full_name ?? ''),
     birth_year: overrides.hasOwnProperty('birth_year') ? overrides.birth_year : (hero.birth_year ?? null),
     death_year: overrides.hasOwnProperty('death_year') ? overrides.death_year : (hero.death_year ?? null),
     rank: overrides.hasOwnProperty('rank') ? overrides.rank : (hero.rank ?? null),
-    // Если photo_base64 явно передан (включая null для удаления), используем его
     photo_base64: overrides.hasOwnProperty('photo_base64') ? overrides.photo_base64 : (hero.photo_base64 ?? null),
+    photo_key: hero.photo_key ?? null,
+    photo_offset_x: overrides.hasOwnProperty('photo_offset_x') ? overrides.photo_offset_x : (hero.photo_offset_x ?? 0),
+    photo_offset_y: overrides.hasOwnProperty('photo_offset_y') ? overrides.photo_offset_y : (hero.photo_offset_y ?? 0),
+    photo_scale: overrides.hasOwnProperty('photo_scale') ? overrides.photo_scale : (hero.photo_scale ?? 1),
     biography: overrides.hasOwnProperty('biography') ? overrides.biography : (hero.biography ?? null),
   };
 
@@ -1600,7 +1617,7 @@ function highlightActive(id) {
 // Базовая renderMediaThumbnail импортируется из hero-utils.js
 // Для админ-панели нужна расширенная версия с кнопкой удаления
 function renderMediaThumbnailAdmin(media, index) {
-  const baseThumbnail = renderMediaThumbnail(media, index);
+  const baseThumbnail = renderMediaThumbnail(media, index, state.active?.id);
   // Добавляем кнопку удаления и оборачиваем в position: relative
   return baseThumbnail.replace(
     '<div class="media-thumbnail"',
@@ -1616,8 +1633,8 @@ function renderMediaItem(media, index) {
     <div class="media-item hero-media__item" data-index="${index}">
       ${
         media.type === 'photo'
-          ? `<img src="${media.media_base64 || media.url}" alt="${escapeHtml(media.caption || '')}" loading="lazy"/>`
-          : `<video src="${media.media_base64 || media.url}" preload="metadata"></video>`
+          ? `<img src="${getMediaSrc(media, state.active.id)}" alt="${escapeHtml(media.caption || '')}" loading="lazy"/>`
+          : `<video src="${getMediaSrc(media, state.active.id)}" preload="metadata"></video>`
       }
       ${media.caption ? `<div class="media-item-caption">${escapeHtml(media.caption)}</div>` : ''}
       <button class="hero-media__remove" data-action="remove-media" data-id="${media.id}" title="Удалить материал">×</button>
@@ -1749,9 +1766,11 @@ function attachAvatarUploader(hero) {
   if (!container) return;
 
   container.addEventListener('click', async (e) => {
-    // Не обрабатываем клик, если кликнули на кнопку добавления медиа или удаления
+    // Не обрабатываем клик, если кликнули на кнопку добавления медиа, удаления или позиционер
     if (e.target.closest('[data-action="add-media"]') || 
-        e.target.closest('[data-action="delete-avatar"]')) {
+        e.target.closest('[data-action="delete-avatar"]') ||
+        e.target.closest('[data-action="position-photo"]') ||
+        e.target.closest('.position-overlay')) {
       return;
     }
     
@@ -1774,20 +1793,172 @@ function attachAvatarUploader(hero) {
       return;
     }
     
-    // Показываем прогресс загрузки
-    showStatus('Конвертируем файл…');
-    const base64 = await fileToBase64(file, (percent) => {
-      showStatus(`Конвертируем файл… ${Math.round(percent)}%`);
-    });
+    // Загружаем файл через multipart
+    showStatus('Загружаем фото…');
+    const formData = new FormData();
+    formData.append('photo', file);
     
-    // Проверка размера base64
-    if (base64.length > FILE_LIMITS.PHOTO_MAX_SIZE * FILE_LIMITS.BASE64_OVERHEAD) {
-      showStatus('Файл слишком большой после конвертации', true);
-      return;
+    try {
+      const response = await adminFetch(`/api/hero/${hero.id}/photo`, {
+        method: 'POST',
+        body: formData
+      });
+      
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: response.statusText }));
+        throw new Error(error.error || 'Ошибка загрузки');
+      }
+      
+      const result = await response.json();
+      await refreshActiveHero(hero.id);
+      showStatus('Фото обновлено');
+    } catch (err) {
+      showStatus('Не удалось загрузить фото', true);
+      if (IS_DEV) console.error('[HeroAdmin] uploadPhoto failed', err);
     }
-    
-    await saveField('photo_base64', base64, hero);
   });
+}
+
+function attachAvatarPosition(hero) {
+  const btn = state.detailEl?.querySelector('[data-action="position-photo"]');
+  if (!btn) return;
+
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openPositionEditor(hero);
+  });
+}
+
+function openPositionEditor(hero) {
+  const container = state.detailEl?.querySelector('[data-avatar]');
+  const img = container?.querySelector('.hero-photo');
+  if (!container || !img) return;
+
+  let ox = hero.photo_offset_x ?? 0;
+  let oy = hero.photo_offset_y ?? 0;
+  let sc = hero.photo_scale ?? 1;
+  let dragging = false;
+  let startX, startY, startOx, startOy;
+
+  const rect = container.getBoundingClientRect();
+  const cw = rect.width;
+  const ch = rect.height;
+
+  function clampOffset() {
+    const maxX = cw * (sc - 1) / 2;
+    const maxY = ch * (sc - 1) / 2;
+    ox = Math.max(-maxX, Math.min(maxX, ox));
+    oy = Math.max(-maxY, Math.min(maxY, oy));
+  }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'position-overlay';
+  overlay.innerHTML = `
+    <input type="range" class="position-range-h" min="-300" max="300" step="1" value="${ox}" title="Позиция"/>
+    <input type="range" class="position-range-v" min="1" max="3" step="0.05" value="${sc}" title="Масштаб"/>
+    <div class="position-zoom-val">${sc.toFixed(2)}x</div>
+  `;
+  container.appendChild(overlay);
+
+  img.style.cursor = 'grab';
+  img.style.transition = 'none';
+
+  let saveTimer = null;
+  function scheduleSave() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      await saveField('photo_offset_x', ox, hero);
+      await saveField('photo_offset_y', oy, hero);
+      await saveField('photo_scale', sc, hero);
+    }, 300);
+  }
+
+  function applyTransform() {
+    clampOffset();
+    const objPosX = `calc(50% + ${ox}px)`;
+    const objPosY = `calc(50% + ${oy}px)`;
+    img.style.objectPosition = `${objPosX} ${objPosY}`;
+    img.style.transformOrigin = 'center center';
+    img.style.transform = `scale(${sc})`;
+    rangeH.value = ox;
+    rangeH.min = Math.round(-cw * (sc - 1) / 2);
+    rangeH.max = Math.round(cw * (sc - 1) / 2);
+    rangeV.value = sc;
+    zoomVal.textContent = sc.toFixed(2) + 'x';
+  }
+
+  function onPointerDown(e) {
+    if (e.target.closest('.position-overlay')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragging = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    startOx = ox;
+    startOy = oy;
+    img.style.cursor = 'grabbing';
+  }
+
+  function onPointerMove(e) {
+    if (!dragging) return;
+    e.preventDefault();
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    ox = startOx + dx / sc;
+    oy = startOy + dy / sc;
+    applyTransform();
+    scheduleSave();
+  }
+
+  function onPointerUp() {
+    if (!dragging) return;
+    dragging = false;
+    img.style.cursor = 'grab';
+  }
+
+  const rangeH = overlay.querySelector('.position-range-h');
+  const rangeV = overlay.querySelector('.position-range-v');
+  const zoomVal = overlay.querySelector('.position-zoom-val');
+
+  rangeH.addEventListener('input', (ev) => {
+    ev.stopPropagation();
+    ox = parseFloat(rangeH.value);
+    applyTransform();
+    scheduleSave();
+  });
+
+  rangeV.addEventListener('input', (ev) => {
+    ev.stopPropagation();
+    sc = parseFloat(rangeV.value);
+    applyTransform();
+    scheduleSave();
+  });
+
+  function cleanup() {
+    clearTimeout(saveTimer);
+    img.removeEventListener('pointerdown', onPointerDown);
+    document.removeEventListener('pointermove', onPointerMove);
+    document.removeEventListener('pointerup', onPointerUp);
+    overlay.remove();
+    img.style.cursor = '';
+    img.style.transform = '';
+    img.style.objectPosition = '';
+    img.style.transition = '';
+    const h = state.active;
+    if (h) {
+      const objPosX = `calc(50% + ${h.photo_offset_x ?? 0}px)`;
+      const objPosY = `calc(50% + ${h.photo_offset_y ?? 0}px)`;
+      img.style.objectPosition = `${objPosX} ${objPosY}`;
+      img.style.transform = `scale(${h.photo_scale ?? 1})`;
+    }
+  }
+
+  img.addEventListener('pointerdown', onPointerDown);
+  document.addEventListener('pointermove', onPointerMove);
+  document.addEventListener('pointerup', onPointerUp);
+
+  applyTransform();
 }
 
 function attachAvatarDelete(hero) {
@@ -1803,9 +1974,12 @@ function attachAvatarDelete(hero) {
     
     try {
       showStatus('Удаляем фото…');
-      // Удаляем фото, явно передавая null
-      // saveField уже вызовет refreshActiveHero после успешного сохранения
-      await saveField('photo_base64', null, hero);
+      const response = await adminFetch(`/api/hero/${hero.id}/photo`, { method: 'DELETE' });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: response.statusText }));
+        throw new Error(err.error || `HTTP ${response.status}`);
+      }
+      await refreshActiveHero(hero.id);
       showStatus('Фото удалено');
     } catch (err) {
       if (IS_DEV) {
@@ -1852,22 +2026,15 @@ async function deleteHero(id) {
     state.heroes = state.heroes.filter(h => h.id !== id);
     state.filtered = state.filtered.filter(h => h.id !== id);
     
-    // Если удаляли активную карточку, выбираем другую или показываем placeholder
-    if (state.active?.id === id) {
-      state.active = null;
-      
-      // Обновляем список
-      renderHeroList();
-      
-      // Выбираем другую карточку или показываем placeholder
-      if (state.filtered.length > 0) {
-        await selectHero(state.filtered[0].id);
-      } else {
-        showPlaceholder('Карточки не найдены. Добавьте первые записи.');
-      }
+    // Обновляем список
+    state.active = null;
+    renderHeroList();
+    
+    // Выбираем другую карточку или показываем placeholder
+    if (state.filtered.length > 0) {
+      await selectHero(state.filtered[0].id);
     } else {
-      // Просто обновляем список
-      renderHeroList();
+      showPlaceholder('Карточки не найдены. Добавьте первые записи.');
     }
     
     showStatus('Карточка удалена');
@@ -1912,23 +2079,12 @@ function attachMediaUploader(hero) {
             continue;
           }
           
-          // Показываем прогресс загрузки
-          showStatus(`Конвертируем файл ${i + 1}/${files.length}…`);
-          const base64 = await fileToBase64(file, (percent) => {
-            showStatus(`Конвертируем файл ${i + 1}/${files.length}… ${Math.round(percent)}%`);
-          });
-          
-          // Проверка размера base64
-          const maxSize = isVideo ? FILE_LIMITS.VIDEO_MAX_SIZE : FILE_LIMITS.PHOTO_MAX_SIZE;
-          if (base64.length > maxSize * FILE_LIMITS.BASE64_OVERHEAD) {
-            showStatus(`Файл ${i + 1}/${files.length}: слишком большой после конвертации`, true);
-            errorCount++;
-            continue;
-          }
+          // Загружаем файл напрямую
+          showStatus(`Загружаем файл ${i + 1}/${files.length}…`);
           
           await uploadMedia(hero.id, {
+            file: file,
             type: isVideo ? 'video' : 'photo',
-            media_base64: base64,
             caption: file.name.replace(/\.[^.]+$/, '') || (isVideo ? 'Видео' : 'Фото'),
           });
           
@@ -1971,21 +2127,48 @@ function attachMediaUploader(hero) {
 async function uploadMedia(heroId, payload) {
   try {
     showStatus('Загружаем материал…');
-    const response = await fetchWithRetry(
-      () => adminFetch(`/api/hero/${heroId}/media`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      }),
-      {
-        maxRetries: 2, // Меньше попыток для больших файлов
-        initialDelay: 2000,
-      }
-    );
     
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ error: response.statusText }));
-      throw new Error(errorData.error || `HTTP ${response.status}`);
+    // If payload contains a file, use FormData
+    if (payload.file) {
+      const formData = new FormData();
+      formData.append('media', payload.file);
+      formData.append('type', payload.type || 'photo');
+      if (payload.caption) formData.append('caption', payload.caption);
+      if (payload.order_index) formData.append('order_index', payload.order_index);
+      
+      const response = await fetchWithRetry(
+        () => adminFetch(`/api/hero/${heroId}/media`, {
+          method: 'POST',
+          body: formData,
+        }),
+        {
+          maxRetries: 2,
+          initialDelay: 2000,
+        }
+      );
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: response.statusText }));
+        throw new Error(errorData.error || `HTTP ${response.status}`);
+      }
+    } else {
+      // Fallback for JSON payload (e.g., media_key)
+      const response = await fetchWithRetry(
+        () => adminFetch(`/api/hero/${heroId}/media`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }),
+        {
+          maxRetries: 2,
+          initialDelay: 2000,
+        }
+      );
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: response.statusText }));
+        throw new Error(errorData.error || `HTTP ${response.status}`);
+      }
     }
     
     await refreshActiveHero(heroId);
