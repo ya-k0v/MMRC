@@ -332,6 +332,9 @@ async function loadHeroes() {
     renderHeroList();
     initScrollListener(); // Инициализируем обработчик скролла
     if (state.heroes.length) {
+      state.active = null;
+      if (state.placeholderEl) state.placeholderEl.style.display = 'none';
+      if (state.detailEl) state.detailEl.style.display = 'flex';
       await selectHero(state.heroes[0].id);
     } else {
       showPlaceholder('Карточки не найдены. Добавьте первые записи через API.');
