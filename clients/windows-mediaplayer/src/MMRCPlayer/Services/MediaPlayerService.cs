@@ -95,7 +95,8 @@ public class MediaPlayerService : IDisposable
             "--no-stats",
             "--no-sub-autodetect-file",
             "--no-snapshot-preview",
-            "--no-osd"
+            "--no-osd",
+            "--no-xlib"
         );
 
         _primaryPlayer = new MediaPlayer(_libVLC)
@@ -119,6 +120,8 @@ public class MediaPlayerService : IDisposable
         if (VideoPrimary != null) VideoPrimary.MediaPlayer = _primaryPlayer;
         if (VideoBuffer != null) VideoBuffer.MediaPlayer = _bufferPlayer;
     }
+
+    public bool IsInitialized => _libVLC != null;
 
     public bool IsPlaceholder => _isPlaceholder;
 

@@ -67,6 +67,52 @@ $files = Get-ChildItem -Path $PublishDir -Recurse -File | Where-Object {
     if ($name -match "^mscordaccore") { return $false }
     if ($name -match "^mscordbi\.dll$") { return $false }
 
+    # LibVLC plugins: keep ONLY what's needed for video/audio/images/streaming
+    if ($full -match "\\plugins\\") {
+        $keep = @(
+            # Decoders (FFmpeg)
+            "libavcodec_plugin.dll",
+            "libavformat_plugin.dll",
+            "libavio_plugin.dll",
+            # Access (streaming)
+            "libaccess_http_plugin.dll",
+            "libaccess_https_plugin.dll",
+            "libaccess_mms_plugin.dll",
+            "libaccess_realrtsp_plugin.dll",
+            # Adaptive streaming (HLS/DASH)
+            "libadaptive_plugin.dll",
+            # Audio decoders
+            "liba52_plugin.dll",
+            "libdts_plugin.dll",
+            "libmpg123_plugin.dll",
+            "libflac_plugin.dll",
+            "libopus_plugin.dll",
+            "libvorbis_plugin.dll",
+            # Subtitle/demux
+            "libmkv_plugin.dll",
+            "libavi_plugin.dll",
+            "libmp4_plugin.dll",
+            "libflacsys_plugin.dll",
+            "libnsv_plugin.dll",
+            # Video output
+            "libdirect3d11_video_output_plugin.dll",
+            "libd3d11va_plugin.dll",
+            # Misc required
+            "libpng_plugin.dll",
+            "libjpeg_plugin.dll",
+            "librawvideo_plugin.dll",
+            "libedummy_plugin.dll",
+            "libqt_plugin.dll",
+            "libau_plugin.dll",
+            "libcaf_plugin.dll",
+            "libwav_plugin.dll",
+            "libau_plugin.dll",
+            "libsubtitle_plugin.dll",
+            "libchain_plugin.dll"
+        )
+        if ($keep -notcontains $name) { return $false }
+    }
+
     # Keep everything else (libvlc, plugins, WPF, .NET runtime, app DLLs)
     return $true
 }
@@ -85,8 +131,9 @@ foreach ($file in $files) {
     $fileId = "fil$componentId"
     $sourcePath = "`$(var.PublishDir)\\$relativePath"
 
+    $fileName = $file.Name
     $sb.AppendLine("      <Component Id=`"$id`" Guid=`"$([guid]::NewGuid())`" >") | Out-Null
-    $sb.AppendLine("        <File Id=`"$fileId`" Source=`"$sourcePath`" KeyPath=`"yes`" />") | Out-Null
+    $sb.AppendLine("        <File Id=`"$fileId`" Name=`"$fileName`" Source=`"$sourcePath`" KeyPath=`"yes`" />") | Out-Null
     $sb.AppendLine("      </Component>") | Out-Null
 }
 

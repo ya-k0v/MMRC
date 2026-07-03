@@ -2,6 +2,43 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
 
+  <Fragment>
+    <ComponentGroup Id="ShortcutGroup" Directory="AppProgramsFolder">
+      <Component Id="StartMenuShortcut" Guid="A1B2C3D4-5678-9ABC-DEF0-123456789012">
+        <Shortcut Id="AppShortcut"
+                  Name="MMRC Player"
+                  Description="MMRC Digital Signage Player"
+                  Target="[INSTALLFOLDER]MMRCPlayer.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="CleanUpShortcutFolder" On="uninstall" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\VideoControl\MMRCPlayer"
+                       Name="installed"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="DesktopGroup" Directory="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="B2C3D4E5-6789-ABCD-EF01-234567890123">
+        <Shortcut Id="DesktopAppShortcut"
+                  Name="MMRC Player"
+                  Description="MMRC Digital Signage Player"
+                  Target="[INSTALLFOLDER]MMRCPlayer.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\VideoControl\MMRCPlayer"
+                       Name="desktopShortcut"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
   <Package Name="MMRCPlayer"
            Manufacturer="VideoControl"
            Version="1.0.0"
@@ -13,7 +50,7 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of MMRC Player is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
-    <StandardDirectory Id="ProgramFilesFolder">
+    <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="MMRCPlayer" />
     </StandardDirectory>
 
@@ -23,29 +60,13 @@
       </Directory>
     </StandardDirectory>
 
+    <StandardDirectory Id="DesktopFolder" />
+
     <Feature Id="Main">
       <ComponentGroupRef Id="AppFiles" />
       <ComponentGroupRef Id="ShortcutGroup" />
+      <ComponentGroupRef Id="DesktopGroup" />
     </Feature>
-
-    <Fragment>
-      <ComponentGroup Id="ShortcutGroup" Directory="AppProgramsFolder">
-        <Component Id="StartMenuShortcut" Guid="A1B2C3D4-5678-9ABC-DEF0-123456789012">
-          <Shortcut Id="AppShortcut"
-                    Name="MMRC Player"
-                    Description="MMRC Digital Signage Player"
-                    Target="[INSTALLFOLDER]MMRCPlayer.exe"
-                    WorkingDirectory="INSTALLFOLDER" />
-          <RemoveFolder Id="CleanUpShortcutFolder" On="uninstall" />
-          <RegistryValue Root="HKCU"
-                         Key="Software\VideoControl\MMRCPlayer"
-                         Name="installed"
-                         Type="integer"
-                         Value="1"
-                         KeyPath="yes" />
-        </Component>
-      </ComponentGroup>
-    </Fragment>
 
   </Package>
 </Wix>

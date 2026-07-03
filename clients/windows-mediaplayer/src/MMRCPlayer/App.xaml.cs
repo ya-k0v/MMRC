@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Text.Json;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using MMRCPlayer.Models;
 using MMRCPlayer.Utilities;
@@ -25,6 +26,20 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        AppDomain.CurrentDomain.UnhandledException += (_, ex) =>
+        {
+            Log($"UnhandledException: {ex.ExceptionObject}");
+        };
+        DispatcherUnhandledException += (_, ex) =>
+        {
+            Log($"DispatcherUnhandledException: {ex.Exception}");
+            ex.Handled = true;
+        };
+        TaskScheduler.UnobservedTaskException += (_, ex) =>
+        {
+            Log($"UnobservedTaskException: {ex.Exception}");
+        };
+
         Log("OnStartup begin");
         _mutex = new Mutex(true, "MMRCPlayer_SingleInstance", out bool createdNew);
 

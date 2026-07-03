@@ -1,7 +1,6 @@
 <Window x:Class="MMRCPlayer.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:vlc="clr-namespace:LibVLCSharp.WPF;assembly=LibVLCSharp.WPF"
         Title="MMRC Player"
         WindowStyle="SingleBorderWindow"
         ResizeMode="CanResize"
@@ -21,19 +20,9 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <Grid Grid.Row="0" Background="Black">
+        <Grid x:Name="VideoGrid" Grid.Row="0" Background="Black">
 
-            <!-- Primary Video Player (HwndHost - always on top of WPF content when visible) -->
-            <vlc:VideoView x:Name="VideoPrimaryView"
-                            Background="Black"
-                            Visibility="Collapsed" />
-
-            <!-- Buffer Video Player (for crossfade) -->
-            <vlc:VideoView x:Name="VideoBufferView"
-                            Background="Black"
-                            Visibility="Collapsed" />
-
-            <!-- Brand Background (Audio logo) - must be after VideoViews to render on top when they're collapsed -->
+            <!-- Brand Background (Audio logo) -->
             <Image x:Name="BrandBg"
                    Stretch="Uniform"
                    MaxWidth="128" MaxHeight="128"

@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Threading;
+using LibVLCSharp.WPF;
 using MMRCPlayer.Models;
 using MMRCPlayer.Services;
 using MMRCPlayer.Utilities;
@@ -25,6 +26,8 @@ public partial class MainWindow : Window
     private bool _isFullscreen;
     private readonly SemaphoreSlim _playLock = new(1, 1);
     private OverlayWindow? _overlayWindow;
+    private VideoView? _videoPrimaryView;
+    private VideoView? _videoBufferView;
 
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
@@ -51,8 +54,8 @@ public partial class MainWindow : Window
             _imageService.ImagePrimary = ImagePrimary;
             _imageService.ImageBuffer = ImageBuffer;
 
-            _mediaPlayer.VideoPrimary = VideoPrimaryView;
-            _mediaPlayer.VideoBuffer = VideoBufferView;
+            _mediaPlayer.VideoPrimary = _videoPrimaryView;
+            _mediaPlayer.VideoBuffer = _videoBufferView;
             _mediaPlayer.BrandBg = BrandBg;
             _mediaPlayer.ImagePrimary = ImagePrimary;
             _mediaPlayer.HideImages = () => _imageService.HideImages();
@@ -60,13 +63,23 @@ public partial class MainWindow : Window
             Log("Loading LibVLC plugins...");
             StatusText.Text = "Loading media engine...";
             StatusText.Visibility = Visibility.Visible;
+            await Task.Delay(50);
+
             await Task.Run(() => _mediaPlayer.InitializeCore());
+            Log("Core initialized, creating players...");
+
             _mediaPlayer.InitializePlayers();
+
+            _videoPrimaryView = new VideoView { Background = System.Windows.Media.Brushes.Black, Visibility = Visibility.Collapsed };
+            _videoBufferView = new VideoView { Background = System.Windows.Media.Brushes.Black, Visibility = Visibility.Collapsed };
+            VideoGrid.Children.Insert(0, _videoBufferView);
+            VideoGrid.Children.Insert(0, _videoPrimaryView);
+
             Log("LibVLC initialized");
             StatusText.Visibility = Visibility.Collapsed;
 
-            VideoPrimaryView.MediaPlayer = _mediaPlayer.PrimaryPlayer;
-            VideoBufferView.MediaPlayer = _mediaPlayer.BufferPlayer;
+            _videoPrimaryView.MediaPlayer = _mediaPlayer.PrimaryPlayer;
+            _videoBufferView.MediaPlayer = _mediaPlayer.BufferPlayer;
 
             _mediaPlayer.OnPlaybackEnd += OnMediaPlaybackEnd;
             _mediaPlayer.OnError += OnMediaError;
@@ -107,20 +120,19 @@ public partial class MainWindow : Window
 
     private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
-        try
-        {
-            _progress.Stop();
-            _watchdogTimer?.Stop();
-            _overlayWindow?.Close();
-            _overlayWindow = null;
-            _socket?.Dispose();
-            _mediaPlayer?.Dispose();
-            _playLock?.Dispose();
-        }
-        catch { }
+        try { _progress.Stop(); } catch { }
+        try { _watchdogTimer?.Stop(); } catch { }
+        try { _mediaPlayer?.PrimaryPlayer?.Stop(); } catch { }
+        try { _mediaPlayer?.BufferPlayer?.Stop(); } catch { }
+        try { _overlayWindow?.Close(); } catch { }
+        try { _socket?.Dispose(); } catch { }
 
-        Dispatcher.InvokeShutdown();
-        Environment.Exit(0);
+        var pid = System.Diagnostics.Process.GetCurrentProcess().Id;
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(1000);
+            try { System.Diagnostics.Process.GetProcessById(pid).Kill(); } catch { }
+        });
     }
 
     private void Window_KeyDown(object sender, KeyEventArgs e)
