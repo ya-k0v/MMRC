@@ -91,6 +91,13 @@ __pycache__/
 .idea/
 opencode.json
 
+# Windows client build output
+clients/windows-mediaplayer/bin/
+clients/windows-mediaplayer/obj/
+clients/windows-mediaplayer/publish/
+clients/windows-mediaplayer/output/
+clients/windows-mediaplayer/installer/components.wxs
+
 # Android project build output
 clients/android-mediaplayer/app/build/
 !clients/android-mediaplayer/app-release.apk

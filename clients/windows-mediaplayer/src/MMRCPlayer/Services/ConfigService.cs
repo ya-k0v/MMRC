@@ -1,47 +1,23 @@
 using System.IO;
 using System.Text.Json;
 using MMRCPlayer.Models;
+using MMRCPlayer.Utilities;
 
 namespace MMRCPlayer.Services;
 
 public class ConfigService
 {
-    private static readonly string ConfigPath = Path.Combine(
-        AppDomain.CurrentDomain.BaseDirectory, "appsettings.json");
-
-    private static readonly string LocalConfigPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "MMRCPlayer", "config.json");
-
     public DeviceConfig Config { get; private set; } = new();
 
     public void Load()
     {
-        if (File.Exists(LocalConfigPath))
+        if (File.Exists(Paths.ConfigPath))
         {
             try
             {
-                var json = File.ReadAllText(LocalConfigPath);
+                var json = File.ReadAllText(Paths.ConfigPath);
                 Config = JsonSerializer.Deserialize<DeviceConfig>(json) ?? new DeviceConfig();
                 return;
-            }
-            catch { }
-        }
-
-        if (File.Exists(ConfigPath))
-        {
-            try
-            {
-                var json = File.ReadAllText(ConfigPath);
-                var doc = JsonDocument.Parse(json);
-                if (doc.RootElement.TryGetProperty("MMRCPlayer", out var section))
-                {
-                    Config = JsonSerializer.Deserialize<DeviceConfig>(section.GetRawText()) ?? new DeviceConfig();
-                }
-                else
-                {
-                    Config = JsonSerializer.Deserialize<DeviceConfig>(json) ?? new DeviceConfig();
-                }
             }
             catch { }
         }
@@ -49,12 +25,12 @@ public class ConfigService
 
     public void Save()
     {
-        var dir = Path.GetDirectoryName(LocalConfigPath);
+        var dir = Path.GetDirectoryName(Paths.ConfigPath);
         if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
             Directory.CreateDirectory(dir);
 
         var json = JsonSerializer.Serialize(Config, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(LocalConfigPath, json);
+        File.WriteAllText(Paths.ConfigPath, json);
     }
 
     public void UpdateFromArgs(string[] args)

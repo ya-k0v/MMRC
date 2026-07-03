@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <Package Name="MMRCPlayer"
+           Manufacturer="VideoControl"
+           Version="1.0.0"
+           UpgradeCode="B5E3A7F0-1234-4567-89AB-CDEF01234567"
+           Scope="perMachine">
+
+    <SummaryInformation Description="MMRC Digital Signage Player for Windows" Manufacturer="VideoControl" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of MMRC Player is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFilesFolder">
+      <Directory Id="INSTALLFOLDER" Name="MMRCPlayer" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ProgramsFolder">
+        <Directory Id="AppProgramsFolder" Name="MMRC Player" />
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentGroupRef Id="ShortcutGroup" />
+    </Feature>
+
+    <Fragment>
+      <ComponentGroup Id="ShortcutGroup" Directory="AppProgramsFolder">
+        <Component Id="StartMenuShortcut" Guid="A1B2C3D4-5678-9ABC-DEF0-123456789012">
+          <Shortcut Id="AppShortcut"
+                    Name="MMRC Player"
+                    Description="MMRC Digital Signage Player"
+                    Target="[INSTALLFOLDER]MMRCPlayer.exe"
+                    WorkingDirectory="INSTALLFOLDER" />
+          <RemoveFolder Id="CleanUpShortcutFolder" On="uninstall" />
+          <RegistryValue Root="HKCU"
+                         Key="Software\VideoControl\MMRCPlayer"
+                         Name="installed"
+                         Type="integer"
+                         Value="1"
+                         KeyPath="yes" />
+        </Component>
+      </ComponentGroup>
+    </Fragment>
+
+  </Package>
+</Wix>

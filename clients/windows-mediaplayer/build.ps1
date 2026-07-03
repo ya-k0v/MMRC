@@ -44,9 +44,6 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 Write-Host "Publishing..." -ForegroundColor Yellow
 dotnet publish -c Release -r $Runtime --self-contained true `
-    -p:PublishSingleFile=true `
-    -p:IncludeNativeLibrariesForSelfExtract=true `
-    -p:EnableCompressionInSingleFile=true `
     -o $PublishDir
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: Publish failed." -ForegroundColor Red
@@ -55,13 +52,11 @@ if ($LASTEXITCODE -ne 0) {
 }
 Pop-Location
 
-# Copy appsettings.json
-$SettingsSrc = Join-Path $SrcDir "appsettings.json"
-$SettingsDst = Join-Path $PublishDir "appsettings.json"
-if (Test-Path $SettingsSrc) {
-    Copy-Item -Path $SettingsSrc -Destination $SettingsDst -Force
-    Write-Host "Copied appsettings.json" -ForegroundColor Green
-}
+# Clean up unnecessary files from publish
+Write-Host "Cleaning up..." -ForegroundColor Yellow
+Get-ChildItem -Path $PublishDir -Recurse -Filter "*.pdb" | Remove-Item -Force
+Get-ChildItem -Path $PublishDir -Recurse -Filter "*.xml" | Where-Object { $_.Length -lt 100KB } | Remove-Item -Force
+Get-ChildItem -Path $PublishDir -Recurse -Filter "*Zone.Identifier*" | Remove-Item -Force
 
 Write-Host ""
 Write-Host "Build complete!" -ForegroundColor Green

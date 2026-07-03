@@ -1,0 +1,18 @@
+<Project Sdk="WixToolset.Sdk/5.0.0">
+
+  <PropertyGroup>
+    <OutputName>MMRCPlayer</OutputName>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <PublishDir>$(MSBuildThisFileDirectory)..\publish\</PublishDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.0" />
+  </ItemGroup>
+
+  <!-- Harvest all files from publish directory -->
+  <ItemGroup>
+    <Content Include="$(PublishDir)**\*" />
+  </ItemGroup>
+
+</Project>

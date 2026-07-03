@@ -74,7 +74,7 @@ public class MediaPlayerService : IDisposable
         Directory.CreateDirectory(_cacheDir);
     }
 
-    public void Initialize()
+    public void InitializeCore()
     {
         try
         {
@@ -85,7 +85,10 @@ public class MediaPlayerService : IDisposable
             System.Diagnostics.Debug.WriteLine($"LibVLC init error: {ex.Message}");
             throw;
         }
+    }
 
+    public void InitializePlayers()
+    {
         _libVLC = new LibVLC(
             "--no-video-title-show",
             "--quiet",

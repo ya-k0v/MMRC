@@ -57,9 +57,13 @@ public partial class MainWindow : Window
             _mediaPlayer.ImagePrimary = ImagePrimary;
             _mediaPlayer.HideImages = () => _imageService.HideImages();
 
-            Log("Initializing LibVLC...");
-            _mediaPlayer.Initialize();
+            Log("Loading LibVLC plugins...");
+            StatusText.Text = "Loading media engine...";
+            StatusText.Visibility = Visibility.Visible;
+            await Task.Run(() => _mediaPlayer.InitializeCore());
+            _mediaPlayer.InitializePlayers();
             Log("LibVLC initialized");
+            StatusText.Visibility = Visibility.Collapsed;
 
             VideoPrimaryView.MediaPlayer = _mediaPlayer.PrimaryPlayer;
             VideoBufferView.MediaPlayer = _mediaPlayer.BufferPlayer;

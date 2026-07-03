@@ -36,6 +36,7 @@
             <!-- Brand Background (Audio logo) - must be after VideoViews to render on top when they're collapsed -->
             <Image x:Name="BrandBg"
                    Stretch="Uniform"
+                   MaxWidth="128" MaxHeight="128"
                    HorizontalAlignment="Center"
                    VerticalAlignment="Center"
                    Visibility="Collapsed"
