@@ -1,0 +1,126 @@
+<Window x:Class="MMRCPlayer.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="MMRC Player"
+        Width="520"         Height="440"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        Background="#1E1E2E">
+
+    <Grid Margin="40,32">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Title -->
+        <TextBlock Grid.Row="0"
+                   Text="Настройки MMRC Player"
+                   FontSize="20" FontWeight="Bold"
+                   Foreground="White"
+                   HorizontalAlignment="Center"
+                   Margin="0,0,0,28" />
+
+        <!-- Server URL -->
+        <TextBlock Grid.Row="1"
+                   Text="Адрес сервера"
+                   FontSize="13" Foreground="#BAC2DE" Margin="0,0,0,6" />
+        <Border Grid.Row="2" Background="#313244" CornerRadius="6" Margin="0,0,0,18">
+            <TextBox x:Name="ServerUrlInput"
+                     Background="Transparent"
+                     Foreground="#CDD6F4"
+                     FontSize="14"
+                     Padding="12,8"
+                     BorderThickness="0"
+                     CaretBrush="#CDD6F4" />
+        </Border>
+
+        <!-- Device ID -->
+        <TextBlock Grid.Row="3"
+                   Text="ID устройства"
+                   FontSize="13" Foreground="#BAC2DE" Margin="0,0,0,6" />
+        <Border Grid.Row="4" Background="#313244" CornerRadius="6" Margin="0,0,0,18">
+            <TextBox x:Name="DeviceIdInput"
+                     Background="Transparent"
+                     Foreground="#CDD6F4"
+                     FontSize="14"
+                     Padding="12,8"
+                     BorderThickness="0"
+                     CaretBrush="#CDD6F4" />
+        </Border>
+
+        <!-- Show Status -->
+        <CheckBox Grid.Row="5"
+                  x:Name="ShowStatusCheckbox"
+                  Content="Показывать статусы"
+                  Foreground="#BAC2DE"
+                  FontSize="12"
+                  Margin="0,0,0,6" />
+
+        <!-- Fullscreen -->
+        <CheckBox Grid.Row="6"
+                  x:Name="FullscreenCheckbox"
+                  Content="Полноэкранный режим"
+                  Foreground="#BAC2DE"
+                  FontSize="12"
+                  Margin="0,0,0,6" />
+
+        <!-- Examples -->
+        <TextBlock Grid.Row="7"
+                   Foreground="#6C7086"
+                   FontSize="11"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,16">
+            Пример: 192.168.1.100:3000 / WIN001
+        </TextBlock>
+
+        <!-- Error -->
+        <TextBlock Grid.Row="8"
+                   x:Name="ErrorText"
+                   Foreground="#F38BA8"
+                   FontSize="12"
+                   Visibility="Collapsed"
+                   Margin="0,0,0,8" />
+
+        <!-- Button -->
+        <Button Grid.Row="10"
+                x:Name="SaveButton"
+                Click="SaveButton_Click"
+                Height="42"
+                FontSize="15"
+                FontWeight="SemiBold"
+                Background="#89B4FA"
+                Foreground="#1E1E2E"
+                BorderThickness="0"
+                Cursor="Hand">
+            <Button.Template>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="border"
+                            Background="{TemplateBinding Background}"
+                            CornerRadius="6" Padding="20,0">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="border" Property="Background" Value="#B4D0FB" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="border" Property="Background" Value="#74A8F7" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Button.Template>
+            Сохранить и запустить
+        </Button>
+    </Grid>
+</Window>
