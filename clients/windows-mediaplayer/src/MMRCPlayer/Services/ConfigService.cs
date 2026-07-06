@@ -25,12 +25,16 @@ public class ConfigService
 
     public void Save()
     {
-        var dir = Path.GetDirectoryName(Paths.ConfigPath);
-        if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-            Directory.CreateDirectory(dir);
+        try
+        {
+            var dir = Path.GetDirectoryName(Paths.ConfigPath);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
 
-        var json = JsonSerializer.Serialize(Config, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(Paths.ConfigPath, json);
+            var json = JsonSerializer.Serialize(Config, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(Paths.ConfigPath, json);
+        }
+        catch { }
     }
 
     public void UpdateFromArgs(string[] args)

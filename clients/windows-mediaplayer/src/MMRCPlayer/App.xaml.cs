@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using MMRCPlayer.Models;
+using MMRCPlayer.Services;
 using MMRCPlayer.Utilities;
 
 namespace MMRCPlayer;
@@ -178,8 +179,8 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        _mutex?.ReleaseMutex();
-        _mutex?.Dispose();
+        try { _mutex?.ReleaseMutex(); } catch { }
+        try { _mutex?.Dispose(); } catch { }
         base.OnExit(e);
     }
 }

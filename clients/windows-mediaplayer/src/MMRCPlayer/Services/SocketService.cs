@@ -85,10 +85,14 @@ public class SocketService : IDisposable
             Log("Socket connected");
             _ = _dispatcher.BeginInvoke(async () =>
             {
-                ShowStatus("Connected");
-                await RegisterDeviceAsync();
-                StartPingTimer();
-                OnConnected?.Invoke();
+                try
+                {
+                    ShowStatus("Connected");
+                    await RegisterDeviceAsync();
+                    StartPingTimer();
+                    OnConnected?.Invoke();
+                }
+                catch { }
             });
         };
 
@@ -399,11 +403,11 @@ public class SocketService : IDisposable
                     if (_socket?.Connected == true && !token.IsCancellationRequested)
                     {
                         await _socket.EmitAsync("player/ping", new { device_id = _config.DeviceId });
-                        _missedPongs++;
-                        if (_missedPongs >= 3)
+                        var missed = Interlocked.Increment(ref _missedPongs);
+                        if (missed >= 3)
                         {
                             await RegisterDeviceAsync();
-                            _missedPongs = 0;
+                            Interlocked.Exchange(ref _missedPongs, 0);
                         }
                     }
                 }

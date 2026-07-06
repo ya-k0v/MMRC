@@ -55,34 +55,38 @@ public class ProgressService : IDisposable
 
     private async void Timer_Tick(object? sender, EventArgs e)
     {
-        if (_getCurrentState == null || _getCurrentTime == null || _GetDuration == null || _getIsPlaceholder == null) return;
-
-        var state = _getCurrentState();
-        if (state == null || string.IsNullOrEmpty(state.File)) return;
-
-        if (_getIsPlaceholder())
+        try
         {
-            await _socket.SendProgressAsync("idle", null!, 0, 0);
-            return;
+            if (_getCurrentState == null || _getCurrentTime == null || _GetDuration == null || _getIsPlaceholder == null) return;
+
+            var state = _getCurrentState();
+            if (state == null || string.IsNullOrEmpty(state.File)) return;
+
+            if (_getIsPlaceholder())
+            {
+                await _socket.SendProgressAsync("idle", null!, 0, 0);
+                return;
+            }
+
+            var currentTime = _getCurrentTime();
+            var duration = _GetDuration();
+
+            int? page = state.ContentType switch
+            {
+                ContentType.Pdf or ContentType.Pptx or ContentType.Folder => state.Page,
+                _ => null
+            };
+
+            await _socket.SendProgressAsync(
+                state.ContentType.AsString(),
+                state.File,
+                currentTime,
+                duration,
+                page,
+                state.StreamProtocol
+            );
         }
-
-        var currentTime = _getCurrentTime();
-        var duration = _GetDuration();
-
-        int? page = state.ContentType switch
-        {
-            ContentType.Pdf or ContentType.Pptx or ContentType.Folder => state.Page,
-            _ => null
-        };
-
-        await _socket.SendProgressAsync(
-            state.ContentType.AsString(),
-            state.File,
-            currentTime,
-            duration,
-            page,
-            state.StreamProtocol
-        );
+        catch { }
     }
 
     public void Dispose()

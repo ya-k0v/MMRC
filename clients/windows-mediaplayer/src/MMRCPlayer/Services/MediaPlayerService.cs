@@ -51,16 +51,18 @@ public class MediaPlayerService : IDisposable
     {
         get
         {
-            if (_primaryPlayer == null) return 0;
-            return _primaryPlayer.Position * ((_primaryPlayer.Length) / 1000.0);
+            var p = _primaryPlayer;
+            if (p == null) return 0;
+            try { return p.Position * (p.Length / 1000.0); } catch { return 0; }
         }
     }
     public double Duration
     {
         get
         {
-            if (_primaryPlayer == null) return 0;
-            return (_primaryPlayer.Length) / 1000.0;
+            var p = _primaryPlayer;
+            if (p == null) return 0;
+            try { return p.Length / 1000.0; } catch { return 0; }
         }
     }
     public bool IsPlaying => _isPlaying && !_isPaused;

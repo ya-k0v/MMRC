@@ -124,8 +124,10 @@ public partial class MainWindow : Window
         try { _watchdogTimer?.Stop(); } catch { }
         try { _mediaPlayer?.PrimaryPlayer?.Stop(); } catch { }
         try { _mediaPlayer?.BufferPlayer?.Stop(); } catch { }
-        try { _overlayWindow?.Close(); } catch { }
+        try { _mediaPlayer?.Dispose(); } catch { }
         try { _socket?.Dispose(); } catch { }
+        try { _playLock?.Dispose(); } catch { }
+        try { _overlayWindow?.Close(); } catch { }
 
         var pid = System.Diagnostics.Process.GetCurrentProcess().Id;
         _ = Task.Run(async () =>
@@ -227,14 +229,12 @@ public partial class MainWindow : Window
 
         _socket.OnConnected += () =>
         {
-            Log("Socket connected");
-            Dispatcher.BeginInvoke(() => ShowStatusBriefly("Connected"));
+            try { Log("Socket connected"); Dispatcher.BeginInvoke(() => ShowStatusBriefly("Connected")); } catch { }
         };
 
         _socket.OnDisconnected += () =>
         {
-            Log("Socket disconnected");
-            Dispatcher.BeginInvoke(() => ShowStatusBriefly("Disconnected"));
+            try { Log("Socket disconnected"); Dispatcher.BeginInvoke(() => ShowStatusBriefly("Disconnected")); } catch { }
         };
 
         _socket.OnRegistered += () =>
@@ -242,55 +242,71 @@ public partial class MainWindow : Window
             Log("Socket registered - loading placeholder");
             Dispatcher.BeginInvoke(async () =>
             {
-                ShowStatusBriefly("Registered");
-                if (_currentState?.ContentType == ContentType.Audio && BrandBg != null)
+                try
                 {
-                    try
+                    ShowStatusBriefly("Registered");
+                    if (_currentState?.ContentType == ContentType.Audio && BrandBg != null)
                     {
-                        var uri = new Uri("pack://application:,,,/Resources/audio-logo.png", UriKind.Absolute);
-                        var bitmap = new System.Windows.Media.Imaging.BitmapImage(uri);
-                        bitmap.Freeze();
-                        BrandBg.Source = bitmap;
-                        BrandBg.Visibility = Visibility.Visible;
-                        BrandBg.Opacity = 1;
+                        try
+                        {
+                            var uri = new Uri("pack://application:,,,/Resources/audio-logo.png", UriKind.Absolute);
+                            var bitmap = new System.Windows.Media.Imaging.BitmapImage(uri);
+                            bitmap.Freeze();
+                            BrandBg.Source = bitmap;
+                            BrandBg.Visibility = Visibility.Visible;
+                            BrandBg.Opacity = 1;
+                        }
+                        catch { }
                     }
-                    catch { }
+                    else
+                    {
+                        await _mediaPlayer.LoadPlaceholderAsync(_deviceConfig.ServerUrl, _deviceConfig.DeviceId);
+                    }
                 }
-                else
-                {
-                    await _mediaPlayer.LoadPlaceholderAsync(_deviceConfig.ServerUrl, _deviceConfig.DeviceId);
-                }
+                catch { }
             });
         };
 
         _socket.OnPlay += async (fileState) =>
         {
-            Log($"OnPlay: type={fileState.Type}, file={fileState.File}");
-            await HandlePlayAsync(fileState);
+            try
+            {
+                Log($"OnPlay: type={fileState.Type}, file={fileState.File}");
+                await HandlePlayAsync(fileState);
+            }
+            catch { }
         };
 
         _socket.OnStop += (reason) =>
         {
-            Log($"OnStop: reason={reason}");
-            HandleStop(reason);
+            try
+            {
+                Log($"OnStop: reason={reason}");
+                HandleStop(reason);
+            }
+            catch { }
         };
 
-        _socket.OnPause += () => _mediaPlayer.Pause();
-        _socket.OnResume += () => _mediaPlayer.Resume();
-        _socket.OnRestart += () => _mediaPlayer.Restart();
-        _socket.OnSeek += (pos) => _mediaPlayer.Seek(pos);
-        _socket.OnVolume += (lvl, _, muted) => { _mediaPlayer.SetVolume(lvl); _mediaPlayer.SetMute(muted); };
-        _socket.OnPdfPage += async (p) => await HandlePageNavigationAsync(p);
-        _socket.OnPptxPage += async (s) => await HandlePageNavigationAsync(s);
-        _socket.OnFolderPage += async (i) => await HandlePageNavigationAsync(i);
+        _socket.OnPause += () => { try { _mediaPlayer.Pause(); } catch { } };
+        _socket.OnResume += () => { try { _mediaPlayer.Resume(); } catch { } };
+        _socket.OnRestart += () => { try { _mediaPlayer.Restart(); } catch { } };
+        _socket.OnSeek += (pos) => { try { _mediaPlayer.Seek(pos); } catch { } };
+        _socket.OnVolume += (lvl, _, muted) => { try { _mediaPlayer.SetVolume(lvl); _mediaPlayer.SetMute(muted); } catch { } };
+        _socket.OnPdfPage += async (p) => { try { await HandlePageNavigationAsync(p); } catch { } };
+        _socket.OnPptxPage += async (s) => { try { await HandlePageNavigationAsync(s); } catch { } };
+        _socket.OnFolderPage += async (i) => { try { await HandlePageNavigationAsync(i); } catch { } };
 
         _socket.OnPlaceholderRefresh += async () =>
         {
-            _imageService.ClearCache();
-            await _mediaPlayer.LoadPlaceholderAsync(_deviceConfig.ServerUrl, _deviceConfig.DeviceId);
+            try
+            {
+                _imageService.ClearCache();
+                await _mediaPlayer.LoadPlaceholderAsync(_deviceConfig.ServerUrl, _deviceConfig.DeviceId);
+            }
+            catch { }
         };
 
-        _socket.OnStateSync += async (fs) => await HandlePlayAsync(fs);
+        _socket.OnStateSync += async (fs) => { try { await HandlePlayAsync(fs); } catch { } };
     }
 
     private async Task HandlePlayAsync(FileState fileState)
