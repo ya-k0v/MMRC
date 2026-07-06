@@ -1,10 +1,8 @@
 using System;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
-using System.Windows.Interop;
 using System.Windows.Threading;
 using LibVLCSharp.WPF;
 using MMRCPlayer.Models;
@@ -25,15 +23,8 @@ public partial class MainWindow : Window
     private DispatcherTimer? _watchdogTimer;
     private bool _isFullscreen;
     private readonly SemaphoreSlim _playLock = new(1, 1);
-    private OverlayWindow? _overlayWindow;
     private VideoView? _videoPrimaryView;
     private VideoView? _videoBufferView;
-
-    [DllImport("user32.dll")]
-    private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct RECT { public int Left, Top, Right, Bottom; }
 
     public MainWindow(DeviceConfig config, bool startFullscreen = false)
     {
@@ -51,6 +42,7 @@ public partial class MainWindow : Window
         try
         {
             Log("Window_Loaded begin");
+            VersionText.Text = $"ID: {_deviceConfig.DeviceId} | v1.0.0";
             _imageService.ImagePrimary = ImagePrimary;
             _imageService.ImageBuffer = ImageBuffer;
 
@@ -63,11 +55,8 @@ public partial class MainWindow : Window
             Log("Loading LibVLC plugins...");
             StatusText.Text = "Loading media engine...";
             StatusText.Visibility = Visibility.Visible;
-            await Task.Delay(50);
 
             await Task.Run(() => _mediaPlayer.InitializeCore());
-            Log("Core initialized, creating players...");
-
             _mediaPlayer.InitializePlayers();
 
             _videoPrimaryView = new VideoView { Background = System.Windows.Media.Brushes.Black, Visibility = Visibility.Collapsed };
@@ -95,12 +84,6 @@ public partial class MainWindow : Window
             SetupSocketEvents();
             _progress.Start();
 
-            _overlayWindow = new OverlayWindow();
-            _overlayWindow.SetText($"ID: {_deviceConfig.DeviceId} | v1.0.0");
-            _overlayWindow.Owner = this;
-            _overlayWindow.Show();
-            Dispatcher.BeginInvoke(() => UpdateOverlayPosition(), DispatcherPriority.Loaded);
-
             if (_startFullscreen)
                 EnterFullscreen();
 
@@ -126,8 +109,6 @@ public partial class MainWindow : Window
         try { _mediaPlayer?.BufferPlayer?.Stop(); } catch { }
         try { _mediaPlayer?.Dispose(); } catch { }
         try { _socket?.Dispose(); } catch { }
-        try { _playLock?.Dispose(); } catch { }
-        try { _overlayWindow?.Close(); } catch { }
 
         var pid = System.Diagnostics.Process.GetCurrentProcess().Id;
         _ = Task.Run(async () =>
@@ -161,7 +142,6 @@ public partial class MainWindow : Window
         Width = SystemParameters.PrimaryScreenWidth;
         Height = SystemParameters.PrimaryScreenHeight;
         WindowState = WindowState.Maximized;
-        UpdateOverlayPosition();
         Log("Entered fullscreen");
     }
 
@@ -176,40 +156,7 @@ public partial class MainWindow : Window
         Width = 1280;
         Height = 720;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        UpdateOverlayPosition();
         Log("Exited fullscreen");
-    }
-
-    private void UpdateOverlayPosition()
-    {
-        if (_overlayWindow == null || !IsLoaded) return;
-        try
-        {
-            if (_isFullscreen)
-            {
-                _overlayWindow.Left = SystemParameters.PrimaryScreenWidth - _overlayWindow.ActualWidth - 4;
-                _overlayWindow.Top = SystemParameters.PrimaryScreenHeight - _overlayWindow.ActualHeight - 4;
-            }
-            else
-            {
-                GetWindowRect(new WindowInteropHelper(this).Handle, out var rect);
-                _overlayWindow.Left = rect.Right - _overlayWindow.ActualWidth - 4;
-                _overlayWindow.Top = rect.Bottom - _overlayWindow.ActualHeight - 4;
-            }
-        }
-        catch { }
-    }
-
-    protected override void OnLocationChanged(EventArgs e)
-    {
-        base.OnLocationChanged(e);
-        UpdateOverlayPosition();
-    }
-
-    protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
-    {
-        base.OnRenderSizeChanged(sizeInfo);
-        UpdateOverlayPosition();
     }
 
     private void SetupSocketEvents()

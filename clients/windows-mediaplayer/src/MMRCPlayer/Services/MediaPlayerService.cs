@@ -98,12 +98,12 @@ public class MediaPlayerService : IDisposable
             "--no-sub-autodetect-file",
             "--no-snapshot-preview",
             "--no-osd",
-            "--no-xlib"
+            "--avcodec-hw=none"
         );
 
         _primaryPlayer = new MediaPlayer(_libVLC)
         {
-            EnableHardwareDecoding = true
+            EnableHardwareDecoding = false
         };
         _primaryPlayer.EndReached += OnPrimaryEndReached;
         _primaryPlayer.TimeChanged += OnPrimaryTimeChanged;
@@ -114,7 +114,7 @@ public class MediaPlayerService : IDisposable
 
         _bufferPlayer = new MediaPlayer(_libVLC)
         {
-            EnableHardwareDecoding = true
+            EnableHardwareDecoding = false
         };
         _bufferPlayer.EndReached += OnBufferEndReached;
         _bufferPlayer.Playing += OnBufferPlaying;
