@@ -171,6 +171,18 @@ function scheduleNextFolderSlide(loopState, devices, io) {
 export function setupControlHandlers(socket, deps) {
   const { devices, io, getPageSlideCount, applyVolumeCommand, getVolumeState, storage } = deps;
 
+  const playTokens = {};
+
+  const getToken = (deviceId) => {
+    if (!(deviceId in playTokens)) playTokens[deviceId] = 0;
+    return playTokens[deviceId];
+  };
+
+  const nextToken = (deviceId) => {
+    playTokens[deviceId] = getToken(deviceId) + 1;
+    return playTokens[deviceId];
+  };
+
   const emitDeviceVolumeState = (deviceId, reason = 'control_play') => {
     if (typeof getVolumeState !== 'function') {
       return;
@@ -249,10 +261,12 @@ export function setupControlHandlers(socket, deps) {
         
         io.to(`device:${device_id}`).emit('player/stop', { reason: 'switch_content' });
         // Даем время на остановку видео перед запуском нового контента
+        const videoSwitchToken = nextToken(device_id);
         setTimeout(async () => {
           // Проверяем, что устройство все еще существует и команда актуальна
           const deviceStillExists = devices[device_id];
           if (!deviceStillExists) return;
+          if (getToken(device_id) !== videoSwitchToken) return;
           
           // КРИТИЧНО: Пересчитываем playbackStreamUrl и effectiveStreamProtocol внутри setTimeout
           // так как они могут быть не определены в этой области видимости
@@ -753,10 +767,12 @@ export function setupControlHandlers(socket, deps) {
         
         io.to(`device:${device_id}`).emit('player/stop', { reason: 'switch_content' });
         // Даем время на остановку предыдущего контента
+        const typeSwitchToken = nextToken(device_id);
         setTimeout(() => {
           // Проверяем, что устройство все еще существует
           const deviceStillExists = devices[device_id];
           if (!deviceStillExists) return;
+          if (getToken(device_id) !== typeSwitchToken) return;
           
           const pageNum = page || 1;
           
@@ -886,6 +902,9 @@ export function setupControlHandlers(socket, deps) {
       // Сохраняем финальное состояние после восстановления плейлиста и fallback URL
       saveDevice(device_id, d).catch(e => logger.warn('[Control] saveDevice failed', { deviceId: device_id, error: e.message }));
       
+      // Инкрементируем токен чтобы отменить устаревшие setTimeout play
+      nextToken(device_id);
+
           io.to(`device:${device_id}`).emit('player/play', {
             ...d.current,
             stream_url: type === 'streaming' ? playbackStreamUrl : undefined,
@@ -1017,6 +1036,7 @@ export function setupControlHandlers(socket, deps) {
     
     d.current = { type: 'idle', file: null, state: 'idle' };
     saveDevice(device_id, d).catch(e => logger.warn('[Control] saveDevice failed', { deviceId: device_id, error: e.message }));
+    nextToken(device_id);
     io.to(`device:${device_id}`).emit('player/stop', { reason: 'manual_stop' });
     socket.emit('preview/refresh', { device_id });
     stopServerPlaylistLoop(device_id, 'control stop');
@@ -1049,6 +1069,7 @@ export function setupControlHandlers(socket, deps) {
     // Останавливаем текущее видео, если оно воспроизводится
     if (d.current && d.current.type === 'video' && d.current.state === 'playing') {
       logger.info(`[Playlist] Останавливаем текущее видео перед запуском плейлиста`, { deviceId: device_id, currentFile: d.current.file });
+      nextToken(device_id);
       io.to(`device:${device_id}`).emit('player/stop', { reason: 'switch_content' });
       // Даем время на остановку видео
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -1077,12 +1098,15 @@ export function setupControlHandlers(socket, deps) {
     d.current.state = 'playing';
     d.current.page = initialPage;
     
-    // Показываем начальную страницу только если она отличается от текущей
-    // Если страница уже показывается - не моргаем, просто начинаем отсчет таймера
-    if (initialPage !== currentShowingPage || !d.current.page) {
-      io.to(`device:${device_id}`).emit('player/folderPage', initialPage);
-      socket.emit('preview/refresh', { device_id });
-    }
+    // КРИТИЧНО: Всегда отправляем player/play с type=folder, чтобы плеер установил
+    // currentFileState в состояние папки. Без этого player/folderPage от таймера
+    // будет проигнорирован (проверка currentFileState.type !== 'folder' в плеере).
+    io.to(`device:${device_id}`).emit('player/play', {
+      type: 'folder',
+      file,
+      page: initialPage
+    });
+    socket.emit('preview/refresh', { device_id });
     
     // Рассылаем состояние плейлиста всем панелям для синхронизации
     io.emit('playlist/state', {

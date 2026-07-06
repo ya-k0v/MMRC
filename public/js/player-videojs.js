@@ -981,6 +981,37 @@ if (!device_id || !device_id.trim()) {
                     
                     // Начинаем с небольшой задержки
                     setTimeout(tryLoadStream, 500);
+                  } else if (previewStreamUrl.includes('.mpd') || proto === 'dash') {
+                    console.log('[Player] 📡 Проверяем доступность DASH манифеста для превью (direct URL)...');
+                    let dashRetryCount = 0;
+                    const maxDashRetries = 5;
+                    const dashRetryDelay = 1000;
+                    
+                    const tryLoadDash = async () => {
+                      try {
+                        const checkRes = await fetch(previewStreamUrl, { method: 'HEAD', cache: 'no-cache' });
+                        if (checkRes.ok) {
+                          console.log('[Player] ✅ DASH манифест доступен, запускаем воспроизведение');
+                          handleStreamingPlayback(previewStreamUrl, previewFile, proto);
+                        } else if (dashRetryCount < maxDashRetries) {
+                          dashRetryCount++;
+                          console.log(`[Player] ⏳ DASH манифест еще не готов, повтор через ${dashRetryDelay}ms (попытка ${dashRetryCount}/${maxDashRetries})`);
+                          setTimeout(tryLoadDash, dashRetryDelay);
+                        } else {
+                          console.warn('[Player] ⚠️ DASH манифест не стал доступен, пробуем запустить');
+                          handleStreamingPlayback(previewStreamUrl, previewFile, proto);
+                        }
+                      } catch (err) {
+                        if (dashRetryCount < maxDashRetries) {
+                          dashRetryCount++;
+                          setTimeout(tryLoadDash, dashRetryDelay);
+                        } else {
+                          handleStreamingPlayback(previewStreamUrl, previewFile, proto);
+                        }
+                      }
+                    };
+                    
+                    setTimeout(tryLoadDash, 500);
                   } else {
                     handleStreamingPlayback(previewStreamUrl, previewFile, proto);
                   }
@@ -1047,6 +1078,48 @@ if (!device_id || !device_id.trim()) {
                         
                         // Начинаем с небольшой задержки
                         setTimeout(tryLoadStream, 500);
+                      } else if (playbackUrl.includes('.mpd') || proto === 'dash') {
+                        console.log('[Player] 📡 Проверяем доступность DASH манифеста для превью...');
+                        let dashRetryCount = 0;
+                        const maxDashRetries = 5;
+                        const dashRetryDelay = 1000;
+                        
+                        const tryLoadDash = async () => {
+                          try {
+                            const checkRes = await fetch(playbackUrl, { method: 'HEAD', cache: 'no-cache' });
+                            if (checkRes.ok) {
+                              console.log('[Player] ✅ DASH манифест доступен, запускаем воспроизведение');
+                              handleStreamingPlayback(playbackUrl, previewFile, proto);
+                            } else if (dashRetryCount < maxDashRetries) {
+                              dashRetryCount++;
+                              console.log(`[Player] ⏳ DASH манифест еще не готов, повтор через ${dashRetryDelay}ms (попытка ${dashRetryCount}/${maxDashRetries})`);
+                              setTimeout(tryLoadDash, dashRetryDelay);
+                            } else {
+                              console.warn('[Player] ⚠️ DASH манифест не стал доступен, пробуем запустить');
+                              handleStreamingPlayback(playbackUrl, previewFile, proto);
+                            }
+                          } catch (err) {
+                            if (isLikelyCorsOrAccessFetchError(err, playbackUrl)) {
+                              console.warn('[Player] ⛔ HEAD-проверка DASH заблокирована CORS; пропускаем ретраи', {
+                                playbackUrl,
+                                message: err?.message || String(err)
+                              });
+                              handleStreamingPlayback(playbackUrl, previewFile, proto);
+                              return;
+                            }
+
+                            if (dashRetryCount < maxDashRetries) {
+                              dashRetryCount++;
+                              console.log(`[Player] ⏳ Ошибка проверки DASH манифеста, повтор через ${dashRetryDelay}ms (попытка ${dashRetryCount}/${maxDashRetries}):`, err.message);
+                              setTimeout(tryLoadDash, dashRetryDelay);
+                            } else {
+                              console.warn('[Player] ⚠️ Не удалось проверить DASH манифест, пробуем запустить:', err);
+                              handleStreamingPlayback(playbackUrl, previewFile, proto);
+                            }
+                          }
+                        };
+                        
+                        setTimeout(tryLoadDash, 500);
                       } else {
                         handleStreamingPlayback(playbackUrl, previewFile, proto);
                       }

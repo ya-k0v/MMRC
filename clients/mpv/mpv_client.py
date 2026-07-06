@@ -211,7 +211,6 @@ class MPVClient:
         self.content_device_id: str = device_id
         
         self.skipPlaceholderOnVideoEnd: bool = False
-        self.isSwitchingFromPlaceholder: bool = False
         self.currentFileState: Dict[str, Any] = {'type': None, 'file': None, 'page': 1}
         
         # ── Кэш заглушки ──
@@ -595,7 +594,6 @@ class MPVClient:
             was_placeholder = self.is_playing_placeholder
             if was_placeholder:
                 logger.info("Останавливаем заглушку, воспроизводим контент")
-                self.isSwitchingFromPlaceholder = True
                 self.send_command('stop')
             
             self.skipPlaceholderOnVideoEnd = True
@@ -628,7 +626,7 @@ class MPVClient:
             handlers = {
                 'streaming': lambda: self._handle_streaming(stream_url, file_name, stream_protocol),
                 'video': lambda: self._play_video(file_name, is_placeholder=False),
-                'audio': lambda: self._play_video(file_name, is_placeholder=False),
+                'audio': lambda: self._play_audio(file_name, is_placeholder=False),
                 'image': lambda: self._play_image(file_name, is_placeholder=False),
                 'pdf': lambda: self._show_pdf_page(file_name, page),
                 'pptx': lambda: self._show_pptx_slide(file_name, page),
@@ -737,7 +735,7 @@ class MPVClient:
             self.current_video_file = None
             self.saved_position = 0.0
             self.skipPlaceholderOnVideoEnd = False
-            self.isSwitchingFromPlaceholder = False
+            
             self.is_streaming = False
             self.stream_protocol = None
             
@@ -981,11 +979,11 @@ class MPVClient:
                                 logger.info("Loop видео — MPV уже обрабатывает loop, пропускаем ручной seek")
                                 continue
                             
-                            is_video = self.currentFileState.get('type') in ('video', None)
+                            is_video = self.currentFileState.get('type') in ('video', 'audio', None)
                             is_placeholder = self.is_playing_placeholder
                             
                             if actually_ended and is_video and not is_placeholder and not self.skipPlaceholderOnVideoEnd:
-                                logger.info("Видео закончилось, показываем заглушку")
+                                logger.info("Видео/аудио закончилось, показываем заглушку")
                                 self._stop_progress_updates()
                                 self._emit_progress_stop()
                                 self.send_command('stop')
@@ -1021,7 +1019,7 @@ class MPVClient:
         
         self.send_command('set_property', 'pause', False)
         self._start_progress_updates()
-        self.isSwitchingFromPlaceholder = False
+        
         self.skipPlaceholderOnVideoEnd = False
     
     def _handle_streaming(self, stream_url: str, file_name: str, stream_protocol: Optional[str] = None):
@@ -1064,7 +1062,7 @@ class MPVClient:
         
         if result and result.get('error') == 'success':
             self._grace_until = time.time() + 45
-            self.isSwitchingFromPlaceholder = False
+            
             self.skipPlaceholderOnVideoEnd = False
             time.sleep(0.1)
             self.send_command('set_property', 'pause', False)
@@ -1089,7 +1087,7 @@ class MPVClient:
                 self.send_command('seek', time_pos, 'absolute')
                 self.send_command('set_property', 'pause', False)
                 self._start_progress_updates()
-                self.isSwitchingFromPlaceholder = False
+                
                 self.skipPlaceholderOnVideoEnd = False
                 return
             
@@ -1114,7 +1112,7 @@ class MPVClient:
                 self.is_playing_placeholder = is_placeholder
                 
                 if not is_placeholder:
-                    self.isSwitchingFromPlaceholder = False
+                    
                     self.skipPlaceholderOnVideoEnd = False
                     self._start_progress_updates()
                     self._cancel_retry()
@@ -1132,6 +1130,57 @@ class MPVClient:
             logger.error("Exception в _play_video: %s", e)
             self._handle_load_error(filename, is_placeholder, str(e))
     
+    def _play_audio(self, filename: str, is_placeholder: bool = False):
+        try:
+            url = self._content_url(filename)
+            logger.info("Playing audio: %s (placeholder=%s)", filename, is_placeholder)
+            
+            if self.current_video_file == filename and not is_placeholder and self.saved_position > 0:
+                time_pos = self.saved_position / 1000.0
+                logger.info("Тот же аудио файл, продолжаем с %.2f сек", time_pos)
+                self.send_command('seek', time_pos, 'absolute')
+                self.send_command('set_property', 'pause', False)
+                self._start_progress_updates()
+                
+                self.skipPlaceholderOnVideoEnd = False
+                return
+            
+            self._cancel_retry()
+            self.current_video_file = filename
+            self.saved_position = 0.0
+            self.currentFileState = {'type': 'audio', 'file': filename, 'page': 1}
+            
+            self._loading_since = time.time()
+            result = self.send_command('loadfile', url, 'replace')
+            
+            if result and result.get('error') == 'success':
+                self._grace_until = time.time() + 45
+                self.send_command('set_property', 'loop-file', 'no')
+                
+                time.sleep(0.1)
+                self.send_command('set_property', 'pause', False)
+                
+                self.is_playing_placeholder = is_placeholder
+                
+                if not is_placeholder:
+                    
+                    self.skipPlaceholderOnVideoEnd = False
+                    self._start_progress_updates()
+                    self._cancel_retry()
+                
+                logger.info("Аудио загружено")
+                self._show_badge()
+            else:
+                self._loading_since = 0.0
+                self._grace_until = 0.0
+                err = result.get('error', 'unknown') if result else 'no response'
+                self._handle_load_error(filename, is_placeholder, err)
+        except Exception as e:
+            self._loading_since = 0.0
+            self._grace_until = 0.0
+            logger.error("Exception в _play_audio: %s", e)
+            self._handle_load_error(filename, is_placeholder, str(e))
+    
     def _play_image(self, filename: str, is_placeholder: bool = False):
         try:
             url = self._content_url(filename)
@@ -1145,7 +1194,7 @@ class MPVClient:
             self.currentFileState = {'type': 'image', 'file': filename, 'page': 1}
             self._stop_progress_updates()
             
-            duration = 'inf' if is_placeholder else 10
+            duration = 'inf'
             self.send_command('set_property', 'image-display-duration', duration)
             self.send_command('set_property', 'video-aspect', '-1')
             
@@ -1160,7 +1209,7 @@ class MPVClient:
                 self.is_playing_placeholder = is_placeholder
                 
                 if not is_placeholder:
-                    self.isSwitchingFromPlaceholder = False
+                    
                     self.skipPlaceholderOnVideoEnd = False
                     self._emit_progress()
                     self._cancel_retry()
@@ -1209,7 +1258,7 @@ class MPVClient:
                 
                 self.is_playing_placeholder = False
                 self.currentFileState = {'type': content_type, 'file': filename, 'page': page}
-                self.isSwitchingFromPlaceholder = False
+                
                 self.skipPlaceholderOnVideoEnd = False
                 
                 self._emit_progress()

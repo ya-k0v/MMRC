@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Threading;
 using LibVLCSharp.WPF;
 using MMRCPlayer.Models;
@@ -23,8 +24,17 @@ public partial class MainWindow : Window
     private DispatcherTimer? _watchdogTimer;
     private bool _isFullscreen;
     private readonly SemaphoreSlim _playLock = new(1, 1);
+    private OverlayWindow? _overlayWindow;
     private VideoView? _videoPrimaryView;
     private VideoView? _videoBufferView;
+    private DateTime _lastPlayTime;
+    private string? _lastPlayFile;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct RECT { public int Left, Top, Right, Bottom; }
 
     public MainWindow(DeviceConfig config, bool startFullscreen = false)
     {
@@ -42,7 +52,16 @@ public partial class MainWindow : Window
         try
         {
             Log("Window_Loaded begin");
-            VersionText.Text = $"ID: {_deviceConfig.DeviceId} | v1.0.0";
+
+            _overlayWindow = new OverlayWindow();
+            _overlayWindow.SetText($"ID: {_deviceConfig.DeviceId} | v1.0.0");
+            _overlayWindow.Owner = this;
+            _overlayWindow.Show();
+            UpdateOverlayPosition();
+
+            Activated += (_, _) => { if (_overlayWindow != null) _overlayWindow.Topmost = true; };
+            Deactivated += (_, _) => { if (_overlayWindow != null) _overlayWindow.Topmost = false; };
+
             _imageService.ImagePrimary = ImagePrimary;
             _imageService.ImageBuffer = ImageBuffer;
 
@@ -56,19 +75,19 @@ public partial class MainWindow : Window
             StatusText.Text = "Loading media engine...";
             StatusText.Visibility = Visibility.Visible;
 
-            await Task.Run(() => _mediaPlayer.InitializeCore());
-            _mediaPlayer.InitializePlayers();
-
             _videoPrimaryView = new VideoView { Background = System.Windows.Media.Brushes.Black, Visibility = Visibility.Collapsed };
             _videoBufferView = new VideoView { Background = System.Windows.Media.Brushes.Black, Visibility = Visibility.Collapsed };
             VideoGrid.Children.Insert(0, _videoBufferView);
             VideoGrid.Children.Insert(0, _videoPrimaryView);
 
+            _mediaPlayer.VideoPrimary = _videoPrimaryView;
+            _mediaPlayer.VideoBuffer = _videoBufferView;
+
+            await Task.Run(() => _mediaPlayer.InitializeCore());
+            _mediaPlayer.InitializePlayers();
+
             Log("LibVLC initialized");
             StatusText.Visibility = Visibility.Collapsed;
-
-            _videoPrimaryView.MediaPlayer = _mediaPlayer.PrimaryPlayer;
-            _videoBufferView.MediaPlayer = _mediaPlayer.BufferPlayer;
 
             _mediaPlayer.OnPlaybackEnd += OnMediaPlaybackEnd;
             _mediaPlayer.OnError += OnMediaError;
@@ -109,6 +128,7 @@ public partial class MainWindow : Window
         try { _mediaPlayer?.BufferPlayer?.Stop(); } catch { }
         try { _mediaPlayer?.Dispose(); } catch { }
         try { _socket?.Dispose(); } catch { }
+        try { _overlayWindow?.Close(); } catch { }
 
         var pid = System.Diagnostics.Process.GetCurrentProcess().Id;
         _ = Task.Run(async () =>
@@ -142,6 +162,7 @@ public partial class MainWindow : Window
         Width = SystemParameters.PrimaryScreenWidth;
         Height = SystemParameters.PrimaryScreenHeight;
         WindowState = WindowState.Maximized;
+        UpdateOverlayPosition();
         Log("Entered fullscreen");
     }
 
@@ -156,7 +177,42 @@ public partial class MainWindow : Window
         Width = 1280;
         Height = 720;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        UpdateOverlayPosition();
         Log("Exited fullscreen");
+    }
+
+    private void UpdateOverlayPosition()
+    {
+        if (_overlayWindow == null || !IsLoaded) return;
+        try
+        {
+            if (_isFullscreen)
+            {
+                _overlayWindow.UpdatePosition(
+                    SystemParameters.PrimaryScreenWidth - _overlayWindow.ActualWidth - 4,
+                    SystemParameters.PrimaryScreenHeight - _overlayWindow.ActualHeight - 4);
+            }
+            else
+            {
+                GetWindowRect(new WindowInteropHelper(this).Handle, out var rect);
+                _overlayWindow.UpdatePosition(
+                    rect.Right - _overlayWindow.ActualWidth - 4,
+                    rect.Bottom - _overlayWindow.ActualHeight - 4);
+            }
+        }
+        catch { }
+    }
+
+    protected override void OnLocationChanged(EventArgs e)
+    {
+        base.OnLocationChanged(e);
+        UpdateOverlayPosition();
+    }
+
+    protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
+    {
+        base.OnRenderSizeChanged(sizeInfo);
+        UpdateOverlayPosition();
     }
 
     private void SetupSocketEvents()
@@ -186,7 +242,7 @@ public partial class MainWindow : Window
 
         _socket.OnRegistered += () =>
         {
-            Log("Socket registered - loading placeholder");
+            Log("Socket registered");
             Dispatcher.BeginInvoke(async () =>
             {
                 try
@@ -205,8 +261,13 @@ public partial class MainWindow : Window
                         }
                         catch { }
                     }
+                    else if (_currentState != null && _currentState.ContentType != ContentType.Placeholder)
+                    {
+                        Log("Socket registered - active content present, skipping placeholder");
+                    }
                     else
                     {
+                        Log("Socket registered - loading placeholder");
                         await _mediaPlayer.LoadPlaceholderAsync(_deviceConfig.ServerUrl, _deviceConfig.DeviceId);
                     }
                 }
@@ -258,9 +319,15 @@ public partial class MainWindow : Window
 
     private async Task HandlePlayAsync(FileState fileState)
     {
+        var now = DateTime.UtcNow;
+        if (fileState.File == _lastPlayFile && (now - _lastPlayTime).TotalMilliseconds < 500)
+            return;
+
         await _playLock.WaitAsync();
         try
         {
+            _lastPlayTime = now;
+            _lastPlayFile = fileState.File;
             var previousType = _currentState?.ContentType;
             _currentState = fileState;
             var deviceId = fileState.OriginDeviceId ?? _deviceConfig.DeviceId;
@@ -290,49 +357,69 @@ public partial class MainWindow : Window
                     case ContentType.Streaming:
                         Log($"PlayStreamAsync: StreamUrl={fileState.StreamUrl}, Protocol={fileState.StreamProtocol}");
                         if (isFromPlaceholder || previousType is not (ContentType.Video or ContentType.Streaming))
-                            await _mediaPlayer.PlayStreamAsync(fileState.StreamUrl!, fileState.StreamProtocol ?? "hls", fileState.OriginDeviceId);
+                            await _mediaPlayer.PlayStreamAsync(fileState.StreamUrl!, fileState.StreamProtocol ?? "hls", fileState.OriginDeviceId, fileState.File);
                         else
-                            await _mediaPlayer.PlayStreamWithCrossfadeAsync(fileState.StreamUrl!, fileState.StreamProtocol ?? "hls", fileState.OriginDeviceId);
+                            await _mediaPlayer.PlayStreamWithCrossfadeAsync(fileState.StreamUrl!, fileState.StreamProtocol ?? "hls", fileState.OriginDeviceId, fileState.File);
                         break;
 
                     case ContentType.Image:
                         var imageUrl = FileHelper.GetFileUrl(serverUrl, deviceId, fileState.File!);
                         var hasVideo = _mediaPlayer.IsPlaying && (previousType == ContentType.Video || previousType == ContentType.Streaming);
-                        await _imageService.ShowImageAsync(imageUrl, _deviceConfig.CrossfadeDurationMs);
                         if (hasVideo)
+                        {
+                            await _imageService.ShowImageAsync(imageUrl, _deviceConfig.CrossfadeDurationMs);
                             await _mediaPlayer.CrossfadeToImageAsync(_deviceConfig.CrossfadeDurationMs);
+                        }
                         else
+                        {
                             _mediaPlayer.StopWithoutHiding();
+                            await _imageService.ShowImageAsync(imageUrl, _deviceConfig.CrossfadeDurationMs);
+                        }
                         break;
 
                     case ContentType.Pdf:
                         var pdfUrl = FileHelper.GetConvertedPageUrl(serverUrl, deviceId, fileState.File!, "page", fileState.Page ?? 1);
                         var hasVideoPdf = _mediaPlayer.IsPlaying && (previousType == ContentType.Video || previousType == ContentType.Streaming);
-                        await _imageService.ShowImageAsync(pdfUrl, _deviceConfig.CrossfadeDurationMs);
                         if (hasVideoPdf)
+                        {
+                            await _imageService.ShowImageAsync(pdfUrl, _deviceConfig.CrossfadeDurationMs);
                             await _mediaPlayer.CrossfadeToImageAsync(_deviceConfig.CrossfadeDurationMs);
+                        }
                         else
+                        {
                             _mediaPlayer.StopWithoutHiding();
+                            await _imageService.ShowImageAsync(pdfUrl, _deviceConfig.CrossfadeDurationMs);
+                        }
                         break;
 
                     case ContentType.Pptx:
                         var pptxUrl = FileHelper.GetConvertedPageUrl(serverUrl, deviceId, fileState.File!, "slide", fileState.Page ?? 1);
                         var hasVideoPptx = _mediaPlayer.IsPlaying && (previousType == ContentType.Video || previousType == ContentType.Streaming);
-                        await _imageService.ShowImageAsync(pptxUrl, _deviceConfig.CrossfadeDurationMs);
                         if (hasVideoPptx)
+                        {
+                            await _imageService.ShowImageAsync(pptxUrl, _deviceConfig.CrossfadeDurationMs);
                             await _mediaPlayer.CrossfadeToImageAsync(_deviceConfig.CrossfadeDurationMs);
+                        }
                         else
+                        {
                             _mediaPlayer.StopWithoutHiding();
+                            await _imageService.ShowImageAsync(pptxUrl, _deviceConfig.CrossfadeDurationMs);
+                        }
                         break;
 
                     case ContentType.Folder:
                         var folderUrl = FileHelper.GetFolderImageUrl(serverUrl, deviceId, fileState.File!, fileState.Page ?? 1);
                         var hasVideoFolder = _mediaPlayer.IsPlaying && (previousType == ContentType.Video || previousType == ContentType.Streaming);
-                        await _imageService.ShowImageAsync(folderUrl, _deviceConfig.CrossfadeDurationMs);
                         if (hasVideoFolder)
+                        {
+                            await _imageService.ShowImageAsync(folderUrl, _deviceConfig.CrossfadeDurationMs);
                             await _mediaPlayer.CrossfadeToImageAsync(_deviceConfig.CrossfadeDurationMs);
+                        }
                         else
+                        {
                             _mediaPlayer.StopWithoutHiding();
+                            await _imageService.ShowImageAsync(folderUrl, _deviceConfig.CrossfadeDurationMs);
+                        }
                         break;
                 }
             }
@@ -407,7 +494,7 @@ public partial class MainWindow : Window
         Dispatcher.BeginInvoke(() =>
         {
             if (_mediaPlayer.IsPlaceholder) return;
-            if (_currentState?.ContentType is ContentType.Video or ContentType.Streaming)
+            if (_currentState?.ContentType is ContentType.Video or ContentType.Audio or ContentType.Streaming)
                 _ = _mediaPlayer.LoadPlaceholderAsync(_deviceConfig.ServerUrl, _deviceConfig.DeviceId);
         });
     }

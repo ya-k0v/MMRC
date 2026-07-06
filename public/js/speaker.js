@@ -1978,8 +1978,41 @@ async function showStreamingPreview(deviceId, safeName, streamProtocol = '') {
           
           // Начинаем с небольшой задержки
           setTimeout(tryLoadStream, 500);
+        } else if (playbackUrl.includes('.mpd') || proto === 'dash') {
+          console.log('[Speaker] 📡 Проверяем доступность DASH манифеста для превью...');
+          let dashRetryCount = 0;
+          const maxDashRetries = 5;
+          const dashRetryDelay = 1000;
+          
+          const tryLoadDash = async () => {
+            try {
+              const checkRes = await fetch(playbackUrl, { method: 'HEAD', cache: 'no-cache' });
+              if (checkRes.ok) {
+                console.log('[Speaker] ✅ DASH манифест доступен, показываем плеер');
+                showStreamPlayer(playbackUrl, deviceId, safeName, proto);
+              } else if (dashRetryCount < maxDashRetries) {
+                dashRetryCount++;
+                console.log(`[Speaker] ⏳ DASH манифест еще не готов, повтор через ${dashRetryDelay}ms (попытка ${dashRetryCount}/${maxDashRetries})`);
+                setTimeout(tryLoadDash, dashRetryDelay);
+              } else {
+                console.warn('[Speaker] ⚠️ DASH манифест не стал доступен, пробуем запустить');
+                showStreamPlayer(playbackUrl, deviceId, safeName, proto);
+              }
+            } catch (err) {
+              if (dashRetryCount < maxDashRetries) {
+                dashRetryCount++;
+                console.log(`[Speaker] ⏳ Ошибка проверки DASH манифеста, повтор через ${dashRetryDelay}ms (попытка ${dashRetryCount}/${maxDashRetries}):`, err.message);
+                setTimeout(tryLoadDash, dashRetryDelay);
+              } else {
+                console.warn('[Speaker] ⚠️ Не удалось проверить DASH манифест, пробуем запустить:', err);
+                showStreamPlayer(playbackUrl, deviceId, safeName, proto);
+              }
+            }
+          };
+          
+          setTimeout(tryLoadDash, 500);
         } else {
-          // Для не-HLS стримов показываем сразу
+          // Для не-HLS/DASH стримов показываем сразу
           showStreamPlayer(playbackUrl, deviceId, safeName, proto);
         }
       } catch (error) {
@@ -2234,6 +2267,29 @@ window.addEventListener('resize', () => {
   }, 250);
 });
 
+function buildDevicePreviewUrl(deviceId, device) {
+  let url = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&muted=1`;
+  const cur = device && device.current;
+  if (cur && cur.file) {
+    url += `&file=${encodeURIComponent(cur.file)}`;
+    if (cur.type) url += `&type=${encodeURIComponent(cur.type)}`;
+    if (cur.type === 'streaming') {
+      if (cur.streamUrl) url += `&stream_url=${encodeURIComponent(cur.streamUrl)}`;
+      if (cur.streamProtocol) url += `&protocol=${encodeURIComponent(cur.streamProtocol)}`;
+    }
+    if (typeof cur.currentTime === 'number' && cur.currentTime > 0) {
+      url += `&startTime=${encodeURIComponent(cur.currentTime)}`;
+    }
+    if (typeof cur.page === 'number' && cur.page > 0) {
+      url += `&page=${encodeURIComponent(cur.page)}`;
+    }
+    if (cur.originDeviceId && cur.originDeviceId !== deviceId) {
+      url += `&originDeviceId=${encodeURIComponent(cur.originDeviceId)}`;
+    }
+  }
+  return url;
+}
+
 function showLivePreviewForTV(deviceId, force = false) {
   // КРИТИЧНО: Останавливаем отслеживание превью стрима если было активно
   if (currentPreviewContext.deviceId && currentPreviewContext.file) {
@@ -2246,25 +2302,6 @@ function showLivePreviewForTV(deviceId, force = false) {
     }
   }
 
-  function buildDevicePreviewUrl(deviceId, device) {
-    let url = `/player-videojs.html?device_id=${encodeURIComponent(deviceId)}&preview=1&muted=1`;
-    const cur = device && device.current;
-    if (cur && cur.file) {
-      url += `&file=${encodeURIComponent(cur.file)}`;
-      if (cur.type) url += `&type=${encodeURIComponent(cur.type)}`;
-      if (typeof cur.currentTime === 'number' && cur.currentTime > 0) {
-        url += `&startTime=${encodeURIComponent(cur.currentTime)}`;
-      }
-      if (typeof cur.page === 'number' && cur.page > 0) {
-        url += `&page=${encodeURIComponent(cur.page)}`;
-      }
-      if (cur.originDeviceId && cur.originDeviceId !== deviceId) {
-        url += `&originDeviceId=${encodeURIComponent(cur.originDeviceId)}`;
-      }
-    }
-    return url;
-  }
-  
   const device = devices.find(d => d.device_id === deviceId);
   const previewUrl = buildDevicePreviewUrl(deviceId, device);
   
@@ -2847,6 +2884,7 @@ async function loadFiles(stabilizeAttempt = 0) {
         previewManuallyClosed = false;
         stopFolderPlaylistIfNeeded('streaming play', { deviceId: targetDeviceId, file: safeName });
         sendVolumeBeforePlay(targetDeviceId);
+        showStreamingPreview(targetDeviceId, safeName, streamProtocol || '');
         socket.emit('control/play', { device_id: targetDeviceId, file: safeName, type: 'streaming', streamProtocol: streamProtocol || undefined });
         return;
       }
@@ -5070,6 +5108,21 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
     refreshTvTilePlaybackInfo(device_id);
     if (device_id === currentDevice || device_id === currentPreviewContext.deviceId) {
       updatePlaybackInfoUI(device_id);
+      // КРИТИЧНО: Обновляем iframe превью для стрима (передаём stream_url и protocol)
+      const streamingPreviewUrl = buildDevicePreviewUrl(device_id, device);
+      const frame = filePreview.querySelector('iframe');
+      const currentSrc = frame?.src || '';
+      const newUrlBase = streamingPreviewUrl.split('&t=')[0];
+      const currentUrlBase = currentSrc.split('&t=')[0];
+      if (frame && currentUrlBase !== newUrlBase) {
+        console.log('[onPreviewRefresh] Updating streaming preview iframe');
+        frame.src = streamingPreviewUrl + '&_=' + Date.now();
+        currentPreviewContext = { deviceId: device_id, file: device.current.file, page: null };
+        updatePreviewControlButtons();
+      } else if (!frame) {
+        console.log('[onPreviewRefresh] Creating new streaming preview iframe');
+        showStreamingPreview(device_id, device.current.file, device.current.streamProtocol || '');
+      }
     }
   }
 

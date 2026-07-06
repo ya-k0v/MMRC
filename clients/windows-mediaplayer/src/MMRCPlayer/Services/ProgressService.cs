@@ -71,6 +71,9 @@ public class ProgressService : IDisposable
             var currentTime = _getCurrentTime();
             var duration = _GetDuration();
 
+            if (state.ContentType is ContentType.Pdf or ContentType.Pptx or ContentType.Folder)
+                duration = 0;
+
             int? page = state.ContentType switch
             {
                 ContentType.Pdf or ContentType.Pptx or ContentType.Folder => state.Page,
@@ -83,7 +86,8 @@ public class ProgressService : IDisposable
                 currentTime,
                 duration,
                 page,
-                state.StreamProtocol
+                state.StreamProtocol,
+                state.StreamUrl
             );
         }
         catch { }

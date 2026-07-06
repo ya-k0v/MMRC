@@ -35,6 +35,7 @@ public class MediaPlayerService : IDisposable
     private double _savedPosition;
     private bool _isPlaceholder;
     private double? _pendingSeek;
+    private double _lastDuration;
 
     public event Action<double, double>? OnTimeChanged;
     public event Action? OnPlaybackEnd;
@@ -62,7 +63,13 @@ public class MediaPlayerService : IDisposable
         {
             var p = _primaryPlayer;
             if (p == null) return 0;
-            try { return p.Length / 1000.0; } catch { return 0; }
+            try
+            {
+                var len = p.Length / 1000.0;
+                if (len > 0) _lastDuration = len;
+                return _lastDuration;
+            }
+            catch { return _lastDuration; }
         }
     }
     public bool IsPlaying => _isPlaying && !_isPaused;
@@ -203,7 +210,10 @@ public class MediaPlayerService : IDisposable
         await _playLock.WaitAsync();
         try
         {
-            StopAll();
+            if (_currentState?.Type == "audio")
+                StopWithoutHiding();
+            else
+                StopAll();
 
             var effectiveUrl = await ResolveUrlAsync(url);
             var media = new Media(_libVLC!, new Uri(effectiveUrl));
@@ -300,7 +310,7 @@ public class MediaPlayerService : IDisposable
         finally { _playLock.Release(); }
     }
 
-    public async Task PlayStreamAsync(string streamUrl, string protocol, string? originDeviceId = null)
+    public async Task PlayStreamAsync(string streamUrl, string protocol, string? originDeviceId = null, string? fileName = null)
     {
         await _playLock.WaitAsync();
         try
@@ -327,7 +337,7 @@ public class MediaPlayerService : IDisposable
             _currentState = new FileState
             {
                 Type = "streaming",
-                File = streamUrl,
+                File = fileName ?? streamUrl,
                 StreamUrl = streamUrl,
                 StreamProtocol = protocol,
                 OriginDeviceId = originDeviceId
@@ -341,17 +351,21 @@ public class MediaPlayerService : IDisposable
                     VideoPrimary.Opacity = 1;
                 }
                 HideImages?.Invoke();
+
+                if (_primaryPlayer != null)
+                    _primaryPlayer.Play(media);
+                else
+                    Log("PlayStreamAsync: _primaryPlayer is null, cannot play");
             });
 
-            _primaryPlayer?.Play(media);
             _isPlaying = true;
             _isPaused = false;
         }
-        catch (Exception ex) { Log($"PlayStreamAsync error: {ex.Message}"); }
+        catch (Exception ex) { Log($"PlayStreamAsync error: {ex.Message}"); OnError?.Invoke(ex.Message); }
         finally { _playLock.Release(); }
     }
 
-    public async Task PlayStreamWithCrossfadeAsync(string streamUrl, string protocol, string? originDeviceId = null)
+    public async Task PlayStreamWithCrossfadeAsync(string streamUrl, string protocol, string? originDeviceId = null, string? fileName = null)
     {
         await _playLock.WaitAsync();
         try
@@ -380,7 +394,7 @@ public class MediaPlayerService : IDisposable
             _currentState = new FileState
             {
                 Type = "streaming",
-                File = streamUrl,
+                File = fileName ?? streamUrl,
                 StreamUrl = streamUrl,
                 StreamProtocol = protocol,
                 OriginDeviceId = originDeviceId
@@ -419,13 +433,14 @@ public class MediaPlayerService : IDisposable
             _isPlaying = true;
             _isPaused = false;
         }
-        catch (Exception ex) { Log($"PlayStreamWithCrossfadeAsync error: {ex.Message}"); }
+        catch (Exception ex) { Log($"PlayStreamWithCrossfadeAsync error: {ex.Message}"); OnError?.Invoke(ex.Message); }
         finally { _playLock.Release(); }
     }
 
     public void StopAll()
     {
         _placeholderCts?.Cancel();
+        _lastDuration = 0;
         try { _primaryPlayer?.Stop(); } catch { }
         try { _bufferPlayer?.Stop(); } catch { }
         _isPlaying = false;
@@ -441,10 +456,12 @@ public class MediaPlayerService : IDisposable
     public void StopWithoutHiding()
     {
         _placeholderCts?.Cancel();
+        _lastDuration = 0;
         try { _primaryPlayer?.Stop(); } catch { }
         try { _bufferPlayer?.Stop(); } catch { }
         _isPlaying = false;
         _isPaused = false;
+        _isPlaceholder = false;
         _ = _dispatcher.BeginInvoke(() =>
         {
             if (VideoPrimary != null) VideoPrimary.Visibility = Visibility.Collapsed;
@@ -502,6 +519,7 @@ public class MediaPlayerService : IDisposable
                 });
                 _isPlaying = false;
                 _isPaused = false;
+                _isPlaceholder = false;
                 tcs.TrySetResult(true);
             };
 

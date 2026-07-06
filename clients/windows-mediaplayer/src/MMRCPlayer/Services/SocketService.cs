@@ -355,7 +355,7 @@ public class SocketService : IDisposable
         await _socket.EmitAsync("player/register", registration);
     }
 
-    public async Task SendProgressAsync(string type, string file, double currentTime, double duration, int? page = null, string? streamProtocol = null)
+    public async Task SendProgressAsync(string type, string file, double currentTime, double duration, int? page = null, string? streamProtocol = null, string? streamUrl = null)
     {
         if (_socket == null || !_socket.Connected || !_isRegistered) return;
 
@@ -367,7 +367,8 @@ public class SocketService : IDisposable
             currentTime,
             duration,
             page,
-            stream_protocol = streamProtocol
+            stream_protocol = streamProtocol,
+            stream_url = streamUrl
         };
 
         await _socket.EmitAsync("player/progress", progress);
