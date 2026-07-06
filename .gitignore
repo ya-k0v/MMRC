@@ -97,6 +97,7 @@ clients/windows-mediaplayer/obj/
 clients/windows-mediaplayer/publish/
 clients/windows-mediaplayer/output/
 clients/windows-mediaplayer/installer/components.wxs
+clients/windows-mediaplayer/installer/*.msi
 
 # Android project build output
 clients/android-mediaplayer/app/build/
