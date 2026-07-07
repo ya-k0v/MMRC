@@ -380,8 +380,8 @@ public partial class MainWindow : Window
                         }
                         else
                         {
-                            _mediaPlayer.StopWithoutHiding();
                             await _imageService.ShowImageAsync(imageUrl, _deviceConfig.CrossfadeDurationMs);
+                            _mediaPlayer.StopWithoutHiding();
                         }
                         break;
 
@@ -395,8 +395,8 @@ public partial class MainWindow : Window
                         }
                         else
                         {
-                            _mediaPlayer.StopWithoutHiding();
                             await _imageService.ShowImageAsync(pdfUrl, _deviceConfig.CrossfadeDurationMs);
+                            _mediaPlayer.StopWithoutHiding();
                         }
                         break;
 
@@ -410,8 +410,8 @@ public partial class MainWindow : Window
                         }
                         else
                         {
-                            _mediaPlayer.StopWithoutHiding();
                             await _imageService.ShowImageAsync(pptxUrl, _deviceConfig.CrossfadeDurationMs);
+                            _mediaPlayer.StopWithoutHiding();
                         }
                         break;
 
@@ -425,8 +425,8 @@ public partial class MainWindow : Window
                         }
                         else
                         {
-                            _mediaPlayer.StopWithoutHiding();
                             await _imageService.ShowImageAsync(folderUrl, _deviceConfig.CrossfadeDurationMs);
+                            _mediaPlayer.StopWithoutHiding();
                         }
                         break;
                 }
@@ -449,8 +449,6 @@ public partial class MainWindow : Window
         switch (reason)
         {
             case "switch_content":
-                _mediaPlayer.PauseForSwitch();
-                _imageService.HideImages();
                 if (BrandBg != null) BrandBg.Visibility = Visibility.Collapsed;
                 break;
 

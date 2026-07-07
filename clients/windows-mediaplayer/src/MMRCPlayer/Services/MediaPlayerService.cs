@@ -301,8 +301,6 @@ public class MediaPlayerService : IDisposable
 
                 if (targetView != null && sourceView != null)
                 {
-                    try { sourcePlayer?.Stop(); } catch { }
-
                     targetView.Visibility = Visibility.Visible;
                     targetView.Opacity = 0;
                     targetPlayer?.Play(media);
@@ -313,6 +311,7 @@ public class MediaPlayerService : IDisposable
 
                     fadeOut.Completed += (s, e) =>
                     {
+                        try { sourcePlayer?.Stop(); } catch { }
                         sourceView.Visibility = Visibility.Collapsed;
                         _isBufferActive = !_isBufferActive;
                     };
@@ -431,8 +430,6 @@ public class MediaPlayerService : IDisposable
 
                 if (targetView != null && sourceView != null)
                 {
-                    try { sourcePlayer?.Stop(); } catch { }
-
                     targetView.Visibility = Visibility.Visible;
                     targetView.Opacity = 0;
                     targetPlayer?.Play(media);
@@ -443,6 +440,7 @@ public class MediaPlayerService : IDisposable
 
                     fadeOut.Completed += (s, e) =>
                     {
+                        try { sourcePlayer?.Stop(); } catch { }
                         sourceView.Visibility = Visibility.Collapsed;
                         _isBufferActive = !_isBufferActive;
                     };

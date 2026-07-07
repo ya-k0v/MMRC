@@ -41,6 +41,8 @@ public class ProgressService : IDisposable
         };
         _timer.Tick += Timer_Tick;
         _timer.Start();
+
+        Timer_Tick(_timer, EventArgs.Empty);
     }
 
     public void Stop()
