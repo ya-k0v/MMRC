@@ -18,6 +18,22 @@ public partial class SettingsWindow : Window
         _fromPlayer = fromPlayer;
         _onSaved = onSaved;
         LoadSavedValues();
+
+        if (fromPlayer)
+        {
+            SaveButton.IsEnabled = false;
+            var timer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(500)
+            };
+            timer.Tick += (s, e) =>
+            {
+                SaveButton.IsEnabled = true;
+                timer.Stop();
+            };
+            timer.Start();
+        }
+
         ServerUrlInput.Focus();
     }
 
