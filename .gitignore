@@ -118,3 +118,6 @@ clients/android-mediaplayer/*.iml
 
 # Random artifacts
 untitled.*
+
+# Graphify output (generated cache/reports)
+graphify-out/

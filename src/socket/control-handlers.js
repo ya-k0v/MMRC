@@ -64,7 +64,7 @@ function stopServerPlaylistLoop(deviceId, reason = 'stopped') {
   }
 }
 
-async function startServerPlaylistLoop(deviceId, file, intervalSeconds, startPage, devices, io) {
+async function startServerPlaylistLoop(deviceId, file, intervalSeconds, startPage, devices, io, storage) {
   stopServerPlaylistLoop(deviceId);
 
   const deviceState = devices[deviceId];
@@ -1118,7 +1118,7 @@ export function setupControlHandlers(socket, deps) {
     socket.emit('devices/updated', { device_id });
 
     try {
-      await startServerPlaylistLoop(device_id, file, d.current.playlistInterval, initialPage, devices, io);
+        await startServerPlaylistLoop(device_id, file, d.current.playlistInterval, initialPage, devices, io, storage);
     } catch (error) {
       logger.error('[Playlist] Failed to start server loop', { error: error.message, stack: error.stack, deviceId: device_id, file });
     }

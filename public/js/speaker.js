@@ -1155,7 +1155,7 @@ function updateFolderPlaylistButtonStateForDevice(deviceId, file, isActive, inte
   // Обновляем только если это та же папка
   if (btnDeviceId === deviceId && btnFile === file) {
     btn.classList.toggle('is-active', isActive);
-    btn.textContent = isActive ? 'Остановить плейлист' : 'Плейлист';
+    btn.textContent = isActive ? 'Остановить слайдшоу' : 'Слайдшоу';
     
     // Обновляем интервал если указан
     if (intervalSeconds) {
@@ -1590,10 +1590,10 @@ function renderThumbnailGrid(deviceId, safeName, contentType, imageUrls) {
 
       if (isActive) {
         playlistBtn.classList.remove('is-active');
-        playlistBtn.textContent = 'Плейлист';
+        playlistBtn.textContent = 'Слайдшоу';
       } else {
         playlistBtn.classList.add('is-active');
-        playlistBtn.textContent = 'Остановить плейлист';
+        playlistBtn.textContent = 'Остановить слайдшоу';
       }
       // updateFolderPlaylistButtonState вызывается внутри toggleFolderPlaylist
     });
@@ -3872,7 +3872,7 @@ function formatStaticPlaybackLabel(type, page, totalCount, isPlaylist) {
     label += ` из ${totalCount}`;
   }
   if (type === 'folder' && isPlaylist) {
-    label += ' | Плейлист';
+    label += ' | Слайдшоу';
   }
   return label;
 }
@@ -4971,7 +4971,26 @@ socket.on('playlist/state', ({ device_id, active, file, intervalSeconds }) => {
   refreshTvTilePlaybackInfo(device_id);
 });
 
-socket.on('devices/updated', onDevicesUpdated);
+socket.on('devices/updated', (payload) => {
+  // Если сервер прислал только { device_id } — это лёгкое уведомление (например, плейлист старт/стоп).
+  // В этом случае избегаем полной перезагрузки устройств/файлов, чтобы не терялось текущее состояние UI.
+  try {
+    if (payload && typeof payload === 'object' && Object.keys(payload).length === 1 && payload.device_id) {
+      // Лёгкое обновление: синхронизируем плейлист/превью и плитки без перезагрузки списка файлов
+      const deviceId = payload.device_id;
+      // Обновим только необходимые части UI
+      updateFolderPlaylistButtonState();
+      updatePreviewControlButtons();
+      updatePlaybackInfoUI();
+      refreshTvTilePlaybackInfo(deviceId);
+      return;
+    }
+  } catch (e) {
+    console.warn('[Speaker] devices/updated lightweight handler failed', e);
+  }
+  // По умолчанию выполняем полную обработку (debounced)
+  onDevicesUpdated();
+});
 
 // Live-обновление статуса обработки файлов (прогресс)
 socket.on('file/progress', debounce((data) => {
