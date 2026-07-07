@@ -64,7 +64,6 @@ public class ProgressService : IDisposable
 
             if (_getIsPlaceholder())
             {
-                await _socket.SendProgressAsync("idle", null!, 0, 0);
                 return;
             }
 
