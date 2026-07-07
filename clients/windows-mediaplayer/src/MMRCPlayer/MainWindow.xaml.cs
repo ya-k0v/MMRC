@@ -29,6 +29,7 @@ public partial class MainWindow : Window
     private VideoView? _videoBufferView;
     private DateTime _lastPlayTime;
     private string? _lastPlayFile;
+    private bool _isRestarting;
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
@@ -129,6 +130,8 @@ public partial class MainWindow : Window
         try { _mediaPlayer?.Dispose(); } catch { }
         try { _socket?.Dispose(); } catch { }
         try { _overlayWindow?.Close(); } catch { }
+
+        if (_isRestarting) return;
 
         var pid = System.Diagnostics.Process.GetCurrentProcess().Id;
         _ = Task.Run(async () =>
@@ -526,6 +529,42 @@ public partial class MainWindow : Window
                 ShowStatusBriefly("Connection lost");
         };
         _watchdogTimer.Start();
+    }
+
+    private void VideoGrid_MouseRightButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        var menu = new System.Windows.Controls.ContextMenu();
+        var settingsItem = new System.Windows.Controls.MenuItem { Header = "Settings" };
+        settingsItem.Click += (_, _) => OpenSettings();
+        menu.Items.Add(settingsItem);
+        menu.IsOpen = true;
+    }
+
+    private void OpenSettings()
+    {
+        var settings = new SettingsWindow(fromPlayer: true, onSaved: () =>
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                DeviceConfig? newConfig = null;
+                if (File.Exists(Paths.ConfigPath))
+                {
+                    try
+                    {
+                        var json = File.ReadAllText(Paths.ConfigPath);
+                        newConfig = System.Text.Json.JsonSerializer.Deserialize<DeviceConfig>(json);
+                    }
+                    catch { }
+                }
+                if (newConfig == null) return;
+                _isRestarting = true;
+                var w = new MainWindow(newConfig, newConfig.Fullscreen);
+                w.Show();
+                this.Close();
+            });
+        });
+        settings.Owner = this;
+        settings.ShowDialog();
     }
 
     private void Log(string msg)

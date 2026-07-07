@@ -9,9 +9,14 @@ namespace MMRCPlayer;
 
 public partial class SettingsWindow : Window
 {
-    public SettingsWindow()
+    private readonly bool _fromPlayer;
+    private Action? _onSaved;
+
+    public SettingsWindow(bool fromPlayer = false, Action? onSaved = null)
     {
         InitializeComponent();
+        _fromPlayer = fromPlayer;
+        _onSaved = onSaved;
         LoadSavedValues();
         ServerUrlInput.Focus();
     }
@@ -20,8 +25,23 @@ public partial class SettingsWindow : Window
     {
         if (File.Exists(Paths.ConfigPath))
         {
+        if (_fromPlayer)
+        {
             try
             {
+                _onSaved?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Ошибка применения: {ex.Message}");
+                return;
+            }
+            this.Close();
+            return;
+        }
+
+        try
+        {
                 var json = File.ReadAllText(Paths.ConfigPath);
                 var config = JsonSerializer.Deserialize<DeviceConfig>(json);
                 if (config != null)
@@ -114,6 +134,18 @@ public partial class SettingsWindow : Window
         {
             Log($"Config save error: {ex.Message}");
             ShowError($"Ошибка сохранения: {ex.Message}");
+            return;
+        }
+
+        if (_fromPlayer)
+        {
+            try { _onSaved?.Invoke(); }
+            catch (Exception ex)
+            {
+                ShowError($"Ошибка применения: {ex.Message}");
+                return;
+            }
+            this.Close();
             return;
         }
 

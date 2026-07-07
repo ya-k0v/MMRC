@@ -20,7 +20,8 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <Grid x:Name="VideoGrid" Grid.Row="0" Background="Black">
+        <Grid x:Name="VideoGrid" Grid.Row="0" Background="Black"
+              MouseRightButtonDown="VideoGrid_MouseRightButtonDown">
 
             <!-- Brand Background (Audio logo) -->
             <Image x:Name="BrandBg"
