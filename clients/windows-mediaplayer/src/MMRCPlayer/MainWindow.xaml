@@ -12,7 +12,8 @@
         Background="Black"
         Loaded="Window_Loaded"
         Closing="Window_Closing"
-        KeyDown="Window_KeyDown">
+        KeyDown="Window_KeyDown"
+        MouseRightButtonDown="Window_MouseRightButtonDown">
 
     <Grid x:Name="MainGrid" Background="Black">
         <Grid.RowDefinitions>
@@ -20,8 +21,7 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <Grid x:Name="VideoGrid" Grid.Row="0" Background="Black"
-              MouseRightButtonDown="VideoGrid_MouseRightButtonDown">
+        <Grid x:Name="VideoGrid" Grid.Row="0" Background="Black">
 
             <!-- Brand Background (Audio logo) -->
             <Image x:Name="BrandBg"

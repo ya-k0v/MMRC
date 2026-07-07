@@ -531,7 +531,7 @@ public partial class MainWindow : Window
         _watchdogTimer.Start();
     }
 
-    private void VideoGrid_MouseRightButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    private void Window_MouseRightButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
         var menu = new System.Windows.Controls.ContextMenu();
         var settingsItem = new System.Windows.Controls.MenuItem { Header = "Settings" };
