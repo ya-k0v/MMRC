@@ -140,7 +140,11 @@ public class MediaPlayerService : IDisposable
             EnableHardwareDecoding = false
         };
         _bufferPlayer.EndReached += OnBufferEndReached;
+        _bufferPlayer.TimeChanged += OnBufferTimeChanged;
         _bufferPlayer.Playing += OnBufferPlaying;
+        _bufferPlayer.Paused += OnBufferPaused;
+        _bufferPlayer.Stopped += OnBufferStopped;
+        _bufferPlayer.EncounteredError += OnBufferError;
 
         if (VideoPrimary != null) VideoPrimary.MediaPlayer = _primaryPlayer;
         if (VideoBuffer != null) VideoBuffer.MediaPlayer = _bufferPlayer;
@@ -497,10 +501,11 @@ public class MediaPlayerService : IDisposable
         try
         {
             _lastDuration = 0;
-            if (_primaryPlayer != null && _isPlaying)
+            var p = GetActivePlayer();
+            if (p != null && _isPlaying)
             {
-                _savedPosition = _primaryPlayer.Position * _primaryPlayer.Length / 1000.0;
-                _primaryPlayer.Pause();
+                _savedPosition = p.Position * p.Length / 1000.0;
+                p.Pause();
                 _isPaused = true;
                 _isPlaying = false;
             }
@@ -513,11 +518,15 @@ public class MediaPlayerService : IDisposable
         if (_isPlaceholder) return;
         try
         {
-            if (_isPlaying && !_isPaused && _primaryPlayer != null)
+            if (_isPlaying && !_isPaused)
             {
-                _savedPosition = _primaryPlayer.Position * _primaryPlayer.Length / 1000.0;
-                _primaryPlayer.Pause();
-                _isPaused = true;
+                var p = GetActivePlayer();
+                if (p != null)
+                {
+                    _savedPosition = p.Position * p.Length / 1000.0;
+                    p.Pause();
+                    _isPaused = true;
+                }
             }
         }
         catch (Exception ex) { Log($"Pause error: {ex.Message}"); }
@@ -561,10 +570,14 @@ public class MediaPlayerService : IDisposable
         if (_isPlaceholder) return;
         try
         {
-            if (_isPaused && _primaryPlayer != null)
+            if (_isPaused)
             {
-                _primaryPlayer.Play();
-                _isPaused = false;
+                var p = GetActivePlayer();
+                if (p != null)
+                {
+                    p.Play();
+                    _isPaused = false;
+                }
             }
         }
         catch (Exception ex) { Log($"Resume error: {ex.Message}"); }
@@ -575,10 +588,11 @@ public class MediaPlayerService : IDisposable
         if (_isPlaceholder) return;
         try
         {
-            if (_primaryPlayer != null)
+            var p = GetActivePlayer();
+            if (p != null)
             {
-                _primaryPlayer.Position = 0;
-                _primaryPlayer.Play();
+                p.Position = 0;
+                p.Play();
                 _isPlaying = true;
                 _isPaused = false;
             }
@@ -591,11 +605,12 @@ public class MediaPlayerService : IDisposable
         if (_isPlaceholder) return;
         try
         {
-            if (_primaryPlayer == null) return;
+            var p = GetActivePlayer();
+            if (p == null) return;
 
-            if (_primaryPlayer.Length > 0)
+            if (p.Length > 0)
             {
-                _primaryPlayer.Position = (float)(positionSeconds / (_primaryPlayer.Length / 1000.0));
+                p.Position = (float)(positionSeconds / (p.Length / 1000.0));
                 _pendingSeek = null;
             }
             else
@@ -841,8 +856,77 @@ public class MediaPlayerService : IDisposable
         catch { }
     }
 
-    private void OnBufferEndReached(object? sender, EventArgs e) { }
-    private void OnBufferPlaying(object? sender, EventArgs e) { }
+    private void OnBufferEndReached(object? sender, EventArgs e)
+    {
+        try
+        {
+            _ = _dispatcher.BeginInvoke(() =>
+            {
+                if (_isPlaceholder)
+                {
+                    try
+                    {
+                        _bufferPlayer!.Position = 0;
+                        _bufferPlayer.Play();
+                    }
+                    catch { }
+                    return;
+                }
+                _isPlaying = false;
+                OnPlaybackEnd?.Invoke();
+            });
+        }
+        catch { }
+    }
+
+    private void OnBufferTimeChanged(object? sender, MediaPlayerTimeChangedEventArgs e)
+    {
+        try
+        {
+            _ = _dispatcher.BeginInvoke(() =>
+            {
+                var timeSec = e.Time / 1000.0;
+                var duration = (_bufferPlayer?.Length ?? 0) / 1000.0;
+                OnTimeChanged?.Invoke(timeSec, duration);
+            });
+        }
+        catch { }
+    }
+
+    private void OnBufferPlaying(object? sender, EventArgs e)
+    {
+        try
+        {
+            _isPlaying = true;
+            _isPaused = false;
+
+            if (_pendingSeek.HasValue && _bufferPlayer != null && _bufferPlayer.Length > 0)
+            {
+                _bufferPlayer.Position = (float)(_pendingSeek.Value / (_bufferPlayer.Length / 1000.0));
+                _pendingSeek = null;
+            }
+        }
+        catch { }
+    }
+
+    private void OnBufferPaused(object? sender, EventArgs e)
+    {
+        _isPaused = true;
+    }
+
+    private void OnBufferStopped(object? sender, EventArgs e)
+    {
+        _isPlaying = false;
+    }
+
+    private void OnBufferError(object? sender, EventArgs e)
+    {
+        try
+        {
+            _ = _dispatcher.BeginInvoke(() => { OnError?.Invoke("Playback error"); });
+        }
+        catch { }
+    }
 
     public void Dispose()
     {
