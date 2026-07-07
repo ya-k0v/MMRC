@@ -54,7 +54,14 @@ public class MediaPlayerService : IDisposable
         {
             var p = _primaryPlayer;
             if (p == null) return 0;
-            try { return p.Position * (p.Length / 1000.0); } catch { return 0; }
+            try
+            {
+                var pos = p.Position;
+                var len = p.Length;
+                if (len > 0) return pos * (len / 1000.0);
+                return 0;
+            }
+            catch { return 0; }
         }
     }
     public double Duration
@@ -65,8 +72,12 @@ public class MediaPlayerService : IDisposable
             if (p == null) return 0;
             try
             {
-                var len = p.Length / 1000.0;
-                if (len > 0) _lastDuration = len;
+                var len = p.Length;
+                if (len > 0)
+                {
+                    _lastDuration = len / 1000.0;
+                    return _lastDuration;
+                }
                 return _lastDuration;
             }
             catch { return _lastDuration; }
@@ -440,6 +451,7 @@ public class MediaPlayerService : IDisposable
     public void StopAll()
     {
         _placeholderCts?.Cancel();
+        _lastDuration = 0;
         try { _primaryPlayer?.Stop(); } catch { }
         try { _bufferPlayer?.Stop(); } catch { }
         _isPlaying = false;
@@ -455,6 +467,7 @@ public class MediaPlayerService : IDisposable
     public void StopWithoutHiding()
     {
         _placeholderCts?.Cancel();
+        _lastDuration = 0;
         try { _primaryPlayer?.Stop(); } catch { }
         try { _bufferPlayer?.Stop(); } catch { }
         _isPlaying = false;

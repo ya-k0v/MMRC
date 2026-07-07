@@ -79,6 +79,8 @@ public class ProgressService : IDisposable
                 _ => null
             };
 
+            System.Diagnostics.Debug.WriteLine($"[Progress] type={state.ContentType} file={state.File} ct={currentTime:F1} dur={duration:F1}");
+
             await _socket.SendProgressAsync(
                 state.ContentType.AsString(),
                 state.File,
