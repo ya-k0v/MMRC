@@ -539,8 +539,12 @@ public partial class MainWindow : Window
     private void OpenSettings()
     {
         if (!IsLoaded || _isRestarting) return;
+        _isRestarting = true;
         try
         {
+            if (_overlayWindow != null)
+                _overlayWindow.OnDoubleClick -= OpenSettings;
+
             var settings = new SettingsWindow(fromPlayer: true, onSaved: () =>
             {
                 Dispatcher.BeginInvoke(() =>
@@ -556,13 +560,11 @@ public partial class MainWindow : Window
                         catch { }
                     }
                     if (newConfig == null) return;
-                    _isRestarting = true;
                     var w = new MainWindow(newConfig, newConfig.Fullscreen);
                     w.Show();
                     this.Close();
                 });
             });
-            settings.Owner = this;
             settings.ShowDialog();
         }
         catch { }
