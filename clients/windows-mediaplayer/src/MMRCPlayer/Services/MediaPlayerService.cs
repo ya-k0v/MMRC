@@ -48,11 +48,17 @@ public class MediaPlayerService : IDisposable
     public Action? HideImages { get; set; }
     public MediaPlayer? PrimaryPlayer => _primaryPlayer;
     public MediaPlayer? BufferPlayer => _bufferPlayer;
+    private MediaPlayer? GetActivePlayer()
+    {
+        if (_isBufferActive) return _bufferPlayer ?? _primaryPlayer;
+        return _primaryPlayer;
+    }
+
     public double CurrentTime
     {
         get
         {
-            var p = _primaryPlayer;
+            var p = GetActivePlayer();
             if (p == null) return 0;
             try
             {
@@ -68,7 +74,7 @@ public class MediaPlayerService : IDisposable
     {
         get
         {
-            var p = _primaryPlayer;
+            var p = GetActivePlayer();
             if (p == null) return 0;
             try
             {
@@ -268,6 +274,8 @@ public class MediaPlayerService : IDisposable
         await _playLock.WaitAsync();
         try
         {
+            _lastDuration = 0;
+
             var effectiveUrl = await ResolveUrlAsync(url);
             var media = new Media(_libVLC!, new Uri(effectiveUrl));
 
@@ -289,6 +297,8 @@ public class MediaPlayerService : IDisposable
 
                 if (targetView != null && sourceView != null)
                 {
+                    try { sourcePlayer?.Stop(); } catch { }
+
                     targetView.Visibility = Visibility.Visible;
                     targetView.Opacity = 0;
                     targetPlayer?.Play(media);
@@ -299,7 +309,6 @@ public class MediaPlayerService : IDisposable
 
                     fadeOut.Completed += (s, e) =>
                     {
-                        try { sourcePlayer?.Stop(); } catch { }
                         sourceView.Visibility = Visibility.Collapsed;
                         _isBufferActive = !_isBufferActive;
                     };
@@ -380,6 +389,8 @@ public class MediaPlayerService : IDisposable
         await _playLock.WaitAsync();
         try
         {
+            _lastDuration = 0;
+
             var fullUrl = streamUrl;
             if (!fullUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !fullUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
             {
@@ -416,6 +427,8 @@ public class MediaPlayerService : IDisposable
 
                 if (targetView != null && sourceView != null)
                 {
+                    try { sourcePlayer?.Stop(); } catch { }
+
                     targetView.Visibility = Visibility.Visible;
                     targetView.Opacity = 0;
                     targetPlayer?.Play(media);
@@ -426,7 +439,6 @@ public class MediaPlayerService : IDisposable
 
                     fadeOut.Completed += (s, e) =>
                     {
-                        try { sourcePlayer?.Stop(); } catch { }
                         sourceView.Visibility = Visibility.Collapsed;
                         _isBufferActive = !_isBufferActive;
                     };
