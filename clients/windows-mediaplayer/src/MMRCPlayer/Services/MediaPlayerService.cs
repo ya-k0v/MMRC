@@ -440,7 +440,6 @@ public class MediaPlayerService : IDisposable
     public void StopAll()
     {
         _placeholderCts?.Cancel();
-        _lastDuration = 0;
         try { _primaryPlayer?.Stop(); } catch { }
         try { _bufferPlayer?.Stop(); } catch { }
         _isPlaying = false;
@@ -456,7 +455,6 @@ public class MediaPlayerService : IDisposable
     public void StopWithoutHiding()
     {
         _placeholderCts?.Cancel();
-        _lastDuration = 0;
         try { _primaryPlayer?.Stop(); } catch { }
         try { _bufferPlayer?.Stop(); } catch { }
         _isPlaying = false;
