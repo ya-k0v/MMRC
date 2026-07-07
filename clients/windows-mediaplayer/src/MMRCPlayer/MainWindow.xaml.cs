@@ -54,9 +54,6 @@ public partial class MainWindow : Window
         {
             Log("Window_Loaded begin");
 
-            var hwndSource = PresentationSource.FromVisual(this) as System.Windows.Interop.HwndSource;
-            hwndSource?.AddHook(WndProc);
-
             _overlayWindow = new OverlayWindow();
             _overlayWindow.SetText($"ID: {_deviceConfig.DeviceId} | v1.0.0");
             _overlayWindow.Owner = this;
@@ -153,6 +150,10 @@ public partial class MainWindow : Window
                 ExitFullscreen();
             else
                 EnterFullscreen();
+        }
+        else if (e.Key == Key.F2)
+        {
+            OpenSettings();
         }
     }
 
@@ -535,41 +536,36 @@ public partial class MainWindow : Window
         _watchdogTimer.Start();
     }
 
-    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
-    {
-        if (msg == 0x0204) // WM_RBUTTONDOWN
-        {
-            Dispatcher.BeginInvoke(() => OpenSettings());
-            handled = true;
-        }
-        return IntPtr.Zero;
-    }
-
     private void OpenSettings()
     {
-        var settings = new SettingsWindow(fromPlayer: true, onSaved: () =>
+        if (!IsLoaded || _isRestarting) return;
+        try
         {
-            Dispatcher.BeginInvoke(() =>
+            var settings = new SettingsWindow(fromPlayer: true, onSaved: () =>
             {
-                DeviceConfig? newConfig = null;
-                if (File.Exists(Paths.ConfigPath))
+                Dispatcher.BeginInvoke(() =>
                 {
-                    try
+                    DeviceConfig? newConfig = null;
+                    if (File.Exists(Paths.ConfigPath))
                     {
-                        var json = File.ReadAllText(Paths.ConfigPath);
-                        newConfig = System.Text.Json.JsonSerializer.Deserialize<DeviceConfig>(json);
+                        try
+                        {
+                            var json = File.ReadAllText(Paths.ConfigPath);
+                            newConfig = System.Text.Json.JsonSerializer.Deserialize<DeviceConfig>(json);
+                        }
+                        catch { }
                     }
-                    catch { }
-                }
-                if (newConfig == null) return;
-                _isRestarting = true;
-                var w = new MainWindow(newConfig, newConfig.Fullscreen);
-                w.Show();
-                this.Close();
+                    if (newConfig == null) return;
+                    _isRestarting = true;
+                    var w = new MainWindow(newConfig, newConfig.Fullscreen);
+                    w.Show();
+                    this.Close();
+                });
             });
-        });
-        settings.Owner = this;
-        settings.ShowDialog();
+            settings.Owner = this;
+            settings.ShowDialog();
+        }
+        catch { }
     }
 
     private void Log(string msg)
