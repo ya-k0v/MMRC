@@ -54,6 +54,9 @@ public partial class MainWindow : Window
         {
             Log("Window_Loaded begin");
 
+            var hwndSource = PresentationSource.FromVisual(this) as System.Windows.Interop.HwndSource;
+            hwndSource?.AddHook(WndProc);
+
             _overlayWindow = new OverlayWindow();
             _overlayWindow.SetText($"ID: {_deviceConfig.DeviceId} | v1.0.0");
             _overlayWindow.Owner = this;
@@ -532,13 +535,14 @@ public partial class MainWindow : Window
         _watchdogTimer.Start();
     }
 
-    private void Window_MouseRightButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        var menu = new System.Windows.Controls.ContextMenu();
-        var settingsItem = new System.Windows.Controls.MenuItem { Header = "Settings" };
-        settingsItem.Click += (_, _) => OpenSettings();
-        menu.Items.Add(settingsItem);
-        menu.IsOpen = true;
+        if (msg == 0x0204) // WM_RBUTTONDOWN
+        {
+            Dispatcher.BeginInvoke(() => OpenSettings());
+            handled = true;
+        }
+        return IntPtr.Zero;
     }
 
     private void OpenSettings()

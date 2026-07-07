@@ -22,7 +22,7 @@ public partial class OverlayWindow : Window
     {
         var hwnd = new WindowInteropHelper(this).Handle;
         var exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-        SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW);
+        SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_TOOLWINDOW);
     }
 
     public void SetText(string text) => OverlayText.Text = text;
