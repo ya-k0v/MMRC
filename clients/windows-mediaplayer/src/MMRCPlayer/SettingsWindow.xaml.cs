@@ -9,31 +9,12 @@ namespace MMRCPlayer;
 
 public partial class SettingsWindow : Window
 {
-    private readonly bool _fromPlayer;
-    private Action? _onSaved;
+    public DeviceConfig? SavedConfig { get; private set; }
 
-    public SettingsWindow(bool fromPlayer = false, Action? onSaved = null)
+    public SettingsWindow()
     {
         InitializeComponent();
-        _fromPlayer = fromPlayer;
-        _onSaved = onSaved;
         LoadSavedValues();
-
-        if (fromPlayer)
-        {
-            SaveButton.IsEnabled = false;
-            var timer = new System.Windows.Threading.DispatcherTimer
-            {
-                Interval = TimeSpan.FromMilliseconds(500)
-            };
-            timer.Tick += (s, e) =>
-            {
-                SaveButton.IsEnabled = true;
-                timer.Stop();
-            };
-            timer.Start();
-        }
-
         ServerUrlInput.Focus();
     }
 
@@ -41,23 +22,8 @@ public partial class SettingsWindow : Window
     {
         if (File.Exists(Paths.ConfigPath))
         {
-        if (_fromPlayer)
-        {
             try
             {
-                _onSaved?.Invoke();
-            }
-            catch (Exception ex)
-            {
-                ShowError($"Ошибка применения: {ex.Message}");
-                return;
-            }
-            this.Close();
-            return;
-        }
-
-        try
-        {
                 var json = File.ReadAllText(Paths.ConfigPath);
                 var config = JsonSerializer.Deserialize<DeviceConfig>(json);
                 if (config != null)
@@ -153,32 +119,9 @@ public partial class SettingsWindow : Window
             return;
         }
 
-        if (_fromPlayer)
-        {
-            try { _onSaved?.Invoke(); }
-            catch (Exception ex)
-            {
-                ShowError($"Ошибка применения: {ex.Message}");
-                return;
-            }
-            this.Close();
-            return;
-        }
-
-        try
-        {
-            Log("Creating MainWindow...");
-            var mainWindow = new MainWindow(config, config.Fullscreen);
-            Log("MainWindow created, calling Show()...");
-            mainWindow.Show();
-            Log("MainWindow shown, closing settings");
-            this.Close();
-        }
-        catch (Exception ex)
-        {
-            Log($"MainWindow creation FAILED: {ex}");
-            ShowError($"Ошибка запуска: {ex.Message}\n{ex.InnerException?.Message}");
-        }
+        SavedConfig = config;
+        this.DialogResult = true;
+        this.Close();
     }
 
     private void ShowError(string message)

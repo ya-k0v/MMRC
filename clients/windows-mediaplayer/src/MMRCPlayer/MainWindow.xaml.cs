@@ -543,37 +543,36 @@ public partial class MainWindow : Window
         if (!IsLoaded || _isSettingsOpen) return;
         _isSettingsOpen = true;
         Log("OpenSettings: showing dialog");
+
+        var oldServer = _deviceConfig.ServerUrl;
+        var oldId = _deviceConfig.DeviceId;
+
         try
         {
-            var settings = new SettingsWindow(fromPlayer: true, onSaved: () =>
+            var settings = new SettingsWindow();
+            var result = settings.ShowDialog();
+            _isSettingsOpen = false;
+
+            if (result != true || settings.SavedConfig == null) return;
+
+            var newConfig = settings.SavedConfig;
+            if (newConfig.ServerUrl == oldServer && newConfig.DeviceId == oldId)
             {
-                Log("OpenSettings: onSaved fired");
-                Dispatcher.BeginInvoke(() =>
-                {
-                    _isRestarting = true;
-                    DeviceConfig? newConfig = null;
-                    if (File.Exists(Paths.ConfigPath))
-                    {
-                        try
-                        {
-                            var json = File.ReadAllText(Paths.ConfigPath);
-                            newConfig = System.Text.Json.JsonSerializer.Deserialize<DeviceConfig>(json);
-                        }
-                        catch { }
-                    }
-                    if (newConfig == null) { _isRestarting = false; return; }
-                    Log("OpenSettings: restarting with new config");
-                    var w = new MainWindow(newConfig, newConfig.Fullscreen);
-                    w.Show();
-                    this.Close();
-                });
-            });
-            _ = Dispatcher.BeginInvoke(async () =>
-            {
-                await System.Threading.Tasks.Task.Delay(50);
-                settings.ShowDialog();
-                _isSettingsOpen = false;
-            });
+                Log("OpenSettings: config unchanged, applying in-place");
+                _deviceConfig.ShowStatus = newConfig.ShowStatus;
+                _deviceConfig.Fullscreen = newConfig.Fullscreen;
+                if (newConfig.Fullscreen && !_isFullscreen)
+                    EnterFullscreen();
+                else if (!newConfig.Fullscreen && _isFullscreen)
+                    ExitFullscreen();
+                return;
+            }
+
+            Log("OpenSettings: server/device changed, restarting");
+            _isRestarting = true;
+            var w = new MainWindow(newConfig, newConfig.Fullscreen);
+            w.Show();
+            this.Close();
         }
         catch (Exception ex)
         {

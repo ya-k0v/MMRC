@@ -115,7 +115,16 @@ public partial class App : Application
             {
                 Log("No config found, showing SettingsWindow");
                 var settingsWindow = new SettingsWindow();
-                settingsWindow.Show();
+                if (settingsWindow.ShowDialog() == true && settingsWindow.SavedConfig != null)
+                {
+                    Log($"First launch: launching with {settingsWindow.SavedConfig.ServerUrl}");
+                    LaunchMainWindow(settingsWindow.SavedConfig, settingsWindow.SavedConfig.Fullscreen);
+                }
+                else
+                {
+                    Log("No config provided, shutting down");
+                    Shutdown();
+                }
             }
         }
         catch (Exception ex)
