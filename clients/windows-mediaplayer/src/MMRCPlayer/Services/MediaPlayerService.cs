@@ -72,11 +72,10 @@ public class MediaPlayerService : IDisposable
             if (p == null) return 0;
             try
             {
-                var len = p.Length;
-                if (len > 0)
+                if (_isPlaying && !_isPaused)
                 {
-                    _lastDuration = len / 1000.0;
-                    return _lastDuration;
+                    var len = p.Length;
+                    if (len > 0) _lastDuration = len / 1000.0;
                 }
                 return _lastDuration;
             }
