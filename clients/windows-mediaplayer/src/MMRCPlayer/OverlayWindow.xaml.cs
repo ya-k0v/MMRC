@@ -10,8 +10,6 @@ public partial class OverlayWindow : Window
     private const int WS_EX_TRANSPARENT = 0x00000020;
     private const int WS_EX_TOOLWINDOW = 0x00000080;
 
-    public event Action? OnDoubleClick;
-
     public OverlayWindow()
     {
         InitializeComponent();
@@ -22,7 +20,7 @@ public partial class OverlayWindow : Window
     {
         var hwnd = new WindowInteropHelper(this).Handle;
         var exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-        SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_TOOLWINDOW);
+        SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW);
     }
 
     public void SetText(string text) => OverlayText.Text = text;
@@ -31,11 +29,6 @@ public partial class OverlayWindow : Window
     {
         Left = left;
         Top = top;
-    }
-
-    private void OverlayWindow_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
-    {
-        OnDoubleClick?.Invoke();
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]

@@ -75,6 +75,17 @@
                        Text=""
                        Panel.ZIndex="30" />
 
+            <!-- Clickable area for settings (double-click) -->
+            <Border x:Name="SettingsHitArea"
+                    Background="Transparent"
+                    Width="200" Height="24"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Bottom"
+                    Margin="0,0,8,4"
+                    Cursor="Hand"
+                    MouseDoubleClick="SettingsHitArea_MouseDoubleClick"
+                    Panel.ZIndex="40" />
+
         </Grid>
     </Grid>
 </Window>
