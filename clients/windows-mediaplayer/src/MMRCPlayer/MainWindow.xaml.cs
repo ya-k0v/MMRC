@@ -536,19 +536,21 @@ public partial class MainWindow : Window
         _watchdogTimer.Start();
     }
 
+    private bool _isSettingsOpen;
+
     private void OpenSettings()
     {
-        if (!IsLoaded || _isRestarting) return;
-        _isRestarting = true;
+        if (!IsLoaded || _isSettingsOpen) return;
+        _isSettingsOpen = true;
+        Log("OpenSettings: showing dialog");
         try
         {
-            if (_overlayWindow != null)
-                _overlayWindow.OnDoubleClick -= OpenSettings;
-
             var settings = new SettingsWindow(fromPlayer: true, onSaved: () =>
             {
+                Log("OpenSettings: onSaved fired");
                 Dispatcher.BeginInvoke(() =>
                 {
+                    _isRestarting = true;
                     DeviceConfig? newConfig = null;
                     if (File.Exists(Paths.ConfigPath))
                     {
@@ -559,7 +561,8 @@ public partial class MainWindow : Window
                         }
                         catch { }
                     }
-                    if (newConfig == null) return;
+                    if (newConfig == null) { _isRestarting = false; return; }
+                    Log("OpenSettings: restarting with new config");
                     var w = new MainWindow(newConfig, newConfig.Fullscreen);
                     w.Show();
                     this.Close();
@@ -567,7 +570,14 @@ public partial class MainWindow : Window
             });
             settings.ShowDialog();
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Log($"OpenSettings error: {ex.Message}");
+        }
+        finally
+        {
+            _isSettingsOpen = false;
+        }
     }
 
     private void Log(string msg)
