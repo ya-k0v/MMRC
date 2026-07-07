@@ -10,6 +10,8 @@ public partial class OverlayWindow : Window
     private const int WS_EX_TRANSPARENT = 0x00000020;
     private const int WS_EX_TOOLWINDOW = 0x00000080;
 
+    public event Action? OnDoubleClick;
+
     public OverlayWindow()
     {
         InitializeComponent();
@@ -29,6 +31,11 @@ public partial class OverlayWindow : Window
     {
         Left = left;
         Top = top;
+    }
+
+    private void OverlayWindow_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        OnDoubleClick?.Invoke();
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]

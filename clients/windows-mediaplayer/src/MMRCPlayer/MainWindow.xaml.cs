@@ -57,6 +57,7 @@ public partial class MainWindow : Window
             _overlayWindow = new OverlayWindow();
             _overlayWindow.SetText($"ID: {_deviceConfig.DeviceId} | v1.0.0");
             _overlayWindow.Owner = this;
+            _overlayWindow.OnDoubleClick += OpenSettings;
             _overlayWindow.Show();
             UpdateOverlayPosition();
 

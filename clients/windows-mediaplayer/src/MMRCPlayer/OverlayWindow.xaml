@@ -8,8 +8,9 @@
         Topmost="False"
         ResizeMode="NoResize"
         Focusable="False"
-        IsHitTestVisible="False"
+        IsHitTestVisible="True"
         SizeToContent="WidthAndHeight"
+        MouseDoubleClick="OverlayWindow_MouseDoubleClick"
         Left="-10000" Top="-10000">
 
     <Border Margin="0,0,2,2">
