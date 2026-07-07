@@ -568,14 +568,16 @@ public partial class MainWindow : Window
                     this.Close();
                 });
             });
-            settings.ShowDialog();
+            _ = Dispatcher.BeginInvoke(async () =>
+            {
+                await System.Threading.Tasks.Task.Delay(50);
+                settings.ShowDialog();
+                _isSettingsOpen = false;
+            });
         }
         catch (Exception ex)
         {
             Log($"OpenSettings error: {ex.Message}");
-        }
-        finally
-        {
             _isSettingsOpen = false;
         }
     }

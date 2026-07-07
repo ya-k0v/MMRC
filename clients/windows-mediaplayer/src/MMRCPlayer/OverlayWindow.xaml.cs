@@ -35,6 +35,7 @@ public partial class OverlayWindow : Window
 
     private void OverlayWindow_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
+        e.Handled = true;
         if (Owner is MainWindow mw && mw.IsLoaded)
             OnDoubleClick?.Invoke();
     }
