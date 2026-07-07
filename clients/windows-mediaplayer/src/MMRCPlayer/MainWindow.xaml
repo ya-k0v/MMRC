@@ -64,17 +64,17 @@
                 </Border.Effect>
             </Border>
 
-            <!-- Status Text -->
-            <TextBlock x:Name="StatusText"
-                       Foreground="#AAFFFFFF"
-                       FontSize="14"
-                       HorizontalAlignment="Center"
-                       VerticalAlignment="Bottom"
-                       Margin="0,0,0,16"
-                       Visibility="Collapsed"
-                       Text=""
-                       Panel.ZIndex="30" />
-
         </Grid>
+
+        <!-- Status Text (below video, so HwndHost won't hide it) -->
+        <TextBlock x:Name="StatusText"
+                   Grid.Row="1"
+                   Foreground="#AAFFFFFF"
+                   FontSize="14"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   Margin="0,4"
+                   Visibility="Collapsed"
+                   Text="" />
     </Grid>
 </Window>
