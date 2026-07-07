@@ -485,6 +485,7 @@ public class MediaPlayerService : IDisposable
         if (_isPlaceholder) return;
         try
         {
+            _lastDuration = 0;
             if (_primaryPlayer != null && _isPlaying)
             {
                 _savedPosition = _primaryPlayer.Position * _primaryPlayer.Length / 1000.0;
