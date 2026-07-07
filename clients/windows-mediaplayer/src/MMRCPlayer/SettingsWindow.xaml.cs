@@ -152,7 +152,7 @@ public partial class SettingsWindow : Window
         try
         {
             Log("Creating MainWindow...");
-            var mainWindow = new MainWindow(config);
+            var mainWindow = new MainWindow(config, config.Fullscreen);
             Log("MainWindow created, calling Show()...");
             mainWindow.Show();
             Log("MainWindow shown, closing settings");
