@@ -70,7 +70,7 @@ function createProcessingCancelButton(safeName, originalName) {
   return cancelBtn;
 }
 
-function appendOptimizeMenuOptions(optimizeMenu, { safeName, originalName, isProcessing, isNightScheduled }) {
+function appendOptimizeMenuOptions(optimizeMenu, { safeName, originalName, isProcessing, isNightScheduled, hlsStatus }) {
   const optimizeBtn = document.createElement('button');
   optimizeBtn.className = 'secondary meta-lg optimizeNowBtn optimizeMenuOption';
   optimizeBtn.setAttribute('data-safe', encodeURIComponent(safeName));
@@ -79,6 +79,17 @@ function appendOptimizeMenuOptions(optimizeMenu, { safeName, originalName, isPro
   optimizeBtn.textContent = 'Обработать';
   optimizeBtn.disabled = isProcessing;
   optimizeMenu.appendChild(optimizeBtn);
+
+  if (hlsStatus !== 'ready') {
+    const hlsBtn = document.createElement('button');
+    hlsBtn.className = 'secondary meta-lg optimizeHlsBtn optimizeMenuOption';
+    hlsBtn.setAttribute('data-safe', encodeURIComponent(safeName));
+    hlsBtn.setAttribute('data-original', encodeURIComponent(originalName));
+    hlsBtn.title = 'Сгенерировать HLS (адаптивные потоки)';
+    hlsBtn.textContent = 'Обработать в HLS';
+    hlsBtn.disabled = isProcessing;
+    optimizeMenu.appendChild(hlsBtn);
+  }
 
   if (isNightScheduled) {
     const cancelNightBtn = document.createElement('button');
@@ -637,7 +648,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       canPlay: item.canPlay !== false,
       error: item.error || null,
       resolution: item.resolution || null,
-      isPlaceholder: !!item.isPlaceholder,  // НОВОЕ: Флаг заглушки
+      isPlaceholder: !!item.isPlaceholder,
       durationSeconds: typeof item.durationSeconds === 'number' ? item.durationSeconds : null,
       folderImageCount: typeof item.folderImageCount === 'number' ? item.folderImageCount : null,
       contentType: item.contentType || null,
@@ -646,7 +657,8 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       streamProxyUrl: item.streamProxyUrl || null,
       streamProtocol: item.streamProtocol || null,
       hasTrailer: !!item.hasTrailer,
-      trailerUrl: item.trailerUrl || null
+      trailerUrl: item.trailerUrl || null,
+      hlsStatus: item.hlsStatus || 'none'
     };
   }).filter(f => f.safeName); // Фильтруем пустые имена
   
@@ -787,7 +799,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
     fileList.className = 'list';
     fileList.style.cssText = 'display:grid; gap:var(--space-sm)';
 
-    files.forEach(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, needsOptimization, streamUrl, streamProtocol, hasTrailer, trailerUrl }) => {
+    files.forEach(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, needsOptimization, streamUrl, streamProtocol, hasTrailer, trailerUrl, hlsStatus }) => {
       const safeExt = getFileExtension(safeName);
       const originalExt = getFileExtension(originalName);
       const displayName = originalName.replace(/\.[^.]+$/, '');
@@ -928,7 +940,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
 
         const optimizeMenu = document.createElement('div');
         optimizeMenu.className = 'optimizeActionsMenu';
-        appendOptimizeMenuOptions(optimizeMenu, { safeName, originalName, isProcessing, isNightScheduled });
+        appendOptimizeMenuOptions(optimizeMenu, { safeName, originalName, isProcessing, isNightScheduled, hlsStatus });
 
         optimizeWrap.appendChild(optimizeMenu);
         actions.appendChild(optimizeWrap);
@@ -961,7 +973,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
     fileList.className = 'list';
     fileList.style.cssText = 'display:grid; gap:var(--space-sm)';
 
-    files.forEach(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, needsOptimization, streamUrl, streamProtocol, hasTrailer, trailerUrl }) => {
+    files.forEach(({ safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder, durationSeconds, folderImageCount, contentType, needsOptimization, streamUrl, streamProtocol, hasTrailer, trailerUrl, hlsStatus }) => {
         // placeholders allowed only for image/video (no pdf/pptx/folders)
         const isStreaming = contentType === 'streaming';
         const isEligible = !isStreaming && /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp)$/i.test(safeName);
@@ -1185,7 +1197,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
 
           const optimizeMenu = document.createElement('div');
           optimizeMenu.className = 'optimizeActionsMenu';
-          appendOptimizeMenuOptions(optimizeMenu, { safeName, originalName, isProcessing, isNightScheduled });
+          appendOptimizeMenuOptions(optimizeMenu, { safeName, originalName, isProcessing, isNightScheduled, hlsStatus });
 
           optimizeWrap.appendChild(optimizeMenu);
           actions.appendChild(optimizeWrap);
@@ -1740,6 +1752,44 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           type: 'file_optimize_start_error',
           title: 'Не удалось запустить обработку',
           message: error.message || 'Ошибка запуска обработки',
+          details: { deviceId, safeName, originalName }
+        });
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    };
+  });
+
+  panelEl.querySelectorAll('.optimizeHlsBtn').forEach(btn => {
+    btn.onclick = async () => {
+      const wrap = btn.closest('.optimize-actions-wrap');
+      if (wrap) { closeOptimizeMenuWrap(wrap); }
+
+      const safeName = decodeURIComponent(btn.getAttribute('data-safe') || '');
+      const originalName = decodeURIComponent(btn.getAttribute('data-original') || safeName);
+      const originalText = btn.textContent;
+
+      btn.disabled = true;
+      btn.textContent = 'Генерация HLS...';
+
+      try {
+        const response = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(safeName)}/generate-hls`, {
+          method: 'POST'
+        });
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok || payload.success === false) {
+          throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
+        }
+
+        await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
+        socket.emit('devices/updated');
+      } catch (error) {
+        await reportFilesManagerNotification({
+          type: 'file_hls_generate_error',
+          title: 'Не удалось запустить генерацию HLS',
+          message: error.message || 'Ошибка генерации HLS',
           details: { deviceId, safeName, originalName }
         });
       } finally {

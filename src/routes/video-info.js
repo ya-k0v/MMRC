@@ -41,6 +41,7 @@ export function createVideoInfoRouter(deps) {
     getFileStatus,
     checkVideoParameters,
     autoOptimizeVideoWrapper,
+    triggerHlsGeneration = null,
     io = null,
     requireAdmin = (_req, _res, next) => next()
   } = deps;
@@ -470,6 +471,39 @@ export function createVideoInfoRouter(deps) {
           fileName
         });
       });
+  });
+
+  // POST /api/devices/:id/files/:name/generate-hls - Сгенерировать HLS VOD
+  router.post('/:id/files/:name/generate-hls', requireAdmin, async (req, res) => {
+    const id = sanitizeDeviceId(req.params.id);
+    if (!id) {
+      return res.status(400).json({ error: 'Неверный ID устройства' });
+    }
+
+    const fileName = decodeURIComponent(req.params.name);
+    const currentStatus = getFileStatus(id, fileName);
+    if (!currentStatus) {
+      return res.status(404).json({ success: false, message: 'Файл не найден' });
+    }
+
+    if (typeof triggerHlsGeneration !== 'function') {
+      return res.status(503).json({ success: false, message: 'HLS генератор недоступен' });
+    }
+
+    logger.info(`[API] 🎬 Запуск генерации HLS: ${fileName}`, { deviceId: id, fileName });
+
+    res.status(202).json({
+      success: true,
+      message: 'Генерация HLS запущена'
+    });
+
+    triggerHlsGeneration(id, fileName).catch((error) => {
+      logger.error('[API] ❌ HLS generation failed', {
+        error: error.message,
+        deviceId: id,
+        fileName
+      });
+    });
   });
 
   // POST /api/devices/:id/files/:name/cancel-optimize - Отменить текущую обработку

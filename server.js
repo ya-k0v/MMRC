@@ -431,6 +431,7 @@ const videoInfoRouter = createVideoInfoRouter({
   getFileStatus,
   checkVideoParameters,
   autoOptimizeVideoWrapper,
+  triggerHlsGeneration,
   io,
   requireAdmin
 });
