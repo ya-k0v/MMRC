@@ -59,7 +59,7 @@ async function generateSingleRendition(inputPath, outputDir, rendition, params) 
 
   const isSource = name === 'source';
   const flags = params.isVideo && !isSource
-    ? ['-vf', `scale=min(${maxWidth},iw):min(${maxHeight},ih):force_original_aspect_ratio=decrease,setsar=1:1`, '-c:v', 'libx264', '-b:v', videoBitrate]
+    ? ['-vf', `scale=w=${maxWidth}:h=${maxHeight}:force_original_aspect_ratio=decrease`, '-c:v', 'libx264', '-b:v', videoBitrate]
     : [];
 
   const videoOpts = params.isVideo && isSource
