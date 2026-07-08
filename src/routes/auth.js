@@ -238,7 +238,7 @@ router.post('/login',
 );
 
 async function checkAdminExists(db) {
-  const admin = await db.get(`SELECT 1 FROM users WHERE role = 'admin' AND is_active = 1 LIMIT 1`);
+  const admin = await db.get(`SELECT 1 FROM users WHERE role = 'admin' AND is_active = true LIMIT 1`);
   return !!admin;
 }
 
@@ -277,8 +277,8 @@ router.post('/setup-first-admin',
       const passwordHash = await bcrypt.hash(password, 12);
       const result = await db.run(
         `INSERT INTO users (username, full_name, password_hash, auth_source, role, is_active)
-         VALUES (?, ?, ?, 'local', 'admin', 1)`,
-        [username, full_name, passwordHash]
+         VALUES (?, ?, ?, 'local', 'admin', ?)`,
+        [username, full_name, passwordHash, true]
       );
 
       const newUserId = result.lastInsertRowid;
