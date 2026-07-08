@@ -1532,7 +1532,6 @@ if (!device_id || !device_id.trim()) {
             if (targetIdx >= 0) {
               hlsPlayer.currentLevel = targetIdx;
             }
-          }
         }
         mediaEl.play().then(() => {
           show(videoContainer, true);
@@ -1557,7 +1556,7 @@ if (!device_id || !device_id.trim()) {
     }
   }
 
-  function handleStreamingPlayback(streamUrl, file, streamProtocol = null) {
+  function handleStreamingPlayback(streamUrl, file, streamProtocol = null, isHlsVod, hlsVodQualities, hlsVodQuality) {
     if (!streamUrl || !vjsPlayer) {
       console.warn('[Player] ⚠️ Нет stream_url для воспроизведения стрима', { file });
       return;
@@ -1603,58 +1602,71 @@ if (!device_id || !device_id.trim()) {
         if (!mediaEl) {
           console.error('[Player] ❌ Не удалось получить video элемент для HLS');
         } else {
-          // КРИТИЧНО: Добавляем cache-busting параметр к URL для предотвращения кэширования старого m3u8
-          // Это решает проблему, когда плеер воспроизводит старые сегменты после перезапуска стрима
-          const cacheBustUrl = addCacheBustParam(streamUrl);
-          console.log('[Player] 🔄 HLS URL с cache-busting', { original: streamUrl, cacheBust: cacheBustUrl });
+          // Для VOD кэширование не вредит (файлы статичны), для live — сбрасываем
+          const hlsPlayUrl = isHlsVod ? streamUrl : addCacheBustParam(streamUrl);
+          if (!isHlsVod) {
+            console.log('[Player] 🔄 HLS URL с cache-busting', { original: streamUrl, cacheBust: hlsPlayUrl });
+          }
           
           hlsPlayer = new window.Hls({
-            liveSyncDurationCount: 3,
             enableWorker: true,
-            lowLatencyMode: true,
             backBufferLength: 30,
-            // КРИТИЧНО: Настройки для live стримов
-            maxBufferLength: 30,        // Максимальная длина буфера (секунды)
-            maxMaxBufferLength: 60,     // Максимальная максимальная длина буфера
-            maxBufferSize: 60 * 1000 * 1000, // Максимальный размер буфера (60MB)
-            maxBufferHole: 0.5,         // Максимальная дыра в буфере (секунды)
-            highBufferWatchdogPeriod: 2, // Период проверки буфера
-            nudgeOffset: 0.1,           // Смещение для синхронизации
-            nudgeMaxRetry: 3,           // Максимальное количество попыток синхронизации
-            maxFragLoadingTimeOut: 20000, // Таймаут загрузки фрагмента (20 секунд)
-            fragLoadingTimeOut: 20000,   // Таймаут загрузки фрагмента
-            manifestLoadingTimeOut: 10000, // Таймаут загрузки манифеста (10 секунд)
-            // КРИТИЧНО: Отключаем автоматическую паузу при достижении конца
+            maxBufferLength: 30,
+            maxMaxBufferLength: 60,
+            maxBufferSize: 60 * 1000 * 1000,
+            maxBufferHole: 0.5,
+            nudgeOffset: 0.1,
+            nudgeMaxRetry: 3,
+            maxFragLoadingTimeOut: 20000,
+            fragLoadingTimeOut: 20000,
+            manifestLoadingTimeOut: 10000,
             autoStartLoad: true,
-            startPosition: -1,          // Начинаем с последнего доступного сегмента (live)
-            liveDurationInfinity: true,  // Live стрим без конечной длительности
-            // КРИТИЧНО: Отключаем кэширование манифеста и сегментов
-            xhrSetup: (xhr, url) => {
-              // Добавляем cache-busting к каждому запросу манифеста
-              if (url.includes('.m3u8')) {
-                const bustedUrl = addCacheBustParam(url);
-                console.log('[Player] 🔄 HLS манифест запрос с cache-busting', { original: url, busted: bustedUrl });
-                xhr.open('GET', bustedUrl, true);
-                return;
+            startPosition: isHlsVod ? 0 : -1,
+            liveDurationInfinity: !isHlsVod,
+            lowLatencyMode: !isHlsVod,
+            liveSyncDurationCount: isHlsVod ? undefined : 3,
+            highBufferWatchdogPeriod: isHlsVod ? undefined : 2,
+            xhrSetup: isHlsVod
+              ? (xhr, url) => xhr.open('GET', url, true)
+              : (xhr, url) => {
+                if (url.includes('.m3u8')) {
+                  const bustedUrl = addCacheBustParam(url);
+                  console.log('[Player] 🔄 HLS манифест запрос с cache-busting', { original: url, busted: bustedUrl });
+                  xhr.open('GET', bustedUrl, true);
+                  return;
+                }
+                xhr.open('GET', url, true);
               }
-              xhr.open('GET', url, true);
-            }
           });
-          hlsPlayer.loadSource(cacheBustUrl);
+          hlsPlayer.loadSource(hlsPlayUrl);
           hlsPlayer.attachMedia(mediaEl);
           hlsPlayer.on(window.Hls.Events.MANIFEST_PARSED, () => {
+            if (isHlsVod && hlsVodQuality && hlsVodQuality !== 'source' && hlsPlayer.levels && !hlsVodQuality.includes('k')) {
+              const qualityNum = parseInt(hlsVodQuality.replace('p', ''));
+              if (!isNaN(qualityNum)) {
+                let targetIdx = -1;
+                for (let i = 0; i < hlsPlayer.levels.length; i++) {
+                  if (hlsPlayer.levels[i].height <= qualityNum) {
+                    if (targetIdx === -1 || hlsPlayer.levels[i].height > hlsPlayer.levels[targetIdx].height) {
+                      targetIdx = i;
+                    }
+                  }
+                }
+                if (targetIdx >= 0) {
+                  hlsPlayer.currentLevel = targetIdx;
+                }
+              }
+            }
             mediaEl.play().then(() => {
               show(videoContainer, true);
-              console.log('[Player] ▶️ HLS поток запущен');
-              // КРИТИЧНО: Отправляем player/progress для обновления информации на панели спикера
-              // КРИТИЧНО: Не отправляем в preview режиме
+              console.log('[Player] ▶️ HLS', isHlsVod ? 'VOD' : 'поток', 'запущен');
               if (!preview && device_id && file) {
                 socket.emit('player/progress', {
                   device_id,
-                  type: 'streaming',
+                  type: isHlsVod ? 'hls-vod' : 'streaming',
                   file: file,
                   currentTime: 0,
-                  duration: 0,
+                  duration: mediaEl.duration || 0,
                   stream_protocol: resolvedProtocol
                 });
               }
@@ -2562,7 +2574,7 @@ if (!device_id || !device_id.trim()) {
   // WebSocket обработчики
   let pendingSyncedPlayTimer = null;
   let pendingSyncedPlayToken = 0;
-  socket.on('player/play', function onPlayerPlay({ type, file, page, stream_url, stream_protocol, originDeviceId, startAt, startDelayMs, hls_manifest_path, hls_renditions, hls_quality }) {
+  socket.on('player/play', function onPlayerPlay({ type, file, page, stream_url, stream_protocol, originDeviceId, startAt, startDelayMs, hls_manifest_path, hls_renditions, hls_quality, hls_vod }) {
     const parsedStartDelayMs = Number(startDelayMs);
     const parsedStartAt = Number(startAt);
     const delayMs = Number.isFinite(parsedStartDelayMs) && parsedStartDelayMs > 0
@@ -2736,7 +2748,7 @@ if (!device_id || !device_id.trim()) {
     }
     
     if (type === 'streaming') {
-      handleStreamingPlayback(stream_url, file, stream_protocol);
+      handleStreamingPlayback(stream_url, file, stream_protocol, hls_vod, hls_renditions, hls_quality);
       return;
     }
     destroyHlsPlayer('player_play_non_stream');

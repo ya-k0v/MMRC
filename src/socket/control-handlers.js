@@ -892,6 +892,10 @@ export function setupControlHandlers(socket, deps) {
           if (meta && meta.hls_status === 'ready' && meta.hls_manifest_path) {
             hlsManifestPath = meta.hls_manifest_path;
             hlsRenditions = meta.hls_renditions ? (typeof meta.hls_renditions === 'string' ? JSON.parse(meta.hls_renditions) : meta.hls_renditions) : null;
+            // HLS VOD доступен — отправляем как стрим, чтобы плеер использовал HLS-путь
+            type = 'streaming';
+            playbackStreamUrl = '/' + hlsManifestPath;
+            effectiveStreamProtocol = 'hls';
           }
         } catch (err) {
           logger.warn('[Control] Failed to load HLS metadata', { deviceId: device_id, file, error: err.message });
@@ -909,7 +913,8 @@ export function setupControlHandlers(socket, deps) {
             startDelayMs: normalizedStartDelayMs || undefined,
             hls_manifest_path: hlsManifestPath,
             hls_renditions: hlsRenditions,
-            hls_quality: hlsQuality || undefined
+            hls_quality: hlsQuality || undefined,
+            hls_vod: !!hlsManifestPath
           });
       emitDeviceVolumeState(device_id, 'control_play');
       socket.emit('preview/refresh', { device_id });
