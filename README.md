@@ -1,8 +1,8 @@
-# MMRC 3.4.0 — Digital Signage & Media Management Platform
+# MMRC 3.5.0 — Digital Signage & Media Management Platform
 
 **Управление медиаконтентом для цифровых дисплеев, TV-панелей и киосков.**
 
-![Version](https://img.shields.io/badge/version-3.4.0-blue)
+![Version](https://img.shields.io/badge/version-3.5.0-blue)
 ![Node](https://img.shields.io/badge/node-22.x-green)
 ![License](https://img.shields.io/badge/license-Personal_Use_Only-red)
 
@@ -34,7 +34,7 @@ MMRC — централизованная платформа для управл
 ## Быстрая установка
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/v340/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/v350/install.sh | sudo bash
 ```
 
 Скрипт автоматически установит Docker, скачает compose-файлы, сгенерирует `.env`, запустит контейнер и установит CLI.

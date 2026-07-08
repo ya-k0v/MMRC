@@ -2,7 +2,7 @@ name: Docker Build
 
 on:
   push:
-    branches: [v340, main]
+    branches: [v350, main]
   workflow_dispatch:
 
 env:

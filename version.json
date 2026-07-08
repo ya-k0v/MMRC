@@ -10,7 +10,7 @@
   },
   "apps": {
     "server": "3.5.0",
-    "jsPlayer": "3.5.0",
+    "jsPlayer": "3.4.0",
     "hub": "3.5.0",
     "android": "3.2.0",
     "mcp": "0.2.0"

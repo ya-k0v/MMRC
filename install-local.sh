@@ -7,9 +7,9 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-MMRC_VERSION="3.4.0"
-MMRC_BRANCH="v340"
-MMRC_DOCKER_TAG="v340"
+MMRC_VERSION="3.5.0"
+MMRC_BRANCH="v350"
+MMRC_DOCKER_TAG="v350"
 MMRC_DOCKER_IMAGE="pingwin1900/mmrc"
 MMRC_CONVERTER_IMAGE="pingwin1900/mmrc-converter"
 MMRC_FFMPEG_IMAGE="pingwin1900/mmrc-ffmpeg"

@@ -2,17 +2,17 @@
 set -e
 
 # MMRC One-Command Installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/v340/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/v350/install.sh | bash
 
 # ========================
 # Configuration
 # ========================
-MMRC_VERSION_INFO=$(curl -fsSL "https://raw.githubusercontent.com/ya-k0v/MMRC/v340/version.json" 2>/dev/null || echo '{"version":"3.4.0","branch":"v340","dockerTag":"v340","dockerImages":{"server":"pingwin1900/mmrc","converter":"pingwin1900/mmrc-converter","ffmpeg":"pingwin1900/mmrc-ffmpeg","streamer":"pingwin1900/mmrc-streamer"}}')
+MMRC_VERSION_INFO=$(curl -fsSL "https://raw.githubusercontent.com/ya-k0v/MMRC/v350/version.json" 2>/dev/null || echo '{"version":"3.5.0","branch":"v350","dockerTag":"v350","dockerImages":{"server":"pingwin1900/mmrc","converter":"pingwin1900/mmrc-converter","ffmpeg":"pingwin1900/mmrc-ffmpeg","streamer":"pingwin1900/mmrc-streamer"}}')
 MMRC_VERSION=$(echo "$MMRC_VERSION_INFO" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
 MMRC_BRANCH=$(echo "$MMRC_VERSION_INFO" | grep -o '"branch":"[^"]*"' | cut -d'"' -f4)
-: "${MMRC_BRANCH:=v340}"
+: "${MMRC_BRANCH:=v350}"
 MMRC_DOCKER_TAG=$(echo "$MMRC_VERSION_INFO" | grep -o '"dockerTag":"[^"]*"' | cut -d'"' -f4)
-: "${MMRC_DOCKER_TAG:=v340}"
+: "${MMRC_DOCKER_TAG:=v350}"
 MMRC_STREAMER_IMAGE="$(echo "$MMRC_VERSION_INFO" | grep -o '"streamer":"[^"]*"' | cut -d'"' -f4 || echo "pingwin1900/mmrc-streamer")"
 MMRC_REPO="https://github.com/ya-k0v/MMRC"
 MMRC_RAW="https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}"
@@ -257,7 +257,7 @@ install_mmrc() {
 ╔══════════════════════════════════════════╗
 ║          📺 MMRC Installer               ║
 ║     Media Management & Remote Control    ║
-║           Version ${MMRC_VERSION:-3.4.0}                ║
+║           Version ${MMRC_VERSION:-3.5.0}                ║
 ╚══════════════════════════════════════════╝
 "
 
@@ -284,8 +284,8 @@ install_mmrc() {
         warn "Downloaded file is only $compose_size bytes (expected ~3KB)"
         warn "Content: $(head -c 100 "$COMPOSE_FILE")"
         warn "MMRC_BRANCH='${MMRC_BRANCH:-<empty>}' MMRC_RAW='$MMRC_RAW'"
-        warn "Check version.json at: https://raw.githubusercontent.com/ya-k0v/MMRC/v340/version.json"
-        warn "Expected compose URL: https://raw.githubusercontent.com/ya-k0v/MMRC/v340/docker-compose.deploy.yml"
+        warn "Check version.json at: https://raw.githubusercontent.com/ya-k0v/MMRC/v350/version.json"
+        warn "Expected compose URL: https://raw.githubusercontent.com/ya-k0v/MMRC/v350/docker-compose.deploy.yml"
         error "Download failed. Check internet connection and try again."
         exit 1
     fi
@@ -343,7 +343,7 @@ HOST_DATA_DIR=/opt/mmrc/data
 MMRC_DOCKER=1
 MMRC_COMPOSE_DIR=/host
 DOCKER_IMAGE=pingwin1900/mmrc
-DOCKER_IMAGE_TAG=${MMRC_DOCKER_TAG:-v340}
+DOCKER_IMAGE_TAG=${MMRC_DOCKER_TAG:-v350}
 CONVERTER_IMAGE=pingwin1900/mmrc-converter
 FFMPEG_IMAGE=pingwin1900/mmrc-ffmpeg
 STREAMER_IMAGE=pingwin1900/mmrc-streamer
