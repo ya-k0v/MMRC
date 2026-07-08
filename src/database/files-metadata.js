@@ -402,6 +402,30 @@ export async function deleteFileMetadata(deviceId, safeName) {
   }
 }
 
+export async function updateFileHlsMetadata(deviceId, safeName, { hlsStatus, hlsManifestPath, hlsRenditions }) {
+  try {
+    const db = getDatabase();
+    const dt = getDriverType();
+    const ph = (col) => dt === 'postgres' ? `$${col}` : '?';
+
+    await withRetryAsync(async () => {
+      await db.run(`
+        UPDATE files_metadata
+        SET hls_status = ${ph(1)}, hls_manifest_path = ${ph(2)}, hls_renditions = ${ph(3)}
+        WHERE device_id = ${ph(4)} AND safe_name = ${ph(5)}
+      `, [hlsStatus || 'none', hlsManifestPath || null, hlsRenditions ? JSON.stringify(hlsRenditions) : null, deviceId, safeName]);
+    }, {
+      maxRetries: 3, delay: 100, shouldRetry: isRetryableDatabaseError,
+      onRetry: (error, attempt, maxRetries) => {
+        logger.warn('Retrying updateFileHlsMetadata', { deviceId, safeName, attempt, maxRetries, error: error.message });
+      }
+    });
+    logger.info('HLS metadata updated', { deviceId, safeName, hlsStatus, hlsManifestPath });
+  } catch (error) {
+    logger.error('Failed to update HLS metadata', { error: error.message, deviceId, safeName });
+  }
+}
+
 /**
  * Удалить все метаданные устройства
  * @param {string} deviceId

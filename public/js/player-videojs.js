@@ -1484,6 +1484,79 @@ if (!device_id || !device_id.trim()) {
     });
   }
 
+  function handleHlsVodPlayback(hlsUrl, file, qualities, selectedQuality) {
+    if (!hlsUrl || !vjsPlayer) return;
+
+    clearAllBuffers();
+    currentFileState = { type: 'video', file, page: 1, hlsVod: true, qualities };
+    currentVideoFile = file;
+    savedVideoPosition = 0;
+    destroyHlsPlayer('switch_to_hls_vod');
+
+    try { vjsPlayer.pause(); vjsPlayer.currentTime(0); } catch {}
+
+    vjsPlayer.loop(false);
+    applyVolumeToPlayer('play_hls_vod');
+    hideVideoJsControls();
+    showMusicLogo(false);
+    videoContainer.style.display = 'block';
+    videoContainer.classList.remove('visible', 'preloading');
+
+    const mediaEl = vjsPlayer.el().querySelector('video') || document.getElementById('v_html5_api') || v;
+    if (mediaEl) mediaEl.crossOrigin = 'anonymous';
+
+    if (window.Hls && window.Hls.isSupported() && mediaEl) {
+      hlsPlayer = new window.Hls({
+        enableWorker: true,
+        backBufferLength: 30,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 60,
+        maxBufferSize: 60 * 1000 * 1000,
+        maxBufferHole: 0.5,
+        startPosition: 0,
+        autoStartLoad: true
+      });
+      hlsPlayer.loadSource(hlsUrl);
+      hlsPlayer.attachMedia(mediaEl);
+      hlsPlayer.on(window.Hls.Events.MANIFEST_PARSED, () => {
+        if (selectedQuality && selectedQuality !== 'source' && hlsPlayer.levels && !selectedQuality.includes('k')) {
+          const qualityNum = parseInt(selectedQuality.replace('p', ''));
+            let targetIdx = -1;
+            for (let i = 0; i < hlsPlayer.levels.length; i++) {
+              if (hlsPlayer.levels[i].height <= qualityNum) {
+                if (targetIdx === -1 || hlsPlayer.levels[i].height > hlsPlayer.levels[targetIdx].height) {
+                  targetIdx = i;
+                }
+              }
+            }
+            if (targetIdx >= 0) {
+              hlsPlayer.currentLevel = targetIdx;
+            }
+          }
+        }
+        mediaEl.play().then(() => {
+          show(videoContainer, true);
+          if (!preview && device_id && file) {
+            socket.emit('player/progress', {
+              device_id, type: 'hls-vod', file,
+              currentTime: 0, duration: mediaEl.duration || 0
+            });
+          }
+        }).catch(err => console.error('[Player] ❌ HLS VOD play error', err));
+      });
+      hlsPlayer.on(window.Hls.Events.ERROR, (_, data) => {
+        if (data?.fatal && !preview) {
+          console.error('[Player] ❌ HLS VOD fatal error', data);
+        }
+      });
+    } else if (mediaEl && mediaEl.canPlayType('application/vnd.apple.mpegurl')) {
+      mediaEl.src = hlsUrl;
+      mediaEl.play().then(() => {
+        show(videoContainer, true);
+      }).catch(err => console.error('[Player] ❌ Native HLS play error', err));
+    }
+  }
+
   function handleStreamingPlayback(streamUrl, file, streamProtocol = null) {
     if (!streamUrl || !vjsPlayer) {
       console.warn('[Player] ⚠️ Нет stream_url для воспроизведения стрима', { file });
@@ -2489,7 +2562,7 @@ if (!device_id || !device_id.trim()) {
   // WebSocket обработчики
   let pendingSyncedPlayTimer = null;
   let pendingSyncedPlayToken = 0;
-  socket.on('player/play', function onPlayerPlay({ type, file, page, stream_url, stream_protocol, originDeviceId, startAt, startDelayMs }) {
+  socket.on('player/play', function onPlayerPlay({ type, file, page, stream_url, stream_protocol, originDeviceId, startAt, startDelayMs, hls_manifest_path, hls_renditions, hls_quality }) {
     const parsedStartDelayMs = Number(startDelayMs);
     const parsedStartAt = Number(startAt);
     const delayMs = Number.isFinite(parsedStartDelayMs) && parsedStartDelayMs > 0
@@ -2551,6 +2624,25 @@ if (!device_id || !device_id.trim()) {
               vjsPlayer.pause();
               vjsPlayer.currentTime(0);
             } catch (e) {}
+          }
+          // Если есть HLS VOD для аудио — используем его
+          if (hls_manifest_path) {
+            destroyHlsPlayer('play_audio_hls');
+            const hlsUrl = '/' + hls_manifest_path;
+            const mediaEl = vjsPlayer ? (vjsPlayer.el().querySelector('video') || document.getElementById('v_html5_api') || v) : null;
+            if (window.Hls && window.Hls.isSupported() && mediaEl) {
+              hlsPlayer = new window.Hls({ enableWorker: true, startPosition: 0, autoStartLoad: true });
+              hlsPlayer.loadSource(hlsUrl);
+              hlsPlayer.attachMedia(mediaEl);
+              hlsPlayer.on(window.Hls.Events.MANIFEST_PARSED, () => {
+                showMusicLogo(true);
+                mediaEl.play().catch(() => {});
+              });
+              if (!preview && device_id && file) {
+                socket.emit('player/progress', { device_id, type: 'audio', file, currentTime: 0, duration: 0 });
+              }
+              return;
+            }
           }
           // Для аудио: скрываем videoContainer, но показываем musicLogo только если это чистое аудио (нет обложки/картинки/видео)
           if (videoContainer) {
@@ -2653,6 +2745,18 @@ if (!device_id || !device_id.trim()) {
     if (type === 'video') {
       // КРИТИЧНО: Полностью очищаем все буферы изображений при переключении на видео
       clearAllBuffers();
+      
+      // HLS VOD доступен — используем потоковое воспроизведение вместо MP4
+      if (hls_manifest_path && file) {
+        console.log('[Player] 🎬 HLS VOD доступен, используем его:', { file, hlsUrl: hls_manifest_path, qualities: hls_renditions });
+        currentFileState = { type: 'video', file, page: 1, hlsVod: true, qualities: hls_renditions };
+        currentVideoFile = file;
+        savedVideoPosition = 0;
+        destroyHlsPlayer('switch_to_hls_vod');
+        try { if (vjsPlayer) vjsPlayer.pause(); } catch {}
+        handleHlsVodPlayback('/' + hls_manifest_path, file, hls_renditions, hls_quality);
+        return;
+      }
       
       if (!file && vjsPlayer) {
         // Resume текущего видео (нет файла = продолжить с паузы)

@@ -464,6 +464,7 @@ export async function initializeSettings() {
   ensureDirectory(getConvertedCache()); // dataRoot/converted
   ensureDirectory(getLogsDir()); // dataRoot/logs
   ensureDirectory(getTempDir()); // dataRoot/temp
+  ensureDirectory(getHlsVodDir()); // dataRoot/hls-vod
   
   // КРИТИЧНО: Используем lazy import logger, чтобы избежать циклической зависимости
   const { default: logger } = await import('../utils/logger.js');
@@ -512,6 +513,7 @@ export async function initializeSettings() {
   logger.info(`[Settings] 📁 Converted: ${getConvertedCache()}`);
   logger.info(`[Settings] 📁 Logs: ${getLogsDir()}`);
   logger.info(`[Settings] 📁 Temp: ${getTempDir()}`);
+  logger.info(`[Settings] 📁 HLS VOD: ${getHlsVodDir()}`);
 }
 
 /**
@@ -530,6 +532,13 @@ export function getDataRoot() {
  */
 export function getStreamsOutputDir() {
   return path.join(getDataRoot(), 'streams');
+}
+
+/**
+ * Получить путь к HLS VOD сегментам
+ */
+export function getHlsVodDir() {
+  return path.join(getDataRoot(), 'hls-vod');
 }
 
 /**
@@ -578,7 +587,8 @@ export function getSettings() {
       streamsOutputDir: getStreamsOutputDir(),
       convertedCache: getConvertedCache(),
       logsDir: getLogsDir(),
-      tempDir: getTempDir()
+      tempDir: getTempDir(),
+      hlsVodDir: getHlsVodDir()
     }
   };
 }

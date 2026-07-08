@@ -8,7 +8,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import mime from 'mime';
 import { PUBLIC, ROOT } from '../config/constants.js';
-import { getDevicesPath, getStreamsOutputDir } from '../config/settings-manager.js';
+import { getDevicesPath, getStreamsOutputDir, getHlsVodDir } from '../config/settings-manager.js';
 import { requestTimeout } from './timeout.js';
 import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('http');
@@ -157,6 +157,25 @@ export function setupStaticFiles(app) {
           res.setHeader('Accept-Ranges', 'bytes');
         }
         res.setHeader('Cache-Control', 'public, max-age=86400');
+      }
+    }));
+  }
+
+  // HLS VOD — статически сгенерированные сегменты из загруженных видео/аудио
+  const hlsVodPath = getHlsVodDir();
+  if (fs.existsSync(hlsVodPath)) {
+    app.use('/hls-vod', express.static(hlsVodPath, {
+      setHeaders: (res, filePath) => {
+        if (/\.m3u8$/i.test(filePath)) {
+          res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+          res.setHeader('Cache-Control', 'public, max-age=3600');
+        } else if (/\.ts$/i.test(filePath)) {
+          res.setHeader('Content-Type', 'video/mp2t');
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+        } else if (/\.m4s$/i.test(filePath)) {
+          res.setHeader('Content-Type', 'video/iso.segment');
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+        }
       }
     }));
   }

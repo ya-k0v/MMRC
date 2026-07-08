@@ -37,6 +37,8 @@ import { cleanupMissingFiles, repairImportedFilePaths } from './src/database/fil
 import { getFileStatus } from './src/video/file-status.js';
 import { checkVideoParameters } from './src/video/ffmpeg-wrapper.js';
 import { autoOptimizeVideo } from './src/video/optimizer.js';
+import { generateHlsVod, getHlsPublicPath } from './src/video/hls-generator.js';
+import { updateFileHlsMetadata } from './src/database/files-metadata.js';
 import { videoOptimizeQueue, queuesReady } from './src/queue/queue.js';
 import { createBullBoard } from '@bull-board/api';
 import { BullAdapter } from '@bull-board/api/bullAdapter';
@@ -1391,15 +1393,90 @@ async function autoOptimizeVideoWrapper(deviceId, fileName) {
     );
     return { success: true, status: 'queued', jobId: job.id };
   }
-  return await autoOptimizeVideo(deviceId, fileName, devices, io, fileNamesMap, (map) => saveFileNamesToDB(map), storage);
+  const result = await autoOptimizeVideo(deviceId, fileName, devices, io, fileNamesMap, (map) => saveFileNamesToDB(map), storage);
+  if (result && result.success && fileName) {
+    scheduleHlsGeneration(deviceId, fileName);
+  }
+  return result;
+}
+
+async function triggerHlsGeneration(deviceId, fileName) {
+  try {
+    const { getFileMetadata } = await import('./src/database/files-metadata.js');
+    const metadata = await getFileMetadata(deviceId, fileName);
+    if (!metadata || !metadata.md5_hash) {
+      logger.warn('[HLS] No metadata/md5 for file, skipping HLS gen', { deviceId, fileName });
+      return;
+    }
+    const filePath = metadata.file_path;
+    if (!filePath || !fs.existsSync(filePath)) {
+      logger.warn('[HLS] File not found on disk, skipping HLS gen', { deviceId, fileName, filePath });
+      return;
+    }
+
+    const result = await generateHlsVod(filePath, metadata.md5_hash, {
+      video_codec: metadata.video_codec,
+      video_width: metadata.video_width,
+      video_height: metadata.video_height,
+      audio_bitrate: metadata.audio_bitrate,
+      audio_codec: metadata.audio_codec
+    });
+
+    if (result.success && result.manifestPath) {
+      await updateFileHlsMetadata(deviceId, fileName, {
+        hlsStatus: 'ready',
+        hlsManifestPath: result.manifestPath,
+        hlsRenditions: result.renditions
+      });
+      logger.info('[HLS] Metadata updated for file', { deviceId, fileName, manifestPath: result.manifestPath });
+    } else if (!result.success && result.reason !== 'already_in_progress') {
+      await updateFileHlsMetadata(deviceId, fileName, { hlsStatus: 'error', hlsManifestPath: null, hlsRenditions: null });
+    }
+  } catch (err) {
+    logger.error('[HLS] Failed to generate HLS', { deviceId, fileName, error: err.message });
+    try {
+      await updateFileHlsMetadata(deviceId, fileName, { hlsStatus: 'error', hlsManifestPath: null, hlsRenditions: null });
+    } catch {}
+  }
 }
 
 if (queuesReady && videoOptimizeQueue) {
   videoOptimizeQueue.process(3, async (job) => {
     const { deviceId, fileName } = job.data;
     logger.info(`[Queue] Processing optimize job ${job.id} (priority ${job.opts.priority}): ${deviceId}/${fileName}`);
-    return autoOptimizeVideo(deviceId, fileName, devices, io, fileNamesMap, (map) => saveFileNamesToDB(map), storage);
+    const result = await autoOptimizeVideo(deviceId, fileName, devices, io, fileNamesMap, (map) => saveFileNamesToDB(map), storage);
+
+    if (result && result.success && fileName) {
+      scheduleHlsGeneration(deviceId, fileName);
+    }
+    return result;
   });
+}
+
+let hlsGenerationTimers = new Map();
+
+function scheduleHlsGeneration(deviceId, fileName) {
+  const key = `${deviceId}_${fileName}`;
+  if (hlsGenerationTimers.has(key)) return;
+  const timer = setTimeout(async () => {
+    hlsGenerationTimers.delete(key);
+    await triggerHlsGeneration(deviceId, fileName);
+    if (io) {
+      try {
+        const { getFileMetadata } = await import('./src/database/files-metadata.js');
+        const meta = await getFileMetadata(deviceId, fileName);
+        if (meta && meta.hls_status === 'ready') {
+          io.to(`device:${deviceId}`).emit('file/hls-ready', {
+            device_id: deviceId,
+            file: fileName,
+            hls_manifest_path: meta.hls_manifest_path,
+            hls_renditions: meta.hls_renditions ? JSON.parse(meta.hls_renditions) : null
+          });
+        }
+      } catch {}
+    }
+  }, 5000);
+  hlsGenerationTimers.set(key, timer);
 }
 
 // Bull Board (UI для мониторинга очередей)

@@ -188,7 +188,7 @@ export function setupControlHandlers(socket, deps) {
     }
   };
   
-  const handleControlPlay = async ({ device_id, file, page, type: requestedType, streamProtocol, originDeviceId, startAt, startDelayMs }) => {
+  const handleControlPlay = async ({ device_id, file, page, type: requestedType, streamProtocol, originDeviceId, startAt, startDelayMs, hlsQuality }) => {
     const d = devices[device_id];
     if (!d) return;
     const normalizedStartAt = Number.isFinite(Number(startAt)) ? Math.floor(Number(startAt)) : null;
@@ -883,6 +883,21 @@ export function setupControlHandlers(socket, deps) {
         }
       }
       
+      // Загружаем HLS VOD информацию для видео/аудио
+      let hlsManifestPath, hlsRenditions;
+      if ((type === 'video' || type === 'audio') && file) {
+        try {
+          const { getFileMetadata } = await import('../database/files-metadata.js');
+          const meta = await getFileMetadata(device_id, file);
+          if (meta && meta.hls_status === 'ready' && meta.hls_manifest_path) {
+            hlsManifestPath = meta.hls_manifest_path;
+            hlsRenditions = meta.hls_renditions ? (typeof meta.hls_renditions === 'string' ? JSON.parse(meta.hls_renditions) : meta.hls_renditions) : null;
+          }
+        } catch (err) {
+          logger.warn('[Control] Failed to load HLS metadata', { deviceId: device_id, file, error: err.message });
+        }
+      }
+      
       // Сохраняем финальное состояние после восстановления плейлиста и fallback URL
       saveDevice(device_id, d).catch(e => logger.warn('[Control] saveDevice failed', { deviceId: device_id, error: e.message }));
       
@@ -891,7 +906,10 @@ export function setupControlHandlers(socket, deps) {
             stream_url: type === 'streaming' ? playbackStreamUrl : undefined,
             stream_protocol: type === 'streaming' ? effectiveStreamProtocol : undefined,
             startAt: normalizedStartAt || undefined,
-            startDelayMs: normalizedStartDelayMs || undefined
+            startDelayMs: normalizedStartDelayMs || undefined,
+            hls_manifest_path: hlsManifestPath,
+            hls_renditions: hlsRenditions,
+            hls_quality: hlsQuality || undefined
           });
       emitDeviceVolumeState(device_id, 'control_play');
       socket.emit('preview/refresh', { device_id });
@@ -912,7 +930,7 @@ export function setupControlHandlers(socket, deps) {
 
   socket.on('control/play', handleControlPlay);
 
-  socket.on('control/play-batch', async ({ device_ids, file, page, type, streamProtocol, originDeviceId, startDelayMs }) => {
+  socket.on('control/play-batch', async ({ device_ids, file, page, type, streamProtocol, originDeviceId, startDelayMs, hlsQuality }) => {
     try {
       const rawDeviceIds = Array.isArray(device_ids) ? device_ids : [];
       const targetDeviceIds = Array.from(new Set(rawDeviceIds.filter((deviceId) => typeof deviceId === 'string' && deviceId.trim())));
@@ -949,7 +967,8 @@ export function setupControlHandlers(socket, deps) {
           streamProtocol,
           originDeviceId,
           startAt: synchronizedStartAt,
-          startDelayMs: safeDelayMs
+          startDelayMs: safeDelayMs,
+          hlsQuality
         })
       ));
     } catch (err) {

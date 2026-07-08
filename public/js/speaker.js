@@ -2414,7 +2414,10 @@ async function loadFiles(stabilizeAttempt = 0) {
           trailerUrl: item.trailerUrl || null,
           sourceDeviceId: currentDevice,
           isPlaceholder: !!item.isPlaceholder,
-          uploadedBy: item.uploadedBy || null
+          uploadedBy: item.uploadedBy || null,
+          hlsStatus: item.hlsStatus || 'none',
+          hlsManifestPath: item.hlsManifestPath || null,
+          hlsRenditions: item.hlsRenditions || null
         };
       });
 
@@ -2450,7 +2453,7 @@ async function loadFiles(stabilizeAttempt = 0) {
   const end = Math.min(start + pageSize, allFiles.length);
   const files = allFiles.slice(start, end);
 
-    fileList.innerHTML = files.map(({ safeName, originalName, resolution, durationSeconds, folderImageCount, contentType, streamProtocol, hasTrailer, trailerUrl, uploadedBy }) => {
+    fileList.innerHTML = files.map(({ safeName, originalName, resolution, durationSeconds, folderImageCount, contentType, streamProtocol, hasTrailer, trailerUrl, uploadedBy, hlsStatus, hlsManifestPath, hlsRenditions }) => {
     // КРИТИЧНО: Используем resolveFileDisplayData для получения правильного оригинального имени
     // Это гарантирует, что будет использовано оригинальное имя из всех доступных источников
     const { displayName: resolvedDisplayName } = resolveFileDisplayData(currentDevice, safeName);
@@ -2603,28 +2606,40 @@ async function loadFiles(stabilizeAttempt = 0) {
         </div>
         
         <!-- Правая часть: Play зона (25%) - часть карточки -->
-        <div class="playBtn" 
-             data-safe="${encodeURIComponent(safeName)}" 
-             data-original="${encodeURIComponent(originalName)}"
-             data-stream-protocol="${streamProtocol || ''}"
-             style="
-               background:var(--brand);
-               color:white;
-               display:flex;
-               align-items:center;
-               justify-content:center;
-               font-size:var(--speaker-play-icon-size, 2rem);
-               min-width:var(--speaker-play-min-width,72px);
-               cursor:pointer;
-               transition:background 0.2s;
-               user-select:none;
-             "
-             onmouseover="this.style.background='var(--brand-hover)'"
-             onmouseout="this.style.background='var(--brand)'"
-             role="button"
-             tabindex="0"
-              aria-label="Воспроизвести ${displayName}">
-          ▶
+        <div style="display:flex; flex-direction:column; align-items:stretch; gap:0;">
+          ${(hlsStatus === 'ready' && hlsRenditions && hlsRenditions.length > 0) ? `
+            <select class="hls-quality-select" data-safe="${encodeURIComponent(safeName)}" style="
+              background:var(--brand-dark, #1a5a8a); color:white; border:none;
+              font-size:0.7rem; padding:2px 4px; cursor:pointer; text-align:center;
+              border-bottom:1px solid rgba(255,255,255,0.2);
+            ">
+              ${hlsRenditions.map(r => `<option value="${r}">${r}</option>`).join('')}
+            </select>
+          ` : ''}
+          <div class="playBtn" 
+               data-safe="${encodeURIComponent(safeName)}" 
+               data-original="${encodeURIComponent(originalName)}"
+               data-stream-protocol="${streamProtocol || ''}"
+               style="
+                 background:var(--brand);
+                 color:white;
+                 display:flex;
+                 align-items:center;
+                 justify-content:center;
+                 font-size:var(--speaker-play-icon-size, 2rem);
+                 min-width:var(--speaker-play-min-width,72px);
+                 cursor:pointer;
+                 transition:background 0.2s;
+                 user-select:none;
+                 flex:1;
+               "
+               onmouseover="this.style.background='var(--brand-hover)'"
+               onmouseout="this.style.background='var(--brand)'"
+               role="button"
+               tabindex="0"
+                aria-label="Воспроизвести ${displayName}">
+            ▶
+          </div>
         </div>
       </li>
     `;
@@ -2804,6 +2819,8 @@ async function loadFiles(stabilizeAttempt = 0) {
       const streamProtocol = btn.getAttribute('data-stream-protocol') || containerItem?.getAttribute('data-stream-protocol') || '';
       const originalName = decodeURIComponent(btn.getAttribute('data-original'));
       const sourceDeviceId = decodeURIComponent(btn.getAttribute('data-source-device') || '') || null;
+      const qualitySelect = containerItem?.querySelector('.hls-quality-select');
+      const selectedQuality = qualitySelect ? qualitySelect.value : null;
 
       // Если текущее устройство офлайн, но источник онлайн — используем источник
       const targetDeviceId = (currentDevice && isDeviceReady(currentDevice))
@@ -2851,7 +2868,7 @@ async function loadFiles(stabilizeAttempt = 0) {
           filePreview.innerHTML = `<iframe src="${audioPreviewUrl}" style="width:100%;height:100%;border:0" allow="autoplay; fullscreen"></iframe>`;
         }
         updatePreviewControlButtons();
-        socket.emit('control/play', { device_id: targetDeviceId, file: safeName, type: 'audio' });
+        socket.emit('control/play', { device_id: targetDeviceId, file: safeName, type: 'audio', hlsQuality: selectedQuality || undefined });
         return;
       }
 
@@ -2943,7 +2960,7 @@ async function loadFiles(stabilizeAttempt = 0) {
         }
         updatePreviewControlButtons();
       }, 300);
-      socket.emit('control/play', { device_id: targetDeviceId, file: safeName });
+      socket.emit('control/play', { device_id: targetDeviceId, file: safeName, hlsQuality: selectedQuality || undefined });
     };
   });
 
@@ -3051,7 +3068,7 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
     const end = Math.min(start + pageSize, allFiles.length);
     const files = allFiles.slice(start, end);
 
-    fileList.innerHTML = files.map(({ safeName, originalName, resolution, durationSeconds, folderImageCount, contentType, streamProtocol, sourceDeviceName, sourceDeviceId, uploadedBy }) => {
+    fileList.innerHTML = files.map(({ safeName, originalName, resolution, durationSeconds, folderImageCount, contentType, streamProtocol, sourceDeviceName, sourceDeviceId, uploadedBy, hlsStatus, hlsRenditions }) => {
       // КРИТИЧНО: Используем resolveFileDisplayData для получения правильного оригинального имени
       // Это гарантирует, что будет использовано оригинальное имя из всех доступных источников
       const { displayName: resolvedDisplayName } = resolveFileDisplayData(sourceDeviceId, safeName);
@@ -3194,30 +3211,42 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
             </div>
           </div>
           
-          <div class="playBtn" 
-               data-safe="${encodeURIComponent(safeName)}" 
-               data-original="${encodeURIComponent(originalName)}"
-               data-stream-protocol="${streamProtocol || ''}"
-               data-source-device="${encodeURIComponent(sourceDeviceId || '')}"
-               style="
-                 display:flex; 
-                 align-items:center; 
-                 justify-content:center; 
-                 font-size:var(--speaker-play-icon-size, 2rem);
-                 background:var(--brand);
-                 color:white;
-                 transition:background 0.2s;
-                 min-height:100%;
-                 min-width:var(--speaker-play-min-width,72px);
-                 cursor:pointer;
-                 user-select:none;
-               "
-               onmouseover="this.style.background='var(--brand-hover)'"
-               onmouseout="this.style.background='var(--brand)'"
-               role="button"
-               tabindex="0"
-               aria-label="Воспроизвести ${displayName}">
-            ▶
+          <div style="display:flex; flex-direction:column; align-items:stretch; gap:0;">
+            ${(hlsStatus === 'ready' && hlsRenditions && hlsRenditions.length > 0) ? `
+              <select class="hls-quality-select" data-safe="${encodeURIComponent(safeName)}" style="
+                background:var(--brand-dark, #1a5a8a); color:white; border:none;
+                font-size:0.7rem; padding:2px 4px; cursor:pointer; text-align:center;
+                border-bottom:1px solid rgba(255,255,255,0.2);
+              ">
+                ${hlsRenditions.map(r => `<option value="${r}">${r}</option>`).join('')}
+              </select>
+            ` : ''}
+            <div class="playBtn" 
+                 data-safe="${encodeURIComponent(safeName)}" 
+                 data-original="${encodeURIComponent(originalName)}"
+                 data-stream-protocol="${streamProtocol || ''}"
+                 data-source-device="${encodeURIComponent(sourceDeviceId || '')}"
+                 style="
+                   display:flex; 
+                   align-items:center; 
+                   justify-content:center; 
+                   font-size:var(--speaker-play-icon-size, 2rem);
+                   background:var(--brand);
+                   color:white;
+                   transition:background 0.2s;
+                   flex:1;
+                   min-height:100%;
+                   min-width:var(--speaker-play-min-width,72px);
+                   cursor:pointer;
+                   user-select:none;
+                 "
+                 onmouseover="this.style.background='var(--brand-hover)'"
+                 onmouseout="this.style.background='var(--brand)'"
+                 role="button"
+                 tabindex="0"
+                 aria-label="Воспроизвести ${displayName}">
+              ▶
+            </div>
           </div>
         </li>
       `;
@@ -3329,6 +3358,8 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
 }
 
 async function handlePlayAggregated({ sourceDeviceId, safeName, contentType, streamProtocol, rowEl }) {
+  const qualitySelect = rowEl?.querySelector('.hls-quality-select');
+  const selectedQuality = qualitySelect ? qualitySelect.value : null;
   if (!sourceDeviceId) {
     await reportSpeakerNotification({
       type: 'speaker_play_missing_source',
@@ -3447,7 +3478,8 @@ async function handlePlayAggregated({ sourceDeviceId, safeName, contentType, str
     file: safeName,
     type: normalizedType || 'video',
     streamProtocol: undefined,
-    originDeviceId: sourceDeviceId
+    originDeviceId: sourceDeviceId,
+    hlsQuality: selectedQuality || undefined
   });
 }
 

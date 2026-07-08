@@ -1715,7 +1715,10 @@ export function createFilesRouter(deps) {
           video_height,
           pages_count,
           is_placeholder,
-          uploaded_by
+          uploaded_by,
+          hls_status,
+          hls_manifest_path,
+          hls_renditions
         FROM files_metadata
         ${whereSql}
         ORDER BY file_mtime DESC, created_at DESC
@@ -1751,7 +1754,10 @@ export function createFilesRouter(deps) {
             width: r.video_width,
             height: r.video_height
           } : null,
-          uploadedBy: r.uploaded_by || null
+          uploadedBy: r.uploaded_by || null,
+          hlsStatus: r.hls_status || 'none',
+          hlsManifestPath: r.hls_manifest_path || null,
+          hlsRenditions: r.hls_renditions ? (typeof r.hls_renditions === 'string' ? JSON.parse(r.hls_renditions) : r.hls_renditions) : null
         };
       });
 
@@ -5341,7 +5347,10 @@ export function createFilesRouter(deps) {
         streamProtocol,
         hasTrailer,
         trailerUrl,
-        uploadedBy: metadata?.uploaded_by || null
+        uploadedBy: metadata?.uploaded_by || null,
+        hlsStatus: metadata?.hls_status || 'none',
+        hlsManifestPath: metadata?.hls_manifest_path || null,
+        hlsRenditions: metadata?.hls_renditions ? (typeof metadata.hls_renditions === 'string' ? JSON.parse(metadata.hls_renditions) : metadata.hls_renditions) : null
       });
     }
     

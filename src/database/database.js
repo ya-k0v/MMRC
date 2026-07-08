@@ -63,6 +63,7 @@ export async function initDatabase(initialDbPath) {
     await ensureHeroAdminMigration();
     await ensureManagerRoleMigration();
     await ensureFileUploadedByColumn();
+    await ensureFilesMetadataHlsVodColumns();
 
     logger.info(`[DB] Database initialized (${driverType})`);
     return driver;
@@ -234,6 +235,29 @@ async function ensureFilesMetadataStreamingColumns() {
     await addIfMissing('pages_count', 'pages_count INTEGER');
   } catch (err) {
     logger.warn('[DB] Failed to ensure streaming columns (non-critical)', { error: err.message });
+  }
+}
+
+async function ensureFilesMetadataHlsVodColumns() {
+  try {
+    const hasTable = await driver.tableExists('files_metadata');
+    if (!hasTable) return;
+
+    const cols = await driver.columns('files_metadata');
+    const names = new Set(cols.map(c => c.name));
+
+    const addIfMissing = async (col, def) => {
+      if (!names.has(col)) {
+        await driver.exec(`ALTER TABLE files_metadata ADD COLUMN ${def}`);
+        logger.info(`[DB] Added column files_metadata.${col}`);
+      }
+    };
+
+    await addIfMissing('hls_status', "hls_status TEXT DEFAULT 'none'");
+    await addIfMissing('hls_manifest_path', 'hls_manifest_path TEXT');
+    await addIfMissing('hls_renditions', 'hls_renditions TEXT');
+  } catch (err) {
+    logger.warn('[DB] Failed to ensure HLS VOD columns (non-critical)', { error: err.message });
   }
 }
 
