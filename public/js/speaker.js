@@ -2569,7 +2569,23 @@ async function loadFiles(stabilizeAttempt = 0) {
               white-space:nowrap;
               line-height:1.1;
             ">${typeBadgeLabel}</span>
-            ${resolutionLabel ? `
+            ${resolutionLabel ? (hlsStatus === 'ready' && hlsRenditions && hlsRenditions.length > 0 ? `
+              <select class="hls-quality-select" data-safe="${encodeURIComponent(safeName)}" style="
+                display:inline-block;
+                padding:0 5px;
+                border:1px solid var(--brand);
+                border-radius:3px;
+                font-size:var(--speaker-badge-font-size, 0.75rem);
+                font-weight:500;
+                color:var(--brand);
+                background:var(--brand-light);
+                white-space:nowrap;
+                line-height:1.1;
+                cursor:pointer;
+              ">
+                ${hlsRenditions.map(r => `<option value="${r}">${r === 'source' ? resolutionLabel : r}</option>`).join('')}
+              </select>
+            ` : `
               <span class="resolution-badge" style="
                 display:inline-block;
                 padding:0 5px;
@@ -2582,7 +2598,7 @@ async function loadFiles(stabilizeAttempt = 0) {
                 white-space:nowrap;
                 line-height:1.1;
               ">${resolutionLabel}</span>
-            ` : ''}
+            `) : ''}
             ${canDelete ? `
               <span class="deleteBtn" 
                     data-safe="${encodeURIComponent(safeName)}"
@@ -2607,15 +2623,6 @@ async function loadFiles(stabilizeAttempt = 0) {
         
         <!-- Правая часть: Play зона (25%) - часть карточки -->
         <div style="display:flex; flex-direction:column; align-items:stretch; gap:0;">
-          ${(hlsStatus === 'ready' && hlsRenditions && hlsRenditions.length > 0) ? `
-            <select class="hls-quality-select" data-safe="${encodeURIComponent(safeName)}" style="
-              background:var(--brand-dark, #1a5a8a); color:white; border:none;
-              font-size:0.7rem; padding:2px 4px; cursor:pointer; text-align:center;
-              border-bottom:1px solid rgba(255,255,255,0.2);
-            ">
-              ${hlsRenditions.map(r => `<option value="${r}">${r}</option>`).join('')}
-            </select>
-          ` : ''}
           <div class="playBtn" 
                data-safe="${encodeURIComponent(safeName)}" 
                data-original="${encodeURIComponent(originalName)}"
@@ -3162,7 +3169,23 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
                 white-space:nowrap;
                 line-height:1.1;
               ">${typeBadgeLabel}</span>
-              ${resolutionLabel ? `
+              ${resolutionLabel ? (hlsStatus === 'ready' && hlsRenditions && hlsRenditions.length > 0 ? `
+                <select class="hls-quality-select" data-safe="${encodeURIComponent(safeName)}" style="
+                  display:inline-block;
+                  padding:0 5px;
+                  border:1px solid var(--brand);
+                  border-radius:3px;
+                  font-size:var(--speaker-badge-font-size, 0.75rem);
+                  font-weight:500;
+                  color:var(--brand);
+                  background:var(--brand-light);
+                  white-space:nowrap;
+                  line-height:1.1;
+                  cursor:pointer;
+                ">
+                  ${hlsRenditions.map(r => `<option value="${r}">${r === 'source' ? resolutionLabel : r}</option>`).join('')}
+                </select>
+              ` : `
                 <span class="resolution-badge" style="
                   display:inline-block;
                   padding:0 5px;
@@ -3175,7 +3198,7 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
                   white-space:nowrap;
                   line-height:1.1;
                 ">${resolutionLabel}</span>
-              ` : ''}
+              `) : ''}
               <span class="device-badge" style="
                 display:inline-block;
                 padding:0 5px;
@@ -3211,42 +3234,30 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
             </div>
           </div>
           
-          <div style="display:flex; flex-direction:column; align-items:stretch; gap:0;">
-            ${(hlsStatus === 'ready' && hlsRenditions && hlsRenditions.length > 0) ? `
-              <select class="hls-quality-select" data-safe="${encodeURIComponent(safeName)}" style="
-                background:var(--brand-dark, #1a5a8a); color:white; border:none;
-                font-size:0.7rem; padding:2px 4px; cursor:pointer; text-align:center;
-                border-bottom:1px solid rgba(255,255,255,0.2);
-              ">
-                ${hlsRenditions.map(r => `<option value="${r}">${r}</option>`).join('')}
-              </select>
-            ` : ''}
-            <div class="playBtn" 
-                 data-safe="${encodeURIComponent(safeName)}" 
-                 data-original="${encodeURIComponent(originalName)}"
-                 data-stream-protocol="${streamProtocol || ''}"
-                 data-source-device="${encodeURIComponent(sourceDeviceId || '')}"
-                 style="
-                   display:flex; 
-                   align-items:center; 
-                   justify-content:center; 
-                   font-size:var(--speaker-play-icon-size, 2rem);
-                   background:var(--brand);
-                   color:white;
-                   transition:background 0.2s;
-                   flex:1;
-                   min-height:100%;
-                   min-width:var(--speaker-play-min-width,72px);
-                   cursor:pointer;
-                   user-select:none;
-                 "
-                 onmouseover="this.style.background='var(--brand-hover)'"
-                 onmouseout="this.style.background='var(--brand)'"
-                 role="button"
-                 tabindex="0"
-                 aria-label="Воспроизвести ${displayName}">
-              ▶
-            </div>
+          <div class="playBtn" 
+               data-safe="${encodeURIComponent(safeName)}" 
+               data-original="${encodeURIComponent(originalName)}"
+               data-stream-protocol="${streamProtocol || ''}"
+               data-source-device="${encodeURIComponent(sourceDeviceId || '')}"
+               style="
+                 display:flex; 
+                 align-items:center; 
+                 justify-content:center; 
+                 font-size:var(--speaker-play-icon-size, 2rem);
+                 background:var(--brand);
+                 color:white;
+                 transition:background 0.2s;
+                 min-height:100%;
+                 min-width:var(--speaker-play-min-width,72px);
+                 cursor:pointer;
+                 user-select:none;
+               "
+               onmouseover="this.style.background='var(--brand-hover)'"
+               onmouseout="this.style.background='var(--brand)'"
+               role="button"
+               tabindex="0"
+               aria-label="Воспроизвести ${displayName}">
+            ▶
           </div>
         </li>
       `;
