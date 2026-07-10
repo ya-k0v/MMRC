@@ -2722,3 +2722,48 @@ body.admin-page.has-sidebar.sidebar-collapsed .admin-main {
   justify-content: center;
   box-shadow: var(--shadow-sm);
 }
+
+/* Admin sections for sidebar navigation */
+.admin-section {
+  grid-column: 1 / -1;
+  min-height: 0;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.admin-section-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Form fields within admin sections */
+.admin-section .field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.admin-section .field-label {
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.admin-section .input {
+  padding: var(--space-sm) var(--space-md);
+  border: var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text);
+  font-size: var(--font-size-base);
+}
+
+.admin-section .input:focus {
+  outline: none;
+  border-color: var(--brand);
+}

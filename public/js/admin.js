@@ -221,9 +221,17 @@ setupSocketListeners(socket, {
 function handleSidebarNavigation(section, action) {
   const grid = document.getElementById('grid');
   
-  // Hide all sections first
-  const sections = grid.querySelectorAll('.admin-section');
-  sections.forEach(s => s.style.display = 'none');
+  // Hide all main panes
+  const devicesPane = document.getElementById('devicesPane');
+  const detailPane = document.getElementById('detailPane');
+  const filesPane = document.getElementById('filesPane');
+  
+  if (devicesPane) devicesPane.style.display = 'none';
+  if (detailPane) detailPane.style.display = 'none';
+  if (filesPane) filesPane.style.display = 'none';
+  
+  // Remove existing admin sections
+  grid.querySelectorAll('.admin-section').forEach(el => el.remove());
   
   // Show or create the requested section
   let sectionEl = grid.querySelector(`[data-admin-section="${section}"]`);
@@ -231,19 +239,28 @@ function handleSidebarNavigation(section, action) {
   switch (section) {
     case 'devices':
       // Show the main devices grid
-      if (sectionEl) sectionEl.style.display = '';
+      if (devicesPane) devicesPane.style.display = '';
+      if (detailPane) detailPane.style.display = '';
+      if (filesPane) filesPane.style.display = '';
       break;
     case 'settings':
-      showSettingsModal();
+      sectionEl = createSettingsSection();
+      grid.appendChild(sectionEl);
       break;
     case 'users':
-      showUsersModal(adminFetch);
+      sectionEl = createUsersSection();
+      grid.appendChild(sectionEl);
+      loadUsersList();
       break;
     case 'apk':
-      showApkSection();
+      sectionEl = createApkSection();
+      grid.appendChild(sectionEl);
+      loadApkVersion();
       break;
     case 'logs':
-      showLogsSection();
+      sectionEl = createLogsSection();
+      grid.appendChild(sectionEl);
+      loadLogs();
       break;
     case 'restart':
       if (confirm('Перезапустить сервис сейчас?')) {
@@ -255,14 +272,289 @@ function handleSidebarNavigation(section, action) {
   }
 }
 
-function showApkSection() {
-  // Show APK install modal for now (will be converted to inline section later)
-  showSettingsModal();
+function createSectionContainer(title, icon) {
+  const container = document.createElement('div');
+  container.className = 'admin-section card';
+  container.dataset.adminSection = 'settings';
+  container.style.cssText = 'display:flex; flex-direction:column; height:100%; padding:var(--space-lg); overflow-y:auto;';
+  
+  container.innerHTML = `
+    <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-lg);">
+      ${icon}
+      <h2 style="margin:0; font-size:var(--font-size-xl);">${title}</h2>
+    </div>
+    <div class="admin-section-content"></div>
+  `;
+  
+  return container;
 }
 
-function showLogsSection() {
-  // Show logs modal for now (will be converted to inline section later)
-  showSettingsModal();
+function createSettingsSection() {
+  const container = createSectionContainer('Настройки сервера', getSettingsIcon(24));
+  const content = container.querySelector('.admin-section-content');
+  
+  content.innerHTML = `
+    <div class="field">
+      <label class="field-label">Название</label>
+      <input id="settingsSiteName" class="input" placeholder="MMRC" />
+    </div>
+    <div class="field" style="margin-top:var(--space-md);">
+      <label class="field-label">Описание</label>
+      <input id="settingsSiteDescription" class="input" placeholder="Video Wall Control System" />
+    </div>
+    <div class="field" style="margin-top:var(--space-md);">
+      <label class="field-label">Версия сервера</label>
+      <div id="settingsServerVersion" class="meta" style="padding:var(--space-sm); background:var(--bg-secondary); border-radius:var(--radius-md);"></div>
+    </div>
+    <div style="margin-top:var(--space-xl); display:flex; gap:var(--space-sm);">
+      <button id="settingsSaveBtn" class="btn btn-primary">Сохранить</button>
+    </div>
+  `;
+  
+  // Load current settings
+  adminFetch('/api/admin/settings').then(r => r.json()).then(data => {
+    document.getElementById('settingsSiteName').value = data.siteName || 'MMRC';
+    document.getElementById('settingsSiteDescription').value = data.siteDescription || '';
+    document.getElementById('settingsServerVersion').textContent = data.version || 'N/A';
+  }).catch(() => {});
+  
+  // Save handler
+  container.querySelector('#settingsSaveBtn').onclick = async () => {
+    const siteName = document.getElementById('settingsSiteName').value.trim();
+    const siteDescription = document.getElementById('settingsSiteDescription').value.trim();
+    
+    try {
+      await adminFetch('/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ siteName, siteDescription })
+      });
+      alert('Настройки сохранены');
+    } catch (err) {
+      alert('Ошибка сохранения');
+    }
+  };
+  
+  return container;
+}
+
+function createUsersSection() {
+  const container = createSectionContainer('Управление пользователями', `
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+      <circle cx="9" cy="7" r="4"></circle>
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+      <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+    </svg>
+  `);
+  const content = container.querySelector('.admin-section-content');
+  
+  content.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md);">
+      <button id="addUserBtn" class="btn btn-primary btn-sm">Добавить пользователя</button>
+    </div>
+    <div id="usersList" class="list" style="display:flex; flex-direction:column; gap:var(--space-sm);"></div>
+  `;
+  
+  container.querySelector('#addUserBtn').onclick = () => showAddUserDialog();
+  
+  return container;
+}
+
+function createApkSection() {
+  const container = createSectionContainer('Установка Android Player', `
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
+      <line x1="12" y1="18" x2="12.01" y2="18"></line>
+    </svg>
+  `);
+  const content = container.querySelector('.admin-section-content');
+  
+  content.innerHTML = `
+    <div id="apkVersionInfo" class="meta" style="margin-bottom:var(--space-md); padding:var(--space-sm); background:var(--bg-secondary); border-radius:var(--radius-md);"></div>
+    <div class="field">
+      <label class="field-label">Device ID</label>
+      <input id="apkDeviceId" class="input" placeholder="android-tv-01" />
+    </div>
+    <div class="field" style="margin-top:var(--space-md);">
+      <label class="field-label">IP адрес устройства</label>
+      <input id="apkDeviceIp" class="input" placeholder="192.168.1.100" />
+    </div>
+    <div style="margin-top:var(--space-xl); display:flex; gap:var(--space-sm);">
+      <button id="apkInstallBtn" class="btn btn-primary">Установить на устройство</button>
+      <button id="apkRefreshBtn" class="btn">Обновить информацию</button>
+    </div>
+    <div id="apkStatus" class="meta" style="margin-top:var(--space-md);"></div>
+  `;
+  
+  container.querySelector('#apkRefreshBtn').onclick = () => loadApkVersion();
+  container.querySelector('#apkInstallBtn').onclick = () => installApkToDevice();
+  
+  return container;
+}
+
+function createLogsSection() {
+  const container = createSectionContainer('Логи системы', `
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+      <polyline points="14 2 14 8 20 8"></polyline>
+      <line x1="16" y1="13" x2="8" y2="13"></line>
+      <line x1="16" y1="17" x2="8" y2="17"></line>
+      <polyline points="10 9 9 9 8 9"></polyline>
+    </svg>
+  `);
+  const content = container.querySelector('.admin-section-content');
+  
+  content.innerHTML = `
+    <div id="logsContainer" style="font-family:monospace; font-size:12px; background:var(--bg-secondary); padding:var(--space-md); border-radius:var(--radius-md); max-height:500px; overflow-y:auto; white-space:pre-wrap;"></div>
+    <div style="margin-top:var(--space-md); display:flex; gap:var(--space-sm);">
+      <button id="logsRefreshBtn" class="btn">Обновить</button>
+      <button id="logsClearBtn" class="btn">Очистить</button>
+    </div>
+  `;
+  
+  container.querySelector('#logsRefreshBtn').onclick = () => loadLogs();
+  container.querySelector('#logsClearBtn').onclick = () => {
+    document.getElementById('logsContainer').textContent = '';
+  };
+  
+  return container;
+}
+
+async function loadUsersList() {
+  const list = document.getElementById('usersList');
+  if (!list) return;
+  
+  list.innerHTML = '<div class="meta">Загрузка...</div>';
+  
+  try {
+    const resp = await adminFetch('/api/admin/users');
+    const data = await resp.json();
+    const users = data.users || [];
+    
+    if (users.length === 0) {
+      list.innerHTML = '<div class="meta">Нет пользователей</div>';
+      return;
+    }
+    
+    list.innerHTML = users.map(u => `
+      <div class="list-item" style="display:flex; align-items:center; gap:var(--space-md); padding:var(--space-sm) var(--space-md); border:1px solid var(--border); border-radius:var(--radius-md);">
+        <div style="flex:1;">
+          <div style="font-weight:500;">${escapeHtml(u.full_name || u.username)}</div>
+          <div class="meta">${escapeHtml(u.username)} • ${u.role}</div>
+        </div>
+        <button class="btn btn-sm btn-danger" onclick="deleteUser('${escapeHtml(u.id)}')">Удалить</button>
+      </div>
+    `).join('');
+  } catch (err) {
+    list.innerHTML = '<div class="meta" style="color:var(--error);">Ошибка загрузки</div>';
+  }
+}
+
+async function showAddUserDialog() {
+  const username = prompt('Имя пользователя:');
+  if (!username) return;
+  
+  const password = prompt('Пароль:');
+  if (!password) return;
+  
+  const fullName = prompt('Полное имя (опционально):');
+  
+  try {
+    await adminFetch('/api/admin/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, full_name: fullName || username, role: 'user' })
+    });
+    alert('Пользователь создан');
+    loadUsersList();
+  } catch (err) {
+    alert('Ошибка создания пользователя');
+  }
+}
+
+window.deleteUser = async function(userId) {
+  if (!confirm('Удалить пользователя?')) return;
+  
+  try {
+    await adminFetch(`/api/admin/users/${userId}`, { method: 'DELETE' });
+    loadUsersList();
+  } catch (err) {
+    alert('Ошибка удаления');
+  }
+};
+
+async function loadApkVersion() {
+  const info = document.getElementById('apkVersionInfo');
+  if (!info) return;
+  
+  info.innerHTML = '<div class="meta">Загрузка информации о версии...</div>';
+  
+  try {
+    const resp = await adminFetch('/api/admin/apk-version');
+    const data = await resp.json();
+    
+    info.innerHTML = `
+      <div style="display:flex; align-items:center; gap:var(--space-md); flex-wrap:wrap;">
+        <span><strong>Последняя версия:</strong> ${escapeHtml(data.latestVersion || 'N/A')}</span>
+        <span><strong>Размер:</strong> ${data.fileSize ? `${(data.fileSize / 1024 / 1024).toFixed(2)} MB` : 'N/A'}</span>
+        ${data.downloadUrl ? `<a href="${escapeHtml(data.downloadUrl)}" target="_blank" class="meta" style="color:var(--primary);">Скачать APK</a>` : ''}
+      </div>
+    `;
+    
+    // Pre-fill device IP if available
+    if (data.lastDeviceIp) {
+      const ipInput = document.getElementById('apkDeviceIp');
+      if (ipInput) ipInput.value = data.lastDeviceIp;
+    }
+  } catch (err) {
+    info.innerHTML = '<div class="meta" style="color:var(--error);">Ошибка загрузки информации о версии</div>';
+  }
+}
+
+async function installApkToDevice() {
+  const deviceId = document.getElementById('apkDeviceId')?.value?.trim();
+  const deviceIp = document.getElementById('apkDeviceIp')?.value?.trim();
+  const status = document.getElementById('apkStatus');
+  
+  if (!deviceId || !deviceIp) {
+    alert('Укажите Device ID и IP адрес');
+    return;
+  }
+  
+  status.innerHTML = '<div class="meta">Отправка команды установки...</div>';
+  
+  try {
+    const resp = await adminFetch('/api/admin/apk-install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId, deviceIp })
+    });
+    const data = await resp.json();
+    
+    if (data.success) {
+      status.innerHTML = '<div class="meta" style="color:var(--success);">✓ Команда установки отправлена. Устройство установит приложение при следующем запуске.</div>';
+    } else {
+      status.innerHTML = `<div class="meta" style="color:var(--error);">Ошибка: ${escapeHtml(data.error || 'Неизвестная ошибка')}</div>`;
+    }
+  } catch (err) {
+    status.innerHTML = '<div class="meta" style="color:var(--error);">Ошибка отправки команды</div>';
+  }
+}
+
+async function loadLogs() {
+  const container = document.getElementById('logsContainer');
+  if (!container) return;
+  
+  container.textContent = 'Загрузка логов...';
+  
+  try {
+    const resp = await adminFetch('/api/admin/logs');
+    const data = await resp.json();
+    container.textContent = data.logs || 'Логи пусты';
+  } catch (err) {
+    container.textContent = 'Ошибка загрузки логов';
+  }
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -314,55 +606,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     userFullName.textContent = user.username; // Fallback
   }
   
-  
-  // Обработчик кнопки Спикер (в toolbar)
-  const speakerBtn = document.getElementById('speakerBtn');
-  if (speakerBtn) {
-    speakerBtn.onclick = () => {
-      window.open('/speaker.html', '_blank');
-    };
-  }
-
-  // Обработчик кнопки Пользователи (только для admin)
+  // Кнопки в toolbar скрыты - навигация через сайдбар
   const usersBtn = document.getElementById('usersBtn');
-  if (usersBtn && user.role === 'admin') {
-    usersBtn.onclick = () => {
-      showUsersModal(adminFetch);
-    };
-  } else if (usersBtn) {
-    usersBtn.style.display = 'none';
-  }
+  if (usersBtn) usersBtn.style.display = 'none';
   
-  // Обработчик кнопки Настройки (только для admin)
   const settingsBtn = document.getElementById('settingsBtn');
+  if (settingsBtn) settingsBtn.style.display = 'none';
+  
   const heroBtn = document.getElementById('heroBtn');
-  if (heroBtn) {
-    heroBtn.style.display = 'none';
-    if (user.role === 'admin') {
-      // Загружаем статус модулей
-      adminFetch('/api/admin/modules').then(r => r.json()).then(data => {
-        window.__modulesData = data.modules || [];
-        const heroModule = (data.modules || []).find(m => m.id === 'hero');
-        if (heroModule && heroModule.enabled) {
-          heroBtn.style.display = '';
-          heroBtn.onclick = () => {
-            window.open('/hero/admin.html', '_blank');
-          };
-        }
-      }).catch(() => {});
-    }
-  }
-  if (settingsBtn) {
-    // Заменяем эмодзи на SVG иконку
-    settingsBtn.innerHTML = getSettingsIcon(20);
-    if (user.role === 'admin') {
-      settingsBtn.onclick = () => {
-        showSettingsModal();
-      };
-    } else {
-      settingsBtn.style.display = 'none'; // Speaker не может открывать настройки
-    }
-  }
+  if (heroBtn) heroBtn.style.display = 'none';
+  
+  const speakerBtn = document.getElementById('speakerBtn');
+  if (speakerBtn) speakerBtn.style.display = 'none';
   
   // Обработчик выхода (теперь это span)
   const logoutBtn = document.getElementById('logoutBtn');
@@ -381,14 +636,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   clearDetail('Выберите устройство', 'Панель управления и кнопки появятся после выбора устройства из списка слева.');
   clearFilesPane('Выберите устройство слева', 'Список файлов загрузится автоматически после выбора устройства.');
   
-  // Обработчик кнопки Устройства (только для admin)
+  // Кнопка добавления устройства в devicesPane
   const devicesBtn = document.getElementById('devicesBtn');
   if (devicesBtn && user.role === 'admin') {
     devicesBtn.onclick = () => {
       showDevicesModal(adminFetch, loadDevices, renderTVList, openDevice, renderFilesPane);
     };
   } else if (devicesBtn) {
-    devicesBtn.style.display = 'none'; // Speaker не может создавать устройства
+    devicesBtn.style.display = 'none';
   }
   
   await initSelectionFromUrl();
