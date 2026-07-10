@@ -74,10 +74,16 @@ COPY public ./public
 COPY scripts ./scripts
 COPY config /app/config
 
-# Download latest Android player APK from GitHub releases
-ARG APK_VERSION=latest
+# Extract APK version from version.json
+COPY version.json /tmp/version.json
+RUN APK_VER=$(cat /tmp/version.json | grep -o '"android": "[^"]*"' | cut -d'"' -f4) \
+    && echo "APK version: $APK_VER" > /tmp/apk_version \
+    && echo "Downloading APK v$APK_VER"
+
+# Download Android player APK from GitHub releases
 RUN mkdir -p /app/clients/android-mediaplayer \
-    && if [ "$APK_VERSION" = "latest" ]; then \
+    && APK_VERSION=$(cat /tmp/apk_version | awk '{print $NF}') \
+    && if [ "$APK_VERSION" = "latest" ] || [ -z "$APK_VERSION" ]; then \
          APK_URL=$(curl -s https://api.github.com/repos/ya-k0v/MMRC-android-player/releases/latest | grep "browser_download_url.*\.apk" | cut -d '"' -f 4); \
        else \
          APK_URL="https://github.com/ya-k0v/MMRC-android-player/releases/download/v${APK_VERSION}/MMRC-android-player.apk"; \
