@@ -73,7 +73,22 @@ COPY src ./src
 COPY public ./public
 COPY scripts ./scripts
 COPY config /app/config
-COPY clients/android-mediaplayer/app-release.apk /app/clients/android-mediaplayer/app-release.apk
+
+# Download latest Android player APK from GitHub releases
+ARG APK_VERSION=latest
+RUN mkdir -p /app/clients/android-mediaplayer \
+    && if [ "$APK_VERSION" = "latest" ]; then \
+         APK_URL=$(curl -s https://api.github.com/repos/ya-k0v/MMRC-android-player/releases/latest | grep "browser_download_url.*\.apk" | cut -d '"' -f 4); \
+       else \
+         APK_URL="https://github.com/ya-k0v/MMRC-android-player/releases/download/v${APK_VERSION}/MMRC-android-player.apk"; \
+       fi \
+    && if [ -n "$APK_URL" ]; then \
+         echo "Downloading APK from $APK_URL" \
+         && curl -fsSL "$APK_URL" -o /app/clients/android-mediaplayer/app-release.apk; \
+       else \
+         echo "No APK found, creating placeholder" \
+         && touch /app/clients/android-mediaplayer/app-release.apk; \
+       fi
 
 COPY docker-entrypoint.sh /usr/local/bin/
 COPY docker/nginx/nginx.conf /etc/nginx/nginx.conf
