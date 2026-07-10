@@ -1,0 +1,30 @@
+/* Speaker panel styles - separate from admin.css */
+
+/* Speaker sidebar (devices panel) */
+.speaker-layout .sidebar {
+  min-height: auto;
+  max-height: none;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Desktop layout */
+@media (min-width: 1024px) {
+  .speaker-layout .sidebar {
+    min-height: 0;
+  }
+  
+  .speaker-layout .sidebar .list {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+  }
+}
+
+/* Mobile layout */
+@media (max-width: 767px) {
+  .speaker-layout .sidebar {
+    min-height: auto !important;
+    max-height: none !important;
+  }
+}
