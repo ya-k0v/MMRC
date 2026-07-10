@@ -617,7 +617,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (heroBtn) heroBtn.style.display = 'none';
   
   const speakerBtn = document.getElementById('speakerBtn');
-  if (speakerBtn) speakerBtn.style.display = 'none';
+  if (speakerBtn) {
+    speakerBtn.onclick = () => {
+      window.open('/speaker.html', '_blank');
+    };
+  }
   
   // Обработчик выхода (теперь это span)
   const logoutBtn = document.getElementById('logoutBtn');
