@@ -24,7 +24,15 @@
   <script type="module" src="/js/admin.js"></script>
 </head>
 <body class="maintenance-ui admin-page">
-  <header class="toolbar">
+  <!-- Mobile menu button -->
+  <button id="sidebarMenuBtn" class="sidebar-menu-btn" type="button" aria-label="Меню">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
+
+  <!-- Sidebar overlay for mobile -->
+  <div id="sidebarOverlay" class="sidebar-overlay"></div>
+
+  <header class="toolbar" style="display:none;">
     <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
       <button id="themeBtn" class="meta-lg" type="button" style="padding:8px 12px; display:flex; align-items:center; justify-content:center;" aria-label="Переключить тему"></button>
       <strong class="meta">Админ‑панель</strong>

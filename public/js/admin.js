@@ -16,6 +16,7 @@ import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownI
 import { escapeHtml } from './shared/utils.js';
 import { initNotifications } from './admin/notifications.js';
 import { showNotificationsModal } from './admin/notifications-modal.js';
+import { createSidebar } from './admin/sidebar.js';
 
 const socket = io();
 const grid = document.getElementById('grid');
@@ -216,6 +217,54 @@ setupSocketListeners(socket, {
   }
 });
 
+// Sidebar navigation handler
+function handleSidebarNavigation(section, action) {
+  const grid = document.getElementById('grid');
+  
+  // Hide all sections first
+  const sections = grid.querySelectorAll('.admin-section');
+  sections.forEach(s => s.style.display = 'none');
+  
+  // Show or create the requested section
+  let sectionEl = grid.querySelector(`[data-admin-section="${section}"]`);
+  
+  switch (section) {
+    case 'devices':
+      // Show the main devices grid
+      if (sectionEl) sectionEl.style.display = '';
+      break;
+    case 'settings':
+      showSettingsModal();
+      break;
+    case 'users':
+      showUsersModal(adminFetch);
+      break;
+    case 'apk':
+      showApkSection();
+      break;
+    case 'logs':
+      showLogsSection();
+      break;
+    case 'restart':
+      if (confirm('Перезапустить сервис сейчас?')) {
+        adminFetch('/api/admin/restart-service', { method: 'POST' })
+          .then(() => alert('Перезапуск запущен'))
+          .catch(() => alert('Ошибка перезапуска'));
+      }
+      break;
+  }
+}
+
+function showApkSection() {
+  // Show APK install modal for now (will be converted to inline section later)
+  showSettingsModal();
+}
+
+function showLogsSection() {
+  // Show logs modal for now (will be converted to inline section later)
+  showSettingsModal();
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   initThemeToggle(document.getElementById('themeBtn'), 'vc_theme_admin');
   
@@ -228,6 +277,33 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   } catch (err) {
     return;
+  }
+
+  // Initialize sidebar
+  let sidebar = null;
+  if (user.role === 'admin') {
+    sidebar = createSidebar({
+      adminFetch,
+      user,
+      onNavigate: handleSidebarNavigation
+    });
+    sidebar.init();
+    document.body.classList.add('has-sidebar');
+    if (sidebar.isCollapsed()) {
+      document.body.classList.add('sidebar-collapsed');
+    }
+
+    // Mobile menu button
+    const menuBtn = document.getElementById('sidebarMenuBtn');
+    if (menuBtn) {
+      menuBtn.onclick = () => sidebar.toggleMobile();
+    }
+
+    // Overlay click closes mobile sidebar
+    const overlay = document.getElementById('sidebarOverlay');
+    if (overlay) {
+      overlay.onclick = () => sidebar.closeMobile();
+    }
   }
 
   // Показываем ФИО пользователя

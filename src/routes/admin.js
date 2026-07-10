@@ -753,6 +753,13 @@ export function createAdminRouter(deps = {}) {
   // GET /api/admin/apk-version — latest version from GitHub releases
   router.get('/apk-version', requireAdmin, async (req, res) => {
     try {
+      // Читаем установленную версию
+      const installedVersionFile = path.resolve(PROJECT_ROOT, 'clients', 'android-mediaplayer', 'version.txt');
+      let installedVersion = '';
+      try {
+        installedVersion = fs.readFileSync(installedVersionFile, 'utf-8').trim();
+      } catch {}
+
       const response = await fetch('https://api.github.com/repos/ya-k0v/MMRC-android-player/releases/latest', {
         headers: { 'Accept': 'application/vnd.github.v3+json' }
       });
@@ -774,6 +781,8 @@ export function createAdminRouter(deps = {}) {
         tag,
         downloadUrl,
         publishedAt,
+        installedVersion,
+        updateAvailable: installedVersion !== version,
         releaseNotes: release.body || ''
       });
     } catch (error) {
@@ -814,6 +823,10 @@ export function createAdminRouter(deps = {}) {
 
       const buffer = Buffer.from(await apkResponse.arrayBuffer());
       fs.writeFileSync(apkPath, buffer);
+
+      // Сохраняем установленную версию
+      const versionFile = path.join(apkDir, 'version.txt');
+      fs.writeFileSync(versionFile, release.tag_name || '');
 
       logger.info('[Admin] APK updated', { version: release.tag_name, size: buffer.length });
 

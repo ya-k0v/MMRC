@@ -2178,22 +2178,23 @@ async function loadSettingsContent(adminFetch) {
   // Fetch APK version
   adminFetch('/api/admin/apk-version').then(r => r.json()).then(data => {
     if (data.available) {
-      apkVersionLabel.textContent = `Доступна версия: ${escapeHtml(data.version)}`;
-      apkUpdateBtn.style.display = 'inline-flex';
-      apkUpdateBtn.onclick = async () => {
-        apkUpdateBtn.disabled = true;
-        apkUpdateBtn.textContent = 'Загрузка...';
-        try {
-          const resp = await adminFetch('/api/admin/apk-update', { method: 'POST' });
-          const result = await resp.json();
-          if (result.ok) {
-            apkVersionLabel.textContent = `APK обновлён до ${escapeHtml(result.version)}`;
-            apkUpdateBtn.style.display = 'none';
-            apkVersionLabel.style.color = 'var(--success, #4caf50)';
-          } else {
-            apkVersionLabel.textContent = `Ошибка: ${result.error || 'не удалось скачать'}`;
-            apkVersionLabel.style.color = 'var(--danger)';
-          }
+      if (data.updateAvailable) {
+        apkVersionLabel.textContent = `Доступна версия: ${escapeHtml(data.version)} (установлена: ${escapeHtml(data.installedVersion || '?')})`;
+        apkUpdateBtn.style.display = 'inline-flex';
+        apkUpdateBtn.onclick = async () => {
+          apkUpdateBtn.disabled = true;
+          apkUpdateBtn.textContent = 'Загрузка...';
+          try {
+            const resp = await adminFetch('/api/admin/apk-update', { method: 'POST' });
+            const result = await resp.json();
+            if (result.ok) {
+              apkVersionLabel.textContent = `APK обновлён до ${escapeHtml(result.version)}`;
+              apkUpdateBtn.style.display = 'none';
+              apkVersionLabel.style.color = 'var(--success, #4caf50)';
+            } else {
+              apkVersionLabel.textContent = `Ошибка: ${result.error || 'не удалось скачать'}`;
+              apkVersionLabel.style.color = 'var(--danger)';
+            }
         } catch {
           apkVersionLabel.textContent = 'Ошибка соединения';
           apkVersionLabel.style.color = 'var(--danger)';
@@ -2202,8 +2203,12 @@ async function loadSettingsContent(adminFetch) {
         apkUpdateBtn.textContent = 'Скачать обновление';
       };
     } else {
-      apkVersionLabel.textContent = `Версия APK: неизвестна (${data.error || ''})`;
+      apkVersionLabel.textContent = `Установлена версия: ${escapeHtml(data.version || '?')}`;
+      apkVersionLabel.style.color = 'var(--success, #4caf50)';
     }
+  } else {
+    apkVersionLabel.textContent = `Версия APK: неизвестна (${data.error || ''})`;
+  }
   }).catch(() => {
     apkVersionLabel.textContent = 'Не удалось загрузить версию APK';
   });
