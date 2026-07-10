@@ -184,8 +184,8 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
       ], { stdio: ['pipe', 'ignore', 'pipe'] });
       logger.info('[APK] Config written via su');
     } catch (suErr) {
-      logger.error('[APK] su fallback also failed', { error: suErr.message });
-      throw suErr;
+      logger.warn('[APK] su fallback also failed, skipping settings copy', { error: suErr.message });
+      logger.info('[APK] App will need manual configuration or will read settings from broadcast');
     }
   }
 
