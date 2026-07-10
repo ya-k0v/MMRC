@@ -2,6 +2,9 @@
 node_modules/
 dev/
 
+# Clients (moved to separate repos)
+clients/
+
 # Development / planning (not used in production)
 PLAN.md
 docker-build.sh
