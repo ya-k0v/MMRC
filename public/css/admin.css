@@ -1,7 +1,8 @@
 /* Admin panel styles - separate from main app.css */
+/* IMPORTANT: Scope all sidebar styles to body.admin-page to avoid conflicts with speaker.html */
 
-/* Sidebar styles */
-.sidebar {
+/* Sidebar styles - only on admin page */
+body.admin-page .sidebar {
   position: fixed;
   left: 0;
   top: 0;
@@ -16,11 +17,11 @@
   overflow: hidden;
 }
 
-.sidebar.collapsed {
+body.admin-page .sidebar.collapsed {
   width: 60px;
 }
 
-.sidebar-header {
+body.admin-page .sidebar-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -29,14 +30,14 @@
   min-height: 56px;
 }
 
-.sidebar-logo {
+body.admin-page .sidebar-logo {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
   overflow: hidden;
 }
 
-.sidebar-logo-icon {
+body.admin-page .sidebar-logo-icon {
   flex-shrink: 0;
   width: 24px;
   height: 24px;
@@ -45,7 +46,7 @@
   justify-content: center;
 }
 
-.sidebar-logo-text {
+body.admin-page .sidebar-logo-text {
   font-weight: 600;
   font-size: var(--font-size-base);
   white-space: nowrap;
@@ -53,12 +54,12 @@
   transition: opacity 0.2s;
 }
 
-.sidebar.collapsed .sidebar-logo-text {
+body.admin-page .sidebar.collapsed .sidebar-logo-text {
   opacity: 0;
   width: 0;
 }
 
-.sidebar-toggle {
+body.admin-page .sidebar-toggle {
   flex-shrink: 0;
   width: 24px;
   height: 24px;
@@ -73,23 +74,23 @@
   transition: background 0.2s;
 }
 
-.sidebar-toggle:hover {
+body.admin-page .sidebar-toggle:hover {
   background: var(--bg-2);
 }
 
-.sidebar-nav {
+body.admin-page .sidebar-nav {
   flex: 1;
   overflow-y: auto;
   padding: var(--space-sm);
 }
 
-.sidebar-divider {
+body.admin-page .sidebar-divider {
   height: 1px;
   background: var(--border);
   margin: var(--space-sm) 0;
 }
 
-.sidebar-item {
+body.admin-page .sidebar-item {
   display: flex;
   align-items: center;
   gap: var(--space-md);
@@ -102,16 +103,16 @@
   min-height: 40px;
 }
 
-.sidebar-item:hover {
+body.admin-page .sidebar-item:hover {
   background: var(--bg-2);
 }
 
-.sidebar-item.active {
+body.admin-page .sidebar-item.active {
   background: var(--brand-light);
   color: var(--brand);
 }
 
-.sidebar-item-icon {
+body.admin-page .sidebar-item-icon {
   flex-shrink: 0;
   width: 20px;
   height: 20px;
@@ -120,31 +121,31 @@
   justify-content: center;
 }
 
-.sidebar-item-label {
+body.admin-page .sidebar-item-label {
   overflow: hidden;
   white-space: nowrap;
   font-size: var(--font-size-base);
   transition: opacity 0.2s;
 }
 
-.sidebar.collapsed .sidebar-item-label {
+body.admin-page .sidebar.collapsed .sidebar-item-label {
   opacity: 0;
   width: 0;
 }
 
-.sidebar-footer {
+body.admin-page .sidebar-footer {
   border-top: var(--border);
   padding: var(--space-sm);
 }
 
-.sidebar-user {
+body.admin-page .sidebar-user {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
   padding: var(--space-sm);
 }
 
-.sidebar-user-avatar {
+body.admin-page .sidebar-user-avatar {
   flex-shrink: 0;
   width: 32px;
   height: 32px;
@@ -158,7 +159,7 @@
   font-size: var(--font-size-sm);
 }
 
-.sidebar-user-name {
+body.admin-page .sidebar-user-name {
   overflow: hidden;
   white-space: nowrap;
   font-size: var(--font-size-sm);
@@ -166,36 +167,36 @@
   transition: opacity 0.2s;
 }
 
-.sidebar.collapsed .sidebar-user-name {
+body.admin-page .sidebar.collapsed .sidebar-user-name {
   opacity: 0;
   width: 0;
 }
 
 /* Main content with sidebar */
-body.admin-page.has-sidebar.sidebar-collapsed .admin-main {
-  margin-left: 60px;
-}
-
 body.admin-page.has-sidebar .admin-main {
   margin-left: 240px;
   transition: margin-left 0.3s ease;
 }
 
+body.admin-page.has-sidebar.sidebar-collapsed .admin-main {
+  margin-left: 60px;
+}
+
 /* Mobile styles */
 @media (max-width: 767px) {
-  .sidebar {
+  body.admin-page .sidebar {
     transform: translateX(-100%);
   }
 
-  .sidebar.mobile-open {
+  body.admin-page .sidebar.mobile-open {
     transform: translateX(0);
   }
 
-  .sidebar.mobile-open + .sidebar-overlay {
+  body.admin-page .sidebar.mobile-open + .sidebar-overlay {
     display: block;
   }
 
-  .sidebar-overlay {
+  body.admin-page .sidebar-overlay {
     display: none;
     position: fixed;
     inset: 0;
@@ -211,18 +212,18 @@ body.admin-page.has-sidebar .admin-main {
     margin-left: 0;
   }
 
-  .sidebar-menu-btn {
+  body.admin-page .sidebar-menu-btn {
     display: flex;
   }
 }
 
 @media (min-width: 768px) {
-  .sidebar-menu-btn {
+  body.admin-page .sidebar-menu-btn {
     display: none;
   }
 }
 
-.sidebar-menu-btn {
+body.admin-page .sidebar-menu-btn {
   position: fixed;
   top: 12px;
   left: 12px;
