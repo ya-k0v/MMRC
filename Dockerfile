@@ -83,18 +83,17 @@ RUN APK_VER=$(cat /tmp/version.json | grep -o '"android": "[^"]*"' | cut -d'"' -
 # Download Android player APK from GitHub releases
 RUN mkdir -p /app/clients/android-mediaplayer \
     && APK_VERSION=$(cat /tmp/apk_version | awk '{print $NF}') \
-    && if [ "$APK_VERSION" = "latest" ] || [ -z "$APK_VERSION" ]; then \
-         APK_URL=$(curl -s https://api.github.com/repos/ya-k0v/MMRC-android-player/releases/latest | grep "browser_download_url.*\.apk" | cut -d '"' -f 4); \
-       else \
-         APK_URL="https://github.com/ya-k0v/MMRC-android-player/releases/download/v${APK_VERSION}/MMRC-android-player.apk"; \
-       fi \
-    && if [ -n "$APK_URL" ]; then \
-         echo "Downloading APK from $APK_URL" \
-         && curl -fsSL "$APK_URL" -o /app/clients/android-mediaplayer/app-release.apk; \
-       else \
-         echo "No APK found, creating placeholder" \
-         && touch /app/clients/android-mediaplayer/app-release.apk; \
-       fi
+    && APK_URL="https://github.com/ya-k0v/MMRC-android-player/releases/download/v${APK_VERSION}/MMRC-android-player.apk" \
+    && echo "Trying APK v${APK_VERSION}..." \
+    && (curl -fsSL "$APK_URL" -o /app/clients/android-mediaplayer/app-release.apk 2>/dev/null \
+        || (echo "Version not found, trying latest..." \
+            && LATEST_URL=$(curl -s https://api.github.com/repos/ya-k0v/MMRC-android-player/releases/latest | grep "browser_download_url.*\.apk" | cut -d '"' -f 4) \
+            && if [ -n "$LATEST_URL" ]; then \
+                 curl -fsSL "$LATEST_URL" -o /app/clients/android-mediaplayer/app-release.apk; \
+               else \
+                 echo "No APK available, creating placeholder" \
+                 && touch /app/clients/android-mediaplayer/app-release.apk; \
+               fi))
 
 COPY docker-entrypoint.sh /usr/local/bin/
 COPY docker/nginx/nginx.conf /etc/nginx/nginx.conf
