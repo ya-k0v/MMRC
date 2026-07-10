@@ -750,6 +750,85 @@ export function createAdminRouter(deps = {}) {
     }
   });
 
+  // GET /api/admin/apk-version — latest version from GitHub releases
+  router.get('/apk-version', requireAdmin, async (req, res) => {
+    try {
+      const response = await fetch('https://api.github.com/repos/ya-k0v/MMRC-android-player/releases/latest', {
+        headers: { 'Accept': 'application/vnd.github.v3+json' }
+      });
+
+      if (!response.ok) {
+        return res.json({ available: false, error: `GitHub API ${response.status}` });
+      }
+
+      const release = await response.json();
+      const tag = release.tag_name || '';
+      const version = tag.replace(/^v/, '');
+      const apkAsset = (release.assets || []).find(a => a.name?.endsWith('.apk'));
+      const downloadUrl = apkAsset?.browser_download_url || null;
+      const publishedAt = release.published_at || null;
+
+      res.json({
+        available: true,
+        version,
+        tag,
+        downloadUrl,
+        publishedAt,
+        releaseNotes: release.body || ''
+      });
+    } catch (error) {
+      logger.error('[Admin] Failed to fetch APK version:', error);
+      res.json({ available: false, error: error.message });
+    }
+  });
+
+  // POST /api/admin/apk-update — download new APK version into container
+  router.post('/apk-update', requireAdmin, async (req, res) => {
+    try {
+      const response = await fetch('https://api.github.com/repos/ya-k0v/MMRC-android-player/releases/latest', {
+        headers: { 'Accept': 'application/vnd.github.v3+json' }
+      });
+
+      if (!response.ok) {
+        return res.status(500).json({ ok: false, error: `GitHub API ${response.status}` });
+      }
+
+      const release = await response.json();
+      const apkAsset = (release.assets || []).find(a => a.name?.endsWith('.apk'));
+
+      if (!apkAsset?.browser_download_url) {
+        return res.status(404).json({ ok: false, error: 'APK not found in release' });
+      }
+
+      const apkDir = path.resolve(PROJECT_ROOT, 'clients', 'android-mediaplayer');
+      if (!fs.existsSync(apkDir)) {
+        fs.mkdirSync(apkDir, { recursive: true });
+      }
+
+      const apkPath = path.join(apkDir, 'app-release.apk');
+      const apkResponse = await fetch(apkAsset.browser_download_url);
+
+      if (!apkResponse.ok) {
+        return res.status(500).json({ ok: false, error: `Download failed: ${apkResponse.status}` });
+      }
+
+      const buffer = Buffer.from(await apkResponse.arrayBuffer());
+      fs.writeFileSync(apkPath, buffer);
+
+      logger.info('[Admin] APK updated', { version: release.tag_name, size: buffer.length });
+
+      res.json({
+        ok: true,
+        version: release.tag_name,
+        size: buffer.length,
+        path: apkPath
+      });
+    } catch (error) {
+      logger.error('[Admin] APK update failed:', error);
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
   return router;
 }
 

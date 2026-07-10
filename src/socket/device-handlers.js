@@ -9,6 +9,65 @@ import { saveDevice } from '../database/database.js';
 import { createModuleLogger, logSocket } from '../utils/logger.js';
 const logger = createModuleLogger('socket');
 import { recordSocketEvent } from '../utils/metrics.js';
+import { notificationsManager } from '../utils/notifications.js';
+
+let latestApkVersion = null;
+let lastVersionCheck = 0;
+const VERSION_CHECK_INTERVAL = 5 * 60 * 1000; // 5 минут
+
+async function checkPlayerVersion(deviceId, playerVersion, io) {
+  const now = Date.now();
+  if (now - lastVersionCheck < VERSION_CHECK_INTERVAL && latestApkVersion) {
+    // Используем кэшированную версию
+  } else {
+    try {
+      const response = await fetch('https://api.github.com/repos/ya-k0v/MMRC-android-player/releases/latest', {
+        headers: { 'Accept': 'application/vnd.github.v3+json' }
+      });
+      if (response.ok) {
+        const release = await response.json();
+        latestApkVersion = (release.tag_name || '').replace(/^v/, '');
+        lastVersionCheck = now;
+      }
+    } catch {
+      return; //网络错误，跳过
+    }
+  }
+
+  if (!latestApkVersion || !playerVersion) return;
+  if (playerVersion === latestApkVersion) return;
+
+  const key = `player_update_${deviceId}`;
+  const existing = notificationsManager.getByKey(key);
+  if (existing) return; // уже есть уведомление
+
+  notificationsManager.add(
+    'player_update_available',
+    'info',
+    '📱 Доступно обновление плеера',
+    `Устройство ${deviceId} работает на версии ${playerVersion}. Доступна версия ${latestApkVersion}.`,
+    {
+      deviceId,
+      currentVersion: playerVersion,
+      latestVersion: latestApkVersion
+    },
+    {
+      key,
+      source: 'player-version-check',
+      actions: [
+        {
+          id: `update_${deviceId}`,
+          label: 'Обновить',
+          method: 'POST',
+          url: `/api/admin/install-apk-bound`,
+          body: { deviceIds: [deviceId] },
+          confirm: `Обновить плеер на устройстве ${deviceId}?`,
+          variant: 'primary'
+        }
+      ]
+    }
+  );
+}
 
 /**
  * Настраивает обработчики регистрации и пингов устройств
@@ -130,6 +189,11 @@ export function setupDeviceHandlers(socket, deps) {
       saveDevice(device_id, devices[device_id]).catch(e => {
         logger.warn('[Socket.IO] Не удалось сохранить ipAddress/platform в БД', { deviceId: device_id, error: e.message });
       });
+
+      // Проверка версии плеера (async, не блокирует регистрацию)
+      if (deviceAppVersion && devicePlatform.toLowerCase().includes('android')) {
+        checkPlayerVersion(device_id, deviceAppVersion, io).catch(() => {});
+      }
       
       // КРИТИЧНО: Отправляем обновление устройства если IP изменился или это первое подключение
       const ipChanged = previousIP !== devices[device_id].ipAddress;

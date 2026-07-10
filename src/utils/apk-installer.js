@@ -153,49 +153,22 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
   // Остановка приложения
   await runAdb(['-s', adbTarget, 'shell', 'am', 'force-stop', 'com.videocontrol.mediaplayer'], { stdio: 'ignore' });
 
-  // Формируем XML-файл настроек
-  const urlForXml = normalizeServerUrlForXml(serverUrl);
-  const xmlSettings = `<?xml version="1.0" encoding="utf-8"?>\n<map>\n    <string name="server_url">${escapeXml(urlForXml)}</string>\n    <string name="device_id">${escapeXml(safeDeviceId)}</string>\n    <boolean name="show_status" value="false" />\n</map>`;
+  // Формируем URL для broadcast
+  const urlForBroadcast = normalizeServerUrlForXml(serverUrl);
 
-  // Пишем XML через base64 + временный файл — это надёжнее, чем пайпить stdin через adb shell
-  const b64 = Buffer.from(xmlSettings).toString('base64');
-  const pkg = 'com.videocontrol.mediaplayer';
-  const tmpFile = '/data/local/tmp/VCMediaPlayerSettings.xml';
-  const targetDir = `/data/data/${pkg}/shared_prefs`;
-  const targetFile = `${targetDir}/VCMediaPlayerSettings.xml`;
+  logger.info('[APK] Sending config via broadcast', { serverUrl: urlForBroadcast, deviceId: safeDeviceId });
 
-  logger.info('[APK] Writing config XML to device', { tmpFile, targetFile });
-
-  // Пишем base64 → декодируем → во временный файл, делаем world-readable
-  await runAdb(['-s', adbTarget, 'shell', `echo -n ${b64} | base64 -d > ${tmpFile} && chmod 644 ${tmpFile}`], {
-    stdio: ['pipe', 'ignore', 'pipe']
-  });
-
+  // Отправка настроек через broadcast (ConfigReceiver)
   try {
-    await runAdb(['-s', adbTarget, 'shell', `run-as ${pkg} sh -c 'mkdir -p shared_prefs && cp ${tmpFile} ${targetFile}'`], {
-      stdio: ['pipe', 'ignore', 'pipe']
-    });
-    logger.info('[APK] Config written via run-as');
-  } catch (runAsErr) {
-    logger.warn('[APK] run-as failed, trying su fallback', { error: runAsErr.message });
-    try {
-      await runAdb(['-s', adbTarget, 'shell',
-        `su -c "mkdir -p ${targetDir} && cp ${tmpFile} ${targetFile} && chown $(stat -c %u:%g /data/data/${pkg}) ${targetFile}"`
-      ], { stdio: ['pipe', 'ignore', 'pipe'] });
-      logger.info('[APK] Config written via su');
-    } catch (suErr) {
-      logger.warn('[APK] su fallback also failed, skipping settings copy', { error: suErr.message });
-      logger.info('[APK] App will need manual configuration or will read settings from broadcast');
-    }
-  }
-
-  // Чистим temp-файл (не fatal если не удалится)
-  try {
-    await runAdb(['-s', adbTarget, 'shell', `rm ${tmpFile}`], {
-      stdio: ['pipe', 'ignore', 'pipe']
-    });
-  } catch (rmErr) {
-    logger.warn('[APK] Failed to remove temp file', { error: rmErr.message });
+    await runAdb(['-s', adbTarget, 'shell', 'am', 'broadcast',
+      '-a', 'com.videocontrol.mediaplayer.CONFIGURE',
+      '--es', 'server_url', urlForBroadcast,
+      '--es', 'device_id', safeDeviceId,
+      '--ez', 'show_status', 'false'
+    ], { stdio: ['pipe', 'ignore', 'pipe'] });
+    logger.info('[APK] Config broadcast sent successfully');
+  } catch (broadcastErr) {
+    logger.warn('[APK] Broadcast failed, app may need manual configuration', { error: broadcastErr.message });
   }
 
   // Снова запускаем приложение с новыми настройками

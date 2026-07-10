@@ -180,6 +180,10 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
     metaDiv.appendChild(createMetaChip({ text: d.platform }));
   }
 
+  if (d.appVersion) {
+    metaDiv.appendChild(createMetaChip({ text: `v${escapeHtml(d.appVersion)}` }));
+  }
+
   if (d.ipAddress) {
     metaDiv.appendChild(createMetaChip({ text: `IP: ${d.ipAddress}` }));
   }

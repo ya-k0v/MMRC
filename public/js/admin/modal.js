@@ -2159,6 +2159,55 @@ async function loadSettingsContent(adminFetch) {
   const apkTitle = document.createElement('div');
   apkTitle.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary); margin-bottom:var(--space-xs);';
   apkTitle.textContent = 'Установка Android-приложения (APK)';
+
+  // APK version info
+  const apkVersionInfo = document.createElement('div');
+  apkVersionInfo.style.cssText = 'display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-sm); flex-wrap:wrap;';
+  const apkVersionLabel = document.createElement('span');
+  apkVersionLabel.className = 'meta';
+  apkVersionLabel.style.cssText = 'color:var(--text-secondary);';
+  apkVersionLabel.textContent = 'Загрузка версии...';
+  const apkUpdateBtn = document.createElement('button');
+  apkUpdateBtn.type = 'button';
+  apkUpdateBtn.className = 'secondary';
+  apkUpdateBtn.style.cssText = 'min-width:auto; padding:4px 12px; font-size:0.85rem; display:none;';
+  apkUpdateBtn.textContent = 'Скачать обновление';
+  apkVersionInfo.appendChild(apkVersionLabel);
+  apkVersionInfo.appendChild(apkUpdateBtn);
+
+  // Fetch APK version
+  adminFetch('/api/admin/apk-version').then(r => r.json()).then(data => {
+    if (data.available) {
+      apkVersionLabel.textContent = `Доступна версия: ${escapeHtml(data.version)}`;
+      apkUpdateBtn.style.display = 'inline-flex';
+      apkUpdateBtn.onclick = async () => {
+        apkUpdateBtn.disabled = true;
+        apkUpdateBtn.textContent = 'Загрузка...';
+        try {
+          const resp = await adminFetch('/api/admin/apk-update', { method: 'POST' });
+          const result = await resp.json();
+          if (result.ok) {
+            apkVersionLabel.textContent = `APK обновлён до ${escapeHtml(result.version)}`;
+            apkUpdateBtn.style.display = 'none';
+            apkVersionLabel.style.color = 'var(--success, #4caf50)';
+          } else {
+            apkVersionLabel.textContent = `Ошибка: ${result.error || 'не удалось скачать'}`;
+            apkVersionLabel.style.color = 'var(--danger)';
+          }
+        } catch {
+          apkVersionLabel.textContent = 'Ошибка соединения';
+          apkVersionLabel.style.color = 'var(--danger)';
+        }
+        apkUpdateBtn.disabled = false;
+        apkUpdateBtn.textContent = 'Скачать обновление';
+      };
+    } else {
+      apkVersionLabel.textContent = `Версия APK: неизвестна (${data.error || ''})`;
+    }
+  }).catch(() => {
+    apkVersionLabel.textContent = 'Не удалось загрузить версию APK';
+  });
+
   const apkForm = document.createElement('form');
   apkForm.style.cssText = 'display:flex; gap:var(--space-xs); align-items:center; flex-wrap:nowrap;';
   apkForm.onsubmit = e => { e.preventDefault(); };
@@ -2213,6 +2262,7 @@ async function loadSettingsContent(adminFetch) {
   apkForm.appendChild(apkNameInput);
   apkForm.appendChild(apkActionsWrap);
   apkSection.appendChild(apkTitle);
+  apkSection.appendChild(apkVersionInfo);
   apkSection.appendChild(apkForm);
   apkSection.appendChild(apkStatus);
 
