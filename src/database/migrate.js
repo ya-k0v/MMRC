@@ -176,6 +176,17 @@ const MIGRATIONS = [
         await driver.exec(`ALTER TABLE users ADD COLUMN token_valid_from ${driver.dialect === 'postgres' ? 'TIMESTAMP' : 'DATETIME'}`);
       }
     }
+  },
+  {
+    id: '2026-07-13-devices-adb-port',
+    description: 'Add adb_port column to devices for remote ADB operations',
+    async up(driver) {
+      if (!(await driver.tableExists('devices'))) return;
+      const cols = await driver.columns('devices');
+      if (!cols.some(c => c.name === 'adb_port')) {
+        await driver.exec(`ALTER TABLE devices ADD COLUMN adb_port TEXT DEFAULT '5555'`);
+      }
+    }
   }
 ];
 

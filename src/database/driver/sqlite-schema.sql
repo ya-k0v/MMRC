@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS devices (
   device_type TEXT DEFAULT 'browser',
   platform TEXT,
   ip_address TEXT,
+  adb_port TEXT DEFAULT '5555',
   capabilities TEXT,
   last_seen DATETIME,
   current_state TEXT,

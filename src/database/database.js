@@ -446,7 +446,7 @@ export async function getAllDevices() {
   try {
     return await withRetrySync(async () => {
       const rows = await driver.query(
-        `SELECT device_id, name, folder, device_type, platform, ip_address, capabilities,
+        `SELECT device_id, name, folder, device_type, platform, ip_address, adb_port, capabilities,
                 last_seen, current_state, created_at, updated_at
          FROM devices ORDER BY device_id`
       );
@@ -460,6 +460,7 @@ export async function getAllDevices() {
             deviceType: row.device_type,
             platform: row.platform,
             ipAddress: row.ip_address || null,
+            adbPort: row.adb_port || '5555',
             capabilities: row.capabilities ? JSON.parse(row.capabilities) : null,
             lastSeen: row.last_seen,
             current: row.current_state ? JSON.parse(row.current_state) : { type: 'idle', file: null, state: 'idle' },
@@ -517,16 +518,17 @@ export function saveDevice(deviceId, data) {
   return circuitBreakers.database.execute(() => {
     return withRetrySync(async () => {
       await driver.run(
-        `INSERT INTO devices (device_id, name, folder, device_type, platform, ip_address, capabilities, last_seen, current_state)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO devices (device_id, name, folder, device_type, platform, ip_address, adb_port, capabilities, last_seen, current_state)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(device_id) DO UPDATE SET
            name = excluded.name, folder = excluded.folder,
            device_type = excluded.device_type, platform = excluded.platform,
-           ip_address = excluded.ip_address, capabilities = excluded.capabilities,
+           ip_address = excluded.ip_address, adb_port = excluded.adb_port, capabilities = excluded.capabilities,
            last_seen = excluded.last_seen, current_state = excluded.current_state,
            updated_at = CURRENT_TIMESTAMP`,
         [deviceId, data.name, data.folder, data.deviceType || 'browser',
          data.platform || null, data.ipAddress || null,
+         data.adbPort || '5555',
          data.capabilities ? JSON.stringify(data.capabilities) : null,
          data.lastSeen || null, data.current ? JSON.stringify(data.current) : null]
       );

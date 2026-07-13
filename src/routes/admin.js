@@ -392,7 +392,7 @@ export function createAdminRouter(deps = {}) {
 
     let installCompleted = false;
     try {
-      await installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl });
+      await installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl, port });
       installCompleted = true;
 
       const incomingAuthHeader = req.get('authorization');
@@ -401,6 +401,15 @@ export function createAdminRouter(deps = {}) {
         deviceName,
         incomingAuthHeader
       });
+
+      // Сохраняем ADB порт и IP для удалённых операций
+      try {
+        const { getDatabase } = await import('../database/database.js');
+        const db = getDatabase();
+        await db.run('UPDATE devices SET adb_port = ?, ip_address = ? WHERE device_id = ?', [port || '5555', ip, deviceId]);
+      } catch (e) {
+        logger.warn('[APK] Failed to save adb_port', { error: e.message });
+      }
 
       const { default: getIO } = await import('../socket/index.js');
       const socketIO = getIO && typeof getIO === 'function' ? getIO() : (io || global.io || null);
@@ -493,7 +502,8 @@ export function createAdminRouter(deps = {}) {
         }
 
         try {
-      await installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl, port });
+      const deviceAdbPort = target.adbPort || '5555';
+      await installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl, port: deviceAdbPort });
           updated += 1;
           results.push({ deviceId, deviceName, ip, ok: true });
         } catch (error) {
@@ -759,7 +769,7 @@ export function createAdminRouter(deps = {}) {
       const installedVersionFile = path.resolve(PROJECT_ROOT, 'clients', 'android-mediaplayer', 'version.txt');
       let installedVersion = '';
       try {
-        installedVersion = fs.readFileSync(installedVersionFile, 'utf-8').trim();
+        installedVersion = fs.readFileSync(installedVersionFile, 'utf-8').trim().replace(/^v/, '');
       } catch {}
 
       const response = await fetch('https://api.github.com/repos/ya-k0v/MMRC-android-player/releases/latest', {

@@ -120,7 +120,8 @@ export function createDevicesRouter(deps) {
       platform: d.platform || 'Unknown',
       appVersion: d.appVersion || null,
       lastSeen: d.lastSeen || null,
-      ipAddress: d.ipAddress || null
+      ipAddress: d.ipAddress || null,
+      adbPort: d.adbPort || '5555'
     }));
 
     // Если пользователь не admin, фильтруем по назначенным устройствам
