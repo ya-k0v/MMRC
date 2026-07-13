@@ -333,8 +333,6 @@ function createSettingsSection() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
             <div id="stUpdateInfo" class="meta" style="color:var(--muted); flex:1;">Проверка...</div>
             <button id="stUpdateCheck" class="secondary meta" style="min-width:auto; padding:3px 10px; font-size:0.75rem;">Проверить</button>
-            <button id="stUpdateApply" class="primary meta" style="display:none; min-width:auto; padding:3px 10px; font-size:0.75rem;">Обновить</button>
-            <button id="stUpdateDismiss" class="secondary meta" style="display:none; min-width:auto; padding:3px 10px; font-size:0.75rem;">${getCloseIcon(12)}</button>
           </div>
         </div>
 
@@ -606,11 +604,7 @@ function createSettingsSection() {
     (async () => {
       const info = document.getElementById('stUpdateInfo');
       const checkBtn = document.getElementById('stUpdateCheck');
-      const applyBtn = document.getElementById('stUpdateApply');
-      const dismissBtn = document.getElementById('stUpdateDismiss');
       if (!info) return;
-
-      let updateStatus = null;
 
       async function refreshUpdateStatus() {
         try {
@@ -618,32 +612,17 @@ function createSettingsSection() {
           info.style.color = 'var(--text-secondary)';
           const r = await adminFetch('/api/admin/update/status');
           const data = await r.json();
-          updateStatus = data.status;
           if (!data.ok) { info.textContent = 'Ошибка проверки обновлений'; info.style.color = 'var(--danger)'; return; }
 
           const s = data.status;
           if (s.updateAvailable && !s.dismissed) {
             info.innerHTML = `Доступно обновление: ветка <strong>${escapeHtml(s.branch)}</strong> отстаёт на <strong>${s.behindCount}</strong> коммитов`;
             info.style.color = 'var(--warning)';
-            if (applyBtn) { applyBtn.style.display = ''; applyBtn.textContent = 'Применить обновление'; }
-            if (dismissBtn) { dismissBtn.style.display = ''; dismissBtn.textContent = 'Отклонить'; }
-          } else if (s.dismissed) {
-            info.textContent = 'Обновление отклонено. Нажмите "Проверить" для новой проверки.';
-            info.style.color = 'var(--muted)';
-            if (applyBtn) applyBtn.style.display = 'none';
-            if (dismissBtn) dismissBtn.style.display = 'none';
-          } else if (s.updating || data.runtime?.updating) {
-            info.textContent = 'Идёт обновление...';
-            info.style.color = 'var(--warning)';
-            if (applyBtn) applyBtn.style.display = 'none';
-            if (dismissBtn) dismissBtn.style.display = 'none';
           } else {
             const branch = s.branch || '—';
             const localSha = s.localSha ? s.localSha.slice(0, 7) : '—';
             info.innerHTML = `Актуально: <strong>${escapeHtml(branch)}</strong> (${escapeHtml(localSha)})`;
             info.style.color = 'var(--success)';
-            if (applyBtn) applyBtn.style.display = 'none';
-            if (dismissBtn) dismissBtn.style.display = 'none';
           }
         } catch {
           info.textContent = 'Не удалось проверить обновления';
@@ -664,38 +643,6 @@ function createSettingsSection() {
             info.style.color = 'var(--danger)';
           }
           checkBtn.disabled = false;
-        };
-      }
-
-      if (applyBtn) {
-        applyBtn.onclick = async () => {
-          if (!confirm('Применить обновление сейчас? Сервис будет перезапущен.')) return;
-          applyBtn.disabled = true;
-          info.textContent = 'Применение обновления...';
-          info.style.color = 'var(--text-secondary)';
-          try {
-            const r = await adminFetch('/api/admin/update/apply', { method: 'POST' });
-            const data = await r.json();
-            alert(data.message || 'Обновление запущено. Страница перезагрузится после перезапуска.');
-          } catch {
-            info.textContent = 'Ошибка применения обновления';
-            info.style.color = 'var(--danger)';
-          }
-          applyBtn.disabled = false;
-        };
-      }
-
-      if (dismissBtn) {
-        dismissBtn.onclick = async () => {
-          dismissBtn.disabled = true;
-          try {
-            await adminFetch('/api/admin/update/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ remoteSha: updateStatus?.remoteSha || '' }) });
-            await refreshUpdateStatus();
-          } catch {
-            info.textContent = 'Ошибка';
-            info.style.color = 'var(--danger)';
-          }
-          dismissBtn.disabled = false;
         };
       }
 

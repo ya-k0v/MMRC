@@ -69,6 +69,7 @@ COPY --from=builder /app/node_modules ./node_modules
 # Copy application files
 COPY package.json package-lock.json ./
 COPY server.js ./
+COPY version.json ./
 COPY src ./src
 COPY public ./public
 COPY scripts ./scripts
