@@ -870,7 +870,7 @@ export function createAdminRouter(deps = {}) {
   router.get('/sessions', requireAdmin, async (req, res) => {
     try {
       const db = getDatabase();
-      const sessions = await db.all(`
+      const sessions = await db.query(`
         SELECT rt.id, rt.user_id, u.username, u.full_name, u.role,
                rt.ip_address, rt.user_agent, rt.expires_at, rt.last_used, rt.created_at
         FROM refresh_tokens rt
@@ -977,7 +977,7 @@ export function createAdminRouter(deps = {}) {
           s.dbType = getDriverType();
           return s;
         }),
-        db.all(`SELECT rt.id, rt.user_id, u.username, u.full_name, u.role, rt.ip_address, rt.user_agent, rt.expires_at, rt.last_used, rt.created_at FROM refresh_tokens rt JOIN users u ON rt.user_id = u.id ORDER BY rt.last_used DESC`)
+        db.query(`SELECT rt.id, rt.user_id, u.username, u.full_name, u.role, rt.ip_address, rt.user_agent, rt.expires_at, rt.last_used, rt.created_at FROM refresh_tokens rt JOIN users u ON rt.user_id = u.id ORDER BY rt.last_used DESC`)
       ]);
 
       // Network

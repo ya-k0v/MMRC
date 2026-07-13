@@ -271,7 +271,9 @@ function createSettingsSection() {
   body.style.cssText = 'display:flex; flex-direction:column; min-height:0; height:100%;';
   body.innerHTML = '<div class="meta" style="padding:var(--space-lg); text-align:center; color:var(--muted);">Загрузка...</div>';
 
-  adminFetch('/api/admin/settings/extended').then(r => r.json()).then(async result => {
+  adminFetch('/api/admin/settings/extended').then(async r => {
+    if (!r.ok) { const e = await r.json().catch(() => ({ error: 'Ошибка загрузки' })); throw new Error(e.error || 'Ошибка загрузки'); }
+    const result = await r.json();
     const data = result.settings;
     const contentRoot = data?.runtime?.contentRoot || data?.contentRoot || '';
     const defaultRoot = data?.defaults?.contentRoot || '';
@@ -391,7 +393,7 @@ function createSettingsSection() {
                 </div>`;
               }).join('')}
               <div class="meta" style="font-size:0.75rem; color:var(--muted); margin-top:4px;">
-                Uptime: ${services.processUptime ? Math.floor(services.processUptime / 86400) + 'д ' + Math.floor((services.processUptime % 86400) / 3600) + 'ч' : '—'}
+                Uptime: ${services.processUptime != null ? (() => { const t = services.processUptime; const d = Math.floor(t/86400); const h = Math.floor((t%86400)/3600); const m = Math.floor((t%3600)/60); const s = Math.floor(t%60); return (d ? d+'д ':'') + (h ? h+'ч ':'') + (m ? m+'м ':'') + s+'с'; })() : '—'}
               </div>
             </div>
           </div>
