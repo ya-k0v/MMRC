@@ -292,7 +292,8 @@ function createSettingsSection() {
         <!-- Система + Uptime + Перезапуск (компактная строка) -->
         <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
           <div style="padding:var(--space-sm) var(--space-md); display:flex; align-items:center; gap:var(--space-md); flex-wrap:wrap; font-size:0.8rem;">
-            <span style="font-weight:600;">v${escapeHtml(version)}</span>
+            <span style="font-weight:600;" id="stSysVersion">v${escapeHtml(version)}</span>
+            <span id="stUpdateBranch" class="meta" style="color:var(--muted);"></span>
             <span style="color:var(--muted);">·</span>
             <span>${escapeHtml(isSqlite ? 'SQLite' : 'PostgreSQL')}</span>
             <span style="color:var(--muted);">·</span>
@@ -324,15 +325,6 @@ function createSettingsSection() {
                 ${escapeHtml(c.label)}
               </span>`;
             }).join('<span style="color:var(--muted);">·</span>')}
-          </div>
-        </div>
-
-        <!-- Обновления -->
-        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div style="padding:var(--space-sm) var(--space-md); display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; font-size:0.8rem;">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-            <div id="stUpdateInfo" class="meta" style="color:var(--muted); flex:1;">Проверка...</div>
-            <button id="stUpdateCheck" class="secondary meta" style="min-width:auto; padding:3px 10px; font-size:0.75rem;">Проверить</button>
           </div>
         </div>
 
@@ -389,7 +381,7 @@ function createSettingsSection() {
             APK устройств
           </div>
           <div style="padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);">
-            <div id="stApkVersion" class="meta" style="font-size:0.8rem; color:var(--muted);">Загрузка...</div>
+            <div id="stApkVersion" class="meta" style="font-size:0.8rem; color:var(--muted); display:flex; align-items:center; gap:var(--space-sm);">Загрузка...</div>
             <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center;">
               <input id="stApkIp" class="input" placeholder="IP" style="width:120px;" />
               <input id="stApkPort" class="input" placeholder="Порт" value="5555" style="width:70px;" />
@@ -590,15 +582,33 @@ function createSettingsSection() {
         const r = await adminFetch('/api/admin/apk-version');
         const data = await r.json();
         if (data.available) {
-          let html = `Доступна: <strong>${escapeHtml(data.version || '?')}</strong>`;
-          if (data.installedVersion) {
-            html += ` &nbsp;·&nbsp; Установлена: <strong>${escapeHtml(data.installedVersion)}</strong>`;
+          let html = `Версия: <strong>${escapeHtml(data.version || '?')}</strong>`;
+          if (data.installedVersion && data.installedVersion !== data.version) {
+            html += ` <span style="color:var(--warning);">(${escapeHtml(data.installedVersion)} на сервере, доступно обновление)</span>`;
           }
           if (data.updateAvailable) {
-            html += ` &nbsp;<span style="color:var(--warning); font-weight:600;">обновление</span>`;
+            html += ` <button id="stApkDownload" class="secondary meta" style="min-width:auto; padding:2px 8px; font-size:0.7rem;">Обновить</button>`;
           }
           el.innerHTML = html;
           el.style.color = data.updateAvailable ? 'var(--warning)' : 'var(--success)';
+          if (data.updateAvailable) {
+            const dlBtn = document.getElementById('stApkDownload');
+            if (dlBtn) {
+              dlBtn.onclick = async () => {
+                dlBtn.disabled = true; dlBtn.textContent = 'Загрузка...';
+                try {
+                  const dr = await adminFetch('/api/admin/apk-update', { method: 'POST' });
+                  const dd = await dr.json();
+                  if (dd.ok) {
+                    el.innerHTML = `Версия: <strong>${escapeHtml(dd.version || data.version)}</strong> <span style="color:var(--success);">обновлено</span>`;
+                    el.style.color = 'var(--success)';
+                  } else {
+                    dlBtn.textContent = 'Ошибка'; dlBtn.disabled = false;
+                  }
+                } catch { dlBtn.textContent = 'Ошибка'; dlBtn.disabled = false; }
+              };
+            }
+          }
         } else {
           el.textContent = data.error || 'Не удалось проверить версию APK';
           el.style.color = 'var(--muted)';
@@ -606,53 +616,26 @@ function createSettingsSection() {
       } catch { el.textContent = 'Не удалось загрузить версию APK'; }
     })();
 
-    // Update system
+    // Update system — показываем версию сервера в шапке
     (async () => {
-      const info = document.getElementById('stUpdateInfo');
-      const checkBtn = document.getElementById('stUpdateCheck');
-      if (!info) return;
+      const branchEl = document.getElementById('stUpdateBranch');
+      if (!branchEl) return;
+      try {
+        const r = await adminFetch('/api/admin/update/status');
+        const data = await r.json();
+        if (!data.ok) return;
 
-      async function refreshUpdateStatus() {
-        try {
-          info.textContent = 'Проверка...';
-          info.style.color = 'var(--text-secondary)';
-          const r = await adminFetch('/api/admin/update/status');
-          const data = await r.json();
-          if (!data.ok) { info.textContent = 'Ошибка проверки обновлений'; info.style.color = 'var(--danger)'; return; }
+        const s = data.status;
+        const branch = s.branch || '—';
+        const localSha = s.localSha ? s.localSha.slice(0, 7) : '—';
+        const hasUpdate = s.updateAvailable && !s.dismissed;
 
-          const s = data.status;
-          if (s.updateAvailable && !s.dismissed) {
-            info.innerHTML = `Доступно обновление: ветка <strong>${escapeHtml(s.branch)}</strong> отстаёт на <strong>${s.behindCount}</strong> коммитов`;
-            info.style.color = 'var(--warning)';
-          } else {
-            const branch = s.branch || '—';
-            const localSha = s.localSha ? s.localSha.slice(0, 7) : '—';
-            info.innerHTML = `Актуально: <strong>${escapeHtml(branch)}</strong> (${escapeHtml(localSha)})`;
-            info.style.color = 'var(--success)';
-          }
-        } catch {
-          info.textContent = 'Не удалось проверить обновления';
-          info.style.color = 'var(--danger)';
-        }
-      }
-
-      if (checkBtn) {
-        checkBtn.onclick = async () => {
-          checkBtn.disabled = true;
-          info.textContent = 'Проверка...';
-          info.style.color = 'var(--text-secondary)';
-          try {
-            await adminFetch('/api/admin/update/check', { method: 'POST' });
-            await refreshUpdateStatus();
-          } catch {
-            info.textContent = 'Ошибка проверки';
-            info.style.color = 'var(--danger)';
-          }
-          checkBtn.disabled = false;
-        };
-      }
-
-      await refreshUpdateStatus();
+        branchEl.textContent = hasUpdate ? '⚠' : '✓';
+        branchEl.style.color = hasUpdate ? 'var(--warning)' : 'var(--success)';
+        branchEl.title = hasUpdate
+          ? `${branch} (${localSha}) — доступно обновление`
+          : `${branch} (${localSha}) — всё актуально`;
+      } catch {}
     })();
 
     // System uptime
