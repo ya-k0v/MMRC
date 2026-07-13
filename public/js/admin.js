@@ -392,6 +392,7 @@ function createSettingsSection() {
             <div id="stApkVersion" class="meta" style="font-size:0.8rem; color:var(--muted);">Загрузка...</div>
             <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center;">
               <input id="stApkIp" class="input" placeholder="IP" style="width:120px;" />
+              <input id="stApkPort" class="input" placeholder="Порт" value="5555" style="width:70px;" />
               <input id="stApkId" class="input" placeholder="ID устройства" style="width:130px;" />
               <input id="stApkName" class="input" placeholder="Имя" style="width:120px;" />
               <button id="stApkInstall" class="primary">Установить</button>
@@ -491,13 +492,14 @@ function createSettingsSection() {
     if (apkInstall) {
       apkInstall.onclick = async () => {
         const ip = document.getElementById('stApkIp').value.trim();
+        const port = document.getElementById('stApkPort').value.trim() || '5555';
         const deviceId = document.getElementById('stApkId').value.trim();
         const deviceName = document.getElementById('stApkName').value.trim();
         const s = document.getElementById('stApkStatus');
         if (!ip || !deviceId || !deviceName) { s.textContent = 'Заполните все поля'; s.style.color = 'var(--danger)'; return; }
         apkInstall.disabled = true; s.textContent = 'Установка...'; s.style.color = 'var(--text-secondary)';
         try {
-          const r = await adminFetch('/api/admin/install-apk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ip, deviceId, deviceName }) });
+          const r = await adminFetch('/api/admin/install-apk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ip, port, deviceId, deviceName }) });
           const result = await r.json();
           s.innerHTML = result.ok ? getCheckIcon(14, 'var(--success)') + ' Установлено!' : (result.error || 'Ошибка'); s.style.color = result.ok ? 'var(--success)' : 'var(--danger)';
         } catch { s.textContent = 'Ошибка соединения'; s.style.color = 'var(--danger)'; }
@@ -587,15 +589,19 @@ function createSettingsSection() {
       try {
         const r = await adminFetch('/api/admin/apk-version');
         const data = await r.json();
-        if (data.installedVersion) {
-          let html = `Установлена: <strong>${escapeHtml(data.installedVersion)}</strong>`;
+        if (data.available) {
+          let html = `Доступна: <strong>${escapeHtml(data.version || '?')}</strong>`;
+          if (data.installedVersion) {
+            html += ` &nbsp;·&nbsp; Установлена: <strong>${escapeHtml(data.installedVersion)}</strong>`;
+          }
           if (data.updateAvailable) {
-            html += ` &nbsp;|&nbsp; Доступно обновление: <strong>${escapeHtml(data.version || '')}</strong>`;
+            html += ` &nbsp;<span style="color:var(--warning); font-weight:600;">обновление</span>`;
           }
           el.innerHTML = html;
-          el.style.color = data.updateAvailable ? 'var(--warning)' : 'var(--muted)';
+          el.style.color = data.updateAvailable ? 'var(--warning)' : 'var(--success)';
         } else {
-          el.textContent = 'Нет данных о версии APK';
+          el.textContent = data.error || 'Не удалось проверить версию APK';
+          el.style.color = 'var(--muted)';
         }
       } catch { el.textContent = 'Не удалось загрузить версию APK'; }
     })();

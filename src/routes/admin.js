@@ -349,6 +349,7 @@ export function createAdminRouter(deps = {}) {
     const ip = req.body.ip;
     const deviceId = req.body.deviceId;
     const deviceName = req.body.deviceName;
+    const port = req.body.port;
 
     const settings = getSettings();
     const serverUrl = settings.serverUrl || process.env.SERVER_URL || `http://${req.headers.host || '127.0.0.1:3000'}`;
@@ -492,7 +493,7 @@ export function createAdminRouter(deps = {}) {
         }
 
         try {
-          await installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl });
+      await installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl, port });
           updated += 1;
           results.push({ deviceId, deviceName, ip, ok: true });
         } catch (error) {

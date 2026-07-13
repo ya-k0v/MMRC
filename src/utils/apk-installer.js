@@ -112,10 +112,11 @@ function normalizeServerUrlForXml(serverUrl) {
 }
 
 // Установка и настройка APK на Android-устройстве
-export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl }) {
+export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl, port }) {
   const host = normalizeHost(ip);
   const safeDeviceId = normalizeDeviceId(deviceId);
   const safeApkPath = resolveAndValidateApkPath(apkPath);
+  const adbPort = String(port || '5555').trim() || '5555';
 
   if (!host || !safeDeviceId) {
     throw new Error('IP и deviceId обязательны');
@@ -134,7 +135,7 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
     throw new Error('APK файл не найден');
   }
 
-  const adbTarget = `${host}:5555`;
+  const adbTarget = `${host}:${adbPort}`;
 
   // Проверяем adb connect
   const out = await runAdb(['connect', adbTarget], { stdio: ['ignore', 'pipe', 'pipe'] });

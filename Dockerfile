@@ -77,10 +77,12 @@ COPY config /app/config
 
 # Download Android player APK from GitHub releases (latest)
 RUN mkdir -p /app/clients/android-mediaplayer \
+    && TAG_NAME=$(curl -s https://api.github.com/repos/ya-k0v/MMRC-android-player/releases/latest | grep '"tag_name"' | cut -d '"' -f 4) \
     && LATEST_URL=$(curl -s https://api.github.com/repos/ya-k0v/MMRC-android-player/releases/latest | grep "browser_download_url.*\.apk" | cut -d '"' -f 4) \
     && if [ -n "$LATEST_URL" ]; then \
-         echo "Downloading $LATEST_URL" \
-         && curl -fsSL "$LATEST_URL" -o /app/clients/android-mediaplayer/app-release.apk; \
+         echo "Downloading $LATEST_URL (tag: $TAG_NAME)" \
+         && curl -fsSL "$LATEST_URL" -o /app/clients/android-mediaplayer/app-release.apk \
+         && echo "$TAG_NAME" > /app/clients/android-mediaplayer/version.txt; \
        else \
          echo "No APK available, creating placeholder" \
          && touch /app/clients/android-mediaplayer/app-release.apk; \
