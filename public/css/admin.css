@@ -59,6 +59,15 @@ body.admin-page .sidebar.collapsed .sidebar-logo-text {
   width: 0;
 }
 
+body.admin-page .sidebar.collapsed .sidebar-logo {
+  display: none;
+}
+
+body.admin-page .sidebar.collapsed .sidebar-header {
+  justify-content: center;
+  padding: var(--space-md) 0;
+}
+
 body.admin-page .sidebar-toggle {
   flex-shrink: 0;
   width: 24px;
@@ -284,4 +293,11 @@ body.admin-page .sidebar-menu-btn {
 .admin-section .input:focus {
   outline: none;
   border-color: var(--brand);
+}
+
+/* Mobile responsive for admin sections */
+@media (max-width: 767px) {
+  .admin-section .admin-section-body {
+    overflow-x: hidden;
+  }
 }

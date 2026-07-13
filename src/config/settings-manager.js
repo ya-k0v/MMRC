@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT, DEFAULT_DEVICES_PATH, DEFAULT_DATA_ROOT, setDevicesPath, DEVICES } from './constants.js';
+import { ROOT, DEFAULT_DEVICES_PATH, DEFAULT_DATA_ROOT, setDevicesPath, DEVICES, APP_VERSION } from './constants.js';
 import { validatePath } from '../utils/path-validator.js';
 
 // КРИТИЧНО: НЕ импортируем logger здесь, так как это создает циклическую зависимость:
@@ -567,6 +567,7 @@ export function getSettings() {
 
   return {
     ...restSettings,
+    version: APP_VERSION,
     ldapAuth: getLdapAuthSettings(),
     defaults: {
       contentRoot: DEFAULT_DATA_ROOT

@@ -44,11 +44,9 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
   // Build menu items
   const menuItems = [
     { id: 'devices', label: 'Устройства', icon: icons.devices, adminOnly: false },
-    { id: 'settings', label: 'Настройки', icon: icons.settings, adminOnly: true },
     { id: 'users', label: 'Пользователи', icon: icons.users, adminOnly: true },
-    { id: 'apk', label: 'Установка APK', icon: icons.apk, adminOnly: true },
+    { id: 'settings', label: 'Настройки', icon: icons.settings, adminOnly: true },
     { id: 'logs', label: 'Логи сервиса', icon: icons.logs, adminOnly: true },
-    { id: 'restart', label: 'Перезапуск', icon: icons.restart, adminOnly: true },
     { type: 'divider' },
     { id: 'hero', label: 'Картотека', icon: icons.hero, adminOnly: true, external: '/hero/admin.html' },
     { id: 'speaker', label: 'Спикер', icon: icons.speaker, adminOnly: false, external: '/speaker.html' }

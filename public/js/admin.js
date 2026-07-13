@@ -12,6 +12,7 @@ import { clearDetail, clearFilesPane, openDevice as openDeviceHelper } from './a
 import { renderDeviceCard as renderDeviceCardModule } from './admin/device-card.js';
 import { setupUploadUI as setupUploadUIModule } from './admin/upload-ui.js';
 import { showDevicesModal, showUsersModal, showSettingsModal } from './admin/modal.js';
+import { initSystemMonitor, stopSystemMonitor } from './admin/system-monitor.js';
 import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon } from './shared/svg-icons.js';
 import { escapeHtml } from './shared/utils.js';
 import { initNotifications } from './admin/notifications.js';
@@ -217,344 +218,1234 @@ setupSocketListeners(socket, {
   }
 });
 
-// Sidebar navigation handler
 function handleSidebarNavigation(section, action) {
   const grid = document.getElementById('grid');
-  
-  // Hide all main panes
   const devicesPane = document.getElementById('devicesPane');
   const detailPane = document.getElementById('detailPane');
   const filesPane = document.getElementById('filesPane');
-  
+
+  // Скрываем основные панели
   if (devicesPane) devicesPane.style.display = 'none';
   if (detailPane) detailPane.style.display = 'none';
   if (filesPane) filesPane.style.display = 'none';
-  
-  // Remove existing admin sections
+
+  // Удаляем старые секции
   grid.querySelectorAll('.admin-section').forEach(el => el.remove());
-  
-  // Show or create the requested section
-  let sectionEl = grid.querySelector(`[data-admin-section="${section}"]`);
-  
+
   switch (section) {
     case 'devices':
-      // Show the main devices grid
       if (devicesPane) devicesPane.style.display = '';
       if (detailPane) detailPane.style.display = '';
       if (filesPane) filesPane.style.display = '';
       break;
     case 'settings':
-      sectionEl = createSettingsSection();
-      grid.appendChild(sectionEl);
+      grid.appendChild(createSettingsSection());
       break;
     case 'users':
-      sectionEl = createUsersSection();
-      grid.appendChild(sectionEl);
-      loadUsersList();
-      break;
-    case 'apk':
-      sectionEl = createApkSection();
-      grid.appendChild(sectionEl);
-      loadApkVersion();
+      grid.appendChild(createUsersSection());
+      loadUsersSection();
       break;
     case 'logs':
-      sectionEl = createLogsSection();
-      grid.appendChild(sectionEl);
-      loadLogs();
-      break;
-    case 'restart':
-      if (confirm('Перезапустить сервис сейчас?')) {
-        adminFetch('/api/admin/restart-service', { method: 'POST' })
-          .then(() => alert('Перезапуск запущен'))
-          .catch(() => alert('Ошибка перезапуска'));
-      }
+      grid.appendChild(createLogsSection());
       break;
   }
 }
 
-function createSectionContainer(title, icon) {
-  const container = document.createElement('div');
-  container.className = 'admin-section card';
-  container.dataset.adminSection = 'settings';
-  container.style.cssText = 'display:flex; flex-direction:column; height:100%; padding:var(--space-lg); overflow-y:auto;';
-  
-  container.innerHTML = `
+function createSectionWrapper(title, icon) {
+  const el = document.createElement('div');
+  el.className = 'admin-section card';
+  el.style.cssText = 'padding:var(--space-lg); overflow-y:auto; height:100%;';
+  el.innerHTML = `
     <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-lg);">
       ${icon}
       <h2 style="margin:0; font-size:var(--font-size-xl);">${title}</h2>
     </div>
-    <div class="admin-section-content"></div>
+    <div class="admin-section-body"></div>
   `;
-  
-  return container;
+  return el;
 }
 
 function createSettingsSection() {
-  const container = createSectionContainer('Настройки сервера', getSettingsIcon(24));
-  const content = container.querySelector('.admin-section-content');
-  
-  content.innerHTML = `
-    <div class="field">
-      <label class="field-label">Название</label>
-      <input id="settingsSiteName" class="input" placeholder="MMRC" />
-    </div>
-    <div class="field" style="margin-top:var(--space-md);">
-      <label class="field-label">Описание</label>
-      <input id="settingsSiteDescription" class="input" placeholder="Video Wall Control System" />
-    </div>
-    <div class="field" style="margin-top:var(--space-md);">
-      <label class="field-label">Версия сервера</label>
-      <div id="settingsServerVersion" class="meta" style="padding:var(--space-sm); background:var(--bg-secondary); border-radius:var(--radius-md);"></div>
-    </div>
-    <div style="margin-top:var(--space-xl); display:flex; gap:var(--space-sm);">
-      <button id="settingsSaveBtn" class="btn btn-primary">Сохранить</button>
-    </div>
-  `;
-  
-  // Load current settings
-  adminFetch('/api/admin/settings').then(r => r.json()).then(data => {
-    document.getElementById('settingsSiteName').value = data.siteName || 'MMRC';
-    document.getElementById('settingsSiteDescription').value = data.siteDescription || '';
-    document.getElementById('settingsServerVersion').textContent = data.version || 'N/A';
-  }).catch(() => {});
-  
-  // Save handler
-  container.querySelector('#settingsSaveBtn').onclick = async () => {
-    const siteName = document.getElementById('settingsSiteName').value.trim();
-    const siteDescription = document.getElementById('settingsSiteDescription').value.trim();
-    
-    try {
-      await adminFetch('/api/admin/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ siteName, siteDescription })
-      });
-      alert('Настройки сохранены');
-    } catch (err) {
-      alert('Ошибка сохранения');
+  const el = createSectionWrapper('Настройки сервера', getSettingsIcon(24));
+  const body = el.querySelector('.admin-section-body');
+  body.style.cssText = 'display:flex; flex-direction:column; min-height:0; height:100%;';
+  body.innerHTML = '<div class="meta" style="padding:var(--space-lg); text-align:center; color:var(--muted);">Загрузка...</div>';
+
+  adminFetch('/api/admin/settings/extended').then(r => r.json()).then(async result => {
+    const data = result.settings;
+    const contentRoot = data?.runtime?.contentRoot || data?.contentRoot || '';
+    const defaultRoot = data?.defaults?.contentRoot || '';
+    const runtime = data?.runtime || {};
+    const version = data?.version || 'N/A';
+    const dbType = data?.dbType || '';
+    const isSqlite = dbType === 'sqlite';
+    const modules = Array.isArray(data?.modules) ? data.modules : [];
+    const docker = result.docker;
+    const network = Array.isArray(result.network) ? result.network : [];
+    const services = result.services || {};
+    const sessions = Array.isArray(result.sessions) ? result.sessions : [];
+
+    body.innerHTML = `
+      <div class="admin-section-content">
+
+        <!-- Система -->
+        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
+          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            Система
+          </div>
+          <div style="padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-md);">
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:var(--space-sm);">
+              <div><div class="meta" style="font-size:0.75rem; color:var(--muted);">Версия сервера</div><div style="font-weight:500;">${escapeHtml(version)}</div></div>
+              <div><div class="meta" style="font-size:0.75rem; color:var(--muted);">База данных</div><div style="font-weight:500;">${escapeHtml(isSqlite ? 'SQLite' : 'PostgreSQL')}</div></div>
+              <div><div class="meta" style="font-size:0.75rem; color:var(--muted);">Хост</div><div id="stSysHostname" style="font-weight:500;">—</div></div>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:var(--space-sm);">
+              <div><div class="meta" style="font-size:0.75rem; color:var(--muted);">Платформа</div><div id="stSysPlatform" style="font-weight:500;">—</div></div>
+              <div><div class="meta" style="font-size:0.75rem; color:var(--muted);">Node.js</div><div id="stSysNode" style="font-weight:500;">—</div></div>
+              <div><div class="meta" style="font-size:0.75rem; color:var(--muted);">Uptime</div><div id="stSysUptime" style="font-weight:500;">—</div></div>
+            </div>
+            <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap;">
+              <button id="stRestart" class="secondary" style="background:var(--danger); color:#fff; border-color:var(--danger);">Перезапустить сервис</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Системный монитор -->
+        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
+          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            Системный монитор
+          </div>
+          <div id="stSysMonitorBody" style="padding:var(--space-md);">
+            <div class="meta" style="font-size:0.8rem; color:var(--muted);">Загрузка...</div>
+          </div>
+        </div>
+
+        <!-- Docker -->
+        <div id="stDockerCard" class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
+          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+            Docker
+          </div>
+          <div id="stDockerBody" style="padding:var(--space-md); font-size:0.8rem;">
+            ${!docker || !docker.enabled
+              ? '<div class="meta" style="color:var(--muted);">Docker не используется</div>'
+              : `<div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--space-sm);">
+                  <div><span class="meta" style="color:var(--muted);">Образ</span><div style="font-weight:500;">${escapeHtml(docker.mainImage || '—')}:${escapeHtml(docker.mainTag || '—')}</div></div>
+                  <div><span class="meta" style="color:var(--muted);">Версия</span><div style="font-weight:500;">${escapeHtml(docker.version || '—')} (${escapeHtml(docker.branch || '—')})</div></div>
+                  <div><span class="meta" style="color:var(--muted);">Конвертер</span><div style="font-weight:500;">${escapeHtml(docker.converterImage || '—')}</div></div>
+                  <div><span class="meta" style="color:var(--muted);">FFmpeg</span><div style="font-weight:500;">${escapeHtml(docker.ffmpegImage || '—')}</div></div>
+                  <div><span class="meta" style="color:var(--muted);">Стример</span><div style="font-weight:500;">${escapeHtml(docker.streamerImage || '—')} ${docker.streamerEnabled ? '✓' : '✗'}</div></div>
+                  <div><span class="meta" style="color:var(--muted);">Compose</span><div style="font-weight:500;">${escapeHtml(docker.composeDir || '—')}</div></div>
+                </div>`}
+          </div>
+        </div>
+
+        <!-- Сеть -->
+        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
+          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16.5 17.5 22 12 16.5 6.5"/><polyline points="7.5 6.5 2 12 7.5 17.5"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
+            Сеть
+          </div>
+          <div id="stNetworkBody" style="padding:var(--space-md); font-size:0.8rem;">
+            ${!network.length
+              ? '<div class="meta" style="color:var(--muted);">Нет сетевых интерфейсов</div>'
+              : network.map(iface => `
+                <div style="margin-bottom:var(--space-sm); padding-bottom:var(--space-sm); border-bottom:1px solid var(--border);">
+                  <div style="font-weight:600; font-size:0.85rem; margin-bottom:4px;">${escapeHtml(iface.name)}</div>
+                  ${iface.addresses.map(a => `
+                    <div style="display:flex; gap:var(--space-sm); padding:2px 0;">
+                      <span style="color:var(--muted); min-width:24px;">${escapeHtml(a.family === 'IPv4' ? 'IPv4' : 'IPv6')}</span>
+                      <code style="font-family:monospace;">${escapeHtml(a.address)}</code>
+                      ${a.mac ? `<span class="meta" style="font-size:0.7rem;">${escapeHtml(a.mac)}</span>` : ''}
+                    </div>
+                  `).join('')}
+                </div>
+              `).join('')}
+          </div>
+        </div>
+
+        <!-- Сервисы -->
+        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
+          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            Сервисы
+          </div>
+          <div id="stServicesBody" style="padding:var(--space-md); font-size:0.8rem;">
+            <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
+              ${[
+                { label: 'FFmpeg', s: services.ffmpeg },
+                { label: 'FFprobe', s: services.ffprobe },
+                { label: 'Git', s: services.git },
+                { label: 'OpenSSL', s: services.openssl },
+                { label: 'Node.js', s: services.node },
+                { label: 'Docker', s: services.docker }
+              ].map(c => {
+                const ok = c.s?.status === 'ok';
+                const v = c.s?.version ? escapeHtml(c.s.version.split('(')[0].trim()) : '';
+                return `<div style="display:flex; align-items:center; gap:var(--space-sm);">
+                  <span style="width:8px; height:8px; border-radius:50%; background:${ok ? 'var(--success)' : 'var(--danger)'}; display:inline-block; flex-shrink:0;"></span>
+                  <span style="min-width:70px; font-weight:500;">${escapeHtml(c.label)}</span>
+                  <span class="meta" style="color:${ok ? 'var(--text-secondary)' : 'var(--danger)'};">${v || (ok ? 'доступен' : 'не найден')}</span>
+                </div>`;
+              }).join('')}
+              <div class="meta" style="font-size:0.75rem; color:var(--muted); margin-top:4px;">
+                Uptime: ${services.processUptime ? Math.floor(services.processUptime / 86400) + 'д ' + Math.floor((services.processUptime % 86400) / 3600) + 'ч' : '—'}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Активные сессии -->
+        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
+          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            Активные сессии
+          </div>
+          <div id="stSessionsBody" style="padding:var(--space-md); font-size:0.8rem;">
+            ${!sessions.length
+              ? '<div class="meta" style="color:var(--muted);">Нет активных сессий</div>'
+              : `<div style="display:flex; flex-direction:column; gap:var(--space-xs);">${sessions.map(s => {
+                const isOwn = (window.user?.id || 0) === s.user_id;
+                const expires = s.expires_at ? new Date(s.expires_at + 'Z').toLocaleString() : '—';
+                const lastUsed = s.last_used ? new Date(s.last_used + 'Z').toLocaleString() : '—';
+                return `<div style="display:flex; align-items:center; gap:var(--space-sm); padding:6px; border:1px solid var(--border); border-radius:var(--radius-sm);">
+                  <div style="min-width:0; flex:1;">
+                    <div style="font-weight:500;">${escapeHtml(s.username)} ${isOwn ? '<span class="meta" style="font-size:0.7rem;">(вы)</span>' : ''}</div>
+                    <div class="meta" style="font-size:0.7rem;">IP: ${escapeHtml(s.ip_address || '—')} · ${escapeHtml(s.user_agent ? s.user_agent.slice(0, 60) : '—')}</div>
+                    <div class="meta" style="font-size:0.65rem; color:var(--muted);">${escapeHtml(lastUsed)} · до ${escapeHtml(expires)}</div>
+                  </div>
+                  ${isOwn ? '' : `<button class="danger meta st-session-revoke" data-id="${s.id}" style="min-width:auto; padding:4px 8px; font-size:0.7rem;">Отозвать</button>`}
+                </div>`;
+              }).join('')}</div>`}
+          </div>
+        </div>
+
+        <!-- Логирование -->
+        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
+          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            Логирование
+          </div>
+          <div id="stLoggingBody" style="padding:var(--space-md); font-size:0.8rem;">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--space-sm);">
+              <div><span class="meta" style="color:var(--muted);">Директория логов</span><div><code style="font-family:monospace; word-break:break-all;">${escapeHtml(runtime.logsDir || '')}</code></div></div>
+              <div><span class="meta" style="color:var(--muted);">Тип БД</span><div style="font-weight:500;">${escapeHtml(dbType || '—')}</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Обновления -->
+        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
+          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            Обновления
+          </div>
+          <div style="padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);">
+            <div id="stUpdateInfo" class="meta" style="color:var(--muted);">Проверка...</div>
+            <div id="stUpdateActions" style="display:flex; gap:var(--space-sm); flex-wrap:wrap;">
+              <button id="stUpdateCheck" class="secondary">Проверить</button>
+              <button id="stUpdateApply" class="primary" style="display:none;">Применить</button>
+              <button id="stUpdateDismiss" class="secondary" style="display:none;">Отклонить</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Хранилище -->
+        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
+          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+            Хранилище контента
+          </div>
+          <div style="padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);">
+            ${defaultRoot ? `<div class="meta" style="font-size:0.75rem;">По умолчанию: <code style="font-family:monospace;">${escapeHtml(defaultRoot)}</code></div>` : ''}
+            <div style="display:flex; gap:var(--space-sm); align-items:center;">
+              <input id="stCrInput" class="input" value="${escapeHtml(contentRoot)}" placeholder="Путь к хранилищу" style="flex:1;" />
+              <button id="stCrSave" class="primary">Сохранить</button>
+            </div>
+            <div id="stCrStatus" class="meta" style="min-height:1.2em; font-size:0.8rem;"></div>
+            <details style="font-size:0.8rem;">
+              <summary class="meta" style="cursor:pointer; color:var(--muted);">Рабочие директории</summary>
+              <div style="display:flex; flex-direction:column; gap:2px; margin-top:var(--space-xs);">
+                ${Object.entries(runtime).filter(([k]) => k !== 'contentRoot').map(([k, v]) =>
+                  `<div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:100px; color:var(--muted);">${escapeHtml(k)}</span><code style="font-family:monospace; word-break:break-all;">${escapeHtml(v || '')}</code></div>`
+                ).join('')}
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <!-- Модули -->
+        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
+          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+            Модули
+          </div>
+          <div style="padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);">
+            <div class="meta" style="font-size:0.8rem; color:var(--text-secondary);">Включение и отключение подключённых модулей</div>
+            <div id="stModList" style="display:flex; flex-direction:column; gap:var(--space-sm);">
+              ${modules.length === 0 ? '<div class="meta" style="color:var(--muted);">Нет доступных модулей</div>' :
+                modules.map(m => `
+                  <label class="st-mod-item" style="display:flex; align-items:center; gap:8px; padding:8px; border:1px solid var(--border); border-radius:var(--radius-sm); cursor:pointer; transition:background 0.15s;">
+                    <input type="checkbox" data-module-id="${escapeHtml(m.id)}" ${m.enabled ? 'checked' : ''} style="width:18px; height:18px;" />
+                    <div style="min-width:0;">
+                      <div style="font-weight:500; font-size:0.85rem;">${escapeHtml(m.name)}</div>
+                      ${m.description ? `<div class="meta" style="font-size:0.75rem;">${escapeHtml(m.description)}</div>` : ''}
+                    </div>
+                  </label>
+                `).join('')}
+            </div>
+            <div id="stModStatus" class="meta" style="min-height:1.2em; font-size:0.8rem;"></div>
+          </div>
+        </div>
+
+        <!-- APK -->
+        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
+          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+            APK устройств
+          </div>
+          <div style="padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);">
+            <div id="stApkVersion" class="meta" style="font-size:0.8rem; color:var(--muted);">Загрузка...</div>
+            <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center;">
+              <input id="stApkIp" class="input" placeholder="IP" style="width:120px;" />
+              <input id="stApkId" class="input" placeholder="ID устройства" style="width:130px;" />
+              <input id="stApkName" class="input" placeholder="Имя" style="width:120px;" />
+              <button id="stApkInstall" class="primary">Установить</button>
+            </div>
+            <div id="stApkStatus" class="meta" style="min-height:1.2em; font-size:0.8rem;"></div>
+            <hr style="border:none; border-top:1px solid var(--border); margin:4px 0;" />
+            <div style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap;">
+              <span class="meta" style="font-size:0.8rem;">Массовое обновление на всех привязанных Android-устройствах</span>
+              <button id="stApkBatch" class="secondary">Обновить все</button>
+              <div id="stApkBatchStatus" class="meta" style="min-height:1.2em; font-size:0.8rem;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- База данных -->
+        ${isSqlite ? `
+        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
+          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+            База данных
+          </div>
+          <div style="padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);">
+            <div style="display:flex; gap:var(--space-sm); align-items:center; flex-wrap:wrap;">
+              <span class="meta" style="font-size:0.8rem;">Экспорт / импорт БД (SQLite)</span>
+              <button id="stDbExport" class="primary">Экспорт</button>
+              <button id="stDbImport" class="secondary">Импорт</button>
+              <input type="file" id="stDbImportInput" accept=".db" style="display:none;" />
+            </div>
+            <hr style="border:none; border-top:1px solid var(--border); margin:4px 0;" />
+            <details>
+              <summary class="meta" style="cursor:pointer; color:var(--muted); font-size:0.8rem;">Обслуживание</summary>
+              <div style="display:flex; flex-direction:column; gap:var(--space-sm); margin-top:var(--space-sm);">
+                <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center;">
+                  <button id="stDbCheckFiles" class="secondary meta">Проверить файлы</button>
+                  <button id="stDbWalCheckpoint" class="secondary meta">WAL Checkpoint</button>
+                  <button id="stDbCleanupMissing" class="secondary meta">Очистить отсутствующие</button>
+                  <button id="stDbCleanupOrphaned" class="secondary meta">Очистить осиротевшие</button>
+                  <div id="stDbMaintStatus" class="meta" style="font-size:0.8rem;"></div>
+                </div>
+              </div>
+            </details>
+          </div>
+        </div>` : ''}
+
+        <!-- LDAP -->
+        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
+          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            LDAP
+          </div>
+          <div id="stLdapBody" style="padding:var(--space-md);">
+            <div class="meta" style="font-size:0.8rem;">Загрузка...</div>
+          </div>
+        </div>
+
+      </div>
+    `;
+
+    // --- Bind events ---
+
+    // Content Root Save
+    const crSave = document.getElementById('stCrSave');
+    if (crSave) {
+      crSave.onclick = async () => {
+        const val = document.getElementById('stCrInput').value.trim();
+        const s = document.getElementById('stCrStatus');
+        try {
+          const r = await adminFetch('/api/admin/settings/content-root', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: val })
+          });
+          if (r.ok) { s.textContent = '✓ Сохранено'; s.style.color = 'var(--success)'; }
+          else { const e = await r.json().catch(() => ({})); s.textContent = e.error || 'Ошибка'; s.style.color = 'var(--danger)'; }
+        } catch { s.textContent = 'Ошибка соединения'; s.style.color = 'var(--danger)'; }
+      };
     }
-  };
-  
-  return container;
+
+    // Restart
+    document.getElementById('stRestart').onclick = async () => {
+      if (!confirm('Перезапустить сервис сейчас?')) return;
+      try { await adminFetch('/api/admin/restart-service', { method: 'POST' }); alert('Перезапуск запущен'); }
+      catch { alert('Ошибка перезапуска'); }
+    };
+
+    // Module toggles
+    const modStatus = document.getElementById('stModStatus');
+    document.querySelectorAll('#stModList .st-mod-item input[type="checkbox"]').forEach(cb => {
+      cb.onchange = async () => {
+        const id = cb.dataset.moduleId;
+        try {
+          const r = await adminFetch(`/api/admin/modules/${id}/toggle`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: cb.checked })
+          });
+          const result = await r.json().catch(() => ({}));
+          if (modStatus) { modStatus.textContent = result.message || (r.ok ? '✓ Сохранено' : 'Ошибка'); modStatus.style.color = r.ok ? 'var(--success)' : 'var(--danger)'; }
+        } catch { if (modStatus) { modStatus.textContent = 'Ошибка соединения'; modStatus.style.color = 'var(--danger)'; } }
+      };
+    });
+
+    // APK Install
+    const apkInstall = document.getElementById('stApkInstall');
+    if (apkInstall) {
+      apkInstall.onclick = async () => {
+        const ip = document.getElementById('stApkIp').value.trim();
+        const deviceId = document.getElementById('stApkId').value.trim();
+        const deviceName = document.getElementById('stApkName').value.trim();
+        const s = document.getElementById('stApkStatus');
+        if (!ip || !deviceId || !deviceName) { s.textContent = 'Заполните все поля'; s.style.color = 'var(--danger)'; return; }
+        apkInstall.disabled = true; s.textContent = 'Установка...'; s.style.color = 'var(--text-secondary)';
+        try {
+          const r = await adminFetch('/api/admin/install-apk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ip, deviceId, deviceName }) });
+          const result = await r.json();
+          s.textContent = result.ok ? '✓ Установлено!' : (result.error || 'Ошибка'); s.style.color = result.ok ? 'var(--success)' : 'var(--danger)';
+        } catch { s.textContent = 'Ошибка соединения'; s.style.color = 'var(--danger)'; }
+        apkInstall.disabled = false;
+      };
+    }
+
+    // APK Batch
+    const apkBatch = document.getElementById('stApkBatch');
+    if (apkBatch) {
+      apkBatch.onclick = async () => {
+        const s = document.getElementById('stApkBatchStatus');
+        apkBatch.disabled = true; s.textContent = 'Обновление...'; s.style.color = 'var(--text-secondary)';
+        try {
+          const r = await adminFetch('/api/admin/install-apk-bound', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+          const result = await r.json().catch(() => ({}));
+          s.textContent = `Готово: ${result.updated || 0} обновлено, ${result.failed || 0} ошибок`;
+          s.style.color = (result.failed || 0) > 0 ? 'var(--warning)' : 'var(--success)';
+        } catch { s.textContent = 'Ошибка соединения'; s.style.color = 'var(--danger)'; }
+        apkBatch.disabled = false;
+      };
+    }
+
+    // DB Export
+    const dbExport = document.getElementById('stDbExport');
+    if (dbExport) {
+      dbExport.onclick = async () => {
+        try {
+          const r = await adminFetch('/api/admin/export-database');
+          if (r.ok) { const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `mmrc-backup-${new Date().toISOString().slice(0, 10)}.db`; a.click(); URL.revokeObjectURL(url); }
+          else { const e = await r.json().catch(() => ({})); alert(e.error || 'Ошибка экспорта'); }
+        } catch { alert('Ошибка соединения'); }
+      };
+    }
+
+    // DB Import
+    const dbImport = document.getElementById('stDbImport');
+    const dbImportInput = document.getElementById('stDbImportInput');
+    if (dbImport && dbImportInput) {
+      dbImport.onclick = () => dbImportInput.click();
+      dbImportInput.onchange = async () => {
+        const file = dbImportInput.files[0];
+        if (!file) return;
+        if (!confirm('Импорт заменит текущую базу данных. Продолжить?')) return;
+        const fd = new FormData();
+        fd.append('file', file);
+        const pwd = prompt('Введите пароль для подтверждения:');
+        if (pwd) fd.append('confirmPassword', pwd);
+        try {
+          const r = await adminFetch('/api/admin/import-database', { method: 'POST', body: fd });
+          if (r.ok) { const result = await r.json(); alert(result.message || 'Импорт завершён.'); }
+          else { const e = await r.json().catch(() => ({})); alert(e.error || 'Ошибка импорта'); }
+        } catch { alert('Ошибка соединения'); }
+      };
+    }
+
+    // DB Maintenance
+    const dbMaintEl = document.getElementById('stDbMaintStatus');
+    async function dbMaint(endpoint, label, method = 'POST') {
+      if (dbMaintEl) { dbMaintEl.textContent = `${label}...`; dbMaintEl.style.color = 'var(--text-secondary)'; }
+      try {
+        const opts = method === 'GET' ? {} : { method };
+        const r = await adminFetch(endpoint, opts);
+        const result = await r.json();
+        if (dbMaintEl) { dbMaintEl.textContent = label + ': ' + JSON.stringify(result).slice(0, 200); dbMaintEl.style.color = 'var(--success)'; }
+      } catch { if (dbMaintEl) { dbMaintEl.textContent = label + ': ошибка'; dbMaintEl.style.color = 'var(--danger)'; } }
+    }
+    const checkFiles = document.getElementById('stDbCheckFiles');
+    if (checkFiles) checkFiles.onclick = () => dbMaint('/api/admin/database/check-files', 'Проверка', 'GET');
+    const walCp = document.getElementById('stDbWalCheckpoint');
+    if (walCp) walCp.onclick = () => dbMaint('/api/admin/database/wal-checkpoint', 'WAL Checkpoint');
+    const cleanupMiss = document.getElementById('stDbCleanupMissing');
+    if (cleanupMiss) cleanupMiss.onclick = () => {
+      if (!confirm('Удалить из БД записи об отсутствующих на диске файлах?')) return;
+      dbMaint('/api/admin/database/cleanup-missing-files', 'Cleanup missing');
+    };
+    const cleanupOrph = document.getElementById('stDbCleanupOrphaned');
+    if (cleanupOrph) cleanupOrph.onclick = () => {
+      const dryRun = !confirm('Удалить осиротевшие файлы? Нажмите OK для удаления, Cancel для сухого прогона.');
+      dbMaint(`/api/admin/database/cleanup-orphaned-files${dryRun ? '?dryRun=true' : ''}`, 'Cleanup orphaned');
+    };
+
+    // APK Version
+    (async () => {
+      const el = document.getElementById('stApkVersion');
+      if (!el) return;
+      try {
+        const r = await adminFetch('/api/admin/apk-version');
+        const data = await r.json();
+        if (data.installedVersion) {
+          let html = `Установлена: <strong>${escapeHtml(data.installedVersion)}</strong>`;
+          if (data.updateAvailable) {
+            html += ` &nbsp;|&nbsp; Доступно обновление: <strong>${escapeHtml(data.version || '')}</strong>`;
+          }
+          el.innerHTML = html;
+          el.style.color = data.updateAvailable ? 'var(--warning)' : 'var(--muted)';
+        } else {
+          el.textContent = 'Нет данных о версии APK';
+        }
+      } catch { el.textContent = 'Не удалось загрузить версию APK'; }
+    })();
+
+    // Update system
+    (async () => {
+      const info = document.getElementById('stUpdateInfo');
+      const checkBtn = document.getElementById('stUpdateCheck');
+      const applyBtn = document.getElementById('stUpdateApply');
+      const dismissBtn = document.getElementById('stUpdateDismiss');
+      if (!info) return;
+
+      let updateStatus = null;
+
+      async function refreshUpdateStatus() {
+        try {
+          info.textContent = 'Проверка...';
+          info.style.color = 'var(--text-secondary)';
+          const r = await adminFetch('/api/admin/update/status');
+          const data = await r.json();
+          updateStatus = data.status;
+          if (!data.ok) { info.textContent = 'Ошибка проверки обновлений'; info.style.color = 'var(--danger)'; return; }
+
+          const s = data.status;
+          if (s.updateAvailable && !s.dismissed) {
+            info.innerHTML = `Доступно обновление: ветка <strong>${escapeHtml(s.branch)}</strong> отстаёт на <strong>${s.behindCount}</strong> коммитов`;
+            info.style.color = 'var(--warning)';
+            if (applyBtn) { applyBtn.style.display = ''; applyBtn.textContent = 'Применить обновление'; }
+            if (dismissBtn) { dismissBtn.style.display = ''; dismissBtn.textContent = 'Отклонить'; }
+          } else if (s.dismissed) {
+            info.textContent = 'Обновление отклонено. Нажмите "Проверить" для новой проверки.';
+            info.style.color = 'var(--muted)';
+            if (applyBtn) applyBtn.style.display = 'none';
+            if (dismissBtn) dismissBtn.style.display = 'none';
+          } else if (s.updating || data.runtime?.updating) {
+            info.textContent = 'Идёт обновление...';
+            info.style.color = 'var(--warning)';
+            if (applyBtn) applyBtn.style.display = 'none';
+            if (dismissBtn) dismissBtn.style.display = 'none';
+          } else {
+            const branch = s.branch || '—';
+            const localSha = s.localSha ? s.localSha.slice(0, 7) : '—';
+            info.innerHTML = `Актуально: <strong>${escapeHtml(branch)}</strong> (${escapeHtml(localSha)})`;
+            info.style.color = 'var(--success)';
+            if (applyBtn) applyBtn.style.display = 'none';
+            if (dismissBtn) dismissBtn.style.display = 'none';
+          }
+        } catch {
+          info.textContent = 'Не удалось проверить обновления';
+          info.style.color = 'var(--danger)';
+        }
+      }
+
+      if (checkBtn) {
+        checkBtn.onclick = async () => {
+          checkBtn.disabled = true;
+          info.textContent = 'Проверка...';
+          info.style.color = 'var(--text-secondary)';
+          try {
+            await adminFetch('/api/admin/update/check', { method: 'POST' });
+            await refreshUpdateStatus();
+          } catch {
+            info.textContent = 'Ошибка проверки';
+            info.style.color = 'var(--danger)';
+          }
+          checkBtn.disabled = false;
+        };
+      }
+
+      if (applyBtn) {
+        applyBtn.onclick = async () => {
+          if (!confirm('Применить обновление сейчас? Сервис будет перезапущен.')) return;
+          applyBtn.disabled = true;
+          info.textContent = 'Применение обновления...';
+          info.style.color = 'var(--text-secondary)';
+          try {
+            const r = await adminFetch('/api/admin/update/apply', { method: 'POST' });
+            const data = await r.json();
+            alert(data.message || 'Обновление запущено. Страница перезагрузится после перезапуска.');
+          } catch {
+            info.textContent = 'Ошибка применения обновления';
+            info.style.color = 'var(--danger)';
+          }
+          applyBtn.disabled = false;
+        };
+      }
+
+      if (dismissBtn) {
+        dismissBtn.onclick = async () => {
+          dismissBtn.disabled = true;
+          try {
+            await adminFetch('/api/admin/update/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ remoteSha: updateStatus?.remoteSha || '' }) });
+            await refreshUpdateStatus();
+          } catch {
+            info.textContent = 'Ошибка';
+            info.style.color = 'var(--danger)';
+          }
+          dismissBtn.disabled = false;
+        };
+      }
+
+      await refreshUpdateStatus();
+    })();
+
+    // LDAP
+    (async () => {
+      const ldapBody = document.getElementById('stLdapBody');
+      if (!ldapBody) return;
+      const ldap = data?.ldapAuth || {};
+      if (!ldap.enabled) {
+        ldapBody.innerHTML = '<div class="meta" style="font-size:0.8rem; color:var(--muted);">LDAP аутентификация не настроена</div>';
+        return;
+      }
+      ldapBody.innerHTML = `
+        <div style="display:flex; flex-direction:column; gap:4px; font-size:0.8rem;">
+          <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:100px; color:var(--muted);">Статус</span><span style="color:var(--success); font-weight:500;">● Настроен</span></div>
+          <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:100px; color:var(--muted);">URL</span><code style="font-family:monospace;">${escapeHtml(ldap.url || '—')}</code></div>
+          <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:100px; color:var(--muted);">Base DN</span><code style="font-family:monospace;">${escapeHtml(ldap.baseDN || '—')}</code></div>
+          <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:100px; color:var(--muted);">Bind DN</span><code style="font-family:monospace;">${escapeHtml(ldap.bindDN || '—')}</code></div>
+          <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:100px; color:var(--muted);">Пароль</span><span class="meta">${ldap.bindPasswordSet ? '✓ Установлен' : 'Не установлен'}</span></div>
+          <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:100px; color:var(--muted);">Автосоздание</span><span>${ldap.autoCreateUsers ? 'Включено' : 'Отключено'}</span></div>
+          <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:100px; color:var(--muted);">Роль по умолч.</span><span>${escapeHtml(ldap.defaultRole || 'speaker')}</span></div>
+        </div>
+      `;
+    })();
+
+    // System info (hostname, platform, node version, uptime)
+    (async () => {
+      try {
+        const r = await adminFetch('/api/system/info');
+        if (r.ok) {
+          const sys = await r.json();
+          const hostEl = document.getElementById('stSysHostname');
+          if (hostEl) hostEl.textContent = sys.hostname || '—';
+          const platEl = document.getElementById('stSysPlatform');
+          if (platEl) platEl.textContent = sys.platform && sys.arch ? `${sys.platform} (${sys.arch})` : '—';
+          const nodeEl = document.getElementById('stSysNode');
+          if (nodeEl) nodeEl.textContent = sys.nodeVersion || '—';
+          const uptimeEl = document.getElementById('stSysUptime');
+          if (uptimeEl) uptimeEl.textContent = sys.processUptimeFormatted || '—';
+        }
+      } catch {}
+    })();
+
+    // System monitor (CPU, RAM, Disk bars)
+    const monitorBody = document.getElementById('stSysMonitorBody');
+    if (monitorBody) {
+      initSystemMonitor(adminFetch, monitorBody);
+    }
+
+    // Session revoke handlers (inline HTML, need event binding)
+    document.querySelectorAll('.st-session-revoke').forEach(btn => {
+      btn.onclick = async () => {
+        if (!confirm('Отозвать эту сессию?')) return;
+        try {
+          const resp = await adminFetch(`/api/admin/sessions/${btn.dataset.id}`, { method: 'DELETE' });
+          if (resp.ok) btn.closest('div').remove();
+          else alert('Ошибка');
+        } catch { alert('Ошибка соединения'); }
+      };
+    });
+
+  }).catch(() => {
+    const root = body;
+    if (root) root.innerHTML = '<div class="meta" style="padding:var(--space-lg); text-align:center; color:var(--danger);">Ошибка загрузки настроек</div>';
+  });
+
+  // Cleanup system monitor when section is removed
+  const obs = new MutationObserver(() => {
+    if (!document.body.contains(el)) {
+      stopSystemMonitor();
+      obs.disconnect();
+    }
+  });
+  obs.observe(document.body, { childList: true, subtree: true });
+
+  return el;
 }
 
 function createUsersSection() {
-  const container = createSectionContainer('Управление пользователями', `
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-      <circle cx="9" cy="7" r="4"></circle>
-      <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-      <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-    </svg>
+  const el = createSectionWrapper('Пользователи', `
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
   `);
-  const content = container.querySelector('.admin-section-content');
-  
-  content.innerHTML = `
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md);">
-      <button id="addUserBtn" class="btn btn-primary btn-sm">Добавить пользователя</button>
+  const body = el.querySelector('.admin-section-body');
+  body.style.cssText = 'display:flex; flex-direction:column; min-height:0; height:100%;';
+
+  body.innerHTML = `
+    <div class="us-toolbar" style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; margin-bottom:var(--space-md); padding:var(--space-sm) var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm); border:1px solid var(--border);">
+      <div style="display:flex; gap:4px;">
+        <button id="usTabLocal" class="secondary meta us-tab-btn" style="background:var(--brand); color:#fff; border-color:var(--brand);">LOCAL</button>
+        <button id="usTabLdap" class="secondary meta us-tab-btn">LDAP</button>
+      </div>
+      <input id="usSearch" class="input" placeholder="Поиск по логину или ФИО..." style="flex:1; min-width:160px; height:32px; min-height:32px; padding:4px 10px; font-size:0.85rem;" />
+      <div class="meta" id="usTotalCount" style="white-space:nowrap; color:var(--muted);"></div>
+      <button id="usCreateBtn" class="primary meta" style="white-space:nowrap;">+ Новый пользователь</button>
     </div>
-    <div id="usersList" class="list" style="display:flex; flex-direction:column; gap:var(--space-sm);"></div>
+
+    <div id="usTableWrap" style="flex:1; min-height:0; overflow-y:auto; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--panel-2);">
+      <table id="usTable" style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+        <thead style="position:sticky; top:0; z-index:1;">
+          <tr style="background:var(--panel); border-bottom:2px solid var(--border);">
+            <th style="padding:10px 12px; text-align:left; font-weight:600; color:var(--text); white-space:nowrap;">Пользователь</th>
+            <th style="padding:10px 12px; text-align:left; font-weight:600; color:var(--text); white-space:nowrap;">Роль</th>
+            <th style="padding:10px 12px; text-align:center; font-weight:600; color:var(--text); white-space:nowrap;">Статус</th>
+            <th style="padding:10px 12px; text-align:center; font-weight:600; color:var(--text); white-space:nowrap;">Устройств</th>
+            <th style="padding:10px 12px; text-align:right; font-weight:600; color:var(--text); white-space:nowrap;">Действия</th>
+          </tr>
+        </thead>
+        <tbody id="usTbody"></tbody>
+      </table>
+      <div id="usEmpty" style="display:none; text-align:center; padding:var(--space-xl); color:var(--muted);">Нет пользователей</div>
+    </div>
+
+    <div id="usPager" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); padding-top:var(--space-sm); margin-top:var(--space-sm);">
+      <div class="meta" id="usPagInfo"></div>
+      <div style="display:flex; gap:var(--space-xs); align-items:center;">
+        <button id="usPrev" class="secondary meta" disabled>← Назад</button>
+        <span class="meta" id="usPageInfo" style="min-width:80px; text-align:center;"></span>
+        <button id="usNext" class="secondary meta" disabled>Вперёд →</button>
+      </div>
+    </div>
   `;
-  
-  container.querySelector('#addUserBtn').onclick = () => showAddUserDialog();
-  
-  return container;
+
+  // Simple modal helper scoped to this section
+  function showUsModal({ title, bodyHtml, onSave }) {
+    const existing = document.getElementById('usModalOverlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'usModalOverlay';
+    overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; display:flex; align-items:center; justify-content:center; padding:20px;';
+
+    const modal = document.createElement('div');
+    modal.style.cssText = 'background:var(--panel); border-radius:var(--radius-lg); max-width:520px; width:100%; max-height:80vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.3);';
+
+    modal.innerHTML = `
+      <div style="padding:var(--space-md) var(--space-lg); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
+        <div style="font-weight:600; font-size:var(--font-size-base);">${escapeHtml(title)}</div>
+        <button id="usModalClose" class="secondary meta" style="min-width:auto; width:28px; height:28px; padding:0; border:none; background:transparent; font-size:18px; line-height:1;">✕</button>
+      </div>
+      <div style="padding:var(--space-lg);">${bodyHtml}</div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const close = () => overlay.remove();
+    modal.querySelector('#usModalClose').onclick = close;
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+
+    const saveBtn = modal.querySelector('#usModalSave');
+    if (saveBtn) {
+      saveBtn.onclick = async () => {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Сохранение...';
+        try {
+          await onSave();
+          close();
+        } catch (e) {
+          const errEl = modal.querySelector('.us-modal-error');
+          if (errEl) { errEl.textContent = e.message || 'Ошибка'; errEl.style.display = 'block'; }
+        } finally {
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Сохранить';
+        }
+      };
+    }
+    return modal;
+  }
+
+  window._usState = { allUsers: [], filtered: [], page: 1, perPage: 20, query: '', tab: 'local', devicesById: {} };
+
+  // Create user modal
+  el.querySelector('#usCreateBtn').onclick = () => {
+    showUsModal({
+      title: 'Новый пользователь',
+      bodyHtml: `
+        <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
+          <input id="usCreateLogin" class="input" placeholder="Логин" autocomplete="off" />
+          <input id="usCreateFullName" class="input" placeholder="ФИО" />
+          <input id="usCreatePass" class="input" type="password" placeholder="Пароль (мин. 8 символов)" autocomplete="new-password" />
+          <select id="usCreateRole" class="input">
+            <option value="speaker">Speaker</option>
+            <option value="manager">Manager</option>
+            <option value="admin">Admin</option>
+          </select>
+          <div class="us-modal-error meta" style="color:var(--danger); display:none;"></div>
+          <button id="usModalSave" class="primary" style="margin-top:var(--space-sm);">Создать</button>
+        </div>
+      `,
+      onSave: async () => {
+        const username = document.getElementById('usCreateLogin').value.trim();
+        const full_name = document.getElementById('usCreateFullName').value.trim();
+        const password = document.getElementById('usCreatePass').value;
+        const role = document.getElementById('usCreateRole').value;
+        if (!username || !password) throw new Error('Заполните логин и пароль');
+        if (password.length < 8) throw new Error('Пароль минимум 8 символов');
+        const res = await adminFetch('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, full_name, password, role }) });
+        if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Ошибка создания'); }
+        loadUsersSection();
+      }
+    });
+  };
+
+  // Tabs
+  el.querySelector('#usTabLocal').onclick = () => { window._usState.tab = 'local'; window._usState.page = 1; renderUsersSectionList(); };
+  el.querySelector('#usTabLdap').onclick = () => { window._usState.tab = 'ldap'; window._usState.page = 1; renderUsersSectionList(); };
+
+  // Search
+  let searchTimer;
+  el.querySelector('#usSearch').oninput = (e) => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      window._usState.query = e.target.value.trim().toLowerCase();
+      window._usState.page = 1;
+      renderUsersSectionList();
+    }, 250);
+  };
+
+  // Pagination
+  el.querySelector('#usPrev').onclick = () => { if (window._usState.page > 1) { window._usState.page--; renderUsersSectionList(); } };
+  el.querySelector('#usNext').onclick = () => {
+    const tp = Math.ceil(window._usState.filtered.length / window._usState.perPage);
+    if (window._usState.page < tp) { window._usState.page++; renderUsersSectionList(); }
+  };
+
+  // Reset password modal
+  window._usResetPass = async (userId, username) => {
+    showUsModal({
+      title: `Сброс пароля — ${escapeHtml(username)}`,
+      bodyHtml: `
+        <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
+          <input id="usResetPass1" class="input" type="password" placeholder="Новый пароль (мин. 8 символов)" autocomplete="new-password" />
+          <input id="usResetPass2" class="input" type="password" placeholder="Повторите пароль" autocomplete="new-password" />
+          <div class="us-modal-error meta" style="color:var(--danger); display:none;"></div>
+          <button id="usModalSave" class="primary" style="margin-top:var(--space-sm);">Изменить пароль</button>
+        </div>
+      `,
+      onSave: async () => {
+        const p1 = document.getElementById('usResetPass1').value;
+        const p2 = document.getElementById('usResetPass2').value;
+        if (!p1 || p1.length < 8) throw new Error('Пароль минимум 8 символов');
+        if (p1 !== p2) throw new Error('Пароли не совпадают');
+        const res = await adminFetch(`/api/auth/users/${userId}/reset-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ new_password: p1 }) });
+        if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Ошибка'); }
+      }
+    });
+  };
+
+  // Delete user
+  window._usDelete = async (id, name) => {
+    if (!confirm(`Удалить пользователя "${name}"?`)) return;
+    try {
+      const res = await adminFetch(`/api/auth/users/${id}`, { method: 'DELETE' });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.error || 'Ошибка удаления'); return; }
+      loadUsersSection();
+    } catch { alert('Ошибка соединения'); }
+  };
+
+  // Toggle active
+  window._usToggle = async (id, makeActive) => {
+    try {
+      const res = await adminFetch(`/api/auth/users/${id}/toggle`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_active: makeActive }) });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.error || 'Ошибка'); return; }
+      loadUsersSection();
+    } catch { alert('Ошибка соединения'); }
+  };
+
+  // Edit devices modal
+  window._usEditDevices = async (userId, username, role) => {
+    if (role === 'admin' || role === 'hero_admin') {
+      alert(role === 'admin' ? 'Admin имеет доступ ко всем устройствам' : 'Hero Admin не использует назначения');
+      return;
+    }
+    try {
+      const [devicesRes, userDevicesRes] = await Promise.all([
+        adminFetch('/api/devices'),
+        adminFetch(`/api/auth/users/${userId}/devices`)
+      ]);
+      const allDevices = await devicesRes.json();
+      const userDeviceIds = await userDevicesRes.json();
+      const assigned = new Set(Array.isArray(userDeviceIds) ? userDeviceIds : []);
+
+      const listHtml = allDevices.map(d => {
+        const checked = assigned.has(d.device_id) ? 'checked' : '';
+        return `<label style="display:flex; align-items:center; gap:8px; padding:8px; border:1px solid var(--border); border-radius:8px; cursor:pointer; transition:background 0.15s;"><input type="checkbox" class="us-device-cb" value="${escapeHtml(d.device_id)}" ${checked} style="width:16px; height:16px;" /><div style="min-width:0;"><div style="font-weight:500; font-size:0.9rem;">${escapeHtml(d.device_name || d.device_id)}</div><div class="meta" style="font-size:0.75rem;">${escapeHtml(d.device_id)}</div></div></label>`;
+      }).join('');
+
+      showUsModal({
+        title: `Устройства — ${escapeHtml(username)}`,
+        bodyHtml: `
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--space-sm); margin-bottom:var(--space-md); max-height:400px; overflow-y:auto; padding:2px;">
+            ${listHtml || '<div class="meta" style="color:var(--muted);">Нет устройств</div>'}
+          </div>
+          <div class="us-modal-error meta" style="color:var(--danger); display:none;"></div>
+          <div style="display:flex; gap:var(--space-sm); justify-content:flex-end; border-top:1px solid var(--border); padding-top:var(--space-md);">
+            <button id="usModalSave" class="primary">Сохранить</button>
+          </div>
+        `,
+        onSave: async () => {
+          const checked = Array.from(document.querySelectorAll('.us-device-cb:checked')).map(cb => cb.value);
+          const res = await adminFetch(`/api/auth/users/${userId}/devices`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceIds: checked }) });
+          if (!res.ok) throw new Error('Ошибка сохранения');
+          loadUsersSection();
+        }
+      });
+    } catch (e) { alert('Ошибка загрузки устройств'); }
+  };
+
+  return el;
 }
 
-function createApkSection() {
-  const container = createSectionContainer('Установка Android Player', `
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
-      <line x1="12" y1="18" x2="12.01" y2="18"></line>
-    </svg>
-  `);
-  const content = container.querySelector('.admin-section-content');
-  
-  content.innerHTML = `
-    <div id="apkVersionInfo" class="meta" style="margin-bottom:var(--space-md); padding:var(--space-sm); background:var(--bg-secondary); border-radius:var(--radius-md);"></div>
-    <div class="field">
-      <label class="field-label">Device ID</label>
-      <input id="apkDeviceId" class="input" placeholder="android-tv-01" />
-    </div>
-    <div class="field" style="margin-top:var(--space-md);">
-      <label class="field-label">IP адрес устройства</label>
-      <input id="apkDeviceIp" class="input" placeholder="192.168.1.100" />
-    </div>
-    <div style="margin-top:var(--space-xl); display:flex; gap:var(--space-sm);">
-      <button id="apkInstallBtn" class="btn btn-primary">Установить на устройство</button>
-      <button id="apkRefreshBtn" class="btn">Обновить информацию</button>
-    </div>
-    <div id="apkStatus" class="meta" style="margin-top:var(--space-md);"></div>
-  `;
-  
-  container.querySelector('#apkRefreshBtn').onclick = () => loadApkVersion();
-  container.querySelector('#apkInstallBtn').onclick = () => installApkToDevice();
-  
-  return container;
+async function loadUsersSection() {
+  const tbody = document.getElementById('usTbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:var(--space-xl); color:var(--muted);">Загрузка...</td></tr>';
+  try {
+    const [usersRes, devicesRes] = await Promise.all([adminFetch('/api/auth/users'), adminFetch('/api/devices')]);
+    if (!usersRes.ok) throw new Error('HTTP ' + usersRes.status);
+    const users = await usersRes.json();
+    const devices = await devicesRes.json();
+    window._usState.devicesById = Array.isArray(devices)
+      ? devices.reduce((a, d) => { if (d?.device_id) a[d.device_id] = d; return a; }, {})
+      : {};
+
+    const usersWithCounts = await Promise.all(users.map(async (u) => {
+      try {
+        const r = await adminFetch(`/api/auth/users/${u.id}/devices`);
+        if (!r.ok) return { ...u, deviceIds: [], deviceCount: 0 };
+        const ids = await r.json();
+        return { ...u, deviceIds: Array.isArray(ids) ? ids : [], deviceCount: (Array.isArray(ids) ? ids : []).length };
+      } catch { return { ...u, deviceIds: [], deviceCount: 0 }; }
+    }));
+    window._usState.allUsers = usersWithCounts;
+    renderUsersSectionList();
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:var(--space-xl); color:var(--danger);">Ошибка загрузки: ${escapeHtml(e.message || '')}</td></tr>`;
+  }
+}
+
+function renderUsersSectionList() {
+  const s = window._usState;
+  const tbody = document.getElementById('usTbody');
+  const empty = document.getElementById('usEmpty');
+  if (!tbody) return;
+
+  const localBtn = document.getElementById('usTabLocal');
+  const ldapBtn = document.getElementById('usTabLdap');
+
+  const localCount = s.allUsers.filter(u => String(u.auth_source || 'local').toLowerCase() !== 'ldap').length;
+  const ldapCount = s.allUsers.filter(u => String(u.auth_source || 'local').toLowerCase() === 'ldap').length;
+  if (localBtn) { localBtn.textContent = `LOCAL (${localCount})`; localBtn.style.background = s.tab !== 'ldap' ? 'var(--brand)' : ''; localBtn.style.color = s.tab !== 'ldap' ? '#fff' : ''; localBtn.style.borderColor = s.tab !== 'ldap' ? 'var(--brand)' : ''; }
+  if (ldapBtn) { ldapBtn.textContent = `LDAP (${ldapCount})`; ldapBtn.style.background = s.tab === 'ldap' ? 'var(--brand)' : ''; ldapBtn.style.color = s.tab === 'ldap' ? '#fff' : ''; ldapBtn.style.borderColor = s.tab === 'ldap' ? 'var(--brand)' : ''; }
+
+  const totalEl = document.getElementById('usTotalCount');
+  if (totalEl) totalEl.textContent = `Всего: ${s.allUsers.length}`;
+
+  s.filtered = s.allUsers.filter(u => {
+    const src = String(u.auth_source || 'local').toLowerCase();
+    const matchTab = s.tab === 'ldap' ? src === 'ldap' : src !== 'ldap';
+    if (!matchTab) return false;
+    if (!s.query) return true;
+    const q = s.query;
+    return (u.username && u.username.toLowerCase().includes(q)) ||
+           (u.full_name && u.full_name.toLowerCase().includes(q));
+  });
+
+  const tp = Math.ceil(s.filtered.length / s.perPage);
+  if (tp === 0) s.page = 1; else if (s.page > tp) s.page = tp;
+  const start = (s.page - 1) * s.perPage;
+  const page = s.filtered.slice(start, start + s.perPage);
+  const end = Math.min(start + s.perPage, s.filtered.length);
+
+  const pagInfo = document.getElementById('usPagInfo');
+  if (pagInfo) pagInfo.textContent = s.filtered.length > 0 ? `${start + 1}–${end} из ${s.filtered.length}` : '';
+
+  const pageInfo = document.getElementById('usPageInfo');
+  if (pageInfo) pageInfo.textContent = tp > 0 ? `Стр. ${s.page} из ${tp}` : '';
+
+  const prevBtn = document.getElementById('usPrev');
+  const nextBtn = document.getElementById('usNext');
+  if (prevBtn) prevBtn.disabled = s.page <= 1;
+  if (nextBtn) nextBtn.disabled = s.page >= tp;
+
+  if (page.length === 0) {
+    tbody.innerHTML = '';
+    if (empty) empty.style.display = 'block';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  const roleColors = { admin: 'var(--brand)', manager: 'var(--warning)', speaker: 'var(--success)', hero_admin: 'var(--warning)' };
+
+  tbody.innerHTML = page.map(u => {
+    const isLdap = String(u.auth_source || 'local').toLowerCase() === 'ldap';
+    return `<tr style="border-bottom:1px solid var(--border); transition:background 0.15s; cursor:default;" onmouseover="this.style.background='var(--panel-hover)'" onmouseout="this.style.background=''">
+      <td style="padding:10px 12px;">
+        <div style="display:flex; align-items:center; gap:var(--space-sm);">
+          <div style="width:32px; height:32px; border-radius:50%; background:${roleColors[u.role] || 'var(--muted-2)'}; color:var(--panel); display:flex; align-items:center; justify-content:center; font-weight:600; font-size:0.8rem; flex-shrink:0;">${(u.username || '?')[0].toUpperCase()}</div>
+          <div style="min-width:0;">
+            <div style="font-weight:500; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(u.username)}</div>
+            <div class="meta" style="font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(u.full_name || '')}</div>
+          </div>
+        </div>
+      </td>
+      <td style="padding:10px 12px;">
+        <span style="display:inline-block; padding:2px 8px; border-radius:4px; font-size:0.75rem; font-weight:500; background:${roleColors[u.role] || 'var(--panel-2)'}; color:var(--panel);">${(u.role || '').toUpperCase()}</span>
+        <span style="margin-left:4px; padding:2px 6px; border-radius:4px; font-size:0.7rem; background:${isLdap ? 'var(--warning)' : 'var(--panel-2)'}; color:${isLdap ? 'var(--panel)' : 'var(--muted)'};">${isLdap ? 'LDAP' : 'LOCAL'}</span>
+      </td>
+      <td style="padding:10px 12px; text-align:center;">
+        <span style="display:inline-flex; align-items:center; gap:4px; padding:2px 10px; border-radius:999px; font-size:0.75rem; font-weight:500; background:${u.is_active ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)'}; color:${u.is_active ? 'var(--success)' : 'var(--danger)'};">
+          <span style="width:6px; height:6px; border-radius:50%; background:${u.is_active ? 'var(--success)' : 'var(--danger)'}; display:inline-block;"></span>
+          ${u.is_active ? 'Активен' : 'Отключён'}
+        </span>
+      </td>
+      <td style="padding:10px 12px; text-align:center; color:var(--text); font-size:0.85rem;">${u.role === 'admin' ? '—' : (u.deviceCount || 0)}</td>
+      <td style="padding:10px 12px; text-align:right;">
+        <div style="display:inline-flex; gap:4px;">
+          <button class="secondary meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usToggle(${u.id}, ${!u.is_active})" title="${u.is_active ? 'Отключить' : 'Включить'}">${u.is_active ? '🔓' : '🔒'}</button>
+          ${(u.role === 'speaker' || u.role === 'manager') ? `<button class="secondary meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usEditDevices(${u.id}, '${escapeHtml(u.username)}', '${escapeHtml(u.role)}')" title="Назначить устройства">📡</button>` : ''}
+          ${!isLdap ? `<button class="secondary meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usResetPass(${u.id}, '${escapeHtml(u.username)}')" title="Сбросить пароль">🔑</button>` : ''}
+          ${u.id !== 1 ? `<button class="danger meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usDelete(${u.id}, '${escapeHtml(u.username)}')" title="Удалить">🗑</button>` : ''}
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
 }
 
 function createLogsSection() {
-  const container = createSectionContainer('Логи системы', `
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-      <polyline points="14 2 14 8 20 8"></polyline>
-      <line x1="16" y1="13" x2="8" y2="13"></line>
-      <line x1="16" y1="17" x2="8" y2="17"></line>
-      <polyline points="10 9 9 9 8 9"></polyline>
-    </svg>
+  const el = createSectionWrapper('Логи сервиса', `
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
   `);
-  const content = container.querySelector('.admin-section-content');
-  
-  content.innerHTML = `
-    <div id="logsContainer" style="font-family:monospace; font-size:12px; background:var(--bg-secondary); padding:var(--space-md); border-radius:var(--radius-md); max-height:500px; overflow-y:auto; white-space:pre-wrap;"></div>
-    <div style="margin-top:var(--space-md); display:flex; gap:var(--space-sm);">
-      <button id="logsRefreshBtn" class="btn">Обновить</button>
-      <button id="logsClearBtn" class="btn">Очистить</button>
+  const body = el.querySelector('.admin-section-body');
+  body.style.cssText = 'display:flex; flex-direction:column; min-height:0; height:100%;';
+
+  body.innerHTML = `
+    <div style="display:flex; flex-direction:column; gap:var(--space-sm); flex:1; min-height:0;">
+
+      <!-- Toolbar -->
+      <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center; padding:var(--space-sm) var(--space-md); background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); flex-shrink:0;">
+        <select id="lgLevel" class="input" style="width:110px; height:30px; min-height:30px; padding:2px 8px; font-size:0.8rem;">
+          <option value="combined">все</option>
+        </select>
+        <select id="lgModule" class="input" style="width:120px; height:30px; min-height:30px; padding:2px 8px; font-size:0.8rem;">
+          <option value="">все модули</option>
+        </select>
+        <select id="lgLines" class="input" style="width:80px; height:30px; min-height:30px; padding:2px 8px; font-size:0.8rem;">
+          <option value="50">50</option>
+          <option value="100" selected>100</option>
+          <option value="200">200</option>
+          <option value="500">500</option>
+          <option value="1000">1000</option>
+          <option value="2000">2000</option>
+        </select>
+        <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem; cursor:pointer;">
+          <input type="checkbox" id="lgAutoscroll" checked style="width:14px; height:14px;" /> Авто
+        </label>
+        <button id="lgPause" class="secondary meta" style="min-width:auto; width:30px; height:30px; padding:0; font-size:0.8rem;" title="Пауза">❚❚</button>
+        <button id="lgRefresh" class="secondary meta" style="min-width:auto; height:30px; padding:2px 10px; font-size:0.8rem;">Обновить</button>
+        <button id="lgClear" class="secondary meta" style="min-width:auto; height:30px; padding:2px 10px; font-size:0.8rem;">Очистить</button>
+        <button id="lgCopy" class="secondary meta" style="min-width:auto; height:30px; padding:2px 10px; font-size:0.8rem;" title="Копировать">📋</button>
+        <button id="lgDownload" class="secondary meta" style="min-width:auto; height:30px; padding:2px 10px; font-size:0.8rem;" title="Скачать">⬇</button>
+      </div>
+
+      <!-- Info bar -->
+      <div id="lgInfo" class="meta" style="font-size:0.75rem; color:var(--muted); min-height:1.2em; padding:0 4px;"></div>
+
+      <!-- Output -->
+      <pre id="lgOutput" style="margin:0; padding:12px; flex:1; min-height:0; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--panel-2); font-family:'Fira Code', Consolas, monospace; font-size:0.84rem; line-height:1.35; white-space:pre-wrap; word-break:break-word; overflow:auto;">Загрузка...</pre>
     </div>
   `;
-  
-  container.querySelector('#logsRefreshBtn').onclick = () => loadLogs();
-  container.querySelector('#logsClearBtn').onclick = () => {
-    document.getElementById('logsContainer').textContent = '';
+
+  let logsPollTimer = null;
+  let paused = false;
+  let incrementalOffset = -1;
+  let currentFileName = '';
+  let availableLevels = ['combined', 'error', 'warn', 'info', 'debug'];
+  let availableModules = [];
+
+  const ql = (sel) => el.querySelector(sel);
+
+  async function fetchLogs(initial) {
+    const output = ql('#lgOutput');
+    if (!output) return;
+    const level = ql('#lgLevel').value;
+    const moduleFilter = ql('#lgModule').value;
+    const lines = ql('#lgLines').value;
+
+    try {
+      const params = new URLSearchParams({ lines, level });
+      if (moduleFilter) params.set('module', moduleFilter);
+      if (!initial && incrementalOffset >= 0) {
+        params.set('offset', incrementalOffset);
+        if (currentFileName) params.set('fileName', currentFileName);
+      }
+      const resp = await adminFetch(`/api/admin/service-logs?${params}`);
+      if (!resp.ok) {
+        output.textContent = 'Ошибка загрузки логов';
+        return;
+      }
+      const result = await resp.json();
+      const arr = Array.isArray(result.lines) ? result.lines : [];
+
+      // Update available levels/modules from response
+      if (Array.isArray(result.availableLevels) && result.availableLevels.length) availableLevels = result.availableLevels;
+      if (Array.isArray(result.availableModules) && result.availableModules.length) availableModules = result.availableModules;
+
+      // Store incremental state
+      if (typeof result.nextOffset === 'number') incrementalOffset = result.nextOffset;
+      if (result.fileName) currentFileName = result.fileName;
+
+      // Update info bar
+      const info = ql('#lgInfo');
+      if (info) {
+        const parts = [];
+        if (result.source) parts.push(`[${result.source}]`);
+        parts.push(`строк: ${arr.length}`);
+        if (typeof result.nextOffset === 'number') parts.push(`offset: ${result.nextOffset}`);
+        if (result.fileName) parts.push(`файл: ${result.fileName}`);
+        info.textContent = parts.join(' · ');
+      }
+
+      // Append or replace
+      if (result.reset || initial) {
+        output.textContent = arr.join('\n') || 'Логи пусты';
+      } else if (arr.length > 0) {
+        const existing = output.textContent;
+        const separator = existing && !existing.endsWith('\n') ? '\n' : '';
+        output.textContent = existing + separator + arr.join('\n');
+      }
+
+      if (ql('#lgAutoscroll').checked) {
+        output.scrollTop = output.scrollHeight;
+      }
+    } catch (e) {
+      if (initial) output.textContent = 'Ошибка соединения';
+    }
+  }
+
+  // Populate level select from API response
+  function populateSelects(levels, modules) {
+    const levelSel = ql('#lgLevel');
+    if (levelSel && levels.length) {
+      const current = levelSel.value;
+      levelSel.innerHTML = levels.map(l =>
+        `<option value="${l}" ${l === current || (current === 'combined' && l === 'combined') ? 'selected' : ''}>${l}</option>`
+      ).join('');
+    }
+    const modSel = ql('#lgModule');
+    if (modSel && modules.length) {
+      modSel.innerHTML = '<option value="">все модули</option>' +
+        modules.map(m => `<option value="${m}">${m}</option>`).join('');
+    }
+  }
+
+  // Async fetch of available levels/modules
+  (async () => {
+    try {
+      const resp = await adminFetch('/api/admin/service-logs?lines=1');
+      if (resp.ok) {
+        const info = await resp.json();
+        if (Array.isArray(info.availableLevels) && info.availableLevels.length) availableLevels = info.availableLevels;
+        if (Array.isArray(info.availableModules) && info.availableModules.length) availableModules = info.availableModules;
+        populateSelects(availableLevels, availableModules);
+      }
+    } catch {}
+  })();
+
+  // Set all handlers synchronously
+  ql('#lgLevel').onchange = () => { incrementalOffset = -1; currentFileName = ''; fetchLogs(true); };
+  ql('#lgModule').onchange = () => { incrementalOffset = -1; currentFileName = ''; fetchLogs(true); };
+  ql('#lgLines').onchange = () => { incrementalOffset = -1; currentFileName = ''; fetchLogs(true); };
+  ql('#lgRefresh').onclick = () => { incrementalOffset = -1; currentFileName = ''; fetchLogs(true); };
+  ql('#lgClear').onclick = () => {
+    const output = ql('#lgOutput');
+    if (output) { output.textContent = ''; incrementalOffset = -1; currentFileName = ''; }
   };
-  
-  return container;
-}
+  ql('#lgPause').onclick = () => {
+    paused = !paused;
+    ql('#lgPause').textContent = paused ? '▶' : '❚❚';
+    ql('#lgPause').title = paused ? 'Возобновить' : 'Пауза';
+  };
 
-async function loadUsersList() {
-  const list = document.getElementById('usersList');
-  if (!list) return;
-  
-  list.innerHTML = '<div class="meta">Загрузка...</div>';
-  
-  try {
-    const resp = await adminFetch('/api/admin/users');
-    const data = await resp.json();
-    const users = data.users || [];
-    
-    if (users.length === 0) {
-      list.innerHTML = '<div class="meta">Нет пользователей</div>';
-      return;
-    }
-    
-    list.innerHTML = users.map(u => `
-      <div class="list-item" style="display:flex; align-items:center; gap:var(--space-md); padding:var(--space-sm) var(--space-md); border:1px solid var(--border); border-radius:var(--radius-md);">
-        <div style="flex:1;">
-          <div style="font-weight:500;">${escapeHtml(u.full_name || u.username)}</div>
-          <div class="meta">${escapeHtml(u.username)} • ${u.role}</div>
-        </div>
-        <button class="btn btn-sm btn-danger" onclick="deleteUser('${escapeHtml(u.id)}')">Удалить</button>
-      </div>
-    `).join('');
-  } catch (err) {
-    list.innerHTML = '<div class="meta" style="color:var(--error);">Ошибка загрузки</div>';
-  }
-}
+  // Initial load + auto-poll
+  fetchLogs(true);
+  logsPollTimer = setInterval(() => {
+    if (!paused) fetchLogs(false);
+  }, 2000);
 
-async function showAddUserDialog() {
-  const username = prompt('Имя пользователя:');
-  if (!username) return;
-  
-  const password = prompt('Пароль:');
-  if (!password) return;
-  
-  const fullName = prompt('Полное имя (опционально):');
-  
-  try {
-    await adminFetch('/api/admin/users', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, full_name: fullName || username, role: 'user' })
+  // Copy
+  ql('#lgCopy').onclick = () => {
+    const output = ql('#lgOutput');
+    if (!output || !output.textContent) return;
+    navigator.clipboard.writeText(output.textContent).catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = output.textContent;
+      ta.style.position = 'fixed'; ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
     });
-    alert('Пользователь создан');
-    loadUsersList();
-  } catch (err) {
-    alert('Ошибка создания пользователя');
-  }
-}
+  };
 
-window.deleteUser = async function(userId) {
-  if (!confirm('Удалить пользователя?')) return;
-  
-  try {
-    await adminFetch(`/api/admin/users/${userId}`, { method: 'DELETE' });
-    loadUsersList();
-  } catch (err) {
-    alert('Ошибка удаления');
-  }
-};
+  // Download
+  ql('#lgDownload').onclick = () => {
+    const output = ql('#lgOutput');
+    if (!output || !output.textContent) return;
+    const level = ql('#lgLevel').value;
+    const blob = new Blob([output.textContent], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `service-log-${level}-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
-async function loadApkVersion() {
-  const info = document.getElementById('apkVersionInfo');
-  if (!info) return;
-  
-  info.innerHTML = '<div class="meta">Загрузка информации о версии...</div>';
-  
-  try {
-    const resp = await adminFetch('/api/admin/apk-version');
-    const data = await resp.json();
-    
-    info.innerHTML = `
-      <div style="display:flex; align-items:center; gap:var(--space-md); flex-wrap:wrap;">
-        <span><strong>Последняя версия:</strong> ${escapeHtml(data.latestVersion || 'N/A')}</span>
-        <span><strong>Размер:</strong> ${data.fileSize ? `${(data.fileSize / 1024 / 1024).toFixed(2)} MB` : 'N/A'}</span>
-        ${data.downloadUrl ? `<a href="${escapeHtml(data.downloadUrl)}" target="_blank" class="meta" style="color:var(--primary);">Скачать APK</a>` : ''}
-      </div>
-    `;
-    
-    // Pre-fill device IP if available
-    if (data.lastDeviceIp) {
-      const ipInput = document.getElementById('apkDeviceIp');
-      if (ipInput) ipInput.value = data.lastDeviceIp;
+  // Cleanup on section remove
+  const observer = new MutationObserver(() => {
+    if (!document.body.contains(el)) {
+      clearInterval(logsPollTimer);
+      observer.disconnect();
     }
-  } catch (err) {
-    info.innerHTML = '<div class="meta" style="color:var(--error);">Ошибка загрузки информации о версии</div>';
-  }
-}
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
 
-async function installApkToDevice() {
-  const deviceId = document.getElementById('apkDeviceId')?.value?.trim();
-  const deviceIp = document.getElementById('apkDeviceIp')?.value?.trim();
-  const status = document.getElementById('apkStatus');
-  
-  if (!deviceId || !deviceIp) {
-    alert('Укажите Device ID и IP адрес');
-    return;
-  }
-  
-  status.innerHTML = '<div class="meta">Отправка команды установки...</div>';
-  
-  try {
-    const resp = await adminFetch('/api/admin/apk-install', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deviceId, deviceIp })
-    });
-    const data = await resp.json();
-    
-    if (data.success) {
-      status.innerHTML = '<div class="meta" style="color:var(--success);">✓ Команда установки отправлена. Устройство установит приложение при следующем запуске.</div>';
-    } else {
-      status.innerHTML = `<div class="meta" style="color:var(--error);">Ошибка: ${escapeHtml(data.error || 'Неизвестная ошибка')}</div>`;
-    }
-  } catch (err) {
-    status.innerHTML = '<div class="meta" style="color:var(--error);">Ошибка отправки команды</div>';
-  }
-}
-
-async function loadLogs() {
-  const container = document.getElementById('logsContainer');
-  if (!container) return;
-  
-  container.textContent = 'Загрузка логов...';
-  
-  try {
-    const resp = await adminFetch('/api/admin/logs');
-    const data = await resp.json();
-    container.textContent = data.logs || 'Логи пусты';
-  } catch (err) {
-    container.textContent = 'Ошибка загрузки логов';
-  }
+  return el;
 }
 
 document.addEventListener('DOMContentLoaded', async () => {

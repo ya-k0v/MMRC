@@ -11,6 +11,7 @@ const logger = createModuleLogger('api');
 import { installAndSetupApk } from '../utils/apk-installer.js';
 import { getSettings, updateContentRootPath } from '../config/settings-manager.js';
 import { validatePath } from '../utils/path-validator.js';
+import { getDatabase } from '../database/database.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -839,6 +840,199 @@ export function createAdminRouter(deps = {}) {
     } catch (error) {
       logger.error('[Admin] APK update failed:', error);
       res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  // GET /api/admin/network — сетевые интерфейсы
+  router.get('/network', requireAdmin, async (req, res) => {
+    try {
+      const os = await import('node:os');
+      const interfaces = os.networkInterfaces();
+      const result = Object.entries(interfaces).map(([name, addrs]) => ({
+        name,
+        addresses: (addrs || []).map(a => ({
+          family: a.family,
+          address: a.address,
+          netmask: a.netmask,
+          mac: a.mac === '00:00:00:00:00:00' ? null : a.mac,
+          internal: a.internal,
+          cidr: a.cidr
+        })).filter(a => !a.internal && (a.family === 'IPv4' || a.family === 'IPv6'))
+      })).filter(iface => iface.addresses.length > 0);
+      res.json(result);
+    } catch (error) {
+      logger.error('[Admin] Failed to get network info:', error);
+      res.status(500).json({ error: 'Не удалось получить информацию о сети' });
+    }
+  });
+
+  // GET /api/admin/sessions — активные сессии пользователей
+  router.get('/sessions', requireAdmin, async (req, res) => {
+    try {
+      const db = getDatabase();
+      const sessions = await db.all(`
+        SELECT rt.id, rt.user_id, u.username, u.full_name, u.role,
+               rt.ip_address, rt.user_agent, rt.expires_at, rt.last_used, rt.created_at
+        FROM refresh_tokens rt
+        JOIN users u ON rt.user_id = u.id
+        ORDER BY rt.last_used DESC
+      `);
+      res.json(sessions);
+    } catch (error) {
+      logger.error('[Admin] Failed to get sessions:', error);
+      res.status(500).json({ error: 'Не удалось загрузить сессии' });
+    }
+  });
+
+  // DELETE /api/admin/sessions/:id — отозвать сессию
+  router.delete('/sessions/:id', requireAdmin, async (req, res) => {
+    try {
+      const db = getDatabase();
+      const result = await db.run('DELETE FROM refresh_tokens WHERE id = ?', [req.params.id]);
+      if (result.changes === 0) {
+        return res.status(404).json({ error: 'Сессия не найдена' });
+      }
+      logger.info('[Admin] Session revoked', { sessionId: req.params.id, byUser: req.user?.username });
+      res.json({ ok: true });
+    } catch (error) {
+      logger.error('[Admin] Failed to delete session:', error);
+      res.status(500).json({ error: 'Не удалось удалить сессию' });
+    }
+  });
+
+  // GET /api/admin/health/services — проверка сервисов
+  router.get('/health/services', requireAdmin, async (req, res) => {
+    try {
+      const { execSync } = await import('node:child_process');
+      const os = await import('node:os');
+      const checks = {};
+
+      const runCheck = (name, cmd) => {
+        try {
+          const out = execSync(cmd, { timeout: 5000, encoding: 'utf-8' }).toString().trim();
+          checks[name] = { status: 'ok', version: out.split('\n')[0] };
+        } catch {
+          checks[name] = { status: 'error', version: null };
+        }
+      };
+
+      runCheck('ffmpeg', 'ffmpeg -version 2>&1 | head -1');
+      runCheck('ffprobe', 'ffprobe -version 2>&1 | head -1');
+      runCheck('git', 'git --version 2>&1');
+      runCheck('openssl', 'openssl version 2>&1');
+
+      checks.node = { status: 'ok', version: process.version };
+      checks.platform = { status: 'ok', os: os.platform(), arch: os.arch() };
+      checks.processUptime = Math.floor(process.uptime());
+      checks.systemUptime = Math.floor(os.uptime());
+      checks.docker = process.env.MMRC_DOCKER === '1' ? { status: 'ok' } : { status: 'disabled' };
+
+      res.json(checks);
+    } catch (error) {
+      logger.error('[Admin] Failed to check services:', error);
+      res.status(500).json({ error: 'Не удалось проверить сервисы' });
+    }
+  });
+
+  // GET /api/admin/docker — информация о Docker
+  router.get('/docker', requireAdmin, async (req, res) => {
+    try {
+      const { APP_VERSION, APP_BRANCH, DOCKER_TAG, DOCKER_IMAGES } = await import('../config/constants.js');
+      res.json({
+        enabled: process.env.MMRC_DOCKER === '1',
+        composeDir: process.env.MMRC_COMPOSE_DIR || null,
+        mainImage: process.env.DOCKER_IMAGE || null,
+        mainTag: process.env.DOCKER_IMAGE_TAG || DOCKER_TAG || null,
+        converterImage: process.env.CONVERTER_IMAGE || null,
+        ffmpegImage: process.env.FFMPEG_IMAGE || null,
+        streamerImage: process.env.STREAMER_IMAGE || null,
+        streamerEnabled: process.env.MMRC_STREAMER_ENABLED === 'true',
+        version: APP_VERSION,
+        branch: APP_BRANCH,
+        images: DOCKER_IMAGES || {}
+      });
+    } catch (error) {
+      logger.error('[Admin] Failed to get docker info:', error);
+      res.status(500).json({ error: 'Не удалось загрузить информацию о Docker' });
+    }
+  });
+
+  // GET /api/admin/settings/extended — все данные для страницы настроек одним запросом
+  router.get('/settings/extended', requireAdmin, async (req, res) => {
+    try {
+      const os = await import('node:os');
+      const { exec } = await import('node:child_process');
+      const db = getDatabase();
+      const { APP_VERSION, APP_BRANCH, DOCKER_TAG, DOCKER_IMAGES } = await import('../config/constants.js');
+
+      // Parallel: settings + sessions + service checks
+      const [settings, sessions] = await Promise.all([
+        Promise.resolve(getSettings()).then(async s => {
+          const mod = await import('../modules/index.js');
+          const availableModules = mod.getAvailableModules();
+          const enabled = await mod.getEnabledModules();
+          const enabledSet = new Set(enabled);
+          s.modules = availableModules.map(m => ({ ...m, enabled: enabledSet.has(m.id) }));
+          const { getDriverType } = await import('../database/database.js');
+          s.dbType = getDriverType();
+          return s;
+        }),
+        db.all(`SELECT rt.id, rt.user_id, u.username, u.full_name, u.role, rt.ip_address, rt.user_agent, rt.expires_at, rt.last_used, rt.created_at FROM refresh_tokens rt JOIN users u ON rt.user_id = u.id ORDER BY rt.last_used DESC`)
+      ]);
+
+      // Network
+      const interfaces = os.networkInterfaces();
+      const network = Object.entries(interfaces).map(([name, addrs]) => ({
+        name,
+        addresses: (addrs || []).map(a => ({
+          family: a.family, address: a.address, netmask: a.netmask,
+          mac: a.mac === '00:00:00:00:00:00' ? null : a.mac,
+          internal: a.internal, cidr: a.cidr
+        })).filter(a => !a.internal && (a.family === 'IPv4' || a.family === 'IPv6'))
+      })).filter(iface => iface.addresses.length > 0);
+
+      // Docker
+      const docker = {
+        enabled: process.env.MMRC_DOCKER === '1',
+        composeDir: process.env.MMRC_COMPOSE_DIR || null,
+        mainImage: process.env.DOCKER_IMAGE || null,
+        mainTag: process.env.DOCKER_IMAGE_TAG || DOCKER_TAG || null,
+        converterImage: process.env.CONVERTER_IMAGE || null,
+        ffmpegImage: process.env.FFMPEG_IMAGE || null,
+        streamerImage: process.env.STREAMER_IMAGE || null,
+        streamerEnabled: process.env.MMRC_STREAMER_ENABLED === 'true',
+        version: APP_VERSION,
+        branch: APP_BRANCH,
+        images: DOCKER_IMAGES || {}
+      };
+
+      // Service checks (parallel with individual timeouts)
+      const runCheck = (cmd) => new Promise(resolve => {
+        exec(cmd, { timeout: 5000 }, (err, stdout) => {
+          if (err) return resolve({ status: 'error', version: null });
+          const v = String(stdout).trim().split('\n')[0];
+          resolve({ status: 'ok', version: v });
+        });
+      });
+      const [ffmpegRes, ffprobeRes, gitRes, opensslRes] = await Promise.all([
+        runCheck('ffmpeg -version 2>&1 | head -1'),
+        runCheck('ffprobe -version 2>&1 | head -1'),
+        runCheck('git --version 2>&1'),
+        runCheck('openssl version 2>&1')
+      ]);
+      const services = {
+        ffmpeg: ffmpegRes, ffprobe: ffprobeRes, git: gitRes, openssl: opensslRes,
+        node: { status: 'ok', version: process.version },
+        platform: { os: os.platform(), arch: os.arch() },
+        processUptime: Math.floor(process.uptime()),
+        systemUptime: Math.floor(os.uptime()),
+        docker: process.env.MMRC_DOCKER === '1' ? { status: 'ok' } : { status: 'disabled' }
+      };
+
+      res.json({ settings, network, docker, services, sessions });
+    } catch (error) {
+      logger.error('[Admin] Failed to get extended settings:', error);
+      res.status(500).json({ error: 'Не удалось загрузить расширенные настройки' });
     }
   });
 
