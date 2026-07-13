@@ -85,7 +85,7 @@ export function generateRefreshToken(userId) {
 /**
  * Middleware: Требует аутентификации
  */
-export function requireAuth(req, res, next) {
+export async function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization;
   
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -100,12 +100,34 @@ export function requireAuth(req, res, next) {
     if (decoded.type !== 'access') {
       return res.status(401).json({ error: 'Неверный тип токена' });
     }
+
+    // Check if token was issued before token_valid_from (instant session revocation)
+    if (decoded.iat && decoded.userId) {
+      try {
+        const db = getDatabase();
+        const user = await db.get('SELECT id, is_active, token_valid_from FROM users WHERE id = ?', [decoded.userId]);
+        if (!user) {
+          return res.status(401).json({ error: 'Пользователь удалён' });
+        }
+        if (!user.is_active) {
+          return res.status(403).json({ error: 'Аккаунт отключён' });
+        }
+        if (user.token_valid_from) {
+          const validFrom = Math.floor(new Date(user.token_valid_from + 'Z').getTime() / 1000);
+          if (decoded.iat < validFrom) {
+            return res.status(401).json({ error: 'Сессия завершена администратором' });
+          }
+        }
+      } catch {
+        // If DB check fails, allow the request (fail-open for availability)
+      }
+    }
     
     req.user = decoded;
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Токен истек' });
+      return res.status(401).json({ error: 'Токен истёк' });
     }
     return res.status(401).json({ error: 'Неверный токен' });
   }

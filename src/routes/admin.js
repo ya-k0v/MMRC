@@ -888,11 +888,16 @@ export function createAdminRouter(deps = {}) {
   router.delete('/sessions/:id', requireAdmin, async (req, res) => {
     try {
       const db = getDatabase();
-      const result = await db.run('DELETE FROM refresh_tokens WHERE id = ?', [req.params.id]);
-      if (result.changes === 0) {
+      // First get the session to know which user it belongs to
+      const session = await db.get('SELECT id, user_id FROM refresh_tokens WHERE id = ?', [req.params.id]);
+      if (!session) {
         return res.status(404).json({ error: 'Сессия не найдена' });
       }
-      logger.info('[Admin] Session revoked', { sessionId: req.params.id, byUser: req.user?.username });
+      // Delete the refresh token
+      await db.run('DELETE FROM refresh_tokens WHERE id = ?', [req.params.id]);
+      // Set token_valid_from to invalidate all existing access tokens for this user instantly
+      await db.run('UPDATE users SET token_valid_from = CURRENT_TIMESTAMP WHERE id = ?', [session.user_id]);
+      logger.info('[Admin] Session revoked', { sessionId: req.params.id, userId: session.user_id, byUser: req.user?.username });
       res.json({ ok: true });
     } catch (error) {
       logger.error('[Admin] Failed to delete session:', error);

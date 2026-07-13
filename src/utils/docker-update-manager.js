@@ -123,6 +123,21 @@ class DockerUpdateManager {
       this.state.lastKnownRemoteSha = sanitizeSha(this.state.lastKnownRemoteSha) || null;
       this.state.updating = Boolean(this.state.updating);
 
+      // Reset stale "updating" flag: if updating was set >30 min ago, the process likely crashed
+      if (this.state.updating && this.state.lastUpdateStartedAt) {
+        const startedAt = new Date(this.state.lastUpdateStartedAt).getTime();
+        const STALE_THRESHOLD_MS = 30 * 60 * 1000;
+        if (Date.now() - startedAt > STALE_THRESHOLD_MS) {
+          logger.warn('[DockerUpdateManager] Resetting stale updating flag (started >30 min ago)', {
+            lastUpdateStartedAt: this.state.lastUpdateStartedAt
+          });
+          this.state.updating = false;
+          this.state.lastUpdateFinishedAt = new Date().toISOString();
+          this.state.lastUpdateError = 'Обновление прервано (процесс перезапущен)';
+          this.saveState();
+        }
+      }
+
       // first init: deployedSha = last known remote (best guess for current image)
       if (!this.state.deployedSha && this.state.lastKnownRemoteSha) {
         this.state.deployedSha = this.state.lastKnownRemoteSha;

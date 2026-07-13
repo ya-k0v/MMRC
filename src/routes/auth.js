@@ -463,6 +463,10 @@ router.post('/users/:id/toggle', requireAuth, requireManager, async (req, res) =
     if (userId === req.user.userId) return res.status(400).json({ error: 'Нельзя отключить свой аккаунт' });
 
     await db.run('UPDATE users SET is_active = ? WHERE id = ?', [is_active ? true : false, userId]);
+    // When deactivating, instantly invalidate all access tokens
+    if (!is_active) {
+      await db.run('UPDATE users SET token_valid_from = CURRENT_TIMESTAMP WHERE id = ?', [userId]);
+    }
 
     const targetUsername = (await db.get('SELECT username FROM users WHERE id = ?', [userId]))?.username || 'unknown';
 
@@ -566,6 +570,8 @@ router.post('/users/:id/reset-password',
 
       await db.run('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [passwordHash, userId]);
       await db.run('DELETE FROM refresh_tokens WHERE user_id = ?', [userId]);
+      // Instantly invalidate all access tokens for this user
+      await db.run('UPDATE users SET token_valid_from = CURRENT_TIMESTAMP WHERE id = ?', [userId]);
 
       await auditLog({
         userId: req.user.userId, action: AuditAction.PASSWORD_RESET, resource: `user:${userId}`,

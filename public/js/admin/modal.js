@@ -14,7 +14,13 @@ import {
   getSettingsIcon, 
   getDownloadIcon, 
   getUpDownloadIcon,
-  getCloseIcon 
+  getCloseIcon,
+  getWarningIcon,
+  getCheckIcon,
+  getBellIcon,
+  getMobileIcon,
+  getDeviceIcon,
+  getSearchIcon
 } from '../shared/svg-icons.js';
 import { escapeHtml } from '../shared/utils.js';
 
@@ -153,12 +159,61 @@ function setServiceLogsStatus(text, color = 'var(--text-secondary)') {
   statusEl.style.color = color;
 }
 
-function trimServiceLogsOutput(outputEl) {
-  if (!outputEl || outputEl.textContent.length <= SERVICE_LOGS_MAX_CHARS) return;
+function formatServiceLogLine(rawLine) {
+  try {
+    const obj = JSON.parse(rawLine);
+    const level = (obj.level || '').toLowerCase();
+    const ts = obj.timestamp || obj.time || obj.t || '';
+    const mod = obj.module || obj.category || '';
+    const message = obj.message || obj.msg || rawLine;
 
-  const tailText = outputEl.textContent.slice(-(SERVICE_LOGS_MAX_CHARS + 4096));
-  const firstLineBreak = tailText.indexOf('\n');
-  outputEl.textContent = firstLineBreak >= 0 ? tailText.slice(firstLineBreak + 1) : tailText;
+    const COLORS = {
+      error:  { bg: 'rgba(239,68,68,0.12)',  text: '#ef4444', label: 'ERR' },
+      warn:   { bg: 'rgba(234,179,8,0.10)',  text: '#eab308', label: 'WRN' },
+      warning:{ bg: 'rgba(234,179,8,0.10)',  text: '#eab308', label: 'WRN' },
+      info:   { bg: 'rgba(59,130,246,0.08)',  text: '#3b82f6', label: 'INF' },
+      debug:  { bg: 'rgba(156,163,175,0.08)', text: '#9ca3af', label: 'DBG' }
+    };
+    const lc = COLORS[level] || { bg: 'transparent', text: 'var(--text)', label: '---' };
+
+    const skip = new Set(['level','message','msg','timestamp','time','t','module','category','service']);
+    let rest = message;
+    const extra = Object.entries(obj).filter(([k]) => !skip.has(k));
+    if (extra.length) {
+      try { const o = {}; extra.forEach(([k, v]) => o[k] = v); rest += ' ' + JSON.stringify(o); } catch {}
+    }
+
+    const parts = [];
+    if (ts) parts.push(`<span style="color:var(--muted);white-space:nowrap;">${escapeHtml(ts)}</span>`);
+    if (level) parts.push(`<span style="display:inline-block;min-width:28px;text-align:center;padding:0 4px;border-radius:3px;font-size:0.72rem;font-weight:600;background:${lc.bg};color:${lc.text};">${lc.label}</span>`);
+    if (mod) parts.push(`<span style="color:var(--brand);font-weight:500;">[${escapeHtml(mod)}]</span>`);
+    parts.push(`<span style="color:${lc.text};">${escapeHtml(rest)}</span>`);
+
+    return `<div class="lg-line" data-level="${level}" style="padding:1px 4px;border-left:2px solid ${lc.bg === 'transparent' ? 'var(--border)' : lc.text};margin-bottom:1px;">${parts.join(' ')}</div>`;
+  } catch {
+    return `<div class="lg-line" data-level="" style="padding:1px 4px;border-left:2px solid var(--border);margin-bottom:1px;"><span style="color:var(--text);">${escapeHtml(rawLine)}</span></div>`;
+  }
+}
+
+function formatServiceLogLines(arr) {
+  return arr.map(formatServiceLogLine).join('');
+}
+
+function trimServiceLogsOutput(outputEl) {
+  if (!outputEl) return;
+  const lines = outputEl.querySelectorAll('.lg-line');
+  const maxLines = Math.ceil(SERVICE_LOGS_MAX_CHARS / 80);
+  while (lines.length > maxLines) {
+    lines[0].remove();
+  }
+}
+
+function getServiceLogTextContent() {
+  const el = document.getElementById('serviceLogsOutput');
+  if (!el) return '';
+  const divs = el.querySelectorAll('.lg-line');
+  if (divs.length === 0) return el.textContent || '';
+  return Array.from(divs).map(d => d.textContent).join('\n');
 }
 
 function flushServiceLogsTypewriterQueue(state, outputEl) {
@@ -171,9 +226,9 @@ function flushServiceLogsTypewriterQueue(state, outputEl) {
 
   state.isTyping = false;
 
-  if (state.textQueue) {
-    outputEl.textContent += state.textQueue;
-    state.textQueue = '';
+  if (state.htmlQueue) {
+    outputEl.insertAdjacentHTML('beforeend', state.htmlQueue);
+    state.htmlQueue = '';
     trimServiceLogsOutput(outputEl);
 
     if (state.autoScroll) {
@@ -204,16 +259,16 @@ function runServiceLogsTypewriter() {
       return;
     }
 
-    if (!activeState.textQueue.length) {
+    if (!activeState.htmlQueue.length) {
       activeState.isTyping = false;
       activeState.typeTimer = null;
       return;
     }
 
-    const chunkSize = Math.min(SERVICE_LOGS_TYPING_CHUNK, activeState.textQueue.length);
-    const chunk = activeState.textQueue.slice(0, chunkSize);
-    activeState.textQueue = activeState.textQueue.slice(chunk.length);
-    liveOutput.textContent += chunk;
+    const chunkSize = Math.min(SERVICE_LOGS_TYPING_CHUNK, activeState.htmlQueue.length);
+    const chunk = activeState.htmlQueue.slice(0, chunkSize);
+    activeState.htmlQueue = activeState.htmlQueue.slice(chunk.length);
+    liveOutput.insertAdjacentHTML('beforeend', chunk);
     trimServiceLogsOutput(liveOutput);
 
     if (activeState.autoScroll) {
@@ -234,12 +289,12 @@ function enqueueServiceLogsText(text, options = {}) {
   if (!outputEl) return;
 
   const forceImmediate = Boolean(options.forceImmediate);
-  const hasPendingOverflow = (state.textQueue.length + text.length) > SERVICE_LOGS_MAX_TYPING_QUEUE;
+  const hasPendingOverflow = (state.htmlQueue.length + text.length) > SERVICE_LOGS_MAX_TYPING_QUEUE;
   const shouldAppendImmediately = forceImmediate || text.length >= SERVICE_LOGS_FAST_APPEND_THRESHOLD || hasPendingOverflow;
 
   if (shouldAppendImmediately) {
     flushServiceLogsTypewriterQueue(state, outputEl);
-    outputEl.textContent += text;
+    outputEl.insertAdjacentHTML('beforeend', text);
     trimServiceLogsOutput(outputEl);
 
     if (state.autoScroll) {
@@ -248,7 +303,7 @@ function enqueueServiceLogsText(text, options = {}) {
     return;
   }
 
-  state.textQueue += text;
+  state.htmlQueue += text;
   runServiceLogsTypewriter();
 }
 
@@ -363,8 +418,8 @@ function openServiceLogsModal(adminFetch) {
         if (result.reset || reset) {
           if (state.typeTimer) clearTimeout(state.typeTimer);
           state.isTyping = false;
-          outputEl.textContent = '';
-          state.textQueue = '';
+          outputEl.innerHTML = '';
+          state.htmlQueue = '';
         }
 
         const nextOffset = Number.parseInt(String(result.nextOffset ?? ''), 10);
@@ -373,11 +428,11 @@ function openServiceLogsModal(adminFetch) {
 
         const lines = Array.isArray(result.lines) ? result.lines : [];
         if (lines.length) {
-          const chunkText = `${lines.join('\n')}\n`;
-          const useTypewriter = !result.truncated && lines.length <= 120 && chunkText.length <= 5000 && state.linesLimit <= 300;
-          enqueueServiceLogsText(chunkText, { forceImmediate: !useTypewriter });
+          const chunkHtml = formatServiceLogLines(lines);
+          const useTypewriter = !result.truncated && lines.length <= 120 && chunkHtml.length <= 5000 && state.linesLimit <= 300;
+          enqueueServiceLogsText(chunkHtml, { forceImmediate: !useTypewriter });
         } else if ((result.reset || reset) && !outputEl.textContent.trim()) {
-          outputEl.textContent = 'Логи пока пусты.\n';
+          outputEl.innerHTML = '<span style="color:var(--muted);">Логи пока пусты.</span>';
         }
 
         if (result.truncated) {
@@ -400,7 +455,7 @@ function openServiceLogsModal(adminFetch) {
       typeTimer: null,
       isTyping: false,
       isFetching: false,
-      textQueue: '',
+      htmlQueue: '',
       autoScroll: true,
       linesLimit: clampServiceLogsLines(linesSelectEl.value),
       offset: -1,
@@ -440,11 +495,11 @@ function openServiceLogsModal(adminFetch) {
     };
 
     clearBtn.onclick = () => {
-      outputEl.textContent = '';
+      outputEl.innerHTML = '';
       if (serviceLogsViewerState) {
         if (serviceLogsViewerState.typeTimer) clearTimeout(serviceLogsViewerState.typeTimer);
         serviceLogsViewerState.isTyping = false;
-        serviceLogsViewerState.textQueue = '';
+        serviceLogsViewerState.htmlQueue = '';
       }
       setServiceLogsStatus('Окно логов очищено.', 'var(--text-secondary)');
     };
@@ -511,7 +566,6 @@ export function showModal(title, content, options = {}) {
   
   // Проверяем, есть ли в заголовке SVG иконка
   const svgMatch = title.match(/<svg[^>]*>[\s\S]*?<\/svg>/i);
-  const emojiMatch = title.match(/^[🔔⚙️📱👥🔑✅❌🗑️🔒🔓]/);
   
   if (svgMatch) {
     // Если есть SVG иконка, используем её
@@ -519,10 +573,6 @@ export function showModal(title, content, options = {}) {
     // Убираем SVG из заголовка для получения чистого текста
     let cleanTitle = title.replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, '').trim();
     const titleText = document.createTextNode(cleanTitle);
-    titleEl.appendChild(titleText);
-  } else if (emojiMatch) {
-    // Если есть эмодзи, оставляем его как есть (он будет отображаться как текст)
-    const titleText = document.createTextNode(title);
     titleEl.appendChild(titleText);
   } else {
     // Если иконки нет, добавляем иконку настроек по умолчанию
@@ -2079,7 +2129,7 @@ async function loadSettingsContent(adminFetch) {
   checkFilesBtn.className = 'secondary';
   checkFilesBtn.style.cssText = 'width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center;';
   checkFilesBtn.title = 'Проверить файлы';
-  checkFilesBtn.textContent = '🔍';
+  checkFilesBtn.innerHTML = getSearchIcon(16);
   
   const cleanupFilesBtn = document.createElement('button');
   cleanupFilesBtn.id = 'cleanupFilesBtn';
@@ -2087,7 +2137,7 @@ async function loadSettingsContent(adminFetch) {
   cleanupFilesBtn.style.cssText = 'width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center;';
   cleanupFilesBtn.disabled = true;
   cleanupFilesBtn.title = 'Очистить';
-  cleanupFilesBtn.textContent = '🗑️';
+  cleanupFilesBtn.innerHTML = getTrashIcon(16);
   
   cleanupButtons.appendChild(checkFilesBtn);
   cleanupButtons.appendChild(cleanupFilesBtn);
@@ -2131,7 +2181,7 @@ async function loadSettingsContent(adminFetch) {
   checkOrphanedBtn.className = 'secondary';
   checkOrphanedBtn.style.cssText = 'width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center;';
   checkOrphanedBtn.title = 'Проверить осиротевшие файлы';
-  checkOrphanedBtn.textContent = '🔍';
+  checkOrphanedBtn.innerHTML = getSearchIcon(16);
   
   const cleanupOrphanedBtn = document.createElement('button');
   cleanupOrphanedBtn.id = 'cleanupOrphanedBtn';
@@ -2139,7 +2189,7 @@ async function loadSettingsContent(adminFetch) {
   cleanupOrphanedBtn.style.cssText = 'width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center;';
   cleanupOrphanedBtn.disabled = true;
   cleanupOrphanedBtn.title = 'Удалить осиротевшие файлы';
-  cleanupOrphanedBtn.textContent = '🗑️';
+  cleanupOrphanedBtn.innerHTML = getTrashIcon(16);
   
   orphanedButtons.appendChild(checkOrphanedBtn);
   orphanedButtons.appendChild(cleanupOrphanedBtn);
@@ -2640,7 +2690,7 @@ async function loadSettingsContent(adminFetch) {
 
           showModal(`
             <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
-              <span style="font-size:20px;">⚠️</span>
+              <span style="font-size:20px;">${getWarningIcon(20, 'var(--warning)')}</span>
               <span style="font-weight:600;">Подтверждение импорта БД</span>
             </div>
             <div style="color:var(--text-secondary); font-size:14px; margin-bottom:16px;">
@@ -2784,7 +2834,7 @@ async function loadSettingsContent(adminFetch) {
       }
       
       if (result.missingOnDisk === 0) {
-        statusText = '✅ Все файлы на месте. Проблем не обнаружено.';
+        statusText = `${getSuccessIcon(16)} Все файлы на месте. Проблем не обнаружено.`;
         cleanupStatusEl.style.color = 'var(--success)';
       } else if (result.missingOnDisk > 0) {
         cleanupStatusEl.style.color = 'var(--warning)';
@@ -2798,7 +2848,7 @@ async function loadSettingsContent(adminFetch) {
       cleanupStatusEl.style.color = 'var(--danger)';
     } finally {
       checkFilesBtn.disabled = false;
-      checkFilesBtn.innerHTML = '🔍';
+      checkFilesBtn.innerHTML = getSearchIcon(16);
     }
   };
 
@@ -2840,15 +2890,15 @@ async function loadSettingsContent(adminFetch) {
       
       let resultText = '';
       if (result.deletedFromDB > 0) {
-        resultText = `✅ Удалено ${result.deletedFromDB} записей из базы данных.`;
+        resultText = `${getSuccessIcon(16, 'var(--success)')} Удалено ${result.deletedFromDB} записей из базы данных.`;
       } else {
-        resultText = '✅ Очистка завершена.';
+        resultText = `${getSuccessIcon(16)} Очистка завершена.`;
       }
       
       cleanupStatusEl.textContent = resultText;
       cleanupStatusEl.style.color = 'var(--success, #22c55e)';
       cleanupFilesBtn.disabled = true;
-      cleanupFilesBtn.innerHTML = '🗑️';
+      cleanupFilesBtn.innerHTML = getTrashIcon(16);
       lastCheckResult = null;
 
       // Обновляем данные после очистки
@@ -2860,7 +2910,7 @@ async function loadSettingsContent(adminFetch) {
       cleanupStatusEl.style.color = 'var(--danger)';
       cleanupFilesBtn.disabled = false;
     } finally {
-      cleanupFilesBtn.innerHTML = '🗑️';
+      cleanupFilesBtn.innerHTML = getTrashIcon(16);
     }
   };
 
@@ -2900,7 +2950,7 @@ async function loadSettingsContent(adminFetch) {
       }
       
       if (result.orphaned === 0) {
-        statusText = '✅ Осиротевших файлов не найдено.';
+        statusText = `${getSuccessIcon(16)} Осиротевших файлов не найдено.`;
         orphanedStatusEl.style.color = 'var(--success)';
       } else if (result.orphaned > 0) {
         orphanedStatusEl.style.color = 'var(--warning)';
@@ -2914,7 +2964,7 @@ async function loadSettingsContent(adminFetch) {
       orphanedStatusEl.style.color = 'var(--danger)';
     } finally {
       checkOrphanedBtn.disabled = false;
-      checkOrphanedBtn.innerHTML = '🔍';
+      checkOrphanedBtn.innerHTML = getSearchIcon(16);
     }
   };
 
@@ -2956,18 +3006,18 @@ async function loadSettingsContent(adminFetch) {
       
       let resultText = '';
       if (result.deleted > 0) {
-        resultText = `✅ Удалено ${result.deleted} осиротевших файлов (${result.totalSizeMB} МБ освобождено).`;
+        resultText = `${getSuccessIcon(16, 'var(--success)')} Удалено ${result.deleted} осиротевших файлов (${result.totalSizeMB} МБ освобождено).`;
         if (result.errors && result.errors.length > 0) {
           resultText += ` Ошибок: ${result.errors.length}.`;
         }
       } else {
-        resultText = '✅ Очистка завершена.';
+        resultText = `${getSuccessIcon(16)} Очистка завершена.`;
       }
 
       orphanedStatusEl.textContent = resultText;
       orphanedStatusEl.style.color = 'var(--success)';
       cleanupOrphanedBtn.disabled = false;
-      cleanupOrphanedBtn.innerHTML = '🗑️';
+      cleanupOrphanedBtn.innerHTML = getTrashIcon(16);
       lastOrphanedResult = null;
 
       // Обновляем данные после очистки
@@ -2978,7 +3028,7 @@ async function loadSettingsContent(adminFetch) {
       orphanedStatusEl.textContent = `Ошибка: ${err.message}`;
       orphanedStatusEl.style.color = 'var(--danger)';
       cleanupOrphanedBtn.disabled = false;
-      cleanupOrphanedBtn.innerHTML = '🗑️';
+      cleanupOrphanedBtn.innerHTML = getTrashIcon(16);
     }
   };
 }

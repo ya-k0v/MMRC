@@ -165,6 +165,17 @@ const MIGRATIONS = [
       await addCol('photo_offset_y', 'REAL DEFAULT 0');
       await addCol('photo_scale', 'REAL DEFAULT 1');
     }
+  },
+  {
+    id: '2026-07-13-users-token-valid-from',
+    description: 'Add token_valid_from column for instant session revocation',
+    async up(driver) {
+      if (!(await driver.tableExists('users'))) return;
+      const cols = await driver.columns('users');
+      if (!cols.some(c => c.name === 'token_valid_from')) {
+        await driver.exec(`ALTER TABLE users ADD COLUMN token_valid_from ${driver.dialect === 'postgres' ? 'TIMESTAMP' : 'DATETIME'}`);
+      }
+    }
   }
 ];
 

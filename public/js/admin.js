@@ -13,7 +13,7 @@ import { renderDeviceCard as renderDeviceCardModule } from './admin/device-card.
 import { setupUploadUI as setupUploadUIModule } from './admin/upload-ui.js';
 import { showDevicesModal, showUsersModal, showSettingsModal } from './admin/modal.js';
 import { initSystemMonitor, stopSystemMonitor } from './admin/system-monitor.js';
-import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon } from './shared/svg-icons.js';
+import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon, getCloseIcon, getCheckIcon, getUnlockIcon, getLockIcon, getDeviceIcon, getKeyIcon, getTrashIcon, getPauseIcon, getPlayIcon, getCopyIcon, getDownloadIcon } from './shared/svg-icons.js';
 import { escapeHtml } from './shared/utils.js';
 import { initNotifications } from './admin/notifications.js';
 import { showNotificationsModal } from './admin/notifications-modal.js';
@@ -283,185 +283,68 @@ function createSettingsSection() {
     const isSqlite = dbType === 'sqlite';
     const modules = Array.isArray(data?.modules) ? data.modules : [];
     const docker = result.docker;
-    const network = Array.isArray(result.network) ? result.network : [];
     const services = result.services || {};
-    const sessions = Array.isArray(result.sessions) ? result.sessions : [];
+    const ldap = data?.ldapAuth || {};
 
     body.innerHTML = `
       <div class="admin-section-content">
 
-        <!-- Система -->
+        <!-- Система + Uptime + Перезапуск (компактная строка) -->
         <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-            Система
-          </div>
-          <div style="padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-md);">
-            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:var(--space-sm);">
-              <div><div class="meta" style="font-size:0.75rem; color:var(--muted);">Версия сервера</div><div style="font-weight:500;">${escapeHtml(version)}</div></div>
-              <div><div class="meta" style="font-size:0.75rem; color:var(--muted);">База данных</div><div style="font-weight:500;">${escapeHtml(isSqlite ? 'SQLite' : 'PostgreSQL')}</div></div>
-              <div><div class="meta" style="font-size:0.75rem; color:var(--muted);">Хост</div><div id="stSysHostname" style="font-weight:500;">—</div></div>
-            </div>
-            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:var(--space-sm);">
-              <div><div class="meta" style="font-size:0.75rem; color:var(--muted);">Платформа</div><div id="stSysPlatform" style="font-weight:500;">—</div></div>
-              <div><div class="meta" style="font-size:0.75rem; color:var(--muted);">Node.js</div><div id="stSysNode" style="font-weight:500;">—</div></div>
-              <div><div class="meta" style="font-size:0.75rem; color:var(--muted);">Uptime</div><div id="stSysUptime" style="font-weight:500;">—</div></div>
-            </div>
-            <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap;">
-              <button id="stRestart" class="secondary" style="background:var(--danger); color:#fff; border-color:var(--danger);">Перезапустить сервис</button>
-            </div>
+          <div style="padding:var(--space-sm) var(--space-md); display:flex; align-items:center; gap:var(--space-md); flex-wrap:wrap; font-size:0.8rem;">
+            <span style="font-weight:600;">v${escapeHtml(version)}</span>
+            <span style="color:var(--muted);">·</span>
+            <span>${escapeHtml(isSqlite ? 'SQLite' : 'PostgreSQL')}</span>
+            <span style="color:var(--muted);">·</span>
+            <span>Uptime: <strong id="stSysUptime">—</strong></span>
+            ${docker && docker.enabled ? `<span style="color:var(--muted);">·</span><span>Docker: <strong>${escapeHtml(docker.mainImage || '')}:${escapeHtml(docker.mainTag || '')}</strong></span>` : ''}
+            <button id="stRestart" class="secondary meta" style="margin-left:auto; background:var(--danger); color:#fff; border-color:var(--danger); min-width:auto; padding:4px 12px; font-size:0.75rem;">Перезапустить</button>
           </div>
         </div>
 
         <!-- Системный монитор -->
         <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-            Системный монитор
-          </div>
           <div id="stSysMonitorBody" style="padding:var(--space-md);">
             <div class="meta" style="font-size:0.8rem; color:var(--muted);">Загрузка...</div>
           </div>
         </div>
 
-        <!-- Docker -->
-        <div id="stDockerCard" class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
-            Docker
-          </div>
-          <div id="stDockerBody" style="padding:var(--space-md); font-size:0.8rem;">
-            ${!docker || !docker.enabled
-              ? '<div class="meta" style="color:var(--muted);">Docker не используется</div>'
-              : `<div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--space-sm);">
-                  <div><span class="meta" style="color:var(--muted);">Образ</span><div style="font-weight:500;">${escapeHtml(docker.mainImage || '—')}:${escapeHtml(docker.mainTag || '—')}</div></div>
-                  <div><span class="meta" style="color:var(--muted);">Версия</span><div style="font-weight:500;">${escapeHtml(docker.version || '—')} (${escapeHtml(docker.branch || '—')})</div></div>
-                  <div><span class="meta" style="color:var(--muted);">Конвертер</span><div style="font-weight:500;">${escapeHtml(docker.converterImage || '—')}</div></div>
-                  <div><span class="meta" style="color:var(--muted);">FFmpeg</span><div style="font-weight:500;">${escapeHtml(docker.ffmpegImage || '—')}</div></div>
-                  <div><span class="meta" style="color:var(--muted);">Стример</span><div style="font-weight:500;">${escapeHtml(docker.streamerImage || '—')} ${docker.streamerEnabled ? '✓' : '✗'}</div></div>
-                  <div><span class="meta" style="color:var(--muted);">Compose</span><div style="font-weight:500;">${escapeHtml(docker.composeDir || '—')}</div></div>
-                </div>`}
-          </div>
-        </div>
-
-        <!-- Сеть -->
+        <!-- Сервисы (компактно: только статусы) -->
         <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16.5 17.5 22 12 16.5 6.5"/><polyline points="7.5 6.5 2 12 7.5 17.5"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
-            Сеть
-          </div>
-          <div id="stNetworkBody" style="padding:var(--space-md); font-size:0.8rem;">
-            ${!network.length
-              ? '<div class="meta" style="color:var(--muted);">Нет сетевых интерфейсов</div>'
-              : network.map(iface => `
-                <div style="margin-bottom:var(--space-sm); padding-bottom:var(--space-sm); border-bottom:1px solid var(--border);">
-                  <div style="font-weight:600; font-size:0.85rem; margin-bottom:4px;">${escapeHtml(iface.name)}</div>
-                  ${iface.addresses.map(a => `
-                    <div style="display:flex; gap:var(--space-sm); padding:2px 0;">
-                      <span style="color:var(--muted); min-width:24px;">${escapeHtml(a.family === 'IPv4' ? 'IPv4' : 'IPv6')}</span>
-                      <code style="font-family:monospace;">${escapeHtml(a.address)}</code>
-                      ${a.mac ? `<span class="meta" style="font-size:0.7rem;">${escapeHtml(a.mac)}</span>` : ''}
-                    </div>
-                  `).join('')}
-                </div>
-              `).join('')}
-          </div>
-        </div>
-
-        <!-- Сервисы -->
-        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-            Сервисы
-          </div>
-          <div id="stServicesBody" style="padding:var(--space-md); font-size:0.8rem;">
-            <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
-              ${[
-                { label: 'FFmpeg', s: services.ffmpeg },
-                { label: 'FFprobe', s: services.ffprobe },
-                { label: 'Git', s: services.git },
-                { label: 'OpenSSL', s: services.openssl },
-                { label: 'Node.js', s: services.node },
-                { label: 'Docker', s: services.docker }
-              ].map(c => {
-                const ok = c.s?.status === 'ok';
-                const v = c.s?.version ? escapeHtml(c.s.version.split('(')[0].trim()) : '';
-                return `<div style="display:flex; align-items:center; gap:var(--space-sm);">
-                  <span style="width:8px; height:8px; border-radius:50%; background:${ok ? 'var(--success)' : 'var(--danger)'}; display:inline-block; flex-shrink:0;"></span>
-                  <span style="min-width:70px; font-weight:500;">${escapeHtml(c.label)}</span>
-                  <span class="meta" style="color:${ok ? 'var(--text-secondary)' : 'var(--danger)'};">${v || (ok ? 'доступен' : 'не найден')}</span>
-                </div>`;
-              }).join('')}
-              <div class="meta" style="font-size:0.75rem; color:var(--muted); margin-top:4px;">
-                Uptime: ${services.processUptime != null ? (() => { const t = services.processUptime; const d = Math.floor(t/86400); const h = Math.floor((t%86400)/3600); const m = Math.floor((t%3600)/60); const s = Math.floor(t%60); return (d ? d+'д ':'') + (h ? h+'ч ':'') + (m ? m+'м ':'') + s+'с'; })() : '—'}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Активные сессии -->
-        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            Активные сессии
-          </div>
-          <div id="stSessionsBody" style="padding:var(--space-md); font-size:0.8rem;">
-            ${!sessions.length
-              ? '<div class="meta" style="color:var(--muted);">Нет активных сессий</div>'
-              : `<div style="display:flex; flex-direction:column; gap:var(--space-xs);">${sessions.map(s => {
-                const isOwn = (window.user?.id || 0) === s.user_id;
-                const expires = s.expires_at ? new Date(s.expires_at + 'Z').toLocaleString() : '—';
-                const lastUsed = s.last_used ? new Date(s.last_used + 'Z').toLocaleString() : '—';
-                return `<div style="display:flex; align-items:center; gap:var(--space-sm); padding:6px; border:1px solid var(--border); border-radius:var(--radius-sm);">
-                  <div style="min-width:0; flex:1;">
-                    <div style="font-weight:500;">${escapeHtml(s.username)} ${isOwn ? '<span class="meta" style="font-size:0.7rem;">(вы)</span>' : ''}</div>
-                    <div class="meta" style="font-size:0.7rem;">IP: ${escapeHtml(s.ip_address || '—')} · ${escapeHtml(s.user_agent ? s.user_agent.slice(0, 60) : '—')}</div>
-                    <div class="meta" style="font-size:0.65rem; color:var(--muted);">${escapeHtml(lastUsed)} · до ${escapeHtml(expires)}</div>
-                  </div>
-                  ${isOwn ? '' : `<button class="danger meta st-session-revoke" data-id="${s.id}" style="min-width:auto; padding:4px 8px; font-size:0.7rem;">Отозвать</button>`}
-                </div>`;
-              }).join('')}</div>`}
-          </div>
-        </div>
-
-        <!-- Логирование -->
-        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-            Логирование
-          </div>
-          <div id="stLoggingBody" style="padding:var(--space-md); font-size:0.8rem;">
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--space-sm);">
-              <div><span class="meta" style="color:var(--muted);">Директория логов</span><div><code style="font-family:monospace; word-break:break-all;">${escapeHtml(runtime.logsDir || '')}</code></div></div>
-              <div><span class="meta" style="color:var(--muted);">Тип БД</span><div style="font-weight:500;">${escapeHtml(dbType || '—')}</div></div>
-            </div>
+          <div style="padding:var(--space-sm) var(--space-md); display:flex; align-items:center; gap:var(--space-md); flex-wrap:wrap; font-size:0.8rem;">
+            ${[
+              { label: 'FFmpeg', s: services.ffmpeg },
+              { label: 'FFprobe', s: services.ffprobe },
+              { label: 'Node', s: services.node },
+              { label: 'Docker', s: services.docker }
+            ].map(c => {
+              const ok = c.s?.status === 'ok';
+              return `<span style="display:inline-flex; align-items:center; gap:4px;">
+                <span style="width:6px; height:6px; border-radius:50%; background:${ok ? 'var(--success)' : 'var(--danger)'};"></span>
+                ${escapeHtml(c.label)}
+              </span>`;
+            }).join('<span style="color:var(--muted);">·</span>')}
           </div>
         </div>
 
         <!-- Обновления -->
         <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-            Обновления
-          </div>
-          <div style="padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);">
-            <div id="stUpdateInfo" class="meta" style="color:var(--muted);">Проверка...</div>
-            <div id="stUpdateActions" style="display:flex; gap:var(--space-sm); flex-wrap:wrap;">
-              <button id="stUpdateCheck" class="secondary">Проверить</button>
-              <button id="stUpdateApply" class="primary" style="display:none;">Применить</button>
-              <button id="stUpdateDismiss" class="secondary" style="display:none;">Отклонить</button>
-            </div>
+          <div style="padding:var(--space-sm) var(--space-md); display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; font-size:0.8rem;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            <div id="stUpdateInfo" class="meta" style="color:var(--muted); flex:1;">Проверка...</div>
+            <button id="stUpdateCheck" class="secondary meta" style="min-width:auto; padding:3px 10px; font-size:0.75rem;">Проверить</button>
+            <button id="stUpdateApply" class="primary meta" style="display:none; min-width:auto; padding:3px 10px; font-size:0.75rem;">Обновить</button>
+            <button id="stUpdateDismiss" class="secondary meta" style="display:none; min-width:auto; padding:3px 10px; font-size:0.75rem;">${getCloseIcon(12)}</button>
           </div>
         </div>
 
-        <!-- Хранилище -->
+        <!-- Хранилище контента -->
         <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
           <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
-            Хранилище контента
+            Хранилище
           </div>
           <div style="padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);">
-            ${defaultRoot ? `<div class="meta" style="font-size:0.75rem;">По умолчанию: <code style="font-family:monospace;">${escapeHtml(defaultRoot)}</code></div>` : ''}
             <div style="display:flex; gap:var(--space-sm); align-items:center;">
               <input id="stCrInput" class="input" value="${escapeHtml(contentRoot)}" placeholder="Путь к хранилищу" style="flex:1;" />
               <button id="stCrSave" class="primary">Сохранить</button>
@@ -485,7 +368,6 @@ function createSettingsSection() {
             Модули
           </div>
           <div style="padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);">
-            <div class="meta" style="font-size:0.8rem; color:var(--text-secondary);">Включение и отключение подключённых модулей</div>
             <div id="stModList" style="display:flex; flex-direction:column; gap:var(--space-sm);">
               ${modules.length === 0 ? '<div class="meta" style="color:var(--muted);">Нет доступных модулей</div>' :
                 modules.map(m => `
@@ -526,7 +408,7 @@ function createSettingsSection() {
           </div>
         </div>
 
-        <!-- База данных -->
+        <!-- База данных (только SQLite) -->
         ${isSqlite ? `
         <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
           <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
@@ -535,37 +417,33 @@ function createSettingsSection() {
           </div>
           <div style="padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);">
             <div style="display:flex; gap:var(--space-sm); align-items:center; flex-wrap:wrap;">
-              <span class="meta" style="font-size:0.8rem;">Экспорт / импорт БД (SQLite)</span>
               <button id="stDbExport" class="primary">Экспорт</button>
               <button id="stDbImport" class="secondary">Импорт</button>
               <input type="file" id="stDbImportInput" accept=".db" style="display:none;" />
             </div>
-            <hr style="border:none; border-top:1px solid var(--border); margin:4px 0;" />
             <details>
               <summary class="meta" style="cursor:pointer; color:var(--muted); font-size:0.8rem;">Обслуживание</summary>
-              <div style="display:flex; flex-direction:column; gap:var(--space-sm); margin-top:var(--space-sm);">
-                <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center;">
-                  <button id="stDbCheckFiles" class="secondary meta">Проверить файлы</button>
-                  <button id="stDbWalCheckpoint" class="secondary meta">WAL Checkpoint</button>
-                  <button id="stDbCleanupMissing" class="secondary meta">Очистить отсутствующие</button>
-                  <button id="stDbCleanupOrphaned" class="secondary meta">Очистить осиротевшие</button>
-                  <div id="stDbMaintStatus" class="meta" style="font-size:0.8rem;"></div>
-                </div>
+              <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; margin-top:var(--space-sm); align-items:center;">
+                <button id="stDbCheckFiles" class="secondary meta">Проверить файлы</button>
+                <button id="stDbWalCheckpoint" class="secondary meta">WAL Checkpoint</button>
+                <button id="stDbCleanupMissing" class="secondary meta">Очистить отсутствующие</button>
+                <button id="stDbCleanupOrphaned" class="secondary meta">Очистить осиротевшие</button>
+                <div id="stDbMaintStatus" class="meta" style="font-size:0.8rem;"></div>
               </div>
             </details>
           </div>
         </div>` : ''}
 
-        <!-- LDAP -->
+        <!-- LDAP (только если настроен) -->
+        ${ldap && ldap.enabled ? `
         <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-            LDAP
+          <div style="padding:var(--space-sm) var(--space-md); display:flex; align-items:center; gap:var(--space-sm); font-size:0.8rem;">
+            <span style="width:6px; height:6px; border-radius:50%; background:var(--success);"></span>
+            LDAP: <code style="font-family:monospace;">${escapeHtml(ldap.url || '—')}</code>
+            <span style="color:var(--muted);">·</span>
+            Base DN: <code style="font-family:monospace;">${escapeHtml(ldap.baseDN || '—')}</code>
           </div>
-          <div id="stLdapBody" style="padding:var(--space-md);">
-            <div class="meta" style="font-size:0.8rem;">Загрузка...</div>
-          </div>
-        </div>
+        </div>` : ''}
 
       </div>
     `;
@@ -582,7 +460,7 @@ function createSettingsSection() {
           const r = await adminFetch('/api/admin/settings/content-root', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: val })
           });
-          if (r.ok) { s.textContent = '✓ Сохранено'; s.style.color = 'var(--success)'; }
+          if (r.ok) { s.innerHTML = getCheckIcon(14, 'var(--success)') + ' Сохранено'; s.style.color = 'var(--success)'; }
           else { const e = await r.json().catch(() => ({})); s.textContent = e.error || 'Ошибка'; s.style.color = 'var(--danger)'; }
         } catch { s.textContent = 'Ошибка соединения'; s.style.color = 'var(--danger)'; }
       };
@@ -605,7 +483,7 @@ function createSettingsSection() {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: cb.checked })
           });
           const result = await r.json().catch(() => ({}));
-          if (modStatus) { modStatus.textContent = result.message || (r.ok ? '✓ Сохранено' : 'Ошибка'); modStatus.style.color = r.ok ? 'var(--success)' : 'var(--danger)'; }
+          if (modStatus) { modStatus.innerHTML = result.message || (r.ok ? getCheckIcon(14, 'var(--success)') + ' Сохранено' : 'Ошибка'); modStatus.style.color = r.ok ? 'var(--success)' : 'var(--danger)'; }
         } catch { if (modStatus) { modStatus.textContent = 'Ошибка соединения'; modStatus.style.color = 'var(--danger)'; } }
       };
     });
@@ -623,7 +501,7 @@ function createSettingsSection() {
         try {
           const r = await adminFetch('/api/admin/install-apk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ip, deviceId, deviceName }) });
           const result = await r.json();
-          s.textContent = result.ok ? '✓ Установлено!' : (result.error || 'Ошибка'); s.style.color = result.ok ? 'var(--success)' : 'var(--danger)';
+          s.innerHTML = result.ok ? getCheckIcon(14, 'var(--success)') + ' Установлено!' : (result.error || 'Ошибка'); s.style.color = result.ok ? 'var(--success)' : 'var(--danger)';
         } catch { s.textContent = 'Ошибка соединения'; s.style.color = 'var(--danger)'; }
         apkInstall.disabled = false;
       };
@@ -824,40 +702,12 @@ function createSettingsSection() {
       await refreshUpdateStatus();
     })();
 
-    // LDAP
-    (async () => {
-      const ldapBody = document.getElementById('stLdapBody');
-      if (!ldapBody) return;
-      const ldap = data?.ldapAuth || {};
-      if (!ldap.enabled) {
-        ldapBody.innerHTML = '<div class="meta" style="font-size:0.8rem; color:var(--muted);">LDAP аутентификация не настроена</div>';
-        return;
-      }
-      ldapBody.innerHTML = `
-        <div style="display:flex; flex-direction:column; gap:4px; font-size:0.8rem;">
-          <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:100px; color:var(--muted);">Статус</span><span style="color:var(--success); font-weight:500;">● Настроен</span></div>
-          <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:100px; color:var(--muted);">URL</span><code style="font-family:monospace;">${escapeHtml(ldap.url || '—')}</code></div>
-          <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:100px; color:var(--muted);">Base DN</span><code style="font-family:monospace;">${escapeHtml(ldap.baseDN || '—')}</code></div>
-          <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:100px; color:var(--muted);">Bind DN</span><code style="font-family:monospace;">${escapeHtml(ldap.bindDN || '—')}</code></div>
-          <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:100px; color:var(--muted);">Пароль</span><span class="meta">${ldap.bindPasswordSet ? '✓ Установлен' : 'Не установлен'}</span></div>
-          <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:100px; color:var(--muted);">Автосоздание</span><span>${ldap.autoCreateUsers ? 'Включено' : 'Отключено'}</span></div>
-          <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:100px; color:var(--muted);">Роль по умолч.</span><span>${escapeHtml(ldap.defaultRole || 'speaker')}</span></div>
-        </div>
-      `;
-    })();
-
-    // System info (hostname, platform, node version, uptime)
+    // System uptime
     (async () => {
       try {
         const r = await adminFetch('/api/system/info');
         if (r.ok) {
           const sys = await r.json();
-          const hostEl = document.getElementById('stSysHostname');
-          if (hostEl) hostEl.textContent = sys.hostname || '—';
-          const platEl = document.getElementById('stSysPlatform');
-          if (platEl) platEl.textContent = sys.platform && sys.arch ? `${sys.platform} (${sys.arch})` : '—';
-          const nodeEl = document.getElementById('stSysNode');
-          if (nodeEl) nodeEl.textContent = sys.nodeVersion || '—';
           const uptimeEl = document.getElementById('stSysUptime');
           if (uptimeEl) uptimeEl.textContent = sys.processUptimeFormatted || '—';
         }
@@ -869,18 +719,6 @@ function createSettingsSection() {
     if (monitorBody) {
       initSystemMonitor(adminFetch, monitorBody);
     }
-
-    // Session revoke handlers (inline HTML, need event binding)
-    document.querySelectorAll('.st-session-revoke').forEach(btn => {
-      btn.onclick = async () => {
-        if (!confirm('Отозвать эту сессию?')) return;
-        try {
-          const resp = await adminFetch(`/api/admin/sessions/${btn.dataset.id}`, { method: 'DELETE' });
-          if (resp.ok) btn.closest('div').remove();
-          else alert('Ошибка');
-        } catch { alert('Ошибка соединения'); }
-      };
-    });
 
   }).catch(() => {
     const root = body;
@@ -958,7 +796,7 @@ function createUsersSection() {
     modal.innerHTML = `
       <div style="padding:var(--space-md) var(--space-lg); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
         <div style="font-weight:600; font-size:var(--font-size-base);">${escapeHtml(title)}</div>
-        <button id="usModalClose" class="secondary meta" style="min-width:auto; width:28px; height:28px; padding:0; border:none; background:transparent; font-size:18px; line-height:1;">✕</button>
+        <button id="usModalClose" class="secondary meta" style="min-width:auto; width:28px; height:28px; padding:0; border:none; background:transparent; font-size:18px; line-height:1;">${getCloseIcon(12)}</button>
       </div>
       <div style="padding:var(--space-lg);">${bodyHtml}</div>
     `;
@@ -1088,6 +926,24 @@ function createUsersSection() {
     } catch { alert('Ошибка соединения'); }
   };
 
+  // Revoke all sessions for a user
+  window._usRevokeAllSessions = async (userId, username) => {
+    if (!confirm(`Завершить все сессии пользователя "${username}"? Он будет разавторизован.`)) return;
+    try {
+      const userSessions = (window._usState.allSessions || []).filter(s => s.user_id === userId);
+      if (!userSessions.length) { alert('Нет активных сессий'); return; }
+      let ok = 0, fail = 0;
+      for (const s of userSessions) {
+        try {
+          const r = await adminFetch(`/api/admin/sessions/${s.id}`, { method: 'DELETE' });
+          if (r.ok) ok++; else fail++;
+        } catch { fail++; }
+      }
+      if (fail > 0) alert(`Завершено: ${ok}, ошибок: ${fail}`);
+      loadUsersSection();
+    } catch { alert('Ошибка соединения'); }
+  };
+
   // Edit devices modal
   window._usEditDevices = async (userId, username, role) => {
     if (role === 'admin' || role === 'hero_admin') {
@@ -1137,13 +993,25 @@ async function loadUsersSection() {
   if (!tbody) return;
   tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:var(--space-xl); color:var(--muted);">Загрузка...</td></tr>';
   try {
-    const [usersRes, devicesRes] = await Promise.all([adminFetch('/api/auth/users'), adminFetch('/api/devices')]);
+    const [usersRes, devicesRes, sessionsRes] = await Promise.all([
+      adminFetch('/api/auth/users'),
+      adminFetch('/api/devices'),
+      adminFetch('/api/admin/sessions')
+    ]);
     if (!usersRes.ok) throw new Error('HTTP ' + usersRes.status);
     const users = await usersRes.json();
     const devices = await devicesRes.json();
+    const sessions = sessionsRes.ok ? await sessionsRes.json() : [];
     window._usState.devicesById = Array.isArray(devices)
       ? devices.reduce((a, d) => { if (d?.device_id) a[d.device_id] = d; return a; }, {})
       : {};
+
+    // Group sessions by user_id
+    const sessionsByUser = {};
+    (Array.isArray(sessions) ? sessions : []).forEach(s => {
+      if (!sessionsByUser[s.user_id]) sessionsByUser[s.user_id] = [];
+      sessionsByUser[s.user_id].push(s);
+    });
 
     const usersWithCounts = await Promise.all(users.map(async (u) => {
       try {
@@ -1153,7 +1021,15 @@ async function loadUsersSection() {
         return { ...u, deviceIds: Array.isArray(ids) ? ids : [], deviceCount: (Array.isArray(ids) ? ids : []).length };
       } catch { return { ...u, deviceIds: [], deviceCount: 0 }; }
     }));
+
+    // Attach sessions to users
+    usersWithCounts.forEach(u => {
+      u.sessions = sessionsByUser[u.id] || [];
+      u.online = u.sessions.length > 0;
+    });
+
     window._usState.allUsers = usersWithCounts;
+    window._usState.allSessions = Array.isArray(sessions) ? sessions : [];
     renderUsersSectionList();
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:var(--space-xl); color:var(--danger);">Ошибка загрузки: ${escapeHtml(e.message || '')}</td></tr>`;
@@ -1218,7 +1094,10 @@ function renderUsersSectionList() {
     return `<tr style="border-bottom:1px solid var(--border); transition:background 0.15s; cursor:default;" onmouseover="this.style.background='var(--panel-hover)'" onmouseout="this.style.background=''">
       <td style="padding:10px 12px;">
         <div style="display:flex; align-items:center; gap:var(--space-sm);">
-          <div style="width:32px; height:32px; border-radius:50%; background:${roleColors[u.role] || 'var(--muted-2)'}; color:var(--panel); display:flex; align-items:center; justify-content:center; font-weight:600; font-size:0.8rem; flex-shrink:0;">${(u.username || '?')[0].toUpperCase()}</div>
+          <div style="position:relative; width:32px; height:32px; flex-shrink:0;">
+            <div style="width:32px; height:32px; border-radius:50%; background:${roleColors[u.role] || 'var(--muted-2)'}; color:var(--panel); display:flex; align-items:center; justify-content:center; font-weight:600; font-size:0.8rem;">${(u.username || '?')[0].toUpperCase()}</div>
+            ${u.online ? `<span title="Онлайн — ${u.sessions.length} сессий" style="position:absolute; bottom:-1px; right:-1px; width:10px; height:10px; border-radius:50%; background:var(--success); border:2px solid var(--panel);"></span>` : ''}
+          </div>
           <div style="min-width:0;">
             <div style="font-weight:500; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(u.username)}</div>
             <div class="meta" style="font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(u.full_name || '')}</div>
@@ -1238,10 +1117,11 @@ function renderUsersSectionList() {
       <td style="padding:10px 12px; text-align:center; color:var(--text); font-size:0.85rem;">${u.role === 'admin' ? '—' : (u.deviceCount || 0)}</td>
       <td style="padding:10px 12px; text-align:right;">
         <div style="display:inline-flex; gap:4px;">
-          <button class="secondary meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usToggle(${u.id}, ${!u.is_active})" title="${u.is_active ? 'Отключить' : 'Включить'}">${u.is_active ? '🔓' : '🔒'}</button>
-          ${(u.role === 'speaker' || u.role === 'manager') ? `<button class="secondary meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usEditDevices(${u.id}, '${escapeHtml(u.username)}', '${escapeHtml(u.role)}')" title="Назначить устройства">📡</button>` : ''}
-          ${!isLdap ? `<button class="secondary meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usResetPass(${u.id}, '${escapeHtml(u.username)}')" title="Сбросить пароль">🔑</button>` : ''}
-          ${u.id !== 1 ? `<button class="danger meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usDelete(${u.id}, '${escapeHtml(u.username)}')" title="Удалить">🗑</button>` : ''}
+          ${u.online ? `<button class="danger meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usRevokeAllSessions(${u.id}, '${escapeHtml(u.username)}')" title="Завершить все сессии (${u.sessions.length})">⏻</button>` : ''}
+          <button class="secondary meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usToggle(${u.id}, ${!u.is_active})" title="${u.is_active ? 'Отключить' : 'Включить'}">${u.is_active ? getUnlockIcon(14) : getLockIcon(14)}</button>
+          ${(u.role === 'speaker' || u.role === 'manager') ? `<button class="secondary meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usEditDevices(${u.id}, '${escapeHtml(u.username)}', '${escapeHtml(u.role)}')" title="Назначить устройства">${getDeviceIcon(14)}</button>` : ''}
+          ${!isLdap ? `<button class="secondary meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usResetPass(${u.id}, '${escapeHtml(u.username)}')" title="Сбросить пароль">${getKeyIcon(14)}</button>` : ''}
+          ${u.id !== 1 ? `<button class="danger meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usDelete(${u.id}, '${escapeHtml(u.username)}')" title="Удалить">${getTrashIcon(14)}</button>` : ''}
         </div>
       </td>
     </tr>`;
@@ -1277,11 +1157,11 @@ function createLogsSection() {
         <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem; cursor:pointer;">
           <input type="checkbox" id="lgAutoscroll" checked style="width:14px; height:14px;" /> Авто
         </label>
-        <button id="lgPause" class="secondary meta" style="min-width:auto; width:30px; height:30px; padding:0; font-size:0.8rem;" title="Пауза">❚❚</button>
+        <button id="lgPause" class="secondary meta" style="min-width:auto; width:30px; height:30px; padding:0; font-size:0.8rem;" title="Пауза">${getPauseIcon(14)}</button>
         <button id="lgRefresh" class="secondary meta" style="min-width:auto; height:30px; padding:2px 10px; font-size:0.8rem;">Обновить</button>
         <button id="lgClear" class="secondary meta" style="min-width:auto; height:30px; padding:2px 10px; font-size:0.8rem;">Очистить</button>
-        <button id="lgCopy" class="secondary meta" style="min-width:auto; height:30px; padding:2px 10px; font-size:0.8rem;" title="Копировать">📋</button>
-        <button id="lgDownload" class="secondary meta" style="min-width:auto; height:30px; padding:2px 10px; font-size:0.8rem;" title="Скачать">⬇</button>
+        <button id="lgCopy" class="secondary meta" style="min-width:auto; height:30px; padding:2px 10px; font-size:0.8rem;" title="Копировать">${getCopyIcon(14)}</button>
+        <button id="lgDownload" class="secondary meta" style="min-width:auto; height:30px; padding:2px 10px; font-size:0.8rem;" title="Скачать">${getDownloadIcon(14)}</button>
       </div>
 
       <!-- Info bar -->
@@ -1300,6 +1180,79 @@ function createLogsSection() {
   let availableModules = [];
 
   const ql = (sel) => el.querySelector(sel);
+
+  const LOG_LEVEL_COLORS = {
+    error:  { bg: 'rgba(239,68,68,0.12)',   text: '#ef4444', label: 'ERR' },
+    warn:   { bg: 'rgba(234,179,8,0.10)',   text: '#eab308', label: 'WRN' },
+    warning:{ bg: 'rgba(234,179,8,0.10)',   text: '#eab308', label: 'WRN' },
+    info:   { bg: 'rgba(59,130,246,0.08)',   text: '#3b82f6', label: 'INF' },
+    debug:  { bg: 'rgba(156,163,175,0.08)',  text: '#9ca3af', label: 'DBG' },
+    default:{ bg: 'transparent',             text: 'var(--text)', label: '---' }
+  };
+
+  function parseLogLine(rawLine) {
+    try {
+      const obj = JSON.parse(rawLine);
+      return {
+        timestamp: obj.timestamp || obj.time || obj.t || '',
+        level: (obj.level || '').toLowerCase(),
+        module: obj.module || obj.category || '',
+        message: obj.message || obj.msg || rawLine,
+        meta: obj
+      };
+    } catch {
+      const tsMatch = rawLine.match(/^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[^\s]*)\s/);
+      if (tsMatch) {
+        return { timestamp: tsMatch[1], level: '', module: '', message: rawLine, meta: null };
+      }
+      return { timestamp: '', level: '', module: '', message: rawLine, meta: null };
+    }
+  }
+
+  function formatLogLine(rawLine) {
+    const parsed = parseLogLine(rawLine);
+    const lc = LOG_LEVEL_COLORS[parsed.level] || LOG_LEVEL_COLORS.default;
+
+    const ts = parsed.timestamp ? escapeHtml(parsed.timestamp) : '';
+    const levelTag = parsed.level ? escapeHtml(parsed.level.toUpperCase().slice(0, 5)) : '';
+    const mod = parsed.module ? escapeHtml(parsed.module) : '';
+
+    let rest = parsed.message;
+    if (parsed.meta) {
+      const skip = new Set(['level','message','msg','timestamp','time','t','module','category','service']);
+      const extra = Object.entries(parsed.meta).filter(([k]) => !skip.has(k));
+      if (extra.length) {
+        try {
+          const obj = {};
+          extra.forEach(([k, v]) => obj[k] = v);
+          rest += ' ' + JSON.stringify(obj);
+        } catch {}
+      }
+    }
+
+    const parts = [];
+    if (ts) parts.push(`<span style="color:var(--muted);white-space:nowrap;">${ts}</span>`);
+    if (levelTag) parts.push(`<span style="display:inline-block;min-width:28px;text-align:center;padding:0 4px;border-radius:3px;font-size:0.72rem;font-weight:600;background:${lc.bg};color:${lc.text};">${levelTag}</span>`);
+    if (mod) parts.push(`<span style="color:var(--brand);font-weight:500;">[${mod}]</span>`);
+
+    const msgColor = lc !== LOG_LEVEL_COLORS.default ? lc.text : 'var(--text)';
+    parts.push(`<span style="color:${msgColor};">${escapeHtml(rest)}</span>`);
+
+    return `<div class="lg-line" data-level="${parsed.level || ''}" style="padding:1px 4px;border-left:2px solid ${lc.bg === 'transparent' ? 'var(--border)' : lc.text};margin-bottom:1px;">${parts.join(' ')}</div>`;
+  }
+
+  function formatLogLines(arr) {
+    if (!arr.length) return 'Логи пусты';
+    return arr.map(formatLogLine).join('');
+  }
+
+  function getLogTextContent() {
+    const output = ql('#lgOutput');
+    if (!output) return '';
+    const divs = output.querySelectorAll('.lg-line');
+    if (divs.length === 0) return output.textContent || '';
+    return Array.from(divs).map(d => d.textContent).join('\n');
+  }
 
   async function fetchLogs(initial) {
     const output = ql('#lgOutput');
@@ -1323,15 +1276,12 @@ function createLogsSection() {
       const result = await resp.json();
       const arr = Array.isArray(result.lines) ? result.lines : [];
 
-      // Update available levels/modules from response
       if (Array.isArray(result.availableLevels) && result.availableLevels.length) availableLevels = result.availableLevels;
       if (Array.isArray(result.availableModules) && result.availableModules.length) availableModules = result.availableModules;
 
-      // Store incremental state
       if (typeof result.nextOffset === 'number') incrementalOffset = result.nextOffset;
       if (result.fileName) currentFileName = result.fileName;
 
-      // Update info bar
       const info = ql('#lgInfo');
       if (info) {
         const parts = [];
@@ -1342,13 +1292,16 @@ function createLogsSection() {
         info.textContent = parts.join(' · ');
       }
 
-      // Append or replace
       if (result.reset || initial) {
-        output.textContent = arr.join('\n') || 'Логи пусты';
+        output.innerHTML = arr.length ? formatLogLines(arr) : '<span style="color:var(--muted);">Логи пусты</span>';
       } else if (arr.length > 0) {
-        const existing = output.textContent;
-        const separator = existing && !existing.endsWith('\n') ? '\n' : '';
-        output.textContent = existing + separator + arr.join('\n');
+        const newHtml = formatLogLines(arr);
+        output.insertAdjacentHTML('beforeend', newHtml);
+        const maxLogLines = 2000;
+        const children = output.children;
+        while (children.length > maxLogLines) {
+          children[0].remove();
+        }
       }
 
       if (ql('#lgAutoscroll').checked) {
@@ -1399,7 +1352,7 @@ function createLogsSection() {
   };
   ql('#lgPause').onclick = () => {
     paused = !paused;
-    ql('#lgPause').textContent = paused ? '▶' : '❚❚';
+    ql('#lgPause').innerHTML = paused ? getPlayIcon(14) : getPauseIcon(14);
     ql('#lgPause').title = paused ? 'Возобновить' : 'Пауза';
   };
 
@@ -1411,11 +1364,11 @@ function createLogsSection() {
 
   // Copy
   ql('#lgCopy').onclick = () => {
-    const output = ql('#lgOutput');
-    if (!output || !output.textContent) return;
-    navigator.clipboard.writeText(output.textContent).catch(() => {
+    const text = getLogTextContent();
+    if (!text) return;
+    navigator.clipboard.writeText(text).catch(() => {
       const ta = document.createElement('textarea');
-      ta.value = output.textContent;
+      ta.value = text;
       ta.style.position = 'fixed'; ta.style.left = '-9999px';
       document.body.appendChild(ta);
       ta.select();
@@ -1426,10 +1379,10 @@ function createLogsSection() {
 
   // Download
   ql('#lgDownload').onclick = () => {
-    const output = ql('#lgOutput');
-    if (!output || !output.textContent) return;
+    const text = getLogTextContent();
+    if (!text) return;
     const level = ql('#lgLevel').value;
-    const blob = new Blob([output.textContent], { type: 'text/plain' });
+    const blob = new Blob([text], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
