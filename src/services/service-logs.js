@@ -9,13 +9,13 @@ const SERVICE_LOGS_MAX_CHUNK_BYTES = Math.max(64 * 1024, Number(process.env.SERV
 const ADMIN_SERVICE_LOGS_FALLBACK_DIR = path.join(process.cwd(), '.tmp', 'logs');
 const SERVICE_LOG_LEVELS = ['combined', 'error', 'warn', 'info', 'debug'];
 
-function parsePositiveInt(value, fallback) {
+export function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
   return parsed;
 }
 
-function clampInt(value, min, max) {
+export function clampInt(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 

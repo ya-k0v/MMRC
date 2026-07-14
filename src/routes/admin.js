@@ -31,7 +31,9 @@ import {
   readLinesFromOffset,
   SERVICE_LOG_LEVELS,
   SERVICE_LOGS_DEFAULT_LINES,
-  SERVICE_LOGS_MAX_LINES
+  SERVICE_LOGS_MAX_LINES,
+  parsePositiveInt,
+  clampInt
 } from '../services/service-logs.js';
 import { ROOT, MAX_FILE_SIZE } from '../config/constants.js';
 
@@ -1084,16 +1086,6 @@ export function createAdminRouter(deps = {}) {
 const SERVICE_LOG_MODULES = ['auth', 'device', 'file', 'socket', 'security', 'api', 'stream', 'system', 'db'];
 const ADMIN_DB_IMPORT_DIR = path.join(ROOT, '.tmp', 'db-import');
 const WAL_CHECKPOINT_INTERVAL_MS = parseInt(process.env.WAL_CHECKPOINT_INTERVAL_MS || '60000', 10);
-
-function parsePositiveInt(value, fallback) {
-  const parsed = Number.parseInt(String(value ?? ''), 10);
-  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
-  return parsed;
-}
-
-function clampInt(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
 
 export function createAdminEndpoints({
   updateManager,
