@@ -5,11 +5,9 @@ import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomBytes } from 'node:crypto';
-
 // Импорты из модулей
 import { 
-  ROOT, PUBLIC, MAX_FILE_SIZE, ALLOWED_EXT, PORT, HOST
+  ROOT, PUBLIC, PORT, HOST
 } from './src/config/constants.js';
 import { createSocketServer } from './src/config/socket-config.js';
 import { 
@@ -59,7 +57,6 @@ import { createHeroRouter, initHeroDb } from './src/hero/index.js';
 import { createVolumeRouter } from './src/routes/volume.js';
 import fileResolverRouter from './src/routes/file-resolver.js';
 import { createNotificationsRouter } from './src/routes/notifications.js';
-import multer from 'multer';
 import { createUploadMiddleware } from './src/middleware/multer-config.js';
 import { requireAuth, requireAdmin, requireManager, requireHeroAdmin, requireSpeaker } from './src/middleware/auth.js';
 
@@ -73,7 +70,6 @@ import logger, { httpLoggerMiddleware } from './src/utils/logger.js';
 import { cleanupResolutionCache, getResolutionCacheSize } from './src/video/resolution-cache.js';
 import { circuitBreakers } from './src/utils/circuit-breaker.js';
 import { getDataRoot, getDevicesPath, getStreamsOutputDir, getConvertedCache, getLogsDir, getTempDir } from './src/config/settings-manager.js';
-import { validatePath } from './src/utils/path-validator.js';
 import { getMetrics } from './src/utils/metrics.js';
 import { timerRegistry } from './src/utils/timer-registry.js';
 import { createUpdateManager } from './src/utils/update-manager.js';
@@ -186,23 +182,6 @@ let devices = {};
 let fileNamesMap = {};
 
 async function startupDatabase() {
-  if (!isPostgres) {
-    const DB_PATH = path.join(ROOT, 'config', 'main.db');
-    try {
-      await runMigrations(DB_PATH);
-    } catch (err) {
-      logger.error('[Server] Database migration failed, aborting startup', { error: err?.message || String(err) });
-      throw err;
-    }
-
-    startWalCheckpointInterval(WAL_CHECKPOINT_INTERVAL_MS);
-    logger.info('[Server] WAL checkpoint interval started', {
-      intervalMs: WAL_CHECKPOINT_INTERVAL_MS,
-      intervalMinutes: WAL_CHECKPOINT_INTERVAL_MS / 60000,
-      thresholdMB: process.env.WAL_CHECKPOINT_THRESHOLD_MB || '100'
-    });
-  }
-
   devices = await loadDevicesFromDB();
   fileNamesMap = await loadFileNamesFromDB();
 
@@ -583,26 +562,7 @@ app.get('/api/metrics', requireAuth, requireAdmin, (req, res) => {
 // Duplicates list (admin only)
 app.use('/api/duplicates', requireAuth, deduplicationRouter);
 
-// ========================================
-// ВСЕ API ROUTES ПЕРЕНЕСЕНЫ В МОДУЛИ src/routes/
-// ========================================
-// - devices.js: CRUD операций с устройствами
-// - placeholder.js: Управление заглушками
-// - files.js: Upload, copy, rename, delete, list файлов
-// - video-info.js: Статус, информация и оптимизация видео
-// - conversion.js: PDF/PPTX конвертация
-
-// ========================================
-// DOCUMENT CONVERSION (PDF/PPTX)
-// ========================================
-// (Модуль: src/converters/document-converter.js)
-
-// ========================================
-// VIDEO OPTIMIZATION для Android TV
-// ========================================
-// (Модули: src/video/optimizer.js, src/video/ffmpeg-wrapper.js, src/video/file-status.js)
-
-// Оберточные функции для совместимости с существующим кодом
+// Wrapper functions for backward compatibility
 async function autoOptimizeVideoWrapper(deviceId, fileName) {
   if (queuesReady && videoOptimizeQueue) {
     // Быстрая оценка приоритета по размеру файла
