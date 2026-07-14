@@ -546,6 +546,13 @@ ENVEOF3
         warn "Some services failed to start (check port conflicts with: mmrc logs)"
     fi
 
+    # SSL setup
+    echo ""
+    read -p "Setup SSL certificate now? [y/N]: " setup_ssl < /dev/tty
+    if [[ "$setup_ssl" =~ ^[Yy]$ ]]; then
+        "$BIN_DIR/mmrc" ssl
+    fi
+
     # Wait for health with progress
     info "Waiting for server to be ready..."
     local check_port=80
@@ -593,6 +600,7 @@ ENVEOF3
     info "Useful commands:"
     echo "   mmrc status    - Check services status"
     echo "   mmrc logs      - View logs"
+    echo "   mmrc ssl       - Setup SSL certificate"
     echo "   mmrc stop      - Stop services"
     echo "   mmrc update    - Update to latest version"
     echo "   mmrc backup    - Create backup"
