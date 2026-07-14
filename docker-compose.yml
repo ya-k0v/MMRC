@@ -1,6 +1,10 @@
 services:
   mmrc:
-    image: ${DOCKER_IMAGE:-pingwin1900/mmrc}:${DOCKER_IMAGE_TAG:-v340}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INCLUDE_DOCKER_CLI: "true"
     container_name: mmrc
     restart: unless-stopped
     environment:
@@ -87,7 +91,9 @@ services:
       - mmrc-network
 
   streamer:
-    image: ${STREAMER_IMAGE:-pingwin1900/mmrc-streamer}:${DOCKER_IMAGE_TAG:-v340}
+    build:
+      context: .
+      dockerfile: Dockerfile.streamer
     profiles: [streamer]
     container_name: mmrc-streamer
     restart: unless-stopped
