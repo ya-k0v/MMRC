@@ -55,7 +55,7 @@ services:
       - ${CONTENT_DIR:-./data}:/app/data
       - mmrc-config:/app/config
       - mmrc-temp:/app/.tmp
-      - mmrc-certs:/etc/nginx/ssl-certs:ro
+      - mmrc-certs:/etc/nginx/ssl-certs
       - /var/lib/mmrc/certs:/var/lib/mmrc/certs:ro
       # Docker socket — для авто-обновления из админки. Удалите, если не нужно.
       - /var/run/docker.sock:/var/run/docker.sock
