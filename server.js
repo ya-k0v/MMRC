@@ -632,14 +632,16 @@ async function autoConvertFileWrapper(deviceId, fileName, devicesParam, fileName
 // Все Socket.IO handlers перенесены в модули src/socket/
 
 // Настраиваем Socket.IO обработчики
-setupSocketHandlers(io, { 
-  devices, 
+setupSocketHandlers(io, {
+  devices,
   getPageSlideCount,
   getVolumeState,
   persistVolumeState,
   applyVolumeCommand,
   deviceVolumeState,
-  storage
+  storage,
+  requireAuth,
+  getLogsDir
 });
 
 // Настраиваем Socket.IO обработчики для уведомлений

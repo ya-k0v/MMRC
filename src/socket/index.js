@@ -6,6 +6,7 @@
 import { getOnlineDevices, startConnectionCleanup } from './connection-manager.js';
 import { setupDeviceHandlers, handleDisconnect } from './device-handlers.js';
 import { setupControlHandlers } from './control-handlers.js';
+import { setupServiceLogsHandler } from './service-logs-handler.js';
 import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('socket');
 
@@ -76,5 +77,7 @@ export function setupSocketHandlers(io, deps) {
     startConnectionCleanup(io);
     cleanupStarted = true;
   }
+
+  setupServiceLogsHandler(io, { requireAuth: deps.requireAuth, getLogsDir: deps.getLogsDir });
 }
 
