@@ -40,7 +40,6 @@ docker-compose.yml
 !README.md
 
 # Dev
-scripts/
 dev/
 docs/
 .devcontainer
