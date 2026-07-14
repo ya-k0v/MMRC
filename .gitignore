@@ -124,3 +124,6 @@ untitled.*
 
 # Graphify output (generated cache/reports)
 graphify-out/
+
+# MiMoCode
+.mimocode/
