@@ -502,96 +502,143 @@ cmd_ssl() {
 
     cd "$APP_DIR"
 
-    read -p "Enter domain or IP address: " domain < /dev/tty
-    if [ -z "$domain" ]; then
-        error "Domain or IP is required"
-        exit 1
-    fi
-
     COMPOSE_HA=$(get_compose_ha)
     PROFILES=$(get_compose_profiles)
 
-    # Check if input is IP address
-    if echo "$domain" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
-        # Self-signed certificate for IP
-        info "IP address detected, generating self-signed certificate..."
+    # Check if SSL certs already exist
+    CERTS_DIR=$(find "$DATA_DIR/certs" -name "fullchain.pem" -exec dirname {} \; 2>/dev/null | head -1)
 
-        mkdir -p "$DATA_DIR/certs/$domain"
+    if [ -n "$CERTS_DIR" ] && [ -f "$CERTS_DIR/fullchain.pem" ] && [ -f "$CERTS_DIR/privkey.pem" ]; then
+        EXISTING_DOMAIN=$(basename "$CERTS_DIR")
+        info "SSL certificates found: $EXISTING_DOMAIN"
+        echo ""
+        echo "1) Use existing certificate"
+        echo "2) Issue new certificate"
+        read -p "Choose [1]: " choice < /dev/tty
+        choice=${choice:-1}
 
-        openssl req -x509 -nodes -days 3650 \
-            -newkey rsa:2048 \
-            -keyout "$DATA_DIR/certs/$domain/privkey.pem" \
-            -out "$DATA_DIR/certs/$domain/fullchain.pem" \
-            -subj "/CN=$domain" \
-            -addext "subjectAltName=IP:$domain"
-
-        if [ $? -eq 0 ]; then
-            success "Self-signed certificate generated!"
-            info "Certificate: $DATA_DIR/certs/$domain/fullchain.pem"
-            info "Key: $DATA_DIR/certs/$domain/privkey.pem"
-            info "Valid for 10 years"
-
-            replace_or_append_env "SSL_DOMAIN" "$domain"
-            replace_or_append_env "SSL_CERT" "$DATA_DIR/certs/$domain/fullchain.pem"
-            replace_or_append_env "SSL_KEY" "$DATA_DIR/certs/$domain/privkey.pem"
-
-            info "Starting MMRC back..."
-            $COMPOSE $COMPOSE_HA $PROFILES up -d
+        if [ "$choice" = "2" ]; then
+            issue_new_cert
         else
-            error "Failed to generate certificate"
-            $COMPOSE $COMPOSE_HA $PROFILES up -d
-            exit 1
+            info "Using existing certificate for $EXISTING_DOMAIN"
+            replace_or_append_env "SSL_DOMAIN" "$EXISTING_DOMAIN"
+            replace_or_append_env "SSL_CERT" "$CERTS_DIR/fullchain.pem"
+            replace_or_append_env "SSL_KEY" "$CERTS_DIR/privkey.pem"
         fi
     else
-        # Let's Encrypt for domain
-        info "Domain detected, issuing Let's Encrypt certificate..."
+        info "No SSL certificates found."
+        issue_new_cert
+    fi
 
-        # In Docker mode, stop MMRC to free port 80 for acme.sh standalone
-        info "Stopping MMRC to free port 80..."
-        $COMPOSE $COMPOSE_HA $PROFILES down
+    info "Restarting MMRC with SSL..."
+    $COMPOSE $COMPOSE_HA $PROFILES down 2>/dev/null || true
+    $COMPOSE $COMPOSE_HA $PROFILES up -d
+    success "MMRC started with SSL on port 443"
+}
 
-        if ! command -v acme.sh >/dev/null 2>&1; then
-            info "Installing acme.sh..."
-            cd /root
-            curl -s https://get.acme.sh | sh
-            export PATH="/root/.acme.sh:$PATH"
-        fi
+issue_new_cert() {
+    echo ""
+    echo "How to get SSL certificate?"
+    echo "1) Self-signed (for IP addresses)"
+    echo "2) Let's Encrypt (for public domains)"
+    echo "3) I have certificate files"
+    read -p "Choose [1]: " cert_type < /dev/tty
+    cert_type=${cert_type:-1}
 
-        if ! command -v acme.sh >/dev/null 2>&1; then
-            error "acme.sh installation failed. Install manually: curl -s https://get.acme.sh | sh"
-            exit 1
-        fi
+    case $cert_type in
+        1)
+            read -p "Enter IP address: " domain < /dev/tty
+            if [ -z "$domain" ] || ! echo "$domain" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+                error "Valid IP address is required"
+                return 1
+            fi
 
-        info "Issuing SSL certificate for $domain..."
-        acme.sh --issue -d "$domain" --standalone --force
-
-        if [ $? -eq 0 ]; then
+            info "Generating self-signed certificate for $domain..."
             mkdir -p "$DATA_DIR/certs/$domain"
 
-            acme.sh --install-cert -d "$domain" \
-                --key-file "$DATA_DIR/certs/$domain/privkey.pem" \
-                --fullchain-file "$DATA_DIR/certs/$domain/fullchain.pem" \
-                --reloadcmd "cp \$CERT_KEY \$CERT_FULLCHAIN $DATA_DIR/certs/$domain/"
+            openssl req -x509 -nodes -days 3650 \
+                -newkey rsa:2048 \
+                -keyout "$DATA_DIR/certs/$domain/privkey.pem" \
+                -out "$DATA_DIR/certs/$domain/fullchain.pem" \
+                -subj "/CN=$domain" \
+                -addext "subjectAltName=IP:$domain" 2>/dev/null
 
-            success "SSL certificate installed!"
-            info "Certificate: $DATA_DIR/certs/$domain/fullchain.pem"
-            info "Key: $DATA_DIR/certs/$domain/privkey.pem"
+            if [ $? -eq 0 ]; then
+                success "Self-signed certificate generated!"
+                replace_or_append_env "SSL_DOMAIN" "$domain"
+                replace_or_append_env "SSL_CERT" "$DATA_DIR/certs/$domain/fullchain.pem"
+                replace_or_append_env "SSL_KEY" "$DATA_DIR/certs/$domain/privkey.pem"
+            else
+                error "Failed to generate certificate"
+                return 1
+            fi
+            ;;
+        2)
+            read -p "Enter domain name: " domain < /dev/tty
+            if [ -z "$domain" ]; then
+                error "Domain name is required"
+                return 1
+            fi
 
+            info "Stopping MMRC to free port 80..."
+            $COMPOSE $COMPOSE_HA $PROFILES down 2>/dev/null || true
+
+            if ! command -v acme.sh >/dev/null 2>&1; then
+                info "Installing acme.sh..."
+                cd /root
+                curl -s https://get.acme.sh | sh
+                export PATH="/root/.acme.sh:$PATH"
+            fi
+
+            info "Issuing Let's Encrypt certificate for $domain..."
+            acme.sh --issue -d "$domain" --standalone --force
+
+            if [ $? -eq 0 ]; then
+                mkdir -p "$DATA_DIR/certs/$domain"
+                acme.sh --install-cert -d "$domain" \
+                    --key-file "$DATA_DIR/certs/$domain/privkey.pem" \
+                    --fullchain-file "$DATA_DIR/certs/$domain/fullchain.pem"
+
+                success "Let's Encrypt certificate issued!"
+                replace_or_append_env "SSL_DOMAIN" "$domain"
+                replace_or_append_env "SSL_CERT" "$DATA_DIR/certs/$domain/fullchain.pem"
+                replace_or_append_env "SSL_KEY" "$DATA_DIR/certs/$domain/privkey.pem"
+            else
+                error "Failed to issue certificate"
+                return 1
+            fi
+            ;;
+        3)
+            read -p "Enter full path to certificate: " cert_path < /dev/tty
+            read -p "Enter full path to private key: " key_path < /dev/tty
+
+            if [ ! -f "$cert_path" ] || [ ! -f "$key_path" ]; then
+                error "Certificate or key file not found"
+                return 1
+            fi
+
+            read -p "Enter domain/IP for this certificate: " domain < /dev/tty
+            if [ -z "$domain" ]; then
+                error "Domain/IP is required"
+                return 1
+            fi
+
+            mkdir -p "$DATA_DIR/certs/$domain"
+            cp "$cert_path" "$DATA_DIR/certs/$domain/fullchain.pem"
+            cp "$key_path" "$DATA_DIR/certs/$domain/privkey.pem"
+            chmod 644 "$DATA_DIR/certs/$domain/fullchain.pem"
+            chmod 600 "$DATA_DIR/certs/$domain/privkey.pem"
+
+            success "Certificate installed!"
             replace_or_append_env "SSL_DOMAIN" "$domain"
             replace_or_append_env "SSL_CERT" "$DATA_DIR/certs/$domain/fullchain.pem"
             replace_or_append_env "SSL_KEY" "$DATA_DIR/certs/$domain/privkey.pem"
-
-            info "Starting MMRC back..."
-            $COMPOSE $COMPOSE_HA $PROFILES up -d
-
-            info "SSL certificate will be used after you configure nginx for HTTPS."
-        else
-            error "Failed to issue certificate"
-            info "Starting MMRC back..."
-            $COMPOSE $COMPOSE_HA $PROFILES up -d
-            exit 1
-        fi
-    fi
+            ;;
+        *)
+            error "Invalid choice"
+            return 1
+            ;;
+    esac
 }
 
 cmd_shell() {
