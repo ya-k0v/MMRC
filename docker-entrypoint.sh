@@ -43,7 +43,7 @@ SSL_CERTS_DIR="/etc/nginx/ssl-certs"
 HTTPS_CONF="/etc/nginx/conf.d/https.conf"
 CERTS_FOUND=false
 
-for CHECK_DIR in "/var/lib/mmrc/certs" "${DATA_DIR:-/app/data}/certs"; do
+for CHECK_DIR in "/etc/nginx/ssl-certs" "/var/lib/mmrc/certs" "${DATA_DIR:-/app/data}/certs"; do
     if [ -d "$CHECK_DIR" ]; then
         CERT_DIR=$(find "$CHECK_DIR" -name "fullchain.pem" -exec dirname {} \; 2>/dev/null | head -1)
         if [ -n "$CERT_DIR" ] && [ -f "$CERT_DIR/fullchain.pem" ] && [ -f "$CERT_DIR/privkey.pem" ]; then

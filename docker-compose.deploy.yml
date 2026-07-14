@@ -56,6 +56,7 @@ services:
       - mmrc-config:/app/config
       - mmrc-temp:/app/.tmp
       - mmrc-certs:/etc/nginx/ssl-certs:ro
+      - /var/lib/mmrc/certs:/var/lib/mmrc/certs:ro
       # Docker socket — для авто-обновления из админки. Удалите, если не нужно.
       - /var/run/docker.sock:/var/run/docker.sock
       # Project dir — для доступа к compose-файлу при обновлении.
