@@ -56,9 +56,7 @@ services:
       - mmrc-config:/app/config
       - mmrc-temp:/app/.tmp
       - /var/run/docker.sock:/var/run/docker.sock
-      # Создайте папку docker/nginx/ssl/ на хосте и положите fullchain.pem + privkey.pem для HTTPS
-      # Или закомментируйте эту строку, если HTTPS не нужен
-      - ./docker/nginx/ssl:/etc/nginx/ssl:ro
+      - /var/lib/mmrc/certs:/var/lib/mmrc/certs:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:80/health"]
       interval: 30s

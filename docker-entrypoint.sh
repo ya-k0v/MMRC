@@ -41,20 +41,22 @@ if [ -f "/app/scripts/post-pull-sync.sh" ]; then
 fi
 
 # Copy SSL certificates if available
-SSL_CERTS_HOST="${DATA_DIR:-/app/data}/certs"
 SSL_CERTS_NGINX="/etc/nginx/ssl-certs"
-if [ -d "$SSL_CERTS_HOST" ]; then
-    # Find first domain/IP folder with certs
-    CERT_DIR=$(find "$SSL_CERTS_HOST" -name "fullchain.pem" -exec dirname {} \; 2>/dev/null | head -1)
-    if [ -n "$CERT_DIR" ] && [ -f "$CERT_DIR/fullchain.pem" ] && [ -f "$CERT_DIR/privkey.pem" ]; then
-        echo "🔐 SSL certificates found, configuring HTTPS..."
-        mkdir -p "$SSL_CERTS_NGINX"
-        cp "$CERT_DIR/fullchain.pem" "$SSL_CERTS_NGINX/"
-        cp "$CERT_DIR/privkey.pem" "$SSL_CERTS_NGINX/"
-        chmod 644 "$SSL_CERTS_NGINX/fullchain.pem"
-        chmod 600 "$SSL_CERTS_NGINX/privkey.pem"
+# Check multiple possible cert locations
+for CERTS_DIR in "/var/lib/mmrc/certs" "${DATA_DIR:-/app/data}/certs"; do
+    if [ -d "$CERTS_DIR" ]; then
+        CERT_DIR=$(find "$CERTS_DIR" -name "fullchain.pem" -exec dirname {} \; 2>/dev/null | head -1)
+        if [ -n "$CERT_DIR" ] && [ -f "$CERT_DIR/fullchain.pem" ] && [ -f "$CERT_DIR/privkey.pem" ]; then
+            echo "🔐 SSL certificates found in $CERT_DIR, configuring HTTPS..."
+            mkdir -p "$SSL_CERTS_NGINX"
+            cp "$CERT_DIR/fullchain.pem" "$SSL_CERTS_NGINX/"
+            cp "$CERT_DIR/privkey.pem" "$SSL_CERTS_NGINX/"
+            chmod 644 "$SSL_CERTS_NGINX/fullchain.pem"
+            chmod 600 "$SSL_CERTS_NGINX/privkey.pem"
+            break
+        fi
     fi
-fi
+done
 
 # Start Nginx as reverse proxy
 echo "🌐 Starting Nginx reverse proxy..."
