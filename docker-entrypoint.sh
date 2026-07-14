@@ -40,6 +40,22 @@ if [ -f "/app/scripts/post-pull-sync.sh" ]; then
     SKIP_NPM_INSTALL=1 SKIP_SERVICE_RESTART=1 SKIP_MIGRATION=0 bash /app/scripts/post-pull-sync.sh 2>/dev/null || true
 fi
 
+# Copy SSL certificates if available
+SSL_CERTS_HOST="${DATA_DIR:-/app/data}/certs"
+SSL_CERTS_NGINX="/etc/nginx/ssl-certs"
+if [ -d "$SSL_CERTS_HOST" ]; then
+    # Find first domain/IP folder with certs
+    CERT_DIR=$(find "$SSL_CERTS_HOST" -name "fullchain.pem" -exec dirname {} \; 2>/dev/null | head -1)
+    if [ -n "$CERT_DIR" ] && [ -f "$CERT_DIR/fullchain.pem" ] && [ -f "$CERT_DIR/privkey.pem" ]; then
+        echo "🔐 SSL certificates found, configuring HTTPS..."
+        mkdir -p "$SSL_CERTS_NGINX"
+        cp "$CERT_DIR/fullchain.pem" "$SSL_CERTS_NGINX/"
+        cp "$CERT_DIR/privkey.pem" "$SSL_CERTS_NGINX/"
+        chmod 644 "$SSL_CERTS_NGINX/fullchain.pem"
+        chmod 600 "$SSL_CERTS_NGINX/privkey.pem"
+    fi
+fi
+
 # Start Nginx as reverse proxy
 echo "🌐 Starting Nginx reverse proxy..."
 if [ -f "/etc/nginx/nginx.conf" ]; then
