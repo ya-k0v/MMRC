@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   quality_gate:
-    name: Quality gate / Node 20
+    name: Quality gate / Node 22
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:

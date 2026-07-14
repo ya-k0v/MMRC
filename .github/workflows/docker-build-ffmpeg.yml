@@ -2,7 +2,7 @@ name: Build and Push FFmpeg Image
 
 on:
   push:
-    branches: [ v330, main ]
+    branches: [ v340, main ]
     paths:
       - Dockerfile.ffmpeg
   workflow_dispatch:

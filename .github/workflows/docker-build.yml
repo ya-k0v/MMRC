@@ -5,6 +5,14 @@ on:
     branches: [v340, main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   DOCKER_ORG: pingwin1900
 
