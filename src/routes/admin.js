@@ -2,16 +2,38 @@ import express from 'express';
 import multer from 'multer';
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { requireAdmin } from '../middleware/auth.js';
+import { requireAuth, requireAdmin, requireCsrfToken } from '../middleware/auth.js';
 import { longOperationTimeout } from '../middleware/timeout.js';
 import { validate, schemas } from '../middleware/validate.js';
+import { validateUploadSize } from '../middleware/multer-config.js';
 import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('api');
 import { installAndSetupApk } from '../utils/apk-installer.js';
-import { getSettings, updateContentRootPath } from '../config/settings-manager.js';
+import { getSettings, updateContentRootPath, getDevicesPath, getLogsDir } from '../config/settings-manager.js';
 import { validatePath } from '../utils/path-validator.js';
-import { getDatabase } from '../database/database.js';
+import {
+  closeDatabase,
+  getDatabase,
+  performWalCheckpoint,
+  startWalCheckpointInterval,
+  stopWalCheckpointInterval
+} from '../database/database.js';
+import { runMigrations } from '../database/migrate.js';
+import { loadDevicesFromDB, loadFileNamesFromDB, saveDevicesToDB } from '../storage/devices-storage-sqlite.js';
+import { updateDeviceFilesFromDB } from './files.js';
+import { repairImportedFilePaths } from '../database/files-metadata.js';
+import bcrypt from 'bcrypt';
+import {
+  resolveLatestServiceLogFilePath,
+  readLastLinesFromFile,
+  readLinesFromOffset,
+  SERVICE_LOG_LEVELS,
+  SERVICE_LOGS_DEFAULT_LINES,
+  SERVICE_LOGS_MAX_LINES
+} from '../services/service-logs.js';
+import { ROOT, MAX_FILE_SIZE } from '../config/constants.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1049,6 +1071,547 @@ export function createAdminRouter(deps = {}) {
     } catch (error) {
       logger.error('[Admin] Failed to get extended settings:', error);
       res.status(500).json({ error: 'Не удалось загрузить расширенные настройки' });
+    }
+  });
+
+  return router;
+}
+
+// ========================================
+// Inline admin endpoints (moved from server.js)
+// ========================================
+
+const SERVICE_LOG_MODULES = ['auth', 'device', 'file', 'socket', 'security', 'api', 'stream', 'system', 'db'];
+const ADMIN_DB_IMPORT_DIR = path.join(ROOT, '.tmp', 'db-import');
+const WAL_CHECKPOINT_INTERVAL_MS = parseInt(process.env.WAL_CHECKPOINT_INTERVAL_MS || '60000', 10);
+
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return parsed;
+}
+
+function clampInt(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+export function createAdminEndpoints({
+  updateManager,
+  scheduleServiceRestart,
+  scheduleRestartAfterDbImport,
+  scheduleRestartAfterUpdateApply,
+  DB_PATH,
+  devices,
+  fileNamesMap,
+  io,
+  manualRestartDelayMs = 1200
+}) {
+  const router = express.Router();
+
+  // POST /restart-service
+  router.post('/restart-service', requireAuth, requireAdmin, (req, res) => {
+    const restartScheduled = scheduleServiceRestart('admin_manual_restart', manualRestartDelayMs);
+    logger.warn('[Admin] Manual service restart requested', {
+      user: req.user?.username || 'unknown',
+      restartScheduled
+    });
+
+    return res.json({
+      ok: true,
+      restartScheduled,
+      message: 'Перезапуск сервиса запущен. Подождите 3-10 секунд и обновите страницу.'
+    });
+  });
+
+  // GET /update/status
+  router.get('/update/status', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const fetchRemoteRaw = String(req.query.fetchRemote || req.query.fetch || '').toLowerCase();
+      const fetchRemote = fetchRemoteRaw === '1' || fetchRemoteRaw === 'true' || fetchRemoteRaw === 'yes';
+
+      const status = await updateManager.getStatus({ fetchRemote });
+      const runtimeState = updateManager.getRuntimeState();
+
+      return res.json({
+        ok: true,
+        status,
+        runtime: {
+          updating: Boolean(runtimeState.updating),
+          lastCheckedAt: runtimeState.lastCheckedAt || null,
+          lastUpdateStartedAt: runtimeState.lastUpdateStartedAt || null,
+          lastUpdateFinishedAt: runtimeState.lastUpdateFinishedAt || null,
+          lastUpdateError: runtimeState.lastUpdateError || null,
+          dismissedRemoteSha: runtimeState.dismissedRemoteSha || null
+        }
+      });
+    } catch (error) {
+      logger.error('[Admin] Failed to get update status', {
+        error: error?.message || String(error)
+      });
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || 'Не удалось получить статус обновлений'
+      });
+    }
+  });
+
+  // POST /update/check
+  router.post('/update/check', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const result = await updateManager.checkAndNotify({
+        force: true,
+        fetchRemote: true,
+        source: 'admin_manual'
+      });
+
+      return res.json({
+        ok: true,
+        ...result
+      });
+    } catch (error) {
+      logger.error('[Admin] Failed to check updates manually', {
+        user: req.user?.username || 'unknown',
+        error: error?.message || String(error)
+      });
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || 'Проверка обновлений завершилась ошибкой'
+      });
+    }
+  });
+
+  // POST /update/dismiss
+  router.post('/update/dismiss', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const remoteSha = typeof req.body?.remoteSha === 'string' ? req.body.remoteSha : '';
+      const dismissResult = updateManager.dismiss(remoteSha);
+
+      logger.info('[Admin] Update notification dismissed', {
+        user: req.user?.username || 'unknown',
+        remoteSha: dismissResult.dismissedRemoteSha || null
+      });
+
+      return res.json({
+        ok: true,
+        ...dismissResult
+      });
+    } catch (error) {
+      logger.error('[Admin] Failed to dismiss update notification', {
+        error: error?.message || String(error)
+      });
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || 'Не удалось отложить уведомление об обновлении'
+      });
+    }
+  });
+
+  // POST /update/apply
+  router.post('/update/apply', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const requestedBy = req.user?.username || 'unknown';
+
+      const applyResult = await updateManager.startApplyUpdate({
+        requestedBy,
+        scheduleRestart: () => {
+          const restartScheduled = scheduleRestartAfterUpdateApply();
+          logger.warn('[Admin] Restart scheduled after update apply', {
+            requestedBy,
+            restartScheduled
+          });
+          return restartScheduled;
+        }
+      });
+
+      if (!applyResult.ok) {
+        const statusCode = applyResult.status === 'in_progress' ? 409 : 500;
+        return res.status(statusCode).json({
+          ok: false,
+          status: applyResult.status,
+          error: applyResult.error || 'Не удалось запустить обновление'
+        });
+      }
+
+      return res.status(202).json({
+        ok: true,
+        status: applyResult.status,
+        message: applyResult.message
+      });
+    } catch (error) {
+      logger.error('[Admin] Failed to schedule update apply', {
+        user: req.user?.username || 'unknown',
+        error: error?.message || String(error)
+      });
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || 'Не удалось запустить обновление'
+      });
+    }
+  });
+
+  // GET /service-logs
+  router.get('/service-logs', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const requestedLines = clampInt(
+        parsePositiveInt(req.query.lines, SERVICE_LOGS_DEFAULT_LINES),
+        1,
+        SERVICE_LOGS_MAX_LINES
+      );
+      const requestedOffset = parsePositiveInt(req.query.offset, -1);
+      const requestedFileName = typeof req.query.fileName === 'string' ? req.query.fileName : '';
+      const level = SERVICE_LOG_LEVELS.includes(req.query.level) ? req.query.level : 'combined';
+      const moduleFilter = typeof req.query.module === 'string' ? req.query.module.trim() : '';
+
+      const logFilePath = resolveLatestServiceLogFilePath(level, getLogsDir);
+      if (!logFilePath) {
+        return res.json({
+          ok: true, lines: [], nextOffset: 0, fileName: null, reset: true, truncated: false,
+          source: level, availableLevels: SERVICE_LOG_LEVELS, availableModules: SERVICE_LOG_MODULES
+        });
+      }
+
+      const fileName = path.basename(logFilePath);
+
+      function readAndFilter(readFn, ...args) {
+        const snapshot = readFn(...args);
+        let lines = snapshot.lines;
+        if (moduleFilter) {
+          lines = lines.filter(line => {
+            try {
+              const parsed = JSON.parse(line);
+              return parsed.module === moduleFilter;
+            } catch { return true; }
+          });
+        }
+        return { ...snapshot, lines };
+      }
+
+      if (requestedOffset < 0) {
+        const snapshot = readAndFilter(readLastLinesFromFile, logFilePath, requestedLines, getLogsDir);
+        return res.json({
+          ok: true, lines: snapshot.lines, nextOffset: snapshot.size,
+          fileName, reset: true, truncated: snapshot.truncated,
+          source: level, availableLevels: SERVICE_LOG_LEVELS, availableModules: SERVICE_LOG_MODULES
+        });
+      }
+
+      const chunkProbe = readAndFilter(readLinesFromOffset, logFilePath, requestedOffset, getLogsDir);
+      const fileChanged = Boolean(requestedFileName) && requestedFileName !== fileName;
+      const offsetOutOfRange = requestedOffset > chunkProbe.size;
+
+      if (fileChanged || offsetOutOfRange) {
+        const snapshot = readAndFilter(readLastLinesFromFile, logFilePath, requestedLines, getLogsDir);
+        return res.json({
+          ok: true, lines: snapshot.lines, nextOffset: snapshot.size,
+          fileName, reset: true, truncated: snapshot.truncated,
+          source: level, availableLevels: SERVICE_LOG_LEVELS, availableModules: SERVICE_LOG_MODULES
+        });
+      }
+
+      const chunk = chunkProbe;
+      return res.json({
+        ok: true, lines: chunk.lines, nextOffset: chunk.size,
+        fileName, reset: chunk.reset, truncated: chunk.truncated,
+        source: level, availableLevels: SERVICE_LOG_LEVELS, availableModules: SERVICE_LOG_MODULES
+      });
+    } catch (error) {
+      logger.error('[Admin] Failed to read service logs', { error: error?.message || String(error) });
+      return res.status(500).json({ ok: false, error: 'Не удалось получить логи сервиса' });
+    }
+  });
+
+  // POST /import-database
+  router.post('/import-database', requireAuth, requireAdmin, requireCsrfToken, validateUploadSize, async (req, res) => {
+    if (process.env.DB_TYPE === 'postgres') {
+      return res.status(400).json({ error: 'Import is not available in PostgreSQL mode. Use pg_restore instead.' });
+    }
+    try {
+      const tempUploadDir = ADMIN_DB_IMPORT_DIR;
+      if (!fs.existsSync(tempUploadDir)) fs.mkdirSync(tempUploadDir, { recursive: true });
+
+      const storage = multer.diskStorage({
+        destination: (_req, _file, cb) => cb(null, tempUploadDir),
+        filename: (_req, _file, cb) => cb(null, `import_${Date.now()}_${randomBytes(4).toString('hex')}.dbupload`)
+      });
+
+      const uploadSingle = multer({ storage, limits: { fileSize: MAX_FILE_SIZE } }).single('file');
+
+      uploadSingle(req, res, async (err) => {
+        if (err) {
+          logger.warn('[Admin] Import DB upload failed', { error: err.message });
+          return res.status(400).json({ error: err.message || 'Upload failed' });
+        }
+
+        const file = req.file;
+        if (!file) return res.status(400).json({ error: 'No file uploaded' });
+
+        let uploadedPath;
+        try {
+            const uploadedName = String(file.filename || '');
+            if (!/^[A-Za-z0-9._-]+$/.test(uploadedName)) {
+              throw new Error('Invalid uploaded filename');
+            }
+            uploadedPath = validatePath(path.join(tempUploadDir, uploadedName), tempUploadDir);
+        } catch (pathError) {
+          return res.status(400).json({ error: 'Invalid uploaded file path' });
+        }
+
+        const ext = path.extname(file.originalname || '').toLowerCase();
+        if (ext !== '.db') {
+          try { fs.unlinkSync(uploadedPath); } catch (_) {}
+          return res.status(400).json({ error: 'Unsupported file type. Expected .db' });
+        }
+
+        // Быстрая проверка сигнатуры SQLite файла
+        let importDbSize = 0;
+        try {
+          const fd = fs.openSync(uploadedPath, 'r');
+          const headerBuffer = Buffer.alloc(16);
+          try {
+            fs.readSync(fd, headerBuffer, 0, 16, 0);
+            const stats = fs.fstatSync(fd);
+            importDbSize = stats.size;
+          } finally {
+            fs.closeSync(fd);
+          }
+
+          const signature = headerBuffer.toString('utf8');
+          if (signature !== 'SQLite format 3\u0000') {
+            try { fs.unlinkSync(uploadedPath); } catch (_) {}
+            return res.status(400).json({ error: 'Invalid SQLite database file' });
+          }
+        } catch (signatureError) {
+          try { fs.unlinkSync(uploadedPath); } catch (_) {}
+          return res.status(400).json({ error: signatureError.message || 'Failed to validate file' });
+        }
+
+        // Проверка версии схемы SQLite (PRAGMA user_version / schema_version)
+        let uploadedSchemaVersion = null;
+        let uploadedTableCount = 0;
+        let uploadedMigrationIds = [];
+        try {
+          const { default: betterSqlite3 } = await import('better-sqlite3');
+          const tmpDb = new betterSqlite3(uploadedPath, { readonly: true, fileMustExist: true });
+
+          const schemaVersion = tmpDb.pragma('schema_version', { simple: true });
+          const userVersion = tmpDb.pragma('user_version', { simple: true });
+          uploadedSchemaVersion = { schemaVersion: Number(schemaVersion) || 0, userVersion: Number(userVersion) || 0 };
+
+          const tables = tmpDb.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+          ).all();
+          uploadedTableCount = tables.length;
+
+          if (tmpDb.tableExists('schema_migrations')) {
+            uploadedMigrationIds = tmpDb.prepare(
+              'SELECT id FROM schema_migrations ORDER BY executed_at'
+            ).all().map(r => r.id);
+          }
+
+          tmpDb.close();
+        } catch (schemaErr) {
+          try { fs.unlinkSync(uploadedPath); } catch (_) {}
+          return res.status(400).json({ error: `Failed to read SQLite schema: ${schemaErr.message}` });
+        }
+
+        // Проверка: импортируемая БД не должна быть старше текущей (по миграциям)
+        try {
+          const { default: betterSqlite3 } = await import('better-sqlite3');
+          if (fs.existsSync(DB_PATH)) {
+            const currentDb = new betterSqlite3(DB_PATH, { readonly: true, fileMustExist: true });
+            let currentMigrationIds = [];
+            if (currentDb.tableExists('schema_migrations')) {
+              currentMigrationIds = currentDb.prepare(
+                'SELECT id FROM schema_migrations ORDER BY executed_at'
+              ).all().map(r => r.id);
+            }
+            currentDb.close();
+
+            // Проверяем что каждая миграция текущей БД присутствует в импортируемой
+            const missingMigrations = currentMigrationIds.filter(id => !uploadedMigrationIds.includes(id));
+            if (missingMigrations.length > 0) {
+              try { fs.unlinkSync(uploadedPath); } catch (_) {}
+              return res.status(400).json({
+                error: 'Импортируемая БД содержит устаревшую схему. Отсутствуют миграции: ' + missingMigrations.join(', ')
+              });
+            }
+          }
+        } catch (schemaCheckErr) {
+          // Если не можем прочитать текущую БД, пропускаем проверку (возможно первый запуск)
+          logger.warn('[Admin] Could not compare schema versions', { error: schemaCheckErr.message });
+        }
+
+        // Подтверждение паролем
+        const confirmPassword = String(req.body?.confirmPassword || '');
+        if (!confirmPassword) {
+          try { fs.unlinkSync(uploadedPath); } catch (_) {}
+          return res.status(400).json({ error: 'Требуется подтверждение пароля (confirmPassword)' });
+        }
+
+        try {
+          const db = getDatabase();
+          const userRecord = await db.get(
+            'SELECT password_hash FROM users WHERE id = ?',
+            [req.user.userId]
+          );
+
+          if (!userRecord) {
+            try { fs.unlinkSync(uploadedPath); } catch (_) {}
+            return res.status(403).json({ error: 'Пользователь не найден' });
+          }
+
+          const passwordValid = await bcrypt.compare(confirmPassword, userRecord.password_hash);
+          if (!passwordValid) {
+            try { fs.unlinkSync(uploadedPath); } catch (_) {}
+            return res.status(403).json({ error: 'Неверный пароль. Импорт отменён.' });
+          }
+        } catch (pwErr) {
+          try { fs.unlinkSync(uploadedPath); } catch (_) {}
+          return res.status(500).json({ error: 'Ошибка проверки пароля' });
+        }
+
+        const isDryRun = req.query.dryRun === 'true' || req.query.dry_run === 'true';
+
+        if (isDryRun) {
+          try { fs.unlinkSync(uploadedPath); } catch (_) {}
+          return res.json({
+            ok: true,
+            dryRun: true,
+            preview: {
+              fileName: file.originalname,
+              fileSize: importDbSize,
+              schemaVersion: uploadedSchemaVersion,
+              tableCount: uploadedTableCount,
+              migrations: uploadedMigrationIds
+            },
+            message: 'Dry-run: файл прошёл все проверки, импорт не выполнялся.'
+          });
+        }
+
+        const backupPath = `${DB_PATH}.bak.${Date.now()}`;
+        const walPath = `${DB_PATH}-wal`;
+        const shmPath = `${DB_PATH}-shm`;
+        let checkpointStopped = false;
+        let backupCreated = false;
+
+        const removeWalShmFiles = () => {
+          [walPath, shmPath].forEach((p) => {
+            try {
+              if (fs.existsSync(p)) fs.unlinkSync(p);
+            } catch (cleanupError) {
+              logger.warn('[Admin] Failed to remove SQLite sidecar file', {
+                file: p,
+                error: cleanupError.message
+              });
+            }
+          });
+        };
+
+        try {
+          // Создаём резервную копию текущей БД если она существует
+          if (fs.existsSync(DB_PATH)) {
+            fs.copyFileSync(DB_PATH, backupPath);
+            backupCreated = true;
+            logger.info('[Admin] Database backup created', { backupPath });
+          }
+
+          // Остановим периодический checkpoint и попробуем корректно завершить БД
+          try {
+            stopWalCheckpointInterval();
+            checkpointStopped = true;
+          } catch (e) {
+            logger.warn('[Admin] Failed to stop WAL checkpoint interval', { error: e.message });
+          }
+
+          try {
+            performWalCheckpoint(true);
+          } catch (e) {
+            logger.warn('[Admin] WAL checkpoint warning', { error: e.message });
+          }
+
+          try {
+            await closeDatabase();
+          } catch (e) {
+            logger.warn('[Admin] closeDatabase warning', { error: e.message });
+          }
+
+          // Важно: удаляем -wal/-shm перед подменой файла базы
+          removeWalShmFiles();
+
+          // Копируем загруженный файл на место основной БД
+          fs.copyFileSync(uploadedPath, DB_PATH);
+          logger.info('[Admin] Database file replaced', { dbPath: DB_PATH });
+
+          // Применяем миграции на новой базе
+          await runMigrations(DB_PATH);
+
+          // КРИТИЧНО: После импорта БД из другого окружения пути к файлам
+          // могут указывать на старый contentRoot. Пробуем восстановить их автоматически.
+          const repairResult = await repairImportedFilePaths({ devicesPath: getDevicesPath() });
+          logger.info('[Admin] Imported DB paths repair completed', {
+            checked: repairResult.checked,
+            repaired: repairResult.repaired,
+            unresolved: repairResult.unresolved,
+            skipped: repairResult.skipped,
+            errors: repairResult.errors
+          });
+
+          // Перезагрузим in-memory данные (devices, fileNamesMap)
+          Object.assign(devices, await loadDevicesFromDB());
+          Object.assign(fileNamesMap, await loadFileNamesFromDB());
+          Object.keys(devices).forEach((deviceId) => {
+            updateDeviceFilesFromDB(deviceId, devices, fileNamesMap);
+          });
+          await saveDevicesToDB(devices);
+          io.emit('devices/updated');
+
+          const restartScheduled = scheduleRestartAfterDbImport();
+
+          res.json({
+            ok: true,
+            restartScheduled,
+            message: restartScheduled
+              ? 'Импорт завершён. Сервис будет автоматически перезапущен.'
+              : 'Импорт завершён.'
+          });
+          logger.info('[Admin] Database import completed', {
+            user: req.user?.username || 'unknown',
+            restartScheduled
+          });
+        } catch (error) {
+          logger.error('[Admin] Database import failed', { error: error?.message || String(error) });
+          // Попытка восстановления из бэкапа
+          try {
+            if (backupCreated && fs.existsSync(backupPath)) {
+              removeWalShmFiles();
+              fs.copyFileSync(backupPath, DB_PATH);
+              await runMigrations(DB_PATH);
+              Object.assign(devices, await loadDevicesFromDB());
+              Object.assign(fileNamesMap, await loadFileNamesFromDB());
+              io.emit('devices/updated');
+              logger.info('[Admin] Database restored from backup after import error and state reloaded', { backupPath });
+            }
+          } catch (restoreErr) {
+            logger.error('[Admin] Failed to restore database from backup', { error: restoreErr.message });
+          }
+
+          return res.status(500).json({ error: error.message || 'Import failed' });
+        } finally {
+          if (checkpointStopped) {
+            try {
+              startWalCheckpointInterval(WAL_CHECKPOINT_INTERVAL_MS);
+            } catch (restartErr) {
+              logger.warn('[Admin] Failed to restart WAL checkpoint interval', { error: restartErr.message });
+            }
+          }
+
+          // Удалим временный файл
+          try { if (fs.existsSync(uploadedPath)) fs.unlinkSync(uploadedPath); } catch (_) {}
+        }
+      });
+    } catch (outerErr) {
+      logger.error('[Admin] Unexpected error in import-database route', { error: outerErr.message });
+      return res.status(500).json({ error: outerErr.message || 'Unexpected error' });
     }
   });
 
