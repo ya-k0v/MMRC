@@ -42,7 +42,7 @@ fi
 
 # Copy SSL certificates if available
 SSL_CERTS_NGINX="/etc/nginx/ssl-certs"
-# Check multiple possible cert locations
+CERTS_FOUND=false
 for CERTS_DIR in "/var/lib/mmrc/certs" "${DATA_DIR:-/app/data}/certs"; do
     if [ -d "$CERTS_DIR" ]; then
         CERT_DIR=$(find "$CERTS_DIR" -name "fullchain.pem" -exec dirname {} \; 2>/dev/null | head -1)
@@ -53,10 +53,22 @@ for CERTS_DIR in "/var/lib/mmrc/certs" "${DATA_DIR:-/app/data}/certs"; do
             cp "$CERT_DIR/privkey.pem" "$SSL_CERTS_NGINX/"
             chmod 644 "$SSL_CERTS_NGINX/fullchain.pem"
             chmod 600 "$SSL_CERTS_NGINX/privkey.pem"
+            CERTS_FOUND=true
             break
         fi
     fi
 done
+
+# Create self-signed placeholder if no certs (prevents nginx crash)
+if [ "$CERTS_FOUND" = false ]; then
+    echo "🔐 No SSL certificates found, generating placeholder..."
+    mkdir -p "$SSL_CERTS_NGINX"
+    openssl req -x509 -nodes -days 3650 \
+        -newkey rsa:2048 \
+        -keyout "$SSL_CERTS_NGINX/privkey.pem" \
+        -out "$SSL_CERTS_NGINX/fullchain.pem" \
+        -subj "/CN=localhost" 2>/dev/null
+fi
 
 # Start Nginx as reverse proxy
 echo "🌐 Starting Nginx reverse proxy..."
