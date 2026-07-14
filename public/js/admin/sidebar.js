@@ -22,8 +22,21 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
   const state = {
     collapsed: localStorage.getItem(STORAGE_KEY) === 'true',
     activeSection: 'devices',
-    sections: {}
+    sections: {},
+    enabledModules: new Set()
   };
+
+  // Check enabled modules
+  async function loadModules() {
+    try {
+      const resp = await adminFetch('/api/admin/modules');
+      if (resp.ok) {
+        const data = await resp.json();
+        const modules = data.modules || [];
+        state.enabledModules = new Set(modules.filter(m => m.enabled).map(m => m.id));
+      }
+    } catch { }
+  }
 
   // SVG Icons
   const icons = {
@@ -48,7 +61,7 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
     { id: 'settings', label: 'Настройки', icon: icons.settings, adminOnly: true },
     { id: 'logs', label: 'Логи сервиса', icon: icons.logs, adminOnly: true },
     { type: 'divider' },
-    { id: 'hero', label: 'Картотека', icon: icons.hero, adminOnly: true, external: '/hero/admin.html' },
+    { id: 'hero', label: 'Картотека', icon: icons.hero, adminOnly: true, external: '/hero/admin.html', moduleRequired: 'hero' },
     { id: 'speaker', label: 'Спикер', icon: icons.speaker, adminOnly: false, external: '/speaker.html' }
   ];
 
@@ -63,6 +76,7 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
     const filteredItems = menuItems.filter(item => {
       if (item.type === 'divider') return true;
       if (item.adminOnly && !isAdmin) return false;
+      if (item.moduleRequired && !state.enabledModules.has(item.moduleRequired)) return false;
       return true;
     });
 
@@ -196,10 +210,12 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
   }
 
   // Initialize
-  function init() {
+  async function init() {
     document.body.appendChild(sidebar);
     render();
     updateLayout();
+    await loadModules();
+    render();
   }
 
   return {
