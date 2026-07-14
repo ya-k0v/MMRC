@@ -77,13 +77,13 @@ export const authLimiter = rateLimit({
 
 /**
  * Admin limiter - защита админских endpoints
- * ВАЖНО: применяется ВСЕГДА
+ * Локальные IP пропускаются (для мониторинга логов изнутри сети)
  */
 export const adminLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
   message: { error: 'Too many admin requests, please try again later' },
-  skip: neverSkip, // ⚡ ОГРАНИЧИВАЕМ ВСЕГДА
+  skip: isLocalIP,
   validate: { trustProxy: false }
 });
 
