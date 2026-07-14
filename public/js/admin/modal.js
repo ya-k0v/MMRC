@@ -27,7 +27,6 @@ import { escapeHtml } from '../shared/utils.js';
 const escapeJsStringForAttr = (value) => escapeHtml(JSON.stringify(value ?? ''));
 const modalHistoryStack = [];
 let activeModalEscHandler = null;
-const SERVICE_LOGS_POLL_INTERVAL_MS = 1200;
 const SERVICE_LOGS_TYPING_CHUNK = 84;
 const SERVICE_LOGS_TYPING_DELAY_MS = 10;
 const SERVICE_LOGS_FAST_APPEND_THRESHOLD = 3200;
@@ -126,8 +125,9 @@ function stopServiceLogsViewer() {
   const state = serviceLogsViewerState;
   if (!state) return;
 
-  if (state.pollTimer) {
-    clearInterval(state.pollTimer);
+  if (state.socket) {
+    state.socket.emit('logs/unsubscribe');
+    state.socket.disconnect();
   }
 
   if (state.typeTimer) {
@@ -384,85 +384,30 @@ function openServiceLogsModal(adminFetch) {
 
     if (!outputEl || !linesSelectEl || !autoscrollEl || !refreshBtn || !clearBtn || !levelSelect || !moduleSelect) return;
 
-    function buildParams(state, reset) {
-      const params = new URLSearchParams();
-      params.set('lines', String(state.linesLimit));
-      params.set('level', state.level);
-      if (state.module) params.set('module', state.module);
-      if (!reset && Number.isFinite(state.offset) && state.offset >= 0) {
-        params.set('offset', String(state.offset));
-      }
-      if (!reset && state.fileName) {
-        params.set('fileName', state.fileName);
-      }
-      return params;
-    }
-
-    async function fetchChunk(reset) {
-      const state = serviceLogsViewerState;
-      if (!state || state.isFetching) return;
-
-      state.isFetching = true;
-
-      try {
-        const params = buildParams(state, reset);
-        const response = await adminFetch(`/api/admin/service-logs?${params.toString()}`);
-        if (!response.ok) {
-          const err = await response.json().catch(() => ({ error: 'Ошибка загрузки логов' }));
-          throw new Error(err.error || 'Ошибка загрузки логов');
-        }
-
-        const result = await response.json().catch(() => ({ ok: true, lines: [], nextOffset: 0 }));
-        if (!serviceLogsViewerState || serviceLogsViewerState !== state) return;
-
-        if (result.reset || reset) {
-          if (state.typeTimer) clearTimeout(state.typeTimer);
-          state.isTyping = false;
-          outputEl.innerHTML = '';
-          state.htmlQueue = '';
-        }
-
-        const nextOffset = Number.parseInt(String(result.nextOffset ?? ''), 10);
-        if (Number.isFinite(nextOffset) && nextOffset >= 0) state.offset = nextOffset;
-        state.fileName = typeof result.fileName === 'string' ? result.fileName : '';
-
-        const lines = Array.isArray(result.lines) ? result.lines : [];
-        if (lines.length) {
-          const chunkHtml = formatServiceLogLines(lines);
-          const useTypewriter = !result.truncated && lines.length <= 120 && chunkHtml.length <= 5000 && state.linesLimit <= 300;
-          enqueueServiceLogsText(chunkHtml, { forceImmediate: !useTypewriter });
-        } else if ((result.reset || reset) && !outputEl.textContent.trim()) {
-          outputEl.innerHTML = '<span style="color:var(--muted);">Логи пока пусты.</span>';
-        }
-
-        if (result.truncated) {
-          setServiceLogsStatus('Показана только последняя часть логов (ограничение объема).', 'var(--warning)');
-        } else {
-          const sourceText = state.fileName ? `Файл: ${state.fileName}` : 'Логи сервиса';
-          setServiceLogsStatus(`${sourceText} • строк: ${state.linesLimit}`, 'var(--text-secondary)');
-        }
-      } catch (error) {
-        if (serviceLogsViewerState === state) {
-          setServiceLogsStatus(`Ошибка: ${error.message || 'не удалось загрузить логи'}`, 'var(--danger)');
-        }
-      } finally {
-        if (serviceLogsViewerState === state) state.isFetching = false;
-      }
-    }
-
     serviceLogsViewerState = {
-      pollTimer: null,
+      socket: null,
       typeTimer: null,
       isTyping: false,
-      isFetching: false,
       htmlQueue: '',
       autoScroll: true,
       linesLimit: clampServiceLogsLines(linesSelectEl.value),
-      offset: -1,
-      fileName: '',
       level: 'combined',
       module: ''
     };
+
+    const logSocket = io('/service-logs', { transports: ['websocket'] });
+    serviceLogsViewerState.socket = logSocket;
+
+    logSocket.on('ready', () => {
+      logSocket.emit('logs/subscribe', {
+        level: serviceLogsViewerState.level,
+        module: serviceLogsViewerState.module
+      });
+    });
+
+    logSocket.on('connect_error', (err) => {
+      setServiceLogsStatus(`Ошибка WS: ${err.message}`, 'var(--danger)');
+    });
 
     autoscrollEl.onchange = () => {
       if (!serviceLogsViewerState) return;
@@ -471,27 +416,29 @@ function openServiceLogsModal(adminFetch) {
     };
 
     function onFilterChange() {
-      if (!serviceLogsViewerState) return;
+      if (!serviceLogsViewerState || !serviceLogsViewerState.socket) return;
       serviceLogsViewerState.level = levelSelect.value;
       serviceLogsViewerState.module = moduleSelect.value;
-      serviceLogsViewerState.offset = -1;
-      fetchChunk(true);
+      serviceLogsViewerState.socket.emit('logs/subscribe', {
+        level: serviceLogsViewerState.level,
+        module: serviceLogsViewerState.module
+      });
     }
 
     levelSelect.onchange = onFilterChange;
     moduleSelect.onchange = onFilterChange;
 
-    linesSelectEl.onchange = async () => {
+    linesSelectEl.onchange = () => {
       if (!serviceLogsViewerState) return;
       serviceLogsViewerState.linesLimit = clampServiceLogsLines(linesSelectEl.value);
-      serviceLogsViewerState.offset = -1;
-      await fetchChunk(true);
     };
 
-    refreshBtn.onclick = async () => {
-      if (!serviceLogsViewerState) return;
-      serviceLogsViewerState.offset = -1;
-      await fetchChunk(true);
+    refreshBtn.onclick = () => {
+      if (!serviceLogsViewerState || !serviceLogsViewerState.socket) return;
+      serviceLogsViewerState.socket.emit('logs/subscribe', {
+        level: serviceLogsViewerState.level,
+        module: serviceLogsViewerState.module
+      });
     };
 
     clearBtn.onclick = () => {
@@ -504,17 +451,32 @@ function openServiceLogsModal(adminFetch) {
       setServiceLogsStatus('Окно логов очищено.', 'var(--text-secondary)');
     };
 
-    fetchChunk(true);
+    logSocket.on('logs/chunk', (data) => {
+      const state = serviceLogsViewerState;
+      if (!state) return;
 
-    serviceLogsViewerState.pollTimer = window.setInterval(() => {
-      const overlay = document.getElementById('modalOverlay');
-      const outputStillVisible = document.getElementById('serviceLogsOutput');
-      if (!overlay || overlay.style.display !== 'flex' || !outputStillVisible) {
-        stopServiceLogsViewer();
-        return;
+      const lines = Array.isArray(data.lines) ? data.lines : [];
+      if (lines.length) {
+        const chunkHtml = formatServiceLogLines(lines);
+        enqueueServiceLogsText(chunkHtml, { forceImmediate: lines.length > 120 });
       }
-      fetchChunk();
-    }, SERVICE_LOGS_POLL_INTERVAL_MS);
+
+      const sourceText = data.fileName ? `Файл: ${data.fileName}` : 'Логи сервиса';
+      setServiceLogsStatus(`${sourceText} • реальное время`, 'var(--text-secondary)');
+    });
+
+    logSocket.on('logs/reset', (data) => {
+      const state = serviceLogsViewerState;
+      if (!state) return;
+
+      if (state.typeTimer) clearTimeout(state.typeTimer);
+      state.isTyping = false;
+      outputEl.innerHTML = '';
+      state.htmlQueue = '';
+
+      const sourceText = data.fileName ? `Файл: ${data.fileName}` : 'Логи сервиса';
+      setServiceLogsStatus(`${sourceText} • подключение...`, 'var(--text-secondary)');
+    });
   }, 0);
 }
 
