@@ -96,8 +96,8 @@ jobs:
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
             INCLUDE_DOCKER_CLI=true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=server-${{ github.sha }}
+          cache-to: type=gha,mode=max,scope=server-${{ github.sha }}
 
       - name: Build and push converter
         uses: docker/build-push-action@v7
@@ -108,8 +108,8 @@ jobs:
           tags: ${{ steps.meta-converter.outputs.tags }}
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=converter-${{ github.sha }}
+          cache-to: type=gha,mode=max,scope=converter-${{ github.sha }}
 
       - name: Build and push ffmpeg
         uses: docker/build-push-action@v7
@@ -120,8 +120,8 @@ jobs:
           tags: ${{ steps.meta-ffmpeg.outputs.tags }}
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=ffmpeg-${{ github.sha }}
+          cache-to: type=gha,mode=max,scope=ffmpeg-${{ github.sha }}
 
       - name: Build and push streamer
         uses: docker/build-push-action@v7
@@ -132,5 +132,5 @@ jobs:
           tags: ${{ steps.meta-streamer.outputs.tags }}
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=streamer-${{ github.sha }}
+          cache-to: type=gha,mode=max,scope=streamer-${{ github.sha }}
