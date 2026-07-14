@@ -1,7 +1,6 @@
 #!/bin/sh
 set -e
 
-# MMRC Docker Entrypoint Script
 ROLE="${MMRC_ROLE:-${ROLE:-server}}"
 export ROLE
 
@@ -10,7 +9,6 @@ echo "📦 Version: 3.4.0"
 echo "🔧 Node: $(node --version)"
 echo "🎬 FFmpeg: $(ffmpeg -version 2>/dev/null | head -1 || echo 'not found')"
 
-# Database type
 DB_TYPE="${DB_TYPE:-sqlite}"
 export DB_TYPE
 echo "🗄️ Database type: ${DB_TYPE}"
@@ -40,70 +38,144 @@ if [ -f "/app/scripts/post-pull-sync.sh" ]; then
     SKIP_NPM_INSTALL=1 SKIP_SERVICE_RESTART=1 SKIP_MIGRATION=0 bash /app/scripts/post-pull-sync.sh 2>/dev/null || true
 fi
 
-# Copy SSL certificates if available
-SSL_CERTS_NGINX="/etc/nginx/ssl-certs"
+# Check for SSL certificates and configure Nginx accordingly
+SSL_CERTS_DIR="/etc/nginx/ssl-certs"
+HTTPS_CONF="/etc/nginx/conf.d/https.conf"
 CERTS_FOUND=false
-for CERTS_DIR in "/var/lib/mmrc/certs" "${DATA_DIR:-/app/data}/certs"; do
-    if [ -d "$CERTS_DIR" ]; then
-        CERT_DIR=$(find "$CERTS_DIR" -name "fullchain.pem" -exec dirname {} \; 2>/dev/null | head -1)
+
+for CHECK_DIR in "/var/lib/mmrc/certs" "${DATA_DIR:-/app/data}/certs"; do
+    if [ -d "$CHECK_DIR" ]; then
+        CERT_DIR=$(find "$CHECK_DIR" -name "fullchain.pem" -exec dirname {} \; 2>/dev/null | head -1)
         if [ -n "$CERT_DIR" ] && [ -f "$CERT_DIR/fullchain.pem" ] && [ -f "$CERT_DIR/privkey.pem" ]; then
-            echo "🔐 SSL certificates found in $CERT_DIR, configuring HTTPS..."
-            mkdir -p "$SSL_CERTS_NGINX"
-            cp "$CERT_DIR/fullchain.pem" "$SSL_CERTS_NGINX/"
-            cp "$CERT_DIR/privkey.pem" "$SSL_CERTS_NGINX/"
-            chmod 644 "$SSL_CERTS_NGINX/fullchain.pem"
-            chmod 600 "$SSL_CERTS_NGINX/privkey.pem"
+            echo "🔐 SSL certificates found in $CERT_DIR"
+            mkdir -p "$SSL_CERTS_DIR"
+            cp "$CERT_DIR/fullchain.pem" "$SSL_CERTS_DIR/"
+            cp "$CERT_DIR/privkey.pem" "$SSL_CERTS_DIR/"
+            chmod 644 "$SSL_CERTS_DIR/fullchain.pem"
+            chmod 600 "$SSL_CERTS_DIR/privkey.pem"
             CERTS_FOUND=true
             break
         fi
     fi
 done
 
-# Create self-signed placeholder if no certs (prevents nginx crash)
-if [ "$CERTS_FOUND" = false ]; then
-    echo "🔐 No SSL certificates found, generating placeholder..."
-    mkdir -p "$SSL_CERTS_NGINX"
-    openssl req -x509 -nodes -days 3650 \
-        -newkey rsa:2048 \
-        -keyout "$SSL_CERTS_NGINX/privkey.pem" \
-        -out "$SSL_CERTS_NGINX/fullchain.pem" \
-        -subj "/CN=localhost" 2>/dev/null
+# Create HTTPS server block only if certs exist
+if [ "$CERTS_FOUND" = true ]; then
+    echo "🌐 Configuring HTTPS..."
+    cat > "$HTTPS_CONF" << 'EOF'
+server {
+    listen 443 ssl http2;
+    server_name _;
+
+    ssl_certificate /etc/nginx/ssl-certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl-certs/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    location /health {
+        proxy_pass http://mmrc_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location /api/ {
+        proxy_pass http://mmrc_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+    }
+
+    location ~ ^/api/devices/[^/]+/upload {
+        client_max_body_size 5120M;
+        proxy_pass http://mmrc_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+
+    location ^~ /socket.io/ {
+        proxy_pass http://mmrc_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_read_timeout 86400s;
+    }
+
+    location /streams/ {
+        alias /app/data/streams/;
+        add_header Cache-Control no-cache;
+        add_header X-Accel-Buffering no;
+        add_header Access-Control-Allow-Origin *;
+        types {
+            application/vnd.apple.mpegurl m3u8;
+            video/mp2t ts;
+        }
+    }
+
+    location /content/ {
+        alias /app/data/content/;
+        expires 30d;
+        add_header Cache-Control "public";
+    }
+
+    location / {
+        proxy_pass http://mmrc_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ~ /\. {
+        deny all;
+    }
+}
+EOF
+    echo "✅ HTTPS configured"
+else
+    echo "ℹ️ No SSL certificates, HTTP only"
+    rm -f "$HTTPS_CONF"
 fi
 
-# Start Nginx as reverse proxy
-echo "🌐 Starting Nginx reverse proxy..."
-if [ -f "/etc/nginx/nginx.conf" ]; then
-    nginx -c /etc/nginx/nginx.conf
-else
-    nginx
-fi
+# Start Nginx
+echo "🌐 Starting Nginx..."
+nginx -c /etc/nginx/nginx.conf
 sleep 1
 echo "✅ Nginx started"
 
 export PORT=${PORT:-3000}
 
-# Create directories if they don't exist
+# Create data directories
 DATA_DIR="${MMRC_DATA_DIR:-${CONTENT_ROOT:-/app/data}}"
-
-mkdir -p "${DATA_DIR}/db"
-mkdir -p "${DATA_DIR}/content"
-mkdir -p "${DATA_DIR}/streams"
-mkdir -p "${DATA_DIR}/converted/trailers"
-mkdir -p "${DATA_DIR}/logs"
-mkdir -p "${DATA_DIR}/temp"
-mkdir -p "${DATA_DIR}/hero"
+mkdir -p "${DATA_DIR}/db" "${DATA_DIR}/content" "${DATA_DIR}/streams"
+mkdir -p "${DATA_DIR}/converted/trailers" "${DATA_DIR}/logs" "${DATA_DIR}/temp" "${DATA_DIR}/hero"
 mkdir -p /app/.tmp
 
-# Migrate legacy DB files if they exist in /app/config
+# Migrate legacy DB files
 if [ -f "/app/config/main.db" ] && [ ! -f "${DATA_DIR}/db/main.db" ]; then
-    echo "🔄 Migrating main.db to ${DATA_DIR}/db/"
+    echo "🔄 Migrating main.db..."
     cp /app/config/main.db "${DATA_DIR}/db/main.db" 2>/dev/null || true
     cp /app/config/main.db-shm "${DATA_DIR}/db/main.db-shm" 2>/dev/null || true
     cp /app/config/main.db-wal "${DATA_DIR}/db/main.db-wal" 2>/dev/null || true
 fi
 
 if [ -f "/app/config/hero/heroes.db" ] && [ ! -f "${DATA_DIR}/db/heroes.db" ]; then
-    echo "🔄 Migrating heroes.db to ${DATA_DIR}/db/"
+    echo "🔄 Migrating heroes.db..."
     mkdir -p "${DATA_DIR}/db"
     cp /app/config/hero/heroes.db "${DATA_DIR}/db/heroes.db" 2>/dev/null || true
     cp /app/config/hero/heroes.db-shm "${DATA_DIR}/db/heroes.db-shm" 2>/dev/null || true
