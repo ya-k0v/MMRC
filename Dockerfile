@@ -57,8 +57,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && mkdir -p /var/log/nginx /run/nginx /etc/nginx/ssl /etc/nginx/ssl-certs \
     && sed -i 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml
 
-# yt-dlp
-RUN wget -q -O /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+# yt-dlp (pinned version)
+ARG YTDLP_VERSION=2026.07.04
+RUN wget -q -O /usr/local/bin/yt-dlp "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp" \
     && chmod +x /usr/local/bin/yt-dlp
 
 WORKDIR /app
