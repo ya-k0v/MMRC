@@ -126,10 +126,10 @@ cmd_install() {
     fi
 
     colorized_echo cyan "
-╔══════════════════════════════════════════╗
-║          📺 MMRC Installer               ║
-║     Media Management & Remote Control    ║
-╚══════════════════════════════════════════╝
+══════════════════════════════════════════
+          📺 MMRC Installer               
+     Media Management & Remote Control    
+══════════════════════════════════════════
 "
 
     curl -fsSL "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/install.sh" | bash
@@ -188,10 +188,10 @@ cmd_reset() {
     require_installed
 
     colorized_echo red "
-╔══════════════════════════════════════════╗
-║      ⚠️  MMRC Reset                      ║
-║   THIS WILL DELETE ALL DATA!             ║
-╚══════════════════════════════════════════╝
+══════════════════════════════════════════
+            ⚠️  MMRC Reset                      
+        THIS WILL DELETE ALL DATA!            
+══════════════════════════════════════════
 "
 
     read -p "Are you sure? Type 'reset' to confirm: " confirm < /dev/tty
@@ -302,9 +302,9 @@ cmd_status() {
     detect_compose
     cd "$APP_DIR"
     echo ""
-    colorized_echo cyan "╔══════════════════════════════════════╗"
-    colorized_echo cyan "║         📊 MMRC Status               ║"
-    colorized_echo cyan "╚══════════════════════════════════════╝"
+    colorized_echo cyan "══════════════════════════════════════"
+    colorized_echo cyan "         📊 MMRC Status              "
+    colorized_echo cyan "══════════════════════════════════════"
     echo ""
     COMPOSE_HA=$(get_compose_ha)
     $COMPOSE $COMPOSE_HA ps
@@ -381,9 +381,9 @@ cmd_update() {
     detect_compose
 
     colorized_echo cyan "
-╔══════════════════════════════════════════╗
-║         🔄 MMRC Updater                  ║
-╚══════════════════════════════════════════╝
+══════════════════════════════════════════
+            🔄 MMRC Updater                  
+══════════════════════════════════════════
 "
 
     cd "$APP_DIR"
@@ -432,9 +432,9 @@ cmd_backup() {
     TIMESTAMP=$(date +%F_%H%M)
 
     colorized_echo cyan "
-╔══════════════════════════════════════════╗
-║         💾 MMRC Backup                   ║
-╚══════════════════════════════════════════╝
+══════════════════════════════════════════
+            💾 MMRC Backup                   
+══════════════════════════════════════════
 "
 
     # Backup databases
@@ -495,9 +495,9 @@ cmd_ssl() {
     detect_compose
 
     colorized_echo cyan "
-╔══════════════════════════════════════════╗
-║         🔐 MMRC SSL Setup                ║
-╚══════════════════════════════════════════╝
+══════════════════════════════════════════
+         🔐 MMRC SSL Setup                
+══════════════════════════════════════════
 "
 
     cd "$APP_DIR"
@@ -576,10 +576,10 @@ cmd_uninstall() {
     require_installed
 
     colorized_echo red "
-╔══════════════════════════════════════════╗
-║      ⚠️  MMRC Uninstall                  ║
-║   THIS WILL DELETE ALL DATA!             ║
-╚══════════════════════════════════════════╝
+══════════════════════════════════════════
+            ⚠️  MMRC Uninstall                  
+        THIS WILL DELETE ALL DATA!            
+══════════════════════════════════════════
 "
 
     read -p "Are you sure? Type 'yes' to confirm: " confirm < /dev/tty
@@ -807,10 +807,10 @@ Note: HA requires PostgreSQL + S3/MinIO (not SQLite).
 
 cmd_help() {
     colorized_echo cyan "
-╔══════════════════════════════════════════════════════╗
-║              📺 MMRC CLI                             ║
-║         Media Management & Remote Control            ║
-╚══════════════════════════════════════════════════════╝
+══════════════════════════════════════════════════════
+                   📺 MMRC CLI                             
+            Media Management & Remote Control            
+══════════════════════════════════════════════════════
 
 Usage: mmrc <command> [options]
 

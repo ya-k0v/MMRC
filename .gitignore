@@ -9,6 +9,7 @@ clients/
 PLAN.md
 docker-build.sh
 scripts/
+docs/
 
 # Logs & runtime artifacts
 data/

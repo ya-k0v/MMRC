@@ -40,7 +40,9 @@ docker-compose.yml
 !README.md
 
 # Dev
+scripts/
 dev/
+docs/
 .devcontainer
 
 # Clients (not needed for server)

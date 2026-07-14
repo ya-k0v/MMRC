@@ -254,11 +254,11 @@ install_mmrc() {
     cd /
 
     colorized_echo cyan "
-╔══════════════════════════════════════════╗
-║          📺 MMRC Installer               ║
-║     Media Management & Remote Control    ║
-║           Version ${MMRC_VERSION:-3.4.0}                ║
-╚══════════════════════════════════════════╝
+══════════════════════════════════════════
+          📺 MMRC Installer               
+     Media Management & Remote Control    
+           Version ${MMRC_VERSION:-3.4.0}                
+══════════════════════════════════════════
 "
 
     # Select database type first
@@ -570,9 +570,9 @@ ENVEOF3
     SERVER_IP=$(curl -4 -fsS --max-time 5 https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
 
     echo ""
-    colorized_echo cyan "╔════════════════════════════════════════════════════════════════════════════════════════════════════╗"
+    colorized_echo cyan "════════════════════════════════════════════════════════════════════════════════════════════════════"
     box_line "                                                  🎉 MMRC Installed Successfully!                                                  "
-    colorized_echo cyan "╠════════════════════════════════════════════════════════════════════════════════════════════════════╣"
+    colorized_echo cyan "════════════════════════════════════════════════════════════════════════════════════════════════════"
     box_line ""
     box_line "  📺 Admin Panel:                         http://localhost:80/admin.html"
     box_line "  🎤 Speaker Panel:                       http://localhost:80/speaker.html"
@@ -588,7 +588,7 @@ ENVEOF3
     box_line "  💾 Data:                                $DATA_DIR"
     box_line "  📦 Media:                               $content_dir"
     box_line ""
-    colorized_echo cyan "╚════════════════════════════════════════════════════════════════════════════════════════════════════╝"
+    colorized_echo cyan "════════════════════════════════════════════════════════════════════════════════════════════════════"
     echo ""
     info "Useful commands:"
     echo "   mmrc status    - Check services status"
