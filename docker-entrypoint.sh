@@ -38,11 +38,100 @@ if [ -f "/app/scripts/post-pull-sync.sh" ]; then
     SKIP_NPM_INSTALL=1 SKIP_SERVICE_RESTART=1 SKIP_MIGRATION=0 bash /app/scripts/post-pull-sync.sh 2>/dev/null || true
 fi
 
-# Check if SSL certs exist at the fixed path
-if [ -f "/var/lib/mmrc/certs/ssl/fullchain.pem" ] && [ -f "/var/lib/mmrc/certs/ssl/privkey.pem" ]; then
-    echo "🔐 SSL certificates found, HTTPS enabled"
+# SSL: create HTTPS server block if certs exist
+SSL_CERT="/var/lib/mmrc/certs/ssl/fullchain.pem"
+SSL_KEY="/var/lib/mmrc/certs/ssl/privkey.pem"
+HTTPS_CONF="/etc/nginx/conf.d/https.conf"
+
+if [ -f "$SSL_CERT" ] && [ -f "$SSL_KEY" ]; then
+    echo "🔐 SSL certificates found, enabling HTTPS..."
+    cat > "$HTTPS_CONF" << 'EOF'
+server {
+    listen 443 ssl http2;
+    server_name _;
+
+    ssl_certificate /var/lib/mmrc/certs/ssl/fullchain.pem;
+    ssl_certificate_key /var/lib/mmrc/certs/ssl/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    location / {
+        proxy_pass http://mmrc_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /health {
+        proxy_pass http://mmrc_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location /api/ {
+        proxy_pass http://mmrc_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+    }
+
+    location ~ ^/api/devices/[^/]+/upload {
+        client_max_body_size 5120M;
+        proxy_pass http://mmrc_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+
+    location ^~ /socket.io/ {
+        proxy_pass http://mmrc_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_read_timeout 86400s;
+    }
+
+    location /streams/ {
+        alias /app/data/streams/;
+        add_header Cache-Control no-cache;
+        add_header X-Accel-Buffering no;
+        add_header Access-Control-Allow-Origin *;
+        types {
+            application/vnd.apple.mpegurl m3u8;
+            video/mp2t ts;
+        }
+    }
+
+    location /content/ {
+        alias /app/data/content/;
+        expires 30d;
+        add_header Cache-Control "public";
+    }
+
+    location ~ /\. {
+        deny all;
+    }
+}
+EOF
 else
     echo "ℹ️ No SSL certificates, HTTP only"
+    rm -f "$HTTPS_CONF"
 fi
 
 # Start Nginx
