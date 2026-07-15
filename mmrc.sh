@@ -220,6 +220,59 @@ cmd_reset() {
     info "Run 'mmrc pull && mmrc start' to start fresh."
 }
 
+cmd_reset_password() {
+    require_installed
+    detect_compose
+
+    colorized_echo yellow "
+══════════════════════════════════════════
+         🔑 Reset Admin Password
+══════════════════════════════════════════
+"
+
+    read -p "Reset admin password to 'admin123'? [y/N]: " confirm < /dev/tty
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        info "Aborted"
+        exit 0
+    fi
+
+    cd "$APP_DIR"
+    COMPOSE_HA=$(get_compose_ha)
+    PROFILES=$(get_compose_profiles)
+
+    info "Resetting admin password..."
+    $COMPOSE $COMPOSE_HA $PROFILES exec -T mmrc node -e "
+        const bcrypt = require('bcrypt');
+        const { getDatabase } = require('./src/database/database.js');
+        const db = getDatabase();
+        const hash = bcrypt.hashSync('admin123', 10);
+        db.run('UPDATE users SET password_hash = ? WHERE username = ?', [hash, 'admin']);
+        console.log('Password reset to admin123');
+        process.exit(0);
+    " 2>/dev/null || {
+        warn "Could not reset via exec, trying direct database update..."
+        DB_PATH=$(grep "^DB_PATH=" "$ENV_FILE" | cut -d= -f2 || echo "$DATA_DIR/db/main.db")
+        if [ -f "$DB_PATH" ]; then
+            HASH=$(docker run --rm -v "$DB_PATH:/db" node:22-slim node -e "
+                const bcrypt = require('bcrypt');
+                console.log(bcrypt.hashSync('admin123', 10));
+            " 2>/dev/null)
+            if [ -n "$HASH" ]; then
+                docker run --rm -v "$DB_PATH:/db" node:22-slim node -e "
+                    const Database = require('better-sqlite3');
+                    const db = new Database('/db');
+                    db.prepare('UPDATE users SET password_hash = ? WHERE username = ?').run('$HASH', 'admin');
+                    console.log('Password reset to admin123');
+                " 2>/dev/null
+            fi
+        fi
+    }
+
+    success "Admin password reset to: admin123"
+    info "Login: admin / admin123"
+    info "CHANGE PASSWORD after first login!"
+}
+
 get_compose_ha() {
     if [ -f "$APP_DIR/docker-compose.ha.yml" ]; then
         echo "-f docker-compose.yml -f docker-compose.ha.yml"
@@ -915,6 +968,7 @@ Commands:
   update           Update to latest version
   down             Stop and remove containers
   reset            Reset to clean state (removes all data, keeps config)
+  reset-password   Reset admin password to default
   ha <command>     Manage HA replicas (setup|scale|remove|status)
   backup           Create database backup
   ssl              Setup SSL certificate
@@ -956,6 +1010,7 @@ case "${1:-help}" in
     update) cmd_update ;;
     down) cmd_down ;;
     reset) cmd_reset ;;
+    reset-password) cmd_reset_password ;;
     backup) cmd_backup ;;
     ssl) cmd_ssl ;;
     shell) cmd_shell "${@:2}" ;;
