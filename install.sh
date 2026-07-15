@@ -239,6 +239,35 @@ select_storage() {
 }
 
 # ========================
+# Service Credentials
+# ========================
+
+setup_credentials() {
+    echo ""
+    colorized_echo cyan "🔐 Service Credentials"
+    echo ""
+    echo "Set login/password for services (MinIO, Database)"
+    echo "Press Enter to use defaults"
+    echo ""
+
+    # MinIO/S3 credentials
+    if [ "$STORAGE_BACKEND" = "s3" ]; then
+        read -p "  MinIO access key [minioadmin]: " s3_key < /dev/tty
+        S3_ACCESS_KEY="${s3_key:-minioadmin}"
+        read -p "  MinIO secret key [minioadmin]: " s3_secret < /dev/tty
+        S3_SECRET_KEY="${s3_secret:-minioadmin}"
+        export S3_ACCESS_KEY S3_SECRET_KEY
+    fi
+
+    # PostgreSQL credentials
+    if [ "$DB_TYPE" = "postgres" ] && [ "$POSTGRES_SOURCE" = "docker" ]; then
+        read -p "  PostgreSQL password [mmrc]: " pg_pass < /dev/tty
+        DB_POSTGRES_PASSWORD="${pg_pass:-mmrc}"
+        export DB_POSTGRES_PASSWORD
+    fi
+}
+
+# ========================
 # Installation
 # ========================
 
@@ -266,6 +295,9 @@ install_mmrc() {
 
     # Select storage backend
     select_storage
+
+    # Ask for service credentials
+    setup_credentials
 
     # Create directories
     mkdir -p "$INSTALL_DIR" "$DATA_DIR"
@@ -320,7 +352,7 @@ DB_HOST=mmrc-postgres
 DB_PORT=5432
 DB_NAME=mmrc
 DB_USER=mmrc
-DB_PASSWORD=mmrc
+DB_PASSWORD=${DB_POSTGRES_PASSWORD:-mmrc}
 
 WAL_CHECKPOINT_INTERVAL_MS=300000
 
@@ -357,13 +389,13 @@ STORAGE_BACKEND=$STORAGE_BACKEND
 S3_ENDPOINT=http://mmrc-minio:9000
 S3_REGION=us-east-1
 S3_BUCKET=mmrc
-S3_ACCESS_KEY=${S3_ACCESS_KEY:-minioadmin}
-S3_SECRET_KEY=${S3_SECRET_KEY:-minioadmin}
+S3_ACCESS_KEY=$S3_ACCESS_KEY
+S3_SECRET_KEY=$S3_SECRET_KEY
 S3_FORCE_PATH_STYLE=true
 
 # MinIO root credentials (must match S3_ACCESS_KEY/S3_SECRET_KEY)
-MINIO_ROOT_USER=${S3_ACCESS_KEY:-minioadmin}
-MINIO_ROOT_PASSWORD=${S3_SECRET_KEY:-minioadmin}
+MINIO_ROOT_USER=$S3_ACCESS_KEY
+MINIO_ROOT_PASSWORD=$S3_SECRET_KEY
 
 # LDAP (optional)
 LDAP_URL=
