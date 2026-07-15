@@ -565,9 +565,11 @@ issue_new_cert() {
 
             if [ $? -eq 0 ]; then
                 success "Self-signed certificate generated!"
+                # Copy to fixed path for nginx
+                mkdir -p "$DATA_DIR/certs/ssl"
+                cp "$DATA_DIR/certs/$domain/fullchain.pem" "$DATA_DIR/certs/ssl/"
+                cp "$DATA_DIR/certs/$domain/privkey.pem" "$DATA_DIR/certs/ssl/"
                 replace_or_append_env "SSL_DOMAIN" "$domain"
-                replace_or_append_env "SSL_CERT" "$DATA_DIR/certs/$domain/fullchain.pem"
-                replace_or_append_env "SSL_KEY" "$DATA_DIR/certs/$domain/privkey.pem"
             else
                 error "Failed to generate certificate"
                 return 1
@@ -600,9 +602,11 @@ issue_new_cert() {
                     --fullchain-file "$DATA_DIR/certs/$domain/fullchain.pem"
 
                 success "Let's Encrypt certificate issued!"
+                # Copy to fixed path for nginx
+                mkdir -p "$DATA_DIR/certs/ssl"
+                cp "$DATA_DIR/certs/$domain/fullchain.pem" "$DATA_DIR/certs/ssl/"
+                cp "$DATA_DIR/certs/$domain/privkey.pem" "$DATA_DIR/certs/ssl/"
                 replace_or_append_env "SSL_DOMAIN" "$domain"
-                replace_or_append_env "SSL_CERT" "$DATA_DIR/certs/$domain/fullchain.pem"
-                replace_or_append_env "SSL_KEY" "$DATA_DIR/certs/$domain/privkey.pem"
             else
                 error "Failed to issue certificate"
                 return 1
@@ -630,6 +634,10 @@ issue_new_cert() {
             chmod 600 "$DATA_DIR/certs/$domain/privkey.pem"
 
             success "Certificate installed!"
+            # Copy to fixed path for nginx
+            mkdir -p "$DATA_DIR/certs/ssl"
+            cp "$DATA_DIR/certs/$domain/fullchain.pem" "$DATA_DIR/certs/ssl/"
+            cp "$DATA_DIR/certs/$domain/privkey.pem" "$DATA_DIR/certs/ssl/"
             replace_or_append_env "SSL_DOMAIN" "$domain"
             replace_or_append_env "SSL_CERT" "$DATA_DIR/certs/$domain/fullchain.pem"
             replace_or_append_env "SSL_KEY" "$DATA_DIR/certs/$domain/privkey.pem"
