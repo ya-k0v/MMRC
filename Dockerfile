@@ -44,6 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     wget \
     ca-certificates \
+    nginx \
     imagemagick \
     ghostscript \
     tini \
@@ -54,11 +55,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
          apt-get install -y --no-install-recommends docker.io docker-compose; \
        fi \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
+    && mkdir -p /var/log/nginx /run/nginx /etc/nginx/ssl /etc/nginx/ssl-certs /etc/nginx/conf.d \
     && sed -i 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml
-
-# Install Caddy
-RUN wget -q -O /usr/bin/caddy "https://caddyserver.com/api/download?os=linux&arch=amd64" \
-    && chmod +x /usr/bin/caddy
 
 # yt-dlp (pinned version)
 ARG YTDLP_VERSION=2026.07.04
@@ -92,14 +90,13 @@ RUN mkdir -p /app/clients/android-mediaplayer \
          && touch /app/clients/android-mediaplayer/app-release.apk; \
        fi
 
-# Copy Caddy config and entrypoint
-COPY docker/caddy/Caddyfile /etc/caddy/Caddyfile
-COPY docker/caddy/https.Caddyfile /etc/caddy/https.Caddyfile
+# Copy nginx configs and entrypoint
+COPY docker/nginx/nginx.conf /etc/nginx/nginx.conf
+COPY docker/nginx/https.conf /etc/nginx/https.conf
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-RUN mkdir -p /app/data/{db,content,streams,converted/trailers,logs,temp,hero} /app/.tmp \
-    && mkdir -p /var/log/caddy /var/lib/mmrc/certs/ssl
+RUN mkdir -p /app/data/{db,content,streams,converted/trailers,logs,temp,hero} /app/.tmp
 
 ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0 LOG_LEVEL=info \
     MMRC_DATA_DIR=/app/data CONTENT_ROOT=/app/data \
