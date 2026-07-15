@@ -246,8 +246,12 @@ cmd_reset_password() {
         const { getDatabase } = require('./src/database/database.js');
         const db = getDatabase();
         const hash = bcrypt.hashSync('admin123', 10);
-        db.run('UPDATE users SET password_hash = ? WHERE username = ?', [hash, 'admin']);
-        console.log('Password reset to admin123');
+        const result = db.prepare('UPDATE users SET password_hash = ? WHERE id = 1').run(hash);
+        if (result.changes > 0) {
+            console.log('User ID 1 password reset to admin123');
+        } else {
+            console.log('User ID 1 not found');
+        }
         process.exit(0);
     " 2>/dev/null || {
         warn "Could not reset via exec, trying direct database update..."
@@ -261,8 +265,8 @@ cmd_reset_password() {
                 docker run --rm -v "$DB_PATH:/db" node:22-slim node -e "
                     const Database = require('better-sqlite3');
                     const db = new Database('/db');
-                    db.prepare('UPDATE users SET password_hash = ? WHERE username = ?').run('$HASH', 'admin');
-                    console.log('Password reset to admin123');
+                    db.prepare('UPDATE users SET password_hash = ? WHERE id = 1').run('$HASH');
+                    console.log('User ID 1 password reset to admin123');
                 " 2>/dev/null
             fi
         fi
