@@ -202,7 +202,7 @@ services:
       - ${CONTENT_DIR:-./data}:/app/data
       - mmrc-config:/app/config
       - mmrc-temp:/app/.tmp
-      - mmrc-certs:/etc/nginx/ssl-certs:ro
+      - /var/lib/mmrc/certs:/var/lib/mmrc/certs:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - .:/host:ro
     healthcheck:
