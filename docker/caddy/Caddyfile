@@ -1,0 +1,73 @@
+{
+	# Global options
+	email {env.MMRC_SSL_EMAIL}
+	admin off
+}
+
+# HTTP server (always works, redirects to HTTPS if certs exist)
+:80 {
+	# Health check
+	handle /health {
+		reverse_proxy localhost:3000
+	}
+
+	# Static files
+	handle_path /streams/* {
+		root * /app/data/streams
+		file_server
+	}
+
+	handle_path /content/* {
+		root * /app/data/content
+		file_server {
+			header Cache-Control "public, max-age=2592000"
+		}
+	}
+
+	handle_path /converted/trailers/* {
+		root * /app/data/converted/trailers
+		file_server {
+			header Cache-Control "public, max-age=604800"
+		}
+	}
+
+	# Everything else → Node.js backend
+	reverse_proxy localhost:3000 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+
+		# WebSocket support
+		@websocket {
+			header Connection *Upgrade*
+			header Upgrade websocket
+		}
+		reverse_proxy @websocket localhost:3000 {
+			header_up Upgrade {>Upgrade}
+			header_up Connection {>Connection}
+		}
+
+		# Timeouts for uploads
+		transport http {
+			read_timeout 300s
+			write_timeout 300s
+		}
+	}
+
+	# Security headers
+	header {
+		X-Frame-Options SAMEORIGIN
+		X-Content-Type-Options nosniff
+		X-XSS-Protection "1; mode=block"
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+
+	# Logging
+	log {
+		output file /var/log/caddy/access.log
+		format json
+	}
+}
+
+# HTTPS server (only if certs exist - handled by entrypoint)
+import /etc/caddy/https.Caddyfile

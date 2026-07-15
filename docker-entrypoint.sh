@@ -38,134 +38,57 @@ if [ -f "/app/scripts/post-pull-sync.sh" ]; then
     SKIP_NPM_INSTALL=1 SKIP_SERVICE_RESTART=1 SKIP_MIGRATION=0 bash /app/scripts/post-pull-sync.sh 2>/dev/null || true
 fi
 
-# SSL: create HTTPS server block if certs exist
+# SSL: check for certificates or generate self-signed
 SSL_CERT="/var/lib/mmrc/certs/ssl/fullchain.pem"
 SSL_KEY="/var/lib/mmrc/certs/ssl/privkey.pem"
-HTTPS_CONF="/etc/nginx/conf.d/https.conf"
+HTTPS_CADDYFILE="/etc/caddy/https.Caddyfile"
+HTTPS_CONF="/etc/caddy/https.conf"
 
-if [ -f "$SSL_CERT" ] && [ -f "$SSL_KEY" ]; then
-    echo "🔐 SSL certificates found, enabling HTTPS..."
-    cat > "$HTTPS_CONF" << 'EOF'
-server {
-    listen 443 ssl http2;
-    server_name _;
+# Check multiple cert locations
+CERTS_FOUND=false
+for CHECK_DIR in "/var/lib/mmrc/certs/ssl" "/var/lib/mmrc/certs"; do
+    if [ -f "$CHECK_DIR/fullchain.pem" ] && [ -f "$CHECK_DIR/privkey.pem" ]; then
+        SSL_CERT="$CHECK_DIR/fullchain.pem"
+        SSL_KEY="$CHECK_DIR/privkey.pem"
+        CERTS_FOUND=true
+        break
+    fi
+done
 
-    ssl_certificate /var/lib/mmrc/certs/ssl/fullchain.pem;
-    ssl_certificate_key /var/lib/mmrc/certs/ssl/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-    ssl_prefer_server_ciphers on;
-
-    location / {
-        proxy_pass http://mmrc_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    location /health {
-        proxy_pass http://mmrc_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-
-    location /api/ {
-        proxy_pass http://mmrc_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_buffering off;
-    }
-
-    location ~ ^/api/devices/[^/]+/upload {
-        client_max_body_size 5120M;
-        proxy_pass http://mmrc_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 300s;
-        proxy_send_timeout 300s;
-    }
-
-    location ^~ /socket.io/ {
-        proxy_pass http://mmrc_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_buffering off;
-        proxy_read_timeout 86400s;
-    }
-
-    location /streams/ {
-        alias /app/data/streams/;
-        add_header Cache-Control no-cache;
-        add_header X-Accel-Buffering no;
-        add_header Access-Control-Allow-Origin *;
-        types {
-            application/vnd.apple.mpegurl m3u8;
-            video/mp2t ts;
-        }
-    }
-
-    location /content/ {
-        alias /app/data/content/;
-        expires 30d;
-        add_header Cache-Control "public";
-    }
-
-    location ~ /\. {
-        deny all;
-    }
-}
-EOF
+if [ "$CERTS_FOUND" = true ]; then
+    echo "🔐 SSL certificates found at $SSL_CERT"
+    # Create HTTPS Caddyfile with actual cert paths
+    sed "s|/var/lib/mmrc/certs/ssl/fullchain.pem|$SSL_CERT|g; s|/var/lib/mmrc/certs/ssl/privkey.pem|$SSL_KEY|g" \
+        "$HTTPS_CADDYFILE" > "$HTTPS_CONF"
 else
-    echo "ℹ️ No SSL certificates, HTTP only"
-    rm -f "$HTTPS_CONF"
+    echo "🔐 No SSL certificates found, generating self-signed..."
+    mkdir -p /var/lib/mmrc/certs/ssl
+    
+    # Get server IP or use localhost
+    SERVER_IP=$(hostname -i 2>/dev/null || echo "127.0.0.1")
+    
+    # Generate self-signed certificate
+    openssl req -x509 -nodes -days 3650 \
+        -newkey rsa:2048 \
+        -keyout "$SSL_KEY" \
+        -out "$SSL_CERT" \
+        -subj "/CN=$SERVER_IP" \
+        -addext "subjectAltName=IP:$SERVER_IP,IP:127.0.0.1,DNS:localhost" 2>/dev/null
+    
+    if [ -f "$SSL_CERT" ] && [ -f "$SSL_KEY" ]; then
+        echo "✅ Self-signed certificate generated for $SERVER_IP"
+        # Create HTTPS config
+        sed "s|/var/lib/mmrc/certs/ssl/fullchain.pem|$SSL_CERT|g; s|/var/lib/mmrc/certs/ssl/privkey.pem|$SSL_KEY|g" \
+            "$HTTPS_CADDYFILE" > "$HTTPS_CONF"
+    else
+        echo "⚠️ Failed to generate certificate, HTTP only"
+        rm -f "$HTTPS_CONF"
+    fi
 fi
 
-# Start Nginx
-echo "🌐 Starting Nginx..."
-nginx -c /etc/nginx/nginx.conf
-sleep 1
-echo "✅ Nginx started"
+# Create log directory
+mkdir -p /var/log/caddy
 
-export PORT=${PORT:-3000}
-
-# Create data directories
-DATA_DIR="${MMRC_DATA_DIR:-${CONTENT_ROOT:-/app/data}}"
-mkdir -p "${DATA_DIR}/db" "${DATA_DIR}/content" "${DATA_DIR}/streams"
-mkdir -p "${DATA_DIR}/converted/trailers" "${DATA_DIR}/logs" "${DATA_DIR}/temp" "${DATA_DIR}/hero"
-mkdir -p /app/.tmp
-
-# Migrate legacy DB files
-if [ -f "/app/config/main.db" ] && [ ! -f "${DATA_DIR}/db/main.db" ]; then
-    echo "🔄 Migrating main.db..."
-    cp /app/config/main.db "${DATA_DIR}/db/main.db" 2>/dev/null || true
-    cp /app/config/main.db-shm "${DATA_DIR}/db/main.db-shm" 2>/dev/null || true
-    cp /app/config/main.db-wal "${DATA_DIR}/db/main.db-wal" 2>/dev/null || true
-fi
-
-if [ -f "/app/config/hero/heroes.db" ] && [ ! -f "${DATA_DIR}/db/heroes.db" ]; then
-    echo "🔄 Migrating heroes.db..."
-    mkdir -p "${DATA_DIR}/db"
-    cp /app/config/hero/heroes.db "${DATA_DIR}/db/heroes.db" 2>/dev/null || true
-    cp /app/config/hero/heroes.db-shm "${DATA_DIR}/db/heroes.db-shm" 2>/dev/null || true
-    cp /app/config/hero/heroes.db-wal "${DATA_DIR}/db/heroes.db-wal" 2>/dev/null || true
-fi
-
-echo "📁 Content Root: ${DATA_DIR}"
-echo "📡 Port: ${PORT}"
-echo "✅ Starting MMRC Node server..."
-
-exec "$@"
+# Start Caddy
+echo "🌐 Starting Caddy..."
+exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
