@@ -158,7 +158,7 @@ select_database() {
     DB_POSTGRES_HOST="${DB_POSTGRES_HOST:-mmrc-postgres}"
     DB_POSTGRES_PORT="${DB_POSTGRES_PORT:-5432}"
     DB_POSTGRES_USER="${DB_POSTGRES_USER:-mmrc}"
-    DB_POSTGRES_PASSWORD="${DB_POSTGRES_PASSWORD:-}"
+    DB_POSTGRES_PASSWORD="${DB_POSTGRES_PASSWORD:-mmrc}"
     DB_POSTGRES_DB="${DB_POSTGRES_DB:-mmrc}"
 
     if [ "$DB_TYPE" = "postgres" ]; then
@@ -216,6 +216,8 @@ select_database() {
 
 select_storage() {
     STORAGE_BACKEND="${STORAGE_BACKEND:-local}"
+    S3_ACCESS_KEY="${S3_ACCESS_KEY:-minioadmin}"
+    S3_SECRET_KEY="${S3_SECRET_KEY:-minioadmin}"
 
     if [ "$DB_TYPE" != "postgres" ]; then
         return
@@ -256,14 +258,12 @@ setup_credentials() {
         S3_ACCESS_KEY="${s3_key:-minioadmin}"
         read -p "  MinIO secret key [minioadmin]: " s3_secret < /dev/tty
         S3_SECRET_KEY="${s3_secret:-minioadmin}"
-        export S3_ACCESS_KEY S3_SECRET_KEY
     fi
 
-    # PostgreSQL credentials
-    if [ "$DB_TYPE" = "postgres" ] && [ "$POSTGRES_SOURCE" = "docker" ]; then
+    # PostgreSQL password (only for docker setup, existing is already set)
+    if [ "$DB_TYPE" = "postgres" ] && [ "$POSTGRES_SOURCE" = "docker" ] && [ -z "$DB_POSTGRES_PASSWORD" ]; then
         read -p "  PostgreSQL password [mmrc]: " pg_pass < /dev/tty
         DB_POSTGRES_PASSWORD="${pg_pass:-mmrc}"
-        export DB_POSTGRES_PASSWORD
     fi
 }
 
