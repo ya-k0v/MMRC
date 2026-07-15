@@ -61,7 +61,11 @@ if [ "$CERTS_FOUND" = false ]; then
     echo "🔐 No SSL certificates found, generating self-signed..."
     mkdir -p "$SSL_CERTS_DIR"
     
-    SERVER_IP=$(hostname -i 2>/dev/null || echo "127.0.0.1")
+    # Use MMRC_SERVER_IP if set, otherwise try to detect external IP
+    SERVER_IP="${MMRC_SERVER_IP:-}"
+    if [ -z "$SERVER_IP" ]; then
+        SERVER_IP=$(curl -s --connect-timeout 3 https://ifconfig.me 2>/dev/null || echo "127.0.0.1")
+    fi
     
     openssl req -x509 -nodes -days 3650 \
         -newkey rsa:2048 \
