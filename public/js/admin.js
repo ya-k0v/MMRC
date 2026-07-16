@@ -734,7 +734,7 @@ function createUsersSection() {
         <div style="font-weight:600; font-size:var(--font-size-base);">${escapeHtml(title)}</div>
         <button id="usModalClose" class="secondary meta" style="min-width:auto; width:28px; height:28px; padding:0; border:none; background:transparent; font-size:18px; line-height:1;">${getCloseIcon(12)}</button>
       </div>
-      <div style="padding:var(--space-lg);">${bodyHtml}</div>
+      <div style="padding:var(--space-lg); flex:1; overflow:auto; max-height:calc(80vh - 120px);">${bodyHtml}</div>
     `;
 
     overlay.appendChild(modal);
@@ -1100,7 +1100,7 @@ function createUsersSection() {
       },
       onOpen: () => {
         const updateDeviceCount = () => {
-          const count = document.querySelectorAll('.us-device-cb:checked').length;
+          const count = assigned.size;
           const el = document.getElementById('usDeviceCount');
           if (el) el.textContent = count;
         };
