@@ -742,7 +742,13 @@ function createUsersSection() {
 
     const close = () => overlay.remove();
     modal.querySelector('#usModalClose').onclick = close;
-    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+
+    // Close only if both mousedown and mouseup are on overlay
+    let mouseDownTarget = null;
+    overlay.addEventListener('mousedown', (e) => { mouseDownTarget = e.target; });
+    overlay.addEventListener('mouseup', (e) => {
+      if (e.target === overlay && mouseDownTarget === overlay) close();
+    });
 
     const saveBtn = modal.querySelector('#usModalSave');
     if (saveBtn) {
