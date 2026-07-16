@@ -982,7 +982,7 @@ function createUsersSection() {
   };
 
   // Edit user modal (ФИО + роль + устройства)
-  window._usEdit = async (userId, username, fullName, role, isLdap) => {
+  window._usEdit = async (userId, username, fullName, role, isLdap, isActive) => {
     isLdap = String(role || '').toLowerCase() === 'ldap';
 
     let allDevices = [];
@@ -1048,9 +1048,9 @@ function createUsersSection() {
     const hasDevices = role !== 'admin' && role !== 'hero_admin' && allDevices.length > 0;
     const totalPages = hasDevices ? Math.ceil(allDevices.filter(d => !deviceSearch || (d.device_id || '').toLowerCase().includes(deviceSearch.toLowerCase()) || (d.device_name || '').toLowerCase().includes(deviceSearch.toLowerCase())).length / devicePerPage) : 0;
 
-    const userActive = !arguments[4] || arguments[4] !== false;
+    const userActive = isActive !== 'false' && isActive !== false;
     showUsModal({
-      titleHtml: `<span>${escapeHtml(username)}</span> <button id="usToggleActive" class="secondary" style="font-size:0.7rem; padding:2px 8px; margin-left:8px; ${userActive ? 'background:rgba(16,185,129,0.15); color:var(--success);' : 'background:rgba(239,68,68,0.15); color:var(--danger);'}">${userActive ? 'Активен' : 'Отключён'}</button>`,
+      titleHtml: `<span>${escapeHtml(username)}</span> <button id="usToggleActive" class="secondary" style="display:inline-flex; align-items:center; gap:4px; padding:2px 10px; border-radius:999px; font-size:0.75rem; font-weight:500; margin-left:8px; border:none; cursor:pointer; background:${userActive ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)'}; color:${userActive ? 'var(--success)' : 'var(--danger)'};"><span style="width:6px; height:6px; border-radius:50%; background:${userActive ? 'var(--success)' : 'var(--danger)'}; display:inline-block;"></span>${userActive ? 'Активен' : 'Отключён'}</button>`,
       bodyHtml: `
         <div style="display:flex; flex-direction:column; gap:var(--space-md);">
           ${isLdap ? '<div style="font-size:0.75rem; color:var(--warning); background:rgba(245,158,11,0.1); padding:6px 10px; border-radius:6px;">LDAP пользователь — редактируется в Active Directory</div>' : ''}
@@ -1186,7 +1186,7 @@ function createUsersSection() {
           const maxPage = Math.ceil(allDevices.filter(d => !deviceSearch || (d.device_id || '').toLowerCase().includes(deviceSearch.toLowerCase()) || (d.device_name || '').toLowerCase().includes(deviceSearch.toLowerCase())).length / devicePerPage);
           document.getElementById('usDevicePager').innerHTML = `
             <button id="usDevicePrev" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage <= 1 ? 'disabled' : ''}>◀</button>
-            <span style="font-size:0.75rem; color:var(--text-secondary);">Стр. ${devicePage} / ${maxPage || 1}</span>
+            <span style="font-size:0.75rem; color:var(--text-secondary);">${devicePage}/${maxPage || 1}</span>
             <button id="usDeviceNext" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage >= maxPage ? 'disabled' : ''}>▶</button>
           `;
           document.getElementById('usDevicePrev').onclick = () => { if (devicePage > 1) { devicePage--; refreshDeviceList(); } };
@@ -1291,7 +1291,7 @@ function renderUsersSectionList() {
   if (pagInfo) pagInfo.textContent = s.filtered.length > 0 ? `${start + 1}–${end} из ${s.filtered.length}` : '';
 
   const pageInfo = document.getElementById('usPageInfo');
-  if (pageInfo) pageInfo.textContent = tp > 0 ? `Стр. ${s.page} из ${tp}` : '';
+  if (pageInfo) pageInfo.textContent = tp > 0 ? `${s.page} из ${tp}` : '';
 
   const prevBtn = document.getElementById('usPrev');
   const nextBtn = document.getElementById('usNext');
@@ -1309,7 +1309,7 @@ function renderUsersSectionList() {
 
   tbody.innerHTML = page.map(u => {
     const isLdap = String(u.auth_source || 'local').toLowerCase() === 'ldap';
-    return `<tr style="border-bottom:1px solid var(--border); transition:background 0.15s; cursor:pointer;" onmouseover="this.style.background='var(--panel-hover)'" onmouseout="this.style.background=''" onclick="window._usEdit(${u.id}, '${escapeHtml(u.username)}', '${escapeHtml(u.full_name || '')}', '${escapeHtml(u.role)}', ${isLdap})">
+    return `<tr style="border-bottom:1px solid var(--border); transition:background 0.15s; cursor:pointer;" onmouseover="this.style.background='var(--panel-hover)'" onmouseout="this.style.background=''" onclick="window._usEdit(${u.id}, '${escapeHtml(u.username)}', '${escapeHtml(u.full_name || '')}', '${escapeHtml(u.role)}', ${isLdap}, ${u.is_active ? 'true' : 'false'})">
       <td style="padding:10px 12px;">
         <div style="display:flex; align-items:center; gap:var(--space-sm);">
           <div style="position:relative; width:32px; height:32px; flex-shrink:0;">
