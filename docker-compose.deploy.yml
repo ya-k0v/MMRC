@@ -58,6 +58,8 @@ services:
       - mmrc-config:/app/config
       - mmrc-temp:/app/.tmp
       - /var/lib/mmrc/certs:/var/lib/mmrc/certs:ro
+      # Frontend files (for live updates without rebuild)
+      - ./public:/app/public
       # Docker socket — для авто-обновления из админки. Удалите, если не нужно.
       - /var/run/docker.sock:/var/run/docker.sock
       # Project dir — для доступа к compose-файлу при обновлении.
