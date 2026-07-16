@@ -975,19 +975,88 @@ function createUsersSection() {
     } catch (e) { alert('Ошибка загрузки устройств'); }
   };
 
-  // Edit user modal (ФИО + роль)
-  window._usEdit = async (userId, username, fullName, role) => {
-    const isLdap = String(role || '').toLowerCase() === 'ldap';
+  // Edit user modal (ФИО + роль + устройства)
+  window._usEdit = async (userId, username, fullName, role, isLdap) => {
+    isLdap = String(role || '').toLowerCase() === 'ldap';
+
+    let allDevices = [];
+    let userDeviceIds = [];
+    try {
+      if (role !== 'admin' && role !== 'hero_admin') {
+        const [devicesRes, userDevicesRes] = await Promise.all([
+          adminFetch('/api/devices'),
+          adminFetch(`/api/auth/users/${userId}/devices`)
+        ]);
+        allDevices = await devicesRes.json();
+        userDeviceIds = await userDevicesRes.json();
+      }
+    } catch (e) { /* ignore */ }
+
+    const assigned = new Set(Array.isArray(userDeviceIds) ? userDeviceIds : []);
+    let devicePage = 1;
+    const devicePerPage = 12;
+    let deviceSearch = '';
+
+    const renderDeviceList = () => {
+      const filtered = allDevices.filter(d => {
+        if (!deviceSearch) return true;
+        const q = deviceSearch.toLowerCase();
+        return (d.device_id || '').toLowerCase().includes(q) || (d.device_name || '').toLowerCase().includes(q);
+      });
+      const totalPages = Math.ceil(filtered.length / devicePerPage);
+      const start = (devicePage - 1) * devicePerPage;
+      const pageDevices = filtered.slice(start, start + devicePerPage);
+
+      return pageDevices.map(d => {
+        const checked = assigned.has(d.device_id);
+        const deviceType = String(d.device_type || '').toLowerCase();
+        const isAndroid = deviceType.includes('android') || deviceType.includes('native');
+        const isMpv = deviceType.includes('mpv');
+        const icon = isAndroid ? '📱' : isMpv ? '🖥️' : '📺';
+        return `
+          <label style="display:flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid ${checked ? 'var(--brand)' : 'var(--border)'}; border-radius:8px; cursor:pointer; background:${checked ? 'rgba(59,130,246,0.08)' : 'transparent'}; transition:all 0.15s;">
+            <input type="checkbox" class="us-device-cb" value="${escapeHtml(d.device_id)}" ${checked ? 'checked' : ''} style="width:14px; height:14px;" />
+            <span style="font-size:1rem;">${icon}</span>
+            <div style="flex:1; min-width:0;">
+              <div style="font-weight:500; font-size:0.85rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(d.device_name || d.device_id)}</div>
+              <div class="meta" style="font-size:0.7rem;">${escapeHtml(d.device_id)}</div>
+            </div>
+            <div style="width:6px; height:6px; border-radius:50%; background:${d.is_online ? 'var(--success)' : 'var(--muted)'}; flex-shrink:0;"></div>
+          </label>
+        `;
+      }).join('');
+    };
+
+    const deviceSection = (role !== 'admin' && role !== 'hero_admin' && allDevices.length > 0) ? `
+      <div style="border-top:1px solid var(--border); padding-top:var(--space-md); margin-top:var(--space-md);">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-sm);">
+          <span style="font-size:0.875rem; color:var(--text-secondary);">Устройства: <span id="usDeviceCount">${assigned.size}</span>/${allDevices.length}</span>
+          <div style="display:flex; gap:4px;">
+            <button id="usDeviceSelectAll" class="secondary" style="font-size:0.7rem; padding:2px 6px;">Все</button>
+            <button id="usDeviceDeselectAll" class="secondary" style="font-size:0.7rem; padding:2px 6px;">Нет</button>
+          </div>
+        </div>
+        <input id="usDeviceSearch" class="input" type="text" placeholder="Поиск устройства..." style="margin-bottom:var(--space-sm); font-size:0.85rem;" />
+        <div id="usDeviceList" style="display:flex; flex-direction:column; gap:4px; max-height:240px; overflow-y:auto;">
+          ${renderDeviceList()}
+        </div>
+        <div id="usDevicePager" style="display:flex; justify-content:center; gap:4px; margin-top:var(--space-sm);">
+          ${Array.from({length: Math.ceil(allDevices.filter(d => !deviceSearch || (d.device_id || '').toLowerCase().includes(deviceSearch.toLowerCase()) || (d.device_name || '').toLowerCase().includes(deviceSearch.toLowerCase())).length / devicePerPage)}, (_, i) => `<button class="secondary us-device-page" style="min-width:28px; padding:2px 6px; font-size:0.75rem; ${i + 1 === devicePage ? 'background:var(--brand); color:white;' : ''}" data-page="${i + 1}">${i + 1}</button>`).join('')}
+        </div>
+      </div>
+    ` : '';
+
     showUsModal({
-      title: `Редактирование — ${escapeHtml(username)}`,
+      title: `${escapeHtml(username)}`,
       bodyHtml: `
         <div style="display:flex; flex-direction:column; gap:var(--space-md);">
+          ${isLdap ? '<div style="font-size:0.75rem; color:var(--warning); background:rgba(245,158,11,0.1); padding:6px 10px; border-radius:6px;">LDAP пользователь — редактируется в Active Directory</div>' : ''}
           <label style="display:flex; flex-direction:column; gap:var(--space-xs);">
-            <span style="font-size:0.875rem; color:var(--text-secondary);">ФИО</span>
+            <span style="font-size:0.8rem; color:var(--text-secondary);">ФИО</span>
             <input id="usEditFullName" class="input" type="text" value="${escapeHtml(fullName)}" placeholder="Введите ФИО" ${isLdap ? 'disabled' : ''} />
           </label>
           <label style="display:flex; flex-direction:column; gap:var(--space-xs);">
-            <span style="font-size:0.875rem; color:var(--text-secondary);">Роль</span>
+            <span style="font-size:0.8rem; color:var(--text-secondary);">Роль</span>
             <select id="usEditRole" class="input" ${isLdap ? 'disabled' : ''}>
               <option value="admin" ${role === 'admin' ? 'selected' : ''}>Admin</option>
               <option value="manager" ${role === 'manager' ? 'selected' : ''}>Manager</option>
@@ -995,8 +1064,9 @@ function createUsersSection() {
               <option value="hero_admin" ${role === 'hero_admin' ? 'selected' : ''}>Hero Admin</option>
             </select>
           </label>
-          ${isLdap ? '<div style="font-size:0.75rem; color:var(--warning);">LDAP пользователи редактируются в Active Directory</div>' : ''}
+          ${deviceSection}
         </div>
+        <div id="usEditError" class="meta" style="color:var(--danger); display:none;"></div>
         <div style="display:flex; gap:var(--space-sm); justify-content:flex-end; border-top:1px solid var(--border); padding-top:var(--space-md); margin-top:var(--space-md);">
           <button id="usModalSave" class="primary">Сохранить</button>
         </div>
@@ -1005,13 +1075,71 @@ function createUsersSection() {
         const newFullName = document.getElementById('usEditFullName').value.trim();
         const newRole = document.getElementById('usEditRole').value;
         if (!newFullName) throw new Error('ФИО не может быть пустым');
+
         const res = await adminFetch(`/api/auth/users/${userId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ full_name: newFullName, role: newRole })
         });
         if (!res.ok) throw new Error('Ошибка сохранения');
+
+        if (role !== 'admin' && role !== 'hero_admin' && allDevices.length > 0) {
+          const checked = Array.from(document.querySelectorAll('.us-device-cb:checked')).map(cb => cb.value);
+          await adminFetch(`/api/auth/users/${userId}/devices`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ deviceIds: checked })
+          });
+        }
+
         loadUsersSection();
+      },
+      onOpen: () => {
+        const updateDeviceCount = () => {
+          const count = document.querySelectorAll('.us-device-cb:checked').length;
+          const el = document.getElementById('usDeviceCount');
+          if (el) el.textContent = count;
+        };
+
+        document.querySelectorAll('.us-device-cb').forEach(cb => {
+          cb.addEventListener('change', () => {
+            cb.closest('label').style.borderColor = cb.checked ? 'var(--brand)' : 'var(--border)';
+            cb.closest('label').style.background = cb.checked ? 'rgba(59,130,246,0.08)' : 'transparent';
+            updateDeviceCount();
+          });
+        });
+
+        const searchEl = document.getElementById('usDeviceSearch');
+        if (searchEl) {
+          let debounce;
+          searchEl.addEventListener('input', () => {
+            clearTimeout(debounce);
+            debounce = setTimeout(() => {
+              deviceSearch = searchEl.value;
+              devicePage = 1;
+              document.getElementById('usDeviceList').innerHTML = renderDeviceList();
+              document.getElementById('usDevicePager').innerHTML = Array.from({length: Math.ceil(allDevices.filter(d => !deviceSearch || (d.device_id || '').toLowerCase().includes(deviceSearch.toLowerCase()) || (d.device_name || '').toLowerCase().includes(deviceSearch.toLowerCase())).length / devicePerPage)}, (_, i) => `<button class="secondary us-device-page" style="min-width:28px; padding:2px 6px; font-size:0.75rem; ${i + 1 === devicePage ? 'background:var(--brand); color:white;' : ''}" data-page="${i + 1}">${i + 1}</button>`).join('');
+              document.querySelectorAll('.us-device-page').forEach(btn => {
+                btn.onclick = () => { devicePage = parseInt(btn.dataset.page); document.getElementById('usDeviceList').innerHTML = renderDeviceList(); };
+              });
+            }, 200);
+          });
+        }
+
+        document.querySelectorAll('.us-device-page').forEach(btn => {
+          btn.onclick = () => { devicePage = parseInt(btn.dataset.page); document.getElementById('usDeviceList').innerHTML = renderDeviceList(); };
+        });
+
+        const selectAllBtn = document.getElementById('usDeviceSelectAll');
+        const deselectAllBtn = document.getElementById('usDeviceDeselectAll');
+        if (selectAllBtn) selectAllBtn.onclick = () => {
+          document.querySelectorAll('.us-device-cb').forEach(cb => { cb.checked = true; cb.closest('label').style.borderColor = 'var(--brand)'; cb.closest('label').style.background = 'rgba(59,130,246,0.08)'; });
+          updateDeviceCount();
+        };
+        if (deselectAllBtn) deselectAllBtn.onclick = () => {
+          document.querySelectorAll('.us-device-cb').forEach(cb => { cb.checked = false; cb.closest('label').style.borderColor = 'var(--border)'; cb.closest('label').style.background = 'transparent'; });
+          updateDeviceCount();
+        };
       }
     });
   };
@@ -1122,7 +1250,7 @@ function renderUsersSectionList() {
 
   tbody.innerHTML = page.map(u => {
     const isLdap = String(u.auth_source || 'local').toLowerCase() === 'ldap';
-    return `<tr style="border-bottom:1px solid var(--border); transition:background 0.15s; cursor:default;" onmouseover="this.style.background='var(--panel-hover)'" onmouseout="this.style.background=''">
+    return `<tr style="border-bottom:1px solid var(--border); transition:background 0.15s; cursor:pointer;" onmouseover="this.style.background='var(--panel-hover)'" onmouseout="this.style.background=''" onclick="window._usEdit(${u.id}, '${escapeHtml(u.username)}', '${escapeHtml(u.full_name || '')}', '${escapeHtml(u.role)}', ${isLdap})">
       <td style="padding:10px 12px;">
         <div style="display:flex; align-items:center; gap:var(--space-sm);">
           <div style="position:relative; width:32px; height:32px; flex-shrink:0;">
@@ -1148,12 +1276,9 @@ function renderUsersSectionList() {
       <td style="padding:10px 12px; text-align:center; color:var(--text); font-size:0.85rem;">${u.role === 'admin' ? '—' : (u.deviceCount || 0)}</td>
       <td style="padding:10px 12px; text-align:right;">
         <div style="display:inline-flex; gap:4px;">
-          ${u.online ? `<button class="danger meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usRevokeAllSessions(${u.id}, '${escapeHtml(u.username)}')" title="Завершить все сессии (${u.sessions.length})">⏻</button>` : ''}
-          <button class="secondary meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usToggle(${u.id}, ${!u.is_active})" title="${u.is_active ? 'Отключить' : 'Включить'}">${u.is_active ? getUnlockIcon(14) : getLockIcon(14)}</button>
-          ${(u.role === 'speaker' || u.role === 'manager') ? `<button class="secondary meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usEditDevices(${u.id}, '${escapeHtml(u.username)}', '${escapeHtml(u.role)}')" title="Назначить устройства">${getDeviceIcon(14)}</button>` : ''}
-          ${!isLdap ? `<button class="secondary meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usEdit(${u.id}, '${escapeHtml(u.username)}', '${escapeHtml(u.full_name || '')}', '${escapeHtml(u.role)}')" title="Редактировать">${getSettingsIcon(14)}</button>` : ''}
-          ${!isLdap ? `<button class="secondary meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usResetPass(${u.id}, '${escapeHtml(u.username)}')" title="Сбросить пароль">${getKeyIcon(14)}</button>` : ''}
-          ${u.id !== 1 ? `<button class="danger meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usDelete(${u.id}, '${escapeHtml(u.username)}')" title="Удалить">${getTrashIcon(14)}</button>` : ''}
+          ${u.online ? `<button class="danger meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="event.stopPropagation(); window._usRevokeAllSessions(${u.id}, '${escapeHtml(u.username)}')" title="Завершить все сессии (${u.sessions.length})">⏻</button>` : ''}
+          ${!isLdap ? `<button class="secondary meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="event.stopPropagation(); window._usResetPass(${u.id}, '${escapeHtml(u.username)}')" title="Сбросить пароль">${getKeyIcon(14)}</button>` : ''}
+          ${u.id !== 1 ? `<button class="danger meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="event.stopPropagation(); window._usDelete(${u.id}, '${escapeHtml(u.username)}')" title="Удалить">${getTrashIcon(14)}</button>` : ''}
         </div>
       </td>
     </tr>`;
