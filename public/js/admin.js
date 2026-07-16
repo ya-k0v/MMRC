@@ -1050,7 +1050,7 @@ function createUsersSection() {
 
     const userActive = isActive !== 'false' && isActive !== false;
     showUsModal({
-      titleHtml: `<span>${escapeHtml(username)}</span> <button id="usToggleActive" class="secondary" style="display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:999px; font-size:0.7rem; font-weight:500; line-height:1; margin-left:8px; border:none; cursor:pointer; background:${userActive ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)'}; color:${userActive ? 'var(--success)' : 'var(--danger)'};"><span style="width:6px; height:6px; border-radius:50%; background:${userActive ? 'var(--success)' : 'var(--danger)'}; display:inline-block;"></span>${userActive ? 'Активен' : 'Отключён'}</button>`,
+      titleHtml: `<span id="usToggleActive" style="cursor:pointer; display:inline-flex; align-items:center; gap:6px;" title="Нажмите для смены статуса"><span id="usToggleDot" style="width:8px; height:8px; border-radius:50%; background:${userActive ? 'var(--success)' : 'var(--danger)'}; display:inline-block;"></span><span style="color:${userActive ? 'var(--success)' : 'var(--danger)'}">${escapeHtml(username)}</span></span>`,
       bodyHtml: `
         <div style="display:flex; flex-direction:column; gap:var(--space-md);">
           ${isLdap ? '<div style="font-size:0.75rem; color:var(--warning); background:rgba(245,158,11,0.1); padding:6px 10px; border-radius:6px;">LDAP пользователь — редактируется в Active Directory</div>' : ''}
@@ -1107,6 +1107,7 @@ function createUsersSection() {
         let isActive = userActive;
 
         const toggleBtn = document.getElementById('usToggleActive');
+        const toggleDot = document.getElementById('usToggleDot');
         if (toggleBtn) {
           toggleBtn.onclick = async () => {
             try {
@@ -1117,9 +1118,9 @@ function createUsersSection() {
               });
               if (res.ok) {
                 isActive = !isActive;
-                toggleBtn.innerHTML = `<span style="width:6px; height:6px; border-radius:50%; background:${isActive ? 'var(--success)' : 'var(--danger)'}; display:inline-block;"></span>${isActive ? 'Активен' : 'Отключён'}`;
-                toggleBtn.style.background = isActive ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)';
-                toggleBtn.style.color = isActive ? 'var(--success)' : 'var(--danger)';
+                if (toggleDot) toggleDot.style.background = isActive ? 'var(--success)' : 'var(--danger)';
+                const nameSpan = toggleBtn.querySelector('span:last-child');
+                if (nameSpan) nameSpan.style.color = isActive ? 'var(--success)' : 'var(--danger)';
               }
             } catch (e) { /* ignore */ }
           };
