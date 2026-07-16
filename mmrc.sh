@@ -241,17 +241,27 @@ cmd_reset_password() {
     PROFILES=$(get_compose_profiles)
 
     info "Resetting admin password..."
-    RESULT=$($COMPOSE $COMPOSE_HA $PROFILES exec -T mmrc node -e "
-        const bcrypt = require('bcrypt');
-        const { getDatabase } = require('./src/database/database.js');
+    RESULT=$($COMPOSE $COMPOSE_HA $PROFILES exec -T mmrc node --input-type=module -e "
+        import { getDatabase, getDriverType } from './src/database/database.js';
+        import bcrypt from 'bcrypt';
+
         const db = getDatabase();
+        const isPg = getDriverType() === 'postgres';
         const hash = bcrypt.hashSync('admin123', 10);
-        const user = db.prepare('SELECT id, username FROM users WHERE id = 1').get();
+
+        const user = isPg
+          ? await db.get('SELECT id, username FROM users WHERE id = 1')
+          : db.prepare('SELECT id, username FROM users WHERE id = 1').get();
+
         if (user) {
+          if (isPg) {
+            await db.run('UPDATE users SET password_hash = \$1 WHERE id = \$2', [hash, 1]);
+          } else {
             db.prepare('UPDATE users SET password_hash = ? WHERE id = 1').run(hash);
-            console.log('USER:' + user.username);
+          }
+          console.log('USER:' + user.username);
         } else {
-            console.log('ERROR:User ID 1 not found');
+          console.log('ERROR:User ID 1 not found');
         }
         process.exit(0);
     " 2>&1)
@@ -265,10 +275,6 @@ cmd_reset_password() {
     else
         warn "Could not reset password"
     fi
-
-    success "Admin password reset to: admin123"
-    info "Login: admin / admin123"
-    info "CHANGE PASSWORD after first login!"
 }
 
 get_compose_ha() {

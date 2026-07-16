@@ -187,6 +187,9 @@ body.admin-page .sidebar-item-label {
 body.admin-page .sidebar-footer {
   border-top: var(--border);
   padding: var(--space-sm);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 body.admin-page .sidebar-user {
@@ -194,6 +197,23 @@ body.admin-page .sidebar-user {
   align-items: center;
   gap: var(--space-sm);
   padding: var(--space-sm);
+}
+
+body.admin-page .sidebar-logout {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: var(--space-xs);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+body.admin-page .sidebar-logout:hover {
+  color: var(--danger);
+  background: var(--danger-bg);
 }
 
 body.admin-page .sidebar-user-avatar {

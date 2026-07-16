@@ -5,6 +5,7 @@
  */
 
 import { escapeHtml } from '../shared/utils.js';
+import { logout } from './auth.js';
 
 const SIDEBAR_WIDTH_EXPANDED = 240;
 const SIDEBAR_WIDTH_COLLAPSED = 60;
@@ -110,6 +111,9 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
           <div class="sidebar-user-avatar">${(user.username || 'A')[0].toUpperCase()}</div>
           <span class="sidebar-user-name">${escapeHtml(user.username || 'Admin')}</span>
         </div>
+        <button class="sidebar-logout" id="logoutBtn" title="Выйти">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </button>
       </div>
     `;
 
@@ -137,6 +141,15 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
         }
       };
     });
+
+    // Logout button
+    const logoutBtn = sidebar.querySelector('#logoutBtn');
+    if (logoutBtn) {
+      logoutBtn.onclick = (e) => {
+        e.preventDefault();
+        logout();
+      };
+    }
   }
 
   function toggle() {
