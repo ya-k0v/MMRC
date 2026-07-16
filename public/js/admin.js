@@ -718,7 +718,7 @@ function createUsersSection() {
   `;
 
   // Simple modal helper scoped to this section
-  function showUsModal({ title, bodyHtml, onSave }) {
+  function showUsModal({ title, bodyHtml, onSave, onOpen }) {
     const existing = document.getElementById('usModalOverlay');
     if (existing) existing.remove();
 
@@ -761,6 +761,7 @@ function createUsersSection() {
         }
       };
     }
+    if (onOpen) setTimeout(onOpen, 50);
     return modal;
   }
 
@@ -896,18 +897,38 @@ function createUsersSection() {
       const assigned = new Set(Array.isArray(userDeviceIds) ? userDeviceIds : []);
 
       const listHtml = allDevices.map(d => {
-        const checked = assigned.has(d.device_id) ? 'checked' : '';
-        return `<label style="display:flex; align-items:center; gap:8px; padding:8px; border:1px solid var(--border); border-radius:8px; cursor:pointer; transition:background 0.15s;"><input type="checkbox" class="us-device-cb" value="${escapeHtml(d.device_id)}" ${checked} style="width:16px; height:16px;" /><div style="min-width:0;"><div style="font-weight:500; font-size:0.9rem;">${escapeHtml(d.device_name || d.device_id)}</div><div class="meta" style="font-size:0.75rem;">${escapeHtml(d.device_id)}</div></div></label>`;
+        const checked = assigned.has(d.device_id);
+        const deviceType = String(d.device_type || '').toLowerCase();
+        const isAndroid = deviceType.includes('android') || deviceType.includes('native');
+        const isBrowser = deviceType.includes('browser') || deviceType.includes('web');
+        const isMpv = deviceType.includes('mpv');
+        const icon = isAndroid ? '📱' : isMpv ? '🖥️' : isBrowser ? '🌐' : '📺';
+        const statusColor = d.is_online ? 'var(--success)' : 'var(--muted)';
+        return `
+          <label class="device-card ${checked ? 'assigned' : ''}" style="display:flex; flex-direction:column; align-items:center; gap:6px; padding:12px 8px; border:2px solid ${checked ? 'var(--brand)' : 'var(--border)'}; border-radius:12px; cursor:pointer; transition:all 0.2s; background:${checked ? 'rgba(var(--brand-rgb, 59,130,246),0.08)' : 'var(--panel-2)'};">
+            <input type="checkbox" class="us-device-cb" value="${escapeHtml(d.device_id)}" ${checked ? 'checked' : ''} style="display:none;" />
+            <div style="font-size:1.5rem;">${icon}</div>
+            <div style="font-weight:500; font-size:0.85rem; text-align:center; line-height:1.2; word-break:break-word;">${escapeHtml(d.device_name || d.device_id)}</div>
+            <div style="font-size:0.7rem; color:var(--text-secondary); text-align:center;">${escapeHtml(d.device_id)}</div>
+            <div style="width:8px; height:8px; border-radius:50%; background:${statusColor};"></div>
+            ${checked ? '<div style="position:absolute; top:6px; right:6px; width:18px; height:18px; border-radius:50%; background:var(--brand); color:white; display:flex; align-items:center; justify-content:center; font-size:10px;">✓</div>' : ''}
+          </label>
+        `;
       }).join('');
 
       showUsModal({
         title: `Устройства — ${escapeHtml(username)}`,
         bodyHtml: `
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--space-sm); margin-bottom:var(--space-md); max-height:400px; overflow-y:auto; padding:2px;">
-            ${listHtml || '<div class="meta" style="color:var(--muted);">Нет устройств</div>'}
+          <div style="margin-bottom:var(--space-md);">
+            <div class="meta" style="margin-bottom:var(--space-sm);">Выбрано: <span id="deviceCount">${assigned.size}</span> из ${allDevices.length}</div>
+            <button id="selectAllDevices" class="secondary meta" style="font-size:0.75rem; padding:4px 8px;">Выбрать все</button>
+            <button id="deselectAllDevices" class="secondary meta" style="font-size:0.75rem; padding:4px 8px;">Снять все</button>
+          </div>
+          <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:var(--space-sm); max-height:400px; overflow-y:auto; padding:2px; position:relative;">
+            ${listHtml || '<div class="meta" style="color:var(--muted); grid-column:1/-1; text-align:center;">Нет устройств</div>'}
           </div>
           <div class="us-modal-error meta" style="color:var(--danger); display:none;"></div>
-          <div style="display:flex; gap:var(--space-sm); justify-content:flex-end; border-top:1px solid var(--border); padding-top:var(--space-md);">
+          <div style="display:flex; gap:var(--space-sm); justify-content:flex-end; border-top:1px solid var(--border); padding-top:var(--space-md); margin-top:var(--space-md);">
             <button id="usModalSave" class="primary">Сохранить</button>
           </div>
         `,
@@ -916,6 +937,39 @@ function createUsersSection() {
           const res = await adminFetch(`/api/auth/users/${userId}/devices`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceIds: checked }) });
           if (!res.ok) throw new Error('Ошибка сохранения');
           loadUsersSection();
+        },
+        onOpen: () => {
+          const updateCount = () => {
+            const count = document.querySelectorAll('.us-device-cb:checked').length;
+            const countEl = document.getElementById('deviceCount');
+            if (countEl) countEl.textContent = count;
+          };
+
+          document.querySelectorAll('.us-device-cb').forEach(cb => {
+            cb.closest('label').onclick = (e) => {
+              if (e.target === cb) return;
+              cb.checked = !cb.checked;
+              cb.closest('label').classList.toggle('assigned', cb.checked);
+              updateCount();
+            };
+          });
+
+          const selectAllBtn = document.getElementById('selectAllDevices');
+          const deselectAllBtn = document.getElementById('deselectAllDevices');
+          if (selectAllBtn) selectAllBtn.onclick = () => {
+            document.querySelectorAll('.us-device-cb').forEach(cb => {
+              cb.checked = true;
+              cb.closest('label').classList.add('assigned');
+            });
+            updateCount();
+          };
+          if (deselectAllBtn) deselectAllBtn.onclick = () => {
+            document.querySelectorAll('.us-device-cb').forEach(cb => {
+              cb.checked = false;
+              cb.closest('label').classList.remove('assigned');
+            });
+            updateCount();
+          };
         }
       });
     } catch (e) { alert('Ошибка загрузки устройств'); }
