@@ -1040,8 +1040,10 @@ function createUsersSection() {
         <div id="usDeviceList" style="display:flex; flex-direction:column; gap:4px; max-height:240px; overflow-y:auto;">
           ${renderDeviceList()}
         </div>
-        <div id="usDevicePager" style="display:flex; justify-content:center; gap:4px; margin-top:var(--space-sm);">
-          ${Array.from({length: Math.ceil(allDevices.filter(d => !deviceSearch || (d.device_id || '').toLowerCase().includes(deviceSearch.toLowerCase()) || (d.device_name || '').toLowerCase().includes(deviceSearch.toLowerCase())).length / devicePerPage)}, (_, i) => `<button class="secondary us-device-page" style="min-width:28px; padding:2px 6px; font-size:0.75rem; ${i + 1 === devicePage ? 'background:var(--brand); color:white;' : ''}" data-page="${i + 1}">${i + 1}</button>`).join('')}
+        <div id="usDevicePager" style="display:flex; align-items:center; justify-content:center; gap:6px; margin-top:var(--space-sm); padding:6px; background:var(--panel-2); border-radius:6px;">
+          <button id="usDevicePrev" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage <= 1 ? 'disabled' : ''}>◀</button>
+          <span style="font-size:0.75rem; color:var(--text-secondary);">Стр. ${devicePage} / ${Math.ceil(allDevices.filter(d => !deviceSearch || (d.device_id || '').toLowerCase().includes(deviceSearch.toLowerCase()) || (d.device_name || '').toLowerCase().includes(deviceSearch.toLowerCase())).length / devicePerPage) || 1}</span>
+          <button id="usDeviceNext" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage >= Math.ceil(allDevices.filter(d => !deviceSearch || (d.device_id || '').toLowerCase().includes(deviceSearch.toLowerCase()) || (d.device_name || '').toLowerCase().includes(deviceSearch.toLowerCase())).length / devicePerPage) ? 'disabled' : ''}>▶</button>
         </div>
       </div>
     ` : '';
@@ -1140,6 +1142,33 @@ function createUsersSection() {
           document.querySelectorAll('.us-device-cb').forEach(cb => { cb.checked = false; cb.closest('label').style.borderColor = 'var(--border)'; cb.closest('label').style.background = 'transparent'; });
           updateDeviceCount();
         };
+
+        const prevBtn = document.getElementById('usDevicePrev');
+        const nextBtn = document.getElementById('usDeviceNext');
+        if (prevBtn) prevBtn.onclick = () => { if (devicePage > 1) { devicePage--; refreshDeviceList(); } };
+        if (nextBtn) nextBtn.onclick = () => {
+          const maxPage = Math.ceil(allDevices.filter(d => !deviceSearch || (d.device_id || '').toLowerCase().includes(deviceSearch.toLowerCase()) || (d.device_name || '').toLowerCase().includes(deviceSearch.toLowerCase())).length / devicePerPage);
+          if (devicePage < maxPage) { devicePage++; refreshDeviceList(); }
+        };
+
+        function refreshDeviceList() {
+          document.getElementById('usDeviceList').innerHTML = renderDeviceList();
+          const maxPage = Math.ceil(allDevices.filter(d => !deviceSearch || (d.device_id || '').toLowerCase().includes(deviceSearch.toLowerCase()) || (d.device_name || '').toLowerCase().includes(deviceSearch.toLowerCase())).length / devicePerPage);
+          document.getElementById('usDevicePager').innerHTML = `
+            <button id="usDevicePrev" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage <= 1 ? 'disabled' : ''}>◀</button>
+            <span style="font-size:0.75rem; color:var(--text-secondary);">Стр. ${devicePage} / ${maxPage || 1}</span>
+            <button id="usDeviceNext" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage >= maxPage ? 'disabled' : ''}>▶</button>
+          `;
+          document.getElementById('usDevicePrev').onclick = () => { if (devicePage > 1) { devicePage--; refreshDeviceList(); } };
+          document.getElementById('usDeviceNext').onclick = () => { if (devicePage < maxPage) { devicePage++; refreshDeviceList(); } };
+          document.querySelectorAll('.us-device-cb').forEach(cb => {
+            cb.addEventListener('change', () => {
+              cb.closest('label').style.borderColor = cb.checked ? 'var(--brand)' : 'var(--border)';
+              cb.closest('label').style.background = cb.checked ? 'rgba(59,130,246,0.08)' : 'transparent';
+              updateDeviceCount();
+            });
+          });
+        }
       }
     });
   };
