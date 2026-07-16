@@ -241,36 +241,30 @@ cmd_reset_password() {
     PROFILES=$(get_compose_profiles)
 
     info "Resetting admin password..."
-    $COMPOSE $COMPOSE_HA $PROFILES exec -T mmrc node -e "
+    RESULT=$($COMPOSE $COMPOSE_HA $PROFILES exec -T mmrc node -e "
         const bcrypt = require('bcrypt');
         const { getDatabase } = require('./src/database/database.js');
         const db = getDatabase();
         const hash = bcrypt.hashSync('admin123', 10);
-        const result = db.prepare('UPDATE users SET password_hash = ? WHERE id = 1').run(hash);
-        if (result.changes > 0) {
-            console.log('User ID 1 password reset to admin123');
+        const user = db.prepare('SELECT id, username FROM users WHERE id = 1').get();
+        if (user) {
+            db.prepare('UPDATE users SET password_hash = ? WHERE id = 1').run(hash);
+            console.log('USER:' + user.username);
         } else {
-            console.log('User ID 1 not found');
+            console.log('ERROR:User ID 1 not found');
         }
         process.exit(0);
-    " 2>/dev/null || {
-        warn "Could not reset via exec, trying direct database update..."
-        DB_PATH=$(grep "^DB_PATH=" "$ENV_FILE" | cut -d= -f2 || echo "$DATA_DIR/db/main.db")
-        if [ -f "$DB_PATH" ]; then
-            HASH=$(docker run --rm -v "$DB_PATH:/db" node:22-slim node -e "
-                const bcrypt = require('bcrypt');
-                console.log(bcrypt.hashSync('admin123', 10));
-            " 2>/dev/null)
-            if [ -n "$HASH" ]; then
-                docker run --rm -v "$DB_PATH:/db" node:22-slim node -e "
-                    const Database = require('better-sqlite3');
-                    const db = new Database('/db');
-                    db.prepare('UPDATE users SET password_hash = ? WHERE id = 1').run('$HASH');
-                    console.log('User ID 1 password reset to admin123');
-                " 2>/dev/null
-            fi
-        fi
-    }
+    " 2>&1)
+
+    if echo "$RESULT" | grep -q "^USER:"; then
+        USERNAME=$(echo "$RESULT" | grep "^USER:" | sed 's/USER://')
+        success "Логин: $USERNAME - пароль сброшен на admin123"
+    elif echo "$RESULT" | grep -q "^ERROR:"; then
+        ERROR=$(echo "$RESULT" | grep "^ERROR:" | sed 's/ERROR://')
+        error "$ERROR"
+    else
+        warn "Could not reset password"
+    fi
 
     success "Admin password reset to: admin123"
     info "Login: admin / admin123"
@@ -416,20 +410,81 @@ cmd_logs() {
     COMPOSE_HA=$(get_compose_ha)
     PROFILES=$(get_compose_profiles)
 
-    if [ -n "$1" ]; then
-        case $1 in
-            server|mmrc) $COMPOSE $COMPOSE_HA $PROFILES logs -f mmrc ;;
-            postgres|db) $COMPOSE $COMPOSE_HA $PROFILES logs -f postgres ;;
-            redis) $COMPOSE $COMPOSE_HA $PROFILES logs -f redis ;;
-            minio|s3) $COMPOSE $COMPOSE_HA $PROFILES logs -f minio ;;
-            streamer) $COMPOSE $COMPOSE_HA $PROFILES logs -f streamer ;;
-            converter) $COMPOSE $COMPOSE_HA $PROFILES logs -f converter 2>/dev/null || warn "Converter service not running" ;;
-            replica) $COMPOSE $COMPOSE_HA $PROFILES logs -f mmrc-replica ;;
-            ha-lb|nginx) $COMPOSE $COMPOSE_HA $PROFILES logs -f nginx-ha ;;
-            *) $COMPOSE $COMPOSE_HA $PROFILES logs -f "$1" ;;
+    # Parse flags
+    TAIL=""
+    MODULE=""
+    LEVEL=""
+    SERVICE=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --tail|-n)
+                TAIL="$2"
+                shift 2
+                ;;
+            --module|-m)
+                MODULE="$2"
+                shift 2
+                ;;
+            --level|-l)
+                LEVEL="$2"
+                shift 2
+                ;;
+            server|mmrc|postgres|db|redis|minio|s3|streamer|converter|replica|ha-lb|nginx)
+                SERVICE="$1"
+                shift
+                ;;
+            *)
+                SERVICE="$1"
+                shift
+                ;;
         esac
+    done
+
+    # Build docker compose logs command
+    LOG_ARGS=""
+    if [ -n "$TAIL" ]; then
+        LOG_ARGS="$LOG_ARGS --tail $TAIL"
+    fi
+
+    # Determine service name
+    case "$SERVICE" in
+        server|mmrc) SVC="mmrc" ;;
+        postgres|db) SVC="postgres" ;;
+        redis) SVC="redis" ;;
+        minio|s3) SVC="minio" ;;
+        streamer) SVC="streamer" ;;
+        converter) SVC="converter" ;;
+        replica) SVC="mmrc-replica" ;;
+        ha-lb|nginx) SVC="nginx-ha" ;;
+        "") SVC="" ;;
+        *) SVC="$SERVICE" ;;
+    esac
+
+    # Build grep filter for module/level
+    GREP_ARGS=""
+    if [ -n "$MODULE" ] || [ -n "$LEVEL" ]; then
+        # Build JSON filter pattern
+        FILTER=""
+        if [ -n "$MODULE" ] && [ -n "$LEVEL" ]; then
+            FILTER="\"module\":\"$MODULE\".*\"level\":\"$LEVEL\""
+        elif [ -n "$MODULE" ]; then
+            FILTER="\"module\":\"$MODULE\""
+        elif [ -n "$LEVEL" ]; then
+            FILTER="\"level\":\"$LEVEL\""
+        fi
+
+        if [ -n "$SVC" ]; then
+            $COMPOSE $COMPOSE_HA $PROFILES logs -f $LOG_ARGS "$SVC" 2>/dev/null | grep --line-buffered "$FILTER"
+        else
+            $COMPOSE $COMPOSE_HA $PROFILES logs -f $LOG_ARGS 2>/dev/null | grep --line-buffered "$FILTER"
+        fi
     else
-        $COMPOSE $COMPOSE_HA $PROFILES logs -f
+        if [ -n "$SVC" ]; then
+            $COMPOSE $COMPOSE_HA $PROFILES logs -f $LOG_ARGS "$SVC"
+        else
+            $COMPOSE $COMPOSE_HA $PROFILES logs -f $LOG_ARGS
+        fi
     fi
 }
 
@@ -522,14 +577,14 @@ cmd_backup() {
         fi
     else
         PROFILES=$(get_compose_profiles)
-        $COMPOSE $PROFILES exec -T mmrc sqlite3 /app/config/main.db \
+        $COMPOSE $PROFILES exec -T mmrc sqlite3 /app/data/db/main.db \
             ".backup '/tmp/main-${TIMESTAMP}.db'" 2>/dev/null && \
         $COMPOSE $PROFILES cp "mmrc:/tmp/main-${TIMESTAMP}.db" "$BACKUP_DIR/main-${TIMESTAMP}.db" && \
         $COMPOSE $PROFILES exec -T mmrc rm "/tmp/main-${TIMESTAMP}.db" 2>/dev/null && \
         success "Main database backed up" || \
         warn "Main database backup failed"
 
-        $COMPOSE $PROFILES exec -T mmrc sqlite3 /app/config/hero/heroes.db \
+        $COMPOSE $PROFILES exec -T mmrc sqlite3 /app/data/db/heroes.db \
             ".backup '/tmp/heroes-${TIMESTAMP}.db'" 2>/dev/null && \
         $COMPOSE $PROFILES cp "mmrc:/tmp/heroes-${TIMESTAMP}.db" "$BACKUP_DIR/heroes-${TIMESTAMP}.db" && \
         $COMPOSE $PROFILES exec -T mmrc rm "/tmp/heroes-${TIMESTAMP}.db" 2>/dev/null && \
@@ -967,7 +1022,10 @@ Commands:
   restart          Restart MMRC services
   status           Check services status
   ps               List containers (docker compose ps)
-  logs [service]   View logs (server|postgres|redis|minio|streamer|replica)
+  logs [service]   View logs with options:
+                   --tail N     Last N lines
+                   --module M   Filter by module (auth|device|file|socket|api|stream|system)
+                   --level L    Filter by level (info|warn|error|debug)
   pull             Pull latest Docker images
   update           Update to latest version
   down             Stop and remove containers
