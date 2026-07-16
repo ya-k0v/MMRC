@@ -727,7 +727,7 @@ function createUsersSection() {
     overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; display:flex; align-items:center; justify-content:center; padding:20px;';
 
     const modal = document.createElement('div');
-    modal.style.cssText = 'background:var(--panel); border-radius:var(--radius-lg); max-width:520px; width:100%; max-height:80vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.3);';
+    modal.style.cssText = 'background:var(--panel); border-radius:var(--radius-lg); width:480px; max-height:80vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.3);';
 
     modal.innerHTML = `
       <div style="padding:var(--space-md) var(--space-lg); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
@@ -1000,7 +1000,7 @@ function createUsersSection() {
 
     const assigned = new Set(Array.isArray(userDeviceIds) ? userDeviceIds : []);
     let devicePage = 1;
-    const devicePerPage = 10;
+    const devicePerPage = 20;
     let deviceSearch = '';
 
     const renderDeviceList = () => {
@@ -1043,10 +1043,10 @@ function createUsersSection() {
           </div>
         </div>
         <input id="usDeviceSearch" class="input" type="text" placeholder="Поиск устройства..." style="margin-bottom:var(--space-sm); font-size:0.85rem;" />
-        <div id="usDeviceList" style="display:flex; flex-direction:column; gap:4px; max-height:240px; overflow-y:auto;">
+        <div id="usDeviceList" style="display:grid; grid-template-columns:1fr 1fr; gap:6px; max-height:360px; overflow-y:auto;">
           ${renderDeviceList()}
         </div>
-        <div id="usDevicePager" style="display:flex; align-items:center; justify-content:center; gap:6px; margin-top:var(--space-sm); padding:6px; background:var(--panel-2); border-radius:6px;">
+        <div id="usDevicePager" style="display:flex; align-items:center; justify-content:center; gap:6px; margin-top:var(--space-sm); padding:6px 0;">
           <button id="usDevicePrev" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage <= 1 ? 'disabled' : ''}>◀</button>
           <span style="font-size:0.75rem; color:var(--text-secondary);">Стр. ${devicePage} / ${Math.ceil(allDevices.filter(d => !deviceSearch || (d.device_id || '').toLowerCase().includes(deviceSearch.toLowerCase()) || (d.device_name || '').toLowerCase().includes(deviceSearch.toLowerCase())).length / devicePerPage) || 1}</span>
           <button id="usDeviceNext" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage >= Math.ceil(allDevices.filter(d => !deviceSearch || (d.device_id || '').toLowerCase().includes(deviceSearch.toLowerCase()) || (d.device_name || '').toLowerCase().includes(deviceSearch.toLowerCase())).length / devicePerPage) ? 'disabled' : ''}>▶</button>
@@ -1141,10 +1141,12 @@ function createUsersSection() {
         const selectAllBtn = document.getElementById('usDeviceSelectAll');
         const deselectAllBtn = document.getElementById('usDeviceDeselectAll');
         if (selectAllBtn) selectAllBtn.onclick = () => {
+          allDevices.forEach(d => assigned.add(d.device_id));
           document.querySelectorAll('.us-device-cb').forEach(cb => { cb.checked = true; cb.closest('label').style.borderColor = 'var(--brand)'; cb.closest('label').style.background = 'rgba(59,130,246,0.08)'; });
           updateDeviceCount();
         };
         if (deselectAllBtn) deselectAllBtn.onclick = () => {
+          allDevices.forEach(d => assigned.delete(d.device_id));
           document.querySelectorAll('.us-device-cb').forEach(cb => { cb.checked = false; cb.closest('label').style.borderColor = 'var(--border)'; cb.closest('label').style.background = 'transparent'; });
           updateDeviceCount();
         };
