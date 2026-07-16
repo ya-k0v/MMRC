@@ -588,6 +588,37 @@ router.post('/users/:id/reset-password',
   }
 );
 
+router.put('/users/:id',
+  requireAuth, requireAdmin,
+  body('full_name').optional().trim().isLength({ min: 1, max: 100 }),
+  async (req, res) => {
+    const userId = parseInt(req.params.id);
+    const db = getDatabase();
+
+    try {
+      const user = await db.get('SELECT id, username FROM users WHERE id = ?', [userId]);
+      if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+
+      const { full_name } = req.body;
+
+      if (full_name !== undefined) {
+        await db.run('UPDATE users SET full_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [full_name, userId]);
+      }
+
+      await auditLog({
+        userId: req.user.userId, action: 'user_update', resource: `user:${userId}`,
+        details: { targetUsername: user.username, updatedBy: req.user.username, changes: { full_name } },
+        ipAddress: req.ip, userAgent: req.get('user-agent'), status: 'success'
+      });
+
+      res.json({ success: true, message: 'Пользователь обновлён' });
+    } catch (err) {
+      logger.error('Update user error', { error: err.message, stack: err.stack, userId });
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+    }
+  }
+);
+
 router.get('/users/:id/devices', requireAuth, requireManager, async (req, res) => {
   const userId = parseInt(req.params.id);
   const db = getDatabase();

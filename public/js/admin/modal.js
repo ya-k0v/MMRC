@@ -1187,6 +1187,7 @@ function filterAndRenderUsers(adminFetch) {
           ${u.role === 'speaker' || u.role === 'manager' ? `<div class="meta" style="font-size:0.75rem; color:var(--text-secondary);">Устройств: ${deviceCountLabel}</div>` : ''}
         </div>
         <div style="display:flex; gap:4px; flex-shrink:0;">
+          <button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); editUserInModal(${safeUserId}, ${usernameArg}, ${escapeJsStringForAttr(u.full_name || '')}, ${roleArg})" title="Редактировать">${getSearchIcon(16)}</button>
           ${u.role === 'speaker' || u.role === 'manager' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})" title="Управление устройствами">${getSettingsIcon(16)}</button>` : ''}
           ${u.role === 'admin' || u.role === 'hero_admin' ? `<button class="secondary" style="min-width:auto; padding:6px 10px; display:flex; align-items:center; justify-content:center;" onclick="event.stopPropagation(); showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})" title="Информация об устройствах">${getSettingsIcon(16)}</button>` : ''}
           ${isLdapUser
@@ -1276,7 +1277,82 @@ function filterAndRenderUsers(adminFetch) {
       }
     };
   }
-  
+
+  if (!window.editUserInModal) {
+    window.editUserInModal = async (userId, username, fullName, role) => {
+      const safeUsername = escapeHtml(username || '');
+      const safeFullName = escapeHtml(fullName || '');
+      const editContent = `
+        <div style="display:flex; flex-direction:column; gap:var(--space-md);">
+          <div style="color:var(--text-secondary);">
+            Редактирование пользователя: <strong>${safeUsername}</strong>
+          </div>
+          <label style="display:flex; flex-direction:column; gap:var(--space-xs);">
+            <span style="font-size:0.875rem; color:var(--text-secondary);">ФИО</span>
+            <input id="editFullName" class="input" type="text" value="${safeFullName}" placeholder="Введите ФИО" />
+          </label>
+          <div id="editUserError" style="color:var(--danger); font-size:0.875rem; display:none;"></div>
+          <div style="display:flex; gap:var(--space-sm);">
+            <button id="saveUserBtn" class="primary" style="flex:1;">Сохранить</button>
+            <button onclick="closeModal()" class="secondary" style="flex:1;">Отмена</button>
+          </div>
+        </div>
+      `;
+
+      showModal(`${getSearchIcon(18)} Редактирование пользователя`, editContent);
+
+      setTimeout(async () => {
+        const saveBtn = document.getElementById('saveUserBtn');
+        const fullNameInput = document.getElementById('editFullName');
+        const errorEl = document.getElementById('editUserError');
+
+        if (!saveBtn) return;
+
+        const doSave = async () => {
+          const newFullName = fullNameInput.value.trim();
+
+          if (!newFullName) {
+            errorEl.textContent = 'ФИО не может быть пустым';
+            errorEl.style.display = 'block';
+            return;
+          }
+
+          saveBtn.disabled = true;
+          saveBtn.textContent = 'Сохранение...';
+          errorEl.style.display = 'none';
+
+          try {
+            const res = await window.adminFetch(`/api/auth/users/${userId}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ full_name: newFullName })
+            });
+
+            if (res.ok) {
+              await loadModalUsersList(window.adminFetch);
+              closeModal();
+            } else {
+              const error = await res.json().catch(() => ({ error: 'Ошибка' }));
+              errorEl.textContent = error.error || 'Ошибка сохранения';
+              errorEl.style.display = 'block';
+            }
+          } catch (err) {
+            errorEl.textContent = 'Ошибка подключения';
+            errorEl.style.display = 'block';
+          } finally {
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Сохранить';
+          }
+        };
+
+        saveBtn.onclick = doSave;
+        fullNameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSave(); });
+        fullNameInput.focus();
+        fullNameInput.select();
+      }, 100);
+    };
+  }
+
   if (!window.resetUserPasswordInModal) {
     window.resetUserPasswordInModal = async (userId, username) => {
       const safeUsername = escapeHtml(username || '');
