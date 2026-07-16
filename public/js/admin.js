@@ -943,6 +943,9 @@ function createUsersSection() {
           </label>
           ${isLdap ? '<div style="font-size:0.75rem; color:var(--warning);">LDAP пользователи редактируются в Active Directory</div>' : ''}
         </div>
+        <div style="display:flex; gap:var(--space-sm); justify-content:flex-end; border-top:1px solid var(--border); padding-top:var(--space-md); margin-top:var(--space-md);">
+          <button id="usModalSave" class="primary">Сохранить</button>
+        </div>
       `,
       onSave: async () => {
         const newFullName = document.getElementById('usEditFullName').value.trim();
