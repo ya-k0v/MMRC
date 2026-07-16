@@ -921,6 +921,44 @@ function createUsersSection() {
     } catch (e) { alert('Ошибка загрузки устройств'); }
   };
 
+  // Edit user modal (ФИО + роль)
+  window._usEdit = async (userId, username, fullName, role) => {
+    const isLdap = String(role || '').toLowerCase() === 'ldap';
+    showUsModal({
+      title: `Редактирование — ${escapeHtml(username)}`,
+      bodyHtml: `
+        <div style="display:flex; flex-direction:column; gap:var(--space-md);">
+          <label style="display:flex; flex-direction:column; gap:var(--space-xs);">
+            <span style="font-size:0.875rem; color:var(--text-secondary);">ФИО</span>
+            <input id="usEditFullName" class="input" type="text" value="${escapeHtml(fullName)}" placeholder="Введите ФИО" ${isLdap ? 'disabled' : ''} />
+          </label>
+          <label style="display:flex; flex-direction:column; gap:var(--space-xs);">
+            <span style="font-size:0.875rem; color:var(--text-secondary);">Роль</span>
+            <select id="usEditRole" class="input" ${isLdap ? 'disabled' : ''}>
+              <option value="admin" ${role === 'admin' ? 'selected' : ''}>Admin</option>
+              <option value="manager" ${role === 'manager' ? 'selected' : ''}>Manager</option>
+              <option value="speaker" ${role === 'speaker' ? 'selected' : ''}>Speaker</option>
+              <option value="hero_admin" ${role === 'hero_admin' ? 'selected' : ''}>Hero Admin</option>
+            </select>
+          </label>
+          ${isLdap ? '<div style="font-size:0.75rem; color:var(--warning);">LDAP пользователи редактируются в Active Directory</div>' : ''}
+        </div>
+      `,
+      onSave: async () => {
+        const newFullName = document.getElementById('usEditFullName').value.trim();
+        const newRole = document.getElementById('usEditRole').value;
+        if (!newFullName) throw new Error('ФИО не может быть пустым');
+        const res = await adminFetch(`/api/auth/users/${userId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ full_name: newFullName, role: newRole })
+        });
+        if (!res.ok) throw new Error('Ошибка сохранения');
+        loadUsersSection();
+      }
+    });
+  };
+
   return el;
 }
 
@@ -1056,6 +1094,7 @@ function renderUsersSectionList() {
           ${u.online ? `<button class="danger meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usRevokeAllSessions(${u.id}, '${escapeHtml(u.username)}')" title="Завершить все сессии (${u.sessions.length})">⏻</button>` : ''}
           <button class="secondary meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usToggle(${u.id}, ${!u.is_active})" title="${u.is_active ? 'Отключить' : 'Включить'}">${u.is_active ? getUnlockIcon(14) : getLockIcon(14)}</button>
           ${(u.role === 'speaker' || u.role === 'manager') ? `<button class="secondary meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usEditDevices(${u.id}, '${escapeHtml(u.username)}', '${escapeHtml(u.role)}')" title="Назначить устройства">${getDeviceIcon(14)}</button>` : ''}
+          ${!isLdap ? `<button class="secondary meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usEdit(${u.id}, '${escapeHtml(u.username)}', '${escapeHtml(u.full_name || '')}', '${escapeHtml(u.role)}')" title="Редактировать">${getSearchIcon(14)}</button>` : ''}
           ${!isLdap ? `<button class="secondary meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usResetPass(${u.id}, '${escapeHtml(u.username)}')" title="Сбросить пароль">${getKeyIcon(14)}</button>` : ''}
           ${u.id !== 1 ? `<button class="danger meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="window._usDelete(${u.id}, '${escapeHtml(u.username)}')" title="Удалить">${getTrashIcon(14)}</button>` : ''}
         </div>
