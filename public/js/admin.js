@@ -727,7 +727,7 @@ function createUsersSection() {
     overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; display:flex; align-items:center; justify-content:center; padding:20px;';
 
     const modal = document.createElement('div');
-    modal.style.cssText = 'background:var(--panel); border-radius:var(--radius-lg); width:480px; max-height:80vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.3);';
+    modal.style.cssText = 'background:var(--panel); border-radius:var(--radius-lg); width:480px; max-height:80vh; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,0.3);';
 
     modal.innerHTML = `
       <div style="padding:var(--space-md) var(--space-lg); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
@@ -1039,7 +1039,7 @@ function createUsersSection() {
           </div>
         </div>
         <input id="usDeviceSearch" class="input" type="text" placeholder="Поиск устройства..." style="margin-bottom:var(--space-sm); font-size:0.85rem;" />
-        <div id="usDeviceList" style="display:grid; grid-template-columns:1fr 1fr; gap:6px; max-height:360px; overflow-y:auto;">
+        <div id="usDeviceList" style="display:grid; grid-template-columns:1fr 1fr; gap:6px; max-height:360px; overflow:hidden;">
           ${renderDeviceList()}
         </div>
         <div id="usDevicePager" style="display:flex; align-items:center; justify-content:center; gap:6px; margin-top:var(--space-sm); padding:6px 0;">
