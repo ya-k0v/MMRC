@@ -1015,19 +1015,15 @@ function createUsersSection() {
 
       return pageDevices.map(d => {
         const checked = assigned.has(d.device_id);
-        const deviceType = String(d.device_type || '').toLowerCase();
-        const isAndroid = deviceType.includes('android') || deviceType.includes('native');
-        const isMpv = deviceType.includes('mpv');
-        const icon = isAndroid ? '📱' : isMpv ? '🖥️' : '📺';
+        const isOnline = d.is_online || d.online;
         return `
           <label style="display:flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid ${checked ? 'var(--brand)' : 'var(--border)'}; border-radius:8px; cursor:pointer; background:${checked ? 'rgba(59,130,246,0.08)' : 'transparent'}; transition:all 0.15s;">
-            <input type="checkbox" class="us-device-cb" value="${escapeHtml(d.device_id)}" ${checked ? 'checked' : ''} style="width:14px; height:14px;" />
-            <span style="font-size:1rem;">${icon}</span>
+            <input type="checkbox" class="us-device-cb" value="${escapeHtml(d.device_id)}" ${checked ? 'checked' : ''} style="display:none;" />
             <div style="flex:1; min-width:0;">
               <div style="font-weight:500; font-size:0.85rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(d.device_name || d.device_id)}</div>
               <div class="meta" style="font-size:0.7rem;">${escapeHtml(d.device_id)}</div>
             </div>
-            <div style="width:6px; height:6px; border-radius:50%; background:${d.is_online ? 'var(--success)' : 'var(--muted)'}; flex-shrink:0;"></div>
+            <div style="width:8px; height:8px; border-radius:50%; background:${isOnline ? 'var(--success)' : 'var(--muted)'}; flex-shrink:0;" title="${isOnline ? 'Онлайн' : 'Оффлайн'}"></div>
           </label>
         `;
       }).join('');
