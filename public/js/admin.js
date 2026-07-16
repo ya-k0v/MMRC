@@ -718,7 +718,7 @@ function createUsersSection() {
   `;
 
   // Simple modal helper scoped to this section
-  function showUsModal({ title, bodyHtml, onSave, onOpen }) {
+  function showUsModal({ title, titleHtml, bodyHtml, onSave, onOpen }) {
     const existing = document.getElementById('usModalOverlay');
     if (existing) existing.remove();
 
@@ -731,7 +731,7 @@ function createUsersSection() {
 
     modal.innerHTML = `
       <div style="padding:var(--space-md) var(--space-lg); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
-        <div style="font-weight:600; font-size:var(--font-size-base);">${escapeHtml(title)}</div>
+        <div style="font-weight:600; font-size:var(--font-size-base); display:flex; align-items:center;">${titleHtml || escapeHtml(title)}</div>
         <button id="usModalClose" class="secondary meta" style="min-width:auto; width:28px; height:28px; padding:0; border:none; background:transparent; font-size:18px; line-height:1;">${getCloseIcon(12)}</button>
       </div>
       <div style="padding:var(--space-lg); flex:1; overflow:auto; max-height:calc(80vh - 120px);">${bodyHtml}</div>
@@ -1042,16 +1042,15 @@ function createUsersSection() {
         <div id="usDeviceList" style="display:grid; grid-template-columns:1fr 1fr; gap:6px; max-height:360px; overflow:hidden;">
           ${renderDeviceList()}
         </div>
-        <div id="usDevicePager" style="display:flex; align-items:center; justify-content:center; gap:6px; margin-top:var(--space-sm); padding:6px 0;">
-          <button id="usDevicePrev" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage <= 1 ? 'disabled' : ''}>◀</button>
-          <span style="font-size:0.75rem; color:var(--text-secondary);">Стр. ${devicePage} / ${Math.ceil(allDevices.filter(d => !deviceSearch || (d.device_id || '').toLowerCase().includes(deviceSearch.toLowerCase()) || (d.device_name || '').toLowerCase().includes(deviceSearch.toLowerCase())).length / devicePerPage) || 1}</span>
-          <button id="usDeviceNext" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage >= Math.ceil(allDevices.filter(d => !deviceSearch || (d.device_id || '').toLowerCase().includes(deviceSearch.toLowerCase()) || (d.device_name || '').toLowerCase().includes(deviceSearch.toLowerCase())).length / devicePerPage) ? 'disabled' : ''}>▶</button>
-        </div>
       </div>
     ` : '';
 
+    const hasDevices = role !== 'admin' && role !== 'hero_admin' && allDevices.length > 0;
+    const totalPages = hasDevices ? Math.ceil(allDevices.filter(d => !deviceSearch || (d.device_id || '').toLowerCase().includes(deviceSearch.toLowerCase()) || (d.device_name || '').toLowerCase().includes(deviceSearch.toLowerCase())).length / devicePerPage) : 0;
+
+    const userActive = !arguments[4] || arguments[4] !== false;
     showUsModal({
-      title: `${escapeHtml(username)}`,
+      titleHtml: `<span>${escapeHtml(username)}</span> <button id="usToggleActive" class="secondary" style="font-size:0.7rem; padding:2px 8px; margin-left:8px; ${userActive ? 'background:rgba(16,185,129,0.15); color:var(--success);' : 'background:rgba(239,68,68,0.15); color:var(--danger);'}">${userActive ? 'Активен' : 'Отключён'}</button>`,
       bodyHtml: `
         <div style="display:flex; flex-direction:column; gap:var(--space-md);">
           ${isLdap ? '<div style="font-size:0.75rem; color:var(--warning); background:rgba(245,158,11,0.1); padding:6px 10px; border-radius:6px;">LDAP пользователь — редактируется в Active Directory</div>' : ''}
@@ -1071,8 +1070,15 @@ function createUsersSection() {
           ${deviceSection}
         </div>
         <div id="usEditError" class="meta" style="color:var(--danger); display:none;"></div>
-        <div style="display:flex; gap:var(--space-sm); justify-content:flex-end; border-top:1px solid var(--border); padding-top:var(--space-md); margin-top:var(--space-md);">
-          <button id="usModalSave" class="primary">Сохранить</button>
+        <div style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:var(--space-sm); margin-top:var(--space-md);">
+          <div id="usDevicePager" style="display:flex; align-items:center; gap:4px;">
+            ${hasDevices && totalPages > 1 ? `
+              <button id="usDevicePrev" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage <= 1 ? 'disabled' : ''}>◀</button>
+              <span style="font-size:0.75rem; color:var(--text-secondary);">${devicePage}/${totalPages}</span>
+              <button id="usDeviceNext" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage >= totalPages ? 'disabled' : ''}>▶</button>
+            ` : ''}
+          </div>
+          <button id="usModalSave" class="primary" style="font-size:0.85rem;">Сохранить</button>
         </div>
       `,
       onSave: async () => {
@@ -1088,17 +1094,37 @@ function createUsersSection() {
         if (!res.ok) throw new Error('Ошибка сохранения');
 
         if (role !== 'admin' && role !== 'hero_admin' && allDevices.length > 0) {
-          const checked = Array.from(document.querySelectorAll('.us-device-cb:checked')).map(cb => cb.value);
           await adminFetch(`/api/auth/users/${userId}/devices`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ deviceIds: checked })
+            body: JSON.stringify({ deviceIds: Array.from(assigned) })
           });
         }
 
         loadUsersSection();
       },
       onOpen: () => {
+        let isActive = userActive;
+
+        const toggleBtn = document.getElementById('usToggleActive');
+        if (toggleBtn) {
+          toggleBtn.onclick = async () => {
+            try {
+              const res = await adminFetch(`/api/auth/users/${userId}/toggle`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ is_active: !isActive })
+              });
+              if (res.ok) {
+                isActive = !isActive;
+                toggleBtn.textContent = isActive ? 'Активен' : 'Отключён';
+                toggleBtn.style.background = isActive ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)';
+                toggleBtn.style.color = isActive ? 'var(--success)' : 'var(--danger)';
+              }
+            } catch (e) { /* ignore */ }
+          };
+        }
+
         const updateDeviceCount = () => {
           const count = assigned.size;
           const el = document.getElementById('usDeviceCount');
