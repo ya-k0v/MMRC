@@ -197,6 +197,18 @@ body.admin-page .sidebar-user {
   align-items: center;
   gap: var(--space-sm);
   padding: var(--space-sm);
+  overflow: hidden;
+  min-width: 0;
+}
+
+body.admin-page .sidebar.collapsed .sidebar-user-name,
+body.admin-page .sidebar.collapsed .sidebar-logout-btn {
+  display: none;
+}
+
+body.admin-page .sidebar.collapsed .sidebar-user {
+  justify-content: center;
+  padding: var(--space-xs);
 }
 
 body.admin-page .sidebar-logout {
