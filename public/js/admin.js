@@ -1000,7 +1000,7 @@ function createUsersSection() {
 
     const assigned = new Set(Array.isArray(userDeviceIds) ? userDeviceIds : []);
     let devicePage = 1;
-    const devicePerPage = 12;
+    const devicePerPage = 10;
     let deviceSearch = '';
 
     const renderDeviceList = () => {
