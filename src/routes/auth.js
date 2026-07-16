@@ -591,23 +591,39 @@ router.post('/users/:id/reset-password',
 router.put('/users/:id',
   requireAuth, requireAdmin,
   body('full_name').optional().trim().isLength({ min: 1, max: 100 }),
+  body('role').optional().isIn(['admin', 'manager', 'speaker', 'hero_admin']),
   async (req, res) => {
     const userId = parseInt(req.params.id);
     const db = getDatabase();
 
     try {
-      const user = await db.get('SELECT id, username FROM users WHERE id = ?', [userId]);
+      const user = await db.get('SELECT id, username, auth_source FROM users WHERE id = ?', [userId]);
       if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
 
-      const { full_name } = req.body;
+      const { full_name, role } = req.body;
+      const updates = [];
+      const params = [];
 
       if (full_name !== undefined) {
-        await db.run('UPDATE users SET full_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [full_name, userId]);
+        updates.push('full_name = ?');
+        params.push(full_name);
       }
+
+      if (role !== undefined) {
+        updates.push('role = ?');
+        params.push(role);
+      }
+
+      if (updates.length === 0) {
+        return res.status(400).json({ error: 'Нечего обновлять' });
+      }
+
+      params.push(userId);
+      await db.run(`UPDATE users SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, params);
 
       await auditLog({
         userId: req.user.userId, action: 'user_update', resource: `user:${userId}`,
-        details: { targetUsername: user.username, updatedBy: req.user.username, changes: { full_name } },
+        details: { targetUsername: user.username, updatedBy: req.user.username, changes: { full_name, role } },
         ipAddress: req.ip, userAgent: req.get('user-agent'), status: 'success'
       });
 

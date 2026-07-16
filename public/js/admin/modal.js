@@ -1282,34 +1282,54 @@ function filterAndRenderUsers(adminFetch) {
     window.editUserInModal = async (userId, username, fullName, role) => {
       const safeUsername = escapeHtml(username || '');
       const safeFullName = escapeHtml(fullName || '');
+      const currentRole = role || 'speaker';
+      const isLdap = currentRole === 'ldap';
+
       const editContent = `
         <div style="display:flex; flex-direction:column; gap:var(--space-md);">
           <div style="color:var(--text-secondary);">
-            Редактирование пользователя: <strong>${safeUsername}</strong>
+            Пользователь: <strong>${safeUsername}</strong>
           </div>
+
           <label style="display:flex; flex-direction:column; gap:var(--space-xs);">
             <span style="font-size:0.875rem; color:var(--text-secondary);">ФИО</span>
-            <input id="editFullName" class="input" type="text" value="${safeFullName}" placeholder="Введите ФИО" />
+            <input id="editFullName" class="input" type="text" value="${safeFullName}" placeholder="Введите ФИО" ${isLdap ? 'disabled' : ''} />
           </label>
+
+          <label style="display:flex; flex-direction:column; gap:var(--space-xs);">
+            <span style="font-size:0.875rem; color:var(--text-secondary);">Роль</span>
+            <select id="editRole" class="input" ${isLdap ? 'disabled' : ''}>
+              <option value="admin" ${currentRole === 'admin' ? 'selected' : ''}>Admin</option>
+              <option value="manager" ${currentRole === 'manager' ? 'selected' : ''}>Manager</option>
+              <option value="speaker" ${currentRole === 'speaker' ? 'selected' : ''}>Speaker</option>
+              <option value="hero_admin" ${currentRole === 'hero_admin' ? 'selected' : ''}>Hero Admin</option>
+            </select>
+          </label>
+
           <div id="editUserError" style="color:var(--danger); font-size:0.875rem; display:none;"></div>
+
           <div style="display:flex; gap:var(--space-sm);">
             <button id="saveUserBtn" class="primary" style="flex:1;">Сохранить</button>
             <button onclick="closeModal()" class="secondary" style="flex:1;">Отмена</button>
           </div>
+
+          ${isLdap ? '<div style="font-size:0.75rem; color:var(--warning);">LDAP пользователи редактируются в Active Directory</div>' : ''}
         </div>
       `;
 
-      showModal(`${getSearchIcon(18)} Редактирование пользователя`, editContent);
+      showModal(`${getSettingsIcon(18)} Редактирование пользователя`, editContent);
 
       setTimeout(async () => {
         const saveBtn = document.getElementById('saveUserBtn');
         const fullNameInput = document.getElementById('editFullName');
+        const roleSelect = document.getElementById('editRole');
         const errorEl = document.getElementById('editUserError');
 
         if (!saveBtn) return;
 
         const doSave = async () => {
           const newFullName = fullNameInput.value.trim();
+          const newRole = roleSelect.value;
 
           if (!newFullName) {
             errorEl.textContent = 'ФИО не может быть пустым';
@@ -1325,7 +1345,7 @@ function filterAndRenderUsers(adminFetch) {
             const res = await window.adminFetch(`/api/auth/users/${userId}`, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ full_name: newFullName })
+              body: JSON.stringify({ full_name: newFullName, role: newRole })
             });
 
             if (res.ok) {
