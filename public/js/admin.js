@@ -1134,6 +1134,11 @@ function createUsersSection() {
 
         document.querySelectorAll('.us-device-cb').forEach(cb => {
           cb.addEventListener('change', () => {
+            if (cb.checked) {
+              assigned.add(cb.value);
+            } else {
+              assigned.delete(cb.value);
+            }
             cb.closest('label').style.borderColor = cb.checked ? 'var(--brand)' : 'var(--border)';
             cb.closest('label').style.background = cb.checked ? 'rgba(59,130,246,0.08)' : 'transparent';
             updateDeviceCount();
