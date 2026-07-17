@@ -1009,6 +1009,13 @@ function createUsersSection() {
         const q = deviceSearch.toLowerCase();
         return (d.device_id || '').toLowerCase().includes(q) || (d.device_name || '').toLowerCase().includes(q);
       });
+      // Sort: assigned first, then by name
+      filtered.sort((a, b) => {
+        const aAssigned = assigned.has(a.device_id) ? 0 : 1;
+        const bAssigned = assigned.has(b.device_id) ? 0 : 1;
+        if (aAssigned !== bAssigned) return aAssigned - bAssigned;
+        return (a.device_name || a.device_id || '').localeCompare(b.device_name || b.device_id || '');
+      });
       const totalPages = Math.ceil(filtered.length / devicePerPage);
       const start = (devicePage - 1) * devicePerPage;
       const pageDevices = filtered.slice(start, start + devicePerPage);
