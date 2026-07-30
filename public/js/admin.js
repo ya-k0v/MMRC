@@ -12,10 +12,12 @@ import { clearDetail, clearFilesPane, openDevice as openDeviceHelper } from './a
 import { renderDeviceCard as renderDeviceCardModule, updateDeviceCardPlayback, updateDeviceCardStatus } from './admin/device-card.js';
 import { setupUploadUI as setupUploadUIModule } from './admin/upload-ui.js';
 import { showDevicesModal, showUsersModal, showSettingsModal } from './admin/modal.js';
+import { initSystemMonitor, stopSystemMonitor } from './admin/system-monitor.js';
 import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon } from './shared/svg-icons.js';
 import { escapeHtml } from './shared/utils.js';
 import { initNotifications } from './admin/notifications.js';
 import { showNotificationsModal } from './admin/notifications-modal.js';
+import { createSidebar } from './admin/sidebar.js';
 
 const socket = io();
 const grid = document.getElementById('grid');
@@ -269,6 +271,43 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   } catch (err) {
     return;
+  }
+
+  // Initialize sidebar navigation
+  if (user.role !== 'hero_admin') {
+    const sidebar = createSidebar({
+      adminFetch,
+      user,
+      onNavigate: (section, action) => {
+        if (action === 'navigate') {
+          // Handle sidebar navigation
+          if (section === 'devices') {
+            // Already on devices view
+          } else if (section === 'users') {
+            showUsersModal(adminFetch);
+          } else if (section === 'settings') {
+            showSettingsModal();
+          } else if (section === 'logs') {
+            showSettingsModal('logs');
+          }
+        }
+      }
+    });
+    sidebar.init();
+    document.body.classList.add('has-sidebar');
+    if (sidebar.isCollapsed()) {
+      document.body.classList.add('sidebar-collapsed');
+    }
+    // Mobile menu button
+    const menuBtn = document.getElementById('sidebarMenuBtn');
+    if (menuBtn) {
+      menuBtn.onclick = () => sidebar.toggleMobile();
+    }
+    // Overlay click closes mobile sidebar
+    const overlay = document.getElementById('sidebarOverlay');
+    if (overlay) {
+      overlay.onclick = () => sidebar.closeMobile();
+    }
   }
 
   // Показываем ФИО пользователя
