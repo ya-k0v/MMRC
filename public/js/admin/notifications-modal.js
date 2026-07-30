@@ -55,7 +55,7 @@ function upsertNotificationInState(notification) {
 function isNotificationsModalOpen() {
   const overlay = document.getElementById('modalOverlay');
   const list = document.getElementById(NOTIFICATIONS_MODAL_LIST_ID);
-  return Boolean(overlay && overlay.style.display === 'flex' && list);
+  return Boolean(overlay && overlay.classList.contains('modal-open') && list);
 }
 
 function setElementHtml(target, html) {

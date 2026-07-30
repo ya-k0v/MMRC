@@ -89,7 +89,7 @@ export function goBackModal() {
     modalContent.appendChild(node);
   });
 
-  overlay.style.display = 'flex';
+  overlay.classList.add('modal-open');
   bindModalOverlayHandlers(overlay);
   bindModalEscHandler();
 }
@@ -454,7 +454,7 @@ function openServiceLogsModal(adminFetch) {
     serviceLogsViewerState.pollTimer = window.setInterval(() => {
       const overlay = document.getElementById('modalOverlay');
       const outputStillVisible = document.getElementById('serviceLogsOutput');
-      if (!overlay || overlay.style.display !== 'flex' || !outputStillVisible) {
+      if (!overlay || !overlay.classList.contains('modal-open') || !outputStillVisible) {
         stopServiceLogsViewer();
         return;
       }
@@ -469,7 +469,7 @@ export function showModal(title, content, options = {}) {
   
   if (!overlay || !modalContent) return;
 
-  const isNestedModal = overlay.style.display === 'flex' && modalContent.childNodes.length > 0;
+  const isNestedModal = overlay.classList.contains('modal-open') && modalContent.childNodes.length > 0;
   if (!isNestedModal) {
     modalHistoryStack.length = 0;
   } else if (options.pushHistory !== false) {
@@ -606,7 +606,7 @@ export function showModal(title, content, options = {}) {
   
   modalContent.appendChild(contentDiv);
   
-  overlay.style.display = 'flex';
+  overlay.classList.add('modal-open');
 
   bindModalOverlayHandlers(overlay);
   bindModalEscHandler();
@@ -617,7 +617,7 @@ export function closeModal() {
 
   const overlay = document.getElementById('modalOverlay');
   if (overlay) {
-    overlay.style.display = 'none';
+    overlay.classList.remove('modal-open');
   }
 
   modalHistoryStack.length = 0;
