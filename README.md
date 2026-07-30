@@ -52,8 +52,8 @@ make logs          # Логи
 
 ```
 ┌─────────────────────────────────────────┐
-│              Docker Host                 │
-│                                          │
+│              Docker Host                │
+│                                         │
 │  ┌──────────────────────────────────┐   │
 │  │         mmrc container           │   │
 │  │  Nginx → Node.js (Express)       │   │
@@ -61,7 +61,7 @@ make logs          # Логи
 │  │  • FFmpeg + yt-dlp               │   │
 │  │  • Bull queues                   │   │
 │  └──────────────────────────────────┘   │
-│                                          │
+│                                         │
 │  ┌────────────┐ ┌────────────┐          │
 │  │ streamer   │ │ PostgreSQL │          │
 │  │ FFmpeg:3001│ │ (profile)  │          │
