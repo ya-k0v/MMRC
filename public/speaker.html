@@ -304,11 +304,13 @@
     .volume-panel {
       margin-top: var(--space-md);
       padding: var(--space-md);
-      background: var(--panel-2);
+      background: var(--panel);
+      border: var(--border);
       border-radius: var(--radius-md);
       display: flex;
       flex-direction: column;
       gap: var(--space-sm);
+      box-shadow: var(--shadow-sm);
     }
     
     .preview-panel {
@@ -331,14 +333,18 @@
     .volume-panel input[type="range"] {
       flex: 1;
       accent-color: var(--brand);
+      height: 6px;
+      border-radius: 3px;
+      background: var(--panel-2);
     }
     
     .volume-panel .volume-value {
-      font-size: 1.5rem;
-      font-weight: 600;
+      font-size: 1.25rem;
+      font-weight: var(--font-weight-semibold);
       color: var(--text);
-      min-width: 64px;
+      min-width: 60px;
       text-align: right;
+      font-variant-numeric: tabular-nums;
     }
     
     #videoProgressContainer {
@@ -384,6 +390,13 @@
 
     .player-controls .primary {
       grid-column: 1 / -1;
+      min-height: 48px;
+      font-weight: var(--font-weight-semibold);
+    }
+
+    .player-controls .secondary,
+    .player-controls .danger {
+      min-height: 40px;
     }
 
     /* ===== Mobile (<=767px) ===== */
