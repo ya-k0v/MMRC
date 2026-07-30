@@ -1,7 +1,7 @@
 import { initThemeToggle } from './theme.js';
 import { sortDevices, debounce, loadNodeNames, getPageSize } from './utils.js';
 import { ensureAuth, speakerFetch, logout } from './speaker/auth.js';
-import { getCrossIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon } from './shared/svg-icons.js';
+import { getCrossIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon, getStopIcon } from './shared/svg-icons.js';
 import { formatTime } from './shared/formatters.js';
 import {
   IMAGE_EXTENSIONS,
@@ -2093,6 +2093,11 @@ function renderTvTile(device) {
         <span class="meta tvTile-files">Файлов: ${filesCount}</span>
       </div>
     `;
+  // Stop button for offline devices to reset their state
+  const stopBtn = !isReady && device.current && device.current.file
+    ? `<button class="tvTile-stopBtn" type="button" data-device-id="${device.device_id}" title="Сбросить состояние (Stop)" aria-label="Сбросить состояние">${getStopIcon(14, 'currentColor')}</button>`
+    : '';
+
   return `
     <li class="tvTile${isActive ? ' active' : ''}${isSelected ? ' selected' : ''}" data-id="${device.device_id}">
       <div class="tvTile-content">
@@ -2101,6 +2106,7 @@ function renderTvTile(device) {
           <span class="tvTile-status ${isReady ? 'online' : 'offline'}" 
                 title="${isReady ? 'Готов' : 'Не готов'}" 
                 aria-label="${isReady ? 'online' : 'offline'}"></span>
+          ${stopBtn}
         </div>
         ${metaRow}
         ${volumeRow}
@@ -2194,6 +2200,18 @@ function renderTVList() {
         meta.textContent = formatFilesMetaWithSelection(meta.textContent || '');
       }
     });
+
+    // Stop button handler for offline devices
+    const stopBtn = item.querySelector('.tvTile-stopBtn');
+    if (stopBtn) {
+      stopBtn.addEventListener('click', (e) => {
+        e.stopPropagation(); // Prevent tile click
+        socket.emit('control/stop', { device_id: deviceId });
+        // Visual feedback
+        stopBtn.style.transform = 'scale(0.8)';
+        setTimeout(() => { stopBtn.style.transform = ''; }, 150);
+      });
+    }
   });
 
   refreshTvSelectionClasses();

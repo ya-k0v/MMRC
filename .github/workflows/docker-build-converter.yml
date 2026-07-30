@@ -2,7 +2,7 @@ name: Build and Push Converter Image
 
 on:
   push:
-    branches: [ v330, main ]
+    branches: [ v350, main ]
     paths:
       - Dockerfile.converter
   workflow_dispatch:

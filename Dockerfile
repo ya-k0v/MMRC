@@ -26,7 +26,7 @@ RUN npm ci --omit=dev
 # ========================
 FROM node:22-slim
 
-ARG APP_VERSION=3.4.0
+ARG APP_VERSION=3.5.0
 ARG MMRC_ROLE=server
 ENV ROLE=${MMRC_ROLE}
 

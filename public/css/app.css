@@ -42,16 +42,16 @@
   /* Spacing - Стандартизированные отступы */
   --space-xs: 4px;
   --space-sm: 8px;
-  --space-md: 8px;   /* Теперь 8px как стандарт */
-  --space-lg: 8px;   /* Теперь 8px как стандарт */
-  --space-xl: 16px;  /* Только для больших отступов */
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
   
   /* Стандартные размеры элементов */
-  --button-height: 40px;
-  --button-padding: 8px 16px;
-  --item-padding: 8px;
-  --item-min-height: 100px;  /* Минимальная высота элементов - можно увеличить, но не уменьшить */
-  --item-gap: 8px;  /* Отступ между элементами */
+  --button-height: 44px;
+  --button-padding: 10px 20px;
+  --item-padding: 12px;
+  --item-min-height: 100px;
+  --item-gap: 8px;
   
   /* Border radius */
   --radius-sm: 8px;
@@ -67,7 +67,7 @@
   --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'PT Sans', 'Open Sans', sans-serif;
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.875rem;
-  --font-size-base: 0.9375rem;
+  --font-size-base: 1rem;
   --font-size-lg: 1rem;
   --font-size-xl: 1.125rem;
   
@@ -95,8 +95,8 @@ body.light {
   --panel-hover: #d9dde6;
   --text: #111827;
   --text-2: #1f2937;
-  --muted: #4b5563;
-  --muted-2: #6b7280;
+  --muted: #374151;
+  --muted-2: #4b5563;
   
   /* Дополнительные переменные для совместимости (light theme) */
   --text-primary: var(--text);
@@ -117,6 +117,45 @@ body.light {
 /* ===== Base Styles ===== */
 * {
   box-sizing: border-box;
+}
+
+/* Skip link for keyboard navigation */
+.skip-link {
+  position: absolute;
+  top: -100px;
+  left: 0;
+  background: var(--brand);
+  color: #fff;
+  padding: 12px 24px;
+  z-index: 10000;
+  transition: top 0.3s ease;
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+  border-radius: 0 0 var(--radius-sm) 0;
+}
+
+.skip-link:focus {
+  top: 0;
+}
+
+/* Focus visible for keyboard navigation */
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 html, body {
@@ -325,8 +364,13 @@ button {
 button:hover:not(:disabled) {
   background: var(--panel-hover);
   border-color: var(--border-hover);
-  transform: translateY(-1px);
   box-shadow: var(--shadow-sm);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  button:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
 }
 
 button:active:not(:disabled) {
@@ -360,9 +404,9 @@ button.secondary {
 button.meta {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
-  padding: 6px 12px;
-  min-height: 32px;
-  height: 32px;
+  padding: 10px 16px;
+  min-height: 44px;
+  height: 44px;
 }
 
 button.primary.meta {
@@ -662,6 +706,42 @@ body.light .tvTile.active {
 
 .tvTile-status.offline {
   background: var(--danger);
+}
+
+.tvTile-stopBtn {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--danger);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.2s, background 0.2s, border-color 0.2s;
+  padding: 0;
+  margin-left: var(--space-xs);
+}
+
+.tvTile-stopBtn:hover {
+  opacity: 1;
+  background: rgba(var(--danger-rgb, 239, 68, 68), 0.1);
+  border-color: var(--danger);
+}
+
+.tvTile-stopBtn:active {
+  opacity: 1;
+  background: rgba(var(--danger-rgb, 239, 68, 68), 0.2);
+}
+
+.tvTile-stopBtn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 
 .tvTile-meta {
@@ -2421,6 +2501,188 @@ body.admin-page a.device-meta-chip.is-link:hover {
   body.admin-page .file-item {
     height: auto;
     min-height: 68px;
+  }
+}
+
+/* ========================================
+   RESPONSIVE MODES: PC / TABLET / PHONE
+   ======================================== */
+
+/* --- Phone (≤480px) --- */
+@media (max-width: 480px) {
+  :root {
+    --space-md: 12px;
+    --space-lg: 16px;
+    --space-xl: 24px;
+    --button-height: 48px;
+    --button-padding: 12px 20px;
+    --item-padding: 12px;
+    --item-min-height: 80px;
+    --font-size-base: 1rem;
+    --radius-sm: 10px;
+    --radius-md: 14px;
+  }
+
+  body {
+    font-size: 1rem;
+  }
+
+  /* Larger touch targets for phone */
+  button, .input {
+    min-height: 48px;
+  }
+
+  /* Stack everything vertically */
+  .admin-main {
+    padding: var(--space-sm);
+  }
+
+  /* File items bigger on phone */
+  .file-item {
+    min-height: 72px;
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  /* TV tiles bigger on phone */
+  .tvTile {
+    min-height: 90px;
+  }
+
+  /* Hide desktop-only elements */
+  .desktop-only {
+    display: none !important;
+  }
+}
+
+/* --- Tablet (481px–1023px) --- */
+@media (min-width: 481px) and (max-width: 1023px) {
+  :root {
+    --space-md: 14px;
+    --space-lg: 20px;
+    --space-xl: 28px;
+    --button-height: 44px;
+    --item-min-height: 90px;
+  }
+
+  /* Show tablet layout */
+  .tablet-only {
+    display: block !important;
+  }
+
+  .desktop-only {
+    display: none !important;
+  }
+
+  /* Balanced grid for tablet */
+  body.admin-page #grid {
+    grid-template-columns: 1fr;
+  }
+
+  body.admin-page .sidebar {
+    width: 200px;
+  }
+
+  body.admin-page .sidebar.collapsed {
+    width: 56px;
+  }
+}
+
+/* --- PC / Desktop (≥1024px) --- */
+@media (min-width: 1024px) {
+  :root {
+    --space-md: 16px;
+    --space-lg: 24px;
+    --space-xl: 32px;
+    --button-height: 44px;
+    --item-min-height: 100px;
+  }
+
+  /* Show desktop layout */
+  .desktop-only {
+    display: block !important;
+  }
+
+  .tablet-only {
+    display: none !important;
+  }
+
+  .phone-only {
+    display: none !important;
+  }
+
+  /* Full sidebar on desktop */
+  body.admin-page .sidebar {
+    width: 260px;
+  }
+
+  body.admin-page .sidebar.collapsed {
+    width: 64px;
+  }
+
+  /* Comfortable spacing */
+  body.admin-page #grid {
+    gap: var(--space-md);
+  }
+}
+
+/* --- Large Desktop (≥1440px) --- */
+@media (min-width: 1440px) {
+  :root {
+    --space-md: 20px;
+    --space-lg: 28px;
+    --space-xl: 36px;
+    --item-min-height: 110px;
+  }
+
+  /* Wider sidebar on large screens */
+  body.admin-page .sidebar {
+    width: 280px;
+  }
+
+  /* More generous grid gaps */
+  body.admin-page #grid {
+    gap: var(--space-lg);
+  }
+}
+
+/* --- Touch device optimizations --- */
+@media (hover: none) and (pointer: coarse) {
+  /* No hover effects on touch */
+  button:hover:not(:disabled) {
+    transform: none;
+    box-shadow: none;
+  }
+
+  /* Larger touch targets */
+  button, .input, select, textarea {
+    min-height: 44px;
+  }
+
+  /* More spacing between interactive elements */
+  .list {
+    gap: var(--space-sm);
+  }
+
+  /* Disable hover transitions */
+  * {
+    transition: none !important;
+  }
+
+  /* Re-enable transitions for specific elements */
+  button, .input, .card, .tvTile, .file-item {
+    transition: all var(--transition-base) !important;
+  }
+}
+
+/* --- Keyboard navigation focus styles --- */
+@media (pointer: fine) {
+  button:focus-visible,
+  .input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  a:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
   }
 }
 
