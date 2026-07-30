@@ -20,6 +20,39 @@ import { showNotificationsModal } from './admin/notifications-modal.js';
 const socket = io();
 const grid = document.getElementById('grid');
 
+// Socket.IO reconnection indicator
+const reconnectBadge = document.getElementById('reconnectBadge');
+let reconnectTimer = null;
+
+function showReconnectBadge(text, type) {
+  if (!reconnectBadge) return;
+  reconnectBadge.textContent = text;
+  reconnectBadge.className = 'reconnect-badge show' + (type ? ' ' + type : '');
+}
+
+function hideReconnectBadge() {
+  if (!reconnectBadge) return;
+  reconnectBadge.className = 'reconnect-badge';
+}
+
+socket.on('connect', () => {
+  hideReconnectBadge();
+});
+
+socket.on('disconnect', (reason) => {
+  showReconnectBadge('Потеряна связь. Переподключение...', 'offline');
+});
+
+socket.on('connect_error', () => {
+  showReconnectBadge('Ошибка подключения. Переподключение...', 'offline');
+});
+
+socket.on('reconnect', () => {
+  showReconnectBadge('Связь восстановлена', 'connected');
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(hideReconnectBadge, 2000);
+});
+
 let readyDevices = new Set();
 let devicesCache = [];
 let currentDeviceId = null;

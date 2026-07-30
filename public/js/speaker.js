@@ -71,6 +71,39 @@ function sendMessageToServiceWorker(worker, message, timeoutMs = 5000) {
 
 const socket = io();
 
+// Socket.IO reconnection indicator
+const reconnectBadge = document.getElementById('reconnectBadge');
+let reconnectTimer = null;
+
+function showReconnectBadge(text, type) {
+  if (!reconnectBadge) return;
+  reconnectBadge.textContent = text;
+  reconnectBadge.className = 'reconnect-badge show' + (type ? ' ' + type : '');
+}
+
+function hideReconnectBadge() {
+  if (!reconnectBadge) return;
+  reconnectBadge.className = 'reconnect-badge';
+}
+
+socket.on('connect', () => {
+  hideReconnectBadge();
+});
+
+socket.on('disconnect', (reason) => {
+  showReconnectBadge('Потеряна связь. Переподключение...', 'offline');
+});
+
+socket.on('connect_error', () => {
+  showReconnectBadge('Ошибка подключения. Переподключение...', 'offline');
+});
+
+socket.on('reconnect', () => {
+  showReconnectBadge('Связь восстановлена', 'connected');
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(hideReconnectBadge, 2000);
+});
+
 const tvList = document.getElementById('tvList');
 const fileList = document.getElementById('fileList');
 const filePreview = document.getElementById('filePreview');

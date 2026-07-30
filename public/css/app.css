@@ -2732,3 +2732,31 @@ button.meta-lg.android-pastel {
   border: 1px solid rgba(16, 185, 129, 0.22) !important;
   box-shadow: 0 2px 6px rgba(16, 185, 129, 0.12) !important;
 }
+
+/* ===== Socket.IO Reconnection Badge ===== */
+.reconnect-badge {
+  display: none;
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  background: rgba(245, 158, 11, 0.92);
+  color: #fff;
+  font: 600 13px/1 system-ui, -apple-system, sans-serif;
+  padding: 8px 16px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  transition: opacity 0.3s;
+}
+.reconnect-badge.show {
+  display: block;
+  animation: fadeIn 0.2s ease-out;
+}
+.reconnect-badge.offline {
+  background: rgba(239, 68, 68, 0.92);
+}
+.reconnect-badge.connected {
+  background: rgba(16, 185, 129, 0.92);
+}
