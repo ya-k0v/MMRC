@@ -153,6 +153,16 @@ cmd_pull() {
     require_installed
     detect_compose
     cd "$APP_DIR"
+
+    # Update compose file from repo
+    info "Updating compose configuration..."
+    MMRC_RAW="https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}"
+    if curl -fSL --connect-timeout 10 --max-time 30 -o "$COMPOSE_FILE" "$MMRC_RAW/docker-compose.deploy.yml" 2>/dev/null; then
+        success "Compose file updated"
+    else
+        warn "Could not update compose file, using existing version"
+    fi
+
     info "Pulling latest Docker images..."
     COMPOSE_HA=$(get_compose_ha)
     PROFILES=$(get_compose_profiles)
@@ -507,6 +517,15 @@ cmd_update() {
     cd "$APP_DIR"
     COMPOSE_HA=$(get_compose_ha)
     PROFILES=$(get_compose_profiles)
+
+    # Update compose file from repo
+    info "Updating compose configuration..."
+    MMRC_RAW="https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}"
+    if curl -fSL --connect-timeout 10 --max-time 30 -o "$COMPOSE_FILE" "$MMRC_RAW/docker-compose.deploy.yml" 2>/dev/null; then
+        success "Compose file updated"
+    else
+        warn "Could not update compose file, using existing version"
+    fi
 
     # Pull new images
     info "Pulling latest Docker images..."
