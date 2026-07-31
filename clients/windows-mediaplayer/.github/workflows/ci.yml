@@ -28,15 +28,14 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Setup VLC
-        working-directory: clients/windows-mediaplayer
-        shell: pwsh
-        run: |
-          ./setup-vlc.ps1
-
-      - name: Restore
+      - name: Restore NuGet packages
         working-directory: clients/windows-mediaplayer/src/MMRCPlayer
         run: dotnet restore -r win-x64
+
+      - name: Setup VLC native binaries
+        working-directory: clients/windows-mediaplayer
+        shell: pwsh
+        run: ./setup-vlc.ps1
 
       - name: Build
         working-directory: clients/windows-mediaplayer/src/MMRCPlayer
