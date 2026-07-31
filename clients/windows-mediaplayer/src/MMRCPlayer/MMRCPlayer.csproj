@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ApplicationIcon>Properties\icon.ico</ApplicationIcon>
+    <AssemblyName>MMRCPlayer</AssemblyName>
+    <RootNamespace>MMRCPlayer</RootNamespace>
+    <Version>1.0.1</Version>
+    <AssemblyVersion>1.0.1.0</AssemblyVersion>
+    <FileVersion>1.0.1.0</FileVersion>
+    <Company>VideoControl</Company>
+    <Product>MMRC Player</Product>
+    <Description>MMRC Digital Signage Player for Windows</Description>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SocketIOClient" Version="3.1.1" />
+    <PackageReference Include="LibVLCSharp" Version="3.8.5" />
+    <PackageReference Include="LibVLCSharp.WPF" Version="3.8.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Resources\audio-logo.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\libvlc-native\libvlccore.dll" CopyToOutputDirectory="PreserveNewest" Link="libvlccore.dll" />
+    <Content Include="..\..\libvlc-native\libvlc.dll" CopyToOutputDirectory="PreserveNewest" Link="libvlc.dll" />
+    <Content Include="..\..\libvlc-native\plugins\**" CopyToOutputDirectory="PreserveNewest" Link="plugins\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

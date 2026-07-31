@@ -1,0 +1,10 @@
+libvlc-native/
+bin/
+obj/
+publish/
+output/
+installer/components.wxs
+installer/*.msi
+*.user
+*.suo
+.vs/
