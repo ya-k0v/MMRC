@@ -727,9 +727,11 @@ issue_new_cert() {
                 cd /root
                 curl -fsSL https://get.acme.sh -o /tmp/acme-install.sh
                 chmod +x /tmp/acme-install.sh
-                /tmp/acme-install.sh --force
+                /tmp/acme-install.sh
                 rm -f /tmp/acme-install.sh
                 export PATH="/root/.acme.sh:$PATH"
+                # Add cron job for auto-renewal
+                (crontab -l 2>/dev/null; echo "0 0 * * * /root/.acme.sh/acme.sh --cron --home /root/.acme.sh > /dev/null 2>&1") | crontab - 2>/dev/null || true
             fi
 
             info "Issuing Let's Encrypt certificate for $domain..."
