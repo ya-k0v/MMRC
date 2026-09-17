@@ -725,24 +725,21 @@ issue_new_cert() {
             if ! command -v acme.sh >/dev/null 2>&1; then
                 info "Installing acme.sh..."
                 cd /root
-                # Download and install acme.sh manually (avoids argument issues)
+                # Download and install acme.sh manually
                 curl -fsSL https://github.com/acmesh-official/acme.sh/archive/master.tar.gz -o /tmp/acme.tar.gz
                 tar xzf /tmp/acme.tar.gz -C /tmp
                 cd /tmp/acme.sh-master
-                ./acme.sh --install --force
+                # Install with email for certificate notifications
+                read -p "Enter email for SSL certificate [admin@$domain]: " ssl_email < /dev/tty
+                ssl_email="${ssl_email:-admin@$domain}"
+                ./acme.sh --install -m "$ssl_email"
                 cd /root
                 rm -rf /tmp/acme.tar.gz /tmp/acme.sh-master
                 export PATH="/root/.acme.sh:$PATH"
             fi
 
-            # Register account with email if not already registered
-            read -p "Enter email for SSL certificate [admin@$domain]: " ssl_email < /dev/tty
-            ssl_email="${ssl_email:-admin@$domain}"
-            info "Registering account with $ssl_email..."
-            acme.sh --register-account -m "$ssl_email" --force 2>/dev/null || true
-
             info "Issuing Let's Encrypt certificate for $domain..."
-            acme.sh --issue -d "$domain" --standalone --force
+            acme.sh --issue -d "$domain" --standalone --server letsencrypt --force
 
             if [ $? -eq 0 ]; then
                 mkdir -p "$DATA_DIR/certs/$domain"
