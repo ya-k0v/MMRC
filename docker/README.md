@@ -9,7 +9,7 @@
 Для production-серверов используйте one-command установку:
 
 ```bash
-sudo curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/docker/install.sh | bash
 ```
 
 Скрипт автоматически:
