@@ -725,7 +725,10 @@ issue_new_cert() {
             if ! command -v acme.sh >/dev/null 2>&1; then
                 info "Installing acme.sh..."
                 cd /root
-                curl -s https://get.acme.sh | sh -s -- --force
+                curl -fsSL https://get.acme.sh -o /tmp/acme-install.sh
+                chmod +x /tmp/acme-install.sh
+                /tmp/acme-install.sh --force
+                rm -f /tmp/acme-install.sh
                 export PATH="/root/.acme.sh:$PATH"
             fi
 
