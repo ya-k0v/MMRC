@@ -19,7 +19,7 @@ import { initNotifications } from './admin/notifications.js';
 import { showNotificationsModal } from './admin/notifications-modal.js';
 import { createSidebar } from './admin/sidebar.js';
 
-const socket = io();
+const socket = io({ auth: { token: localStorage.getItem('accessToken') } });
 const grid = document.getElementById('grid');
 
 let readyDevices = new Set();

@@ -19,6 +19,24 @@ function normalizeAuthSource(authSource) {
   return authSource === 'ldap' ? 'ldap' : 'local';
 }
 
+/**
+ * Хеш refresh-токена для хранения в БД (plain-text не хранится)
+ */
+function hashRefreshToken(rawToken) {
+  return crypto.createHash('sha256').update(String(rawToken)).digest('hex');
+}
+
+async function insertRefreshToken(db, userId, refreshToken, ipAddress, userAgent) {
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + 7);
+
+  await db.run(
+    `INSERT INTO refresh_tokens (user_id, token, expires_at, ip_address, user_agent)
+     VALUES (?, ?, ?, ?, ?)`,
+    [userId, hashRefreshToken(refreshToken), expiresAt.toISOString(), ipAddress, userAgent]
+  );
+}
+
 async function getUserByUsername(db, username) {
   const row = await db.get(
     `SELECT id, username, full_name, password_hash, role, is_active, auth_source, ldap_dn
@@ -80,14 +98,8 @@ async function logLoginFailure(req, username, reason, userId = null) {
 async function createSessionAndRespond(req, res, db, user, authSource = 'local') {
   const accessToken = generateAccessToken(user.id, user.username, user.role);
   const refreshToken = generateRefreshToken(user.id);
-  const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + 7);
 
-  await db.run(
-    `INSERT INTO refresh_tokens (user_id, token, expires_at, ip_address, user_agent)
-     VALUES (?, ?, ?, ?, ?)`,
-    [user.id, refreshToken, expiresAt.toISOString(), req.ip, req.get('user-agent')]
-  );
+  await insertRefreshToken(db, user.id, refreshToken, req.ip, req.get('user-agent'));
 
   await db.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
 
@@ -180,7 +192,7 @@ router.post('/login',
           }
           const generatedPassword = crypto.randomBytes(32).toString('hex');
           const passwordHash = await bcrypt.hash(generatedPassword, 10);
-          const defaultRole = ['admin', 'speaker', 'hero_admin'].includes(ldapSettings.defaultRole)
+          const defaultRole = ['admin', 'manager', 'speaker', 'hero_admin'].includes(ldapSettings.defaultRole)
             ? ldapSettings.defaultRole : 'speaker';
           const effectiveRole = mappedRoleFromGroups || defaultRole;
 
@@ -292,14 +304,8 @@ router.post('/setup-first-admin',
 
       const accessToken = generateAccessToken(newUserId, username, 'admin');
       const refreshToken = generateRefreshToken(newUserId);
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + 7);
 
-      await db.run(
-        `INSERT INTO refresh_tokens (user_id, token, expires_at, ip_address, user_agent)
-         VALUES (?, ?, ?, ?, ?)`,
-        [newUserId, refreshToken, expiresAt.toISOString(), req.ip, req.get('user-agent')]
-      );
+      await insertRefreshToken(db, newUserId, refreshToken, req.ip, req.get('user-agent'));
 
       res.status(201).json({
         accessToken, refreshToken,
@@ -320,27 +326,39 @@ router.post('/refresh',
 
     const { refreshToken } = req.body;
     const db = getDatabase();
+    const tokenHash = hashRefreshToken(refreshToken);
 
     try {
       const tokenRecord = await db.get(
         `SELECT rt.user_id, rt.expires_at, u.username, u.role, u.is_active
          FROM refresh_tokens rt JOIN users u ON rt.user_id = u.id
          WHERE rt.token = ?`,
-        [refreshToken]
+        [tokenHash]
       );
 
       if (!tokenRecord) return res.status(401).json({ error: 'Неверный токен обновления' });
       if (!tokenRecord.is_active) return res.status(403).json({ error: 'Аккаунт отключен' });
 
       if (new Date(tokenRecord.expires_at) < new Date()) {
-        await db.run('DELETE FROM refresh_tokens WHERE token = ?', [refreshToken]);
+        await db.run('DELETE FROM refresh_tokens WHERE token = ?', [tokenHash]);
         return res.status(401).json({ error: 'Токен обновления истек' });
       }
 
-      const accessToken = generateAccessToken(tokenRecord.user_id, tokenRecord.username, tokenRecord.role);
-      await db.run('UPDATE refresh_tokens SET last_used = CURRENT_TIMESTAMP WHERE token = ?', [refreshToken]);
+      // Ротация: старый refresh-токен отзывается, выдаётся новый
+      await db.run(
+        'UPDATE refresh_tokens SET last_used = CURRENT_TIMESTAMP, expires_at = ?, ip_address = ?, user_agent = ? WHERE token = ?',
+        [tokenRecord.expires_at, req.ip, req.get('user-agent'), tokenHash]
+      );
 
-      res.json({ accessToken, expiresIn: 900 });
+      const newRefreshToken = generateRefreshToken(tokenRecord.user_id);
+      await db.run(
+        `UPDATE refresh_tokens SET token = ? WHERE token = ?`,
+        [hashRefreshToken(newRefreshToken), tokenHash]
+      );
+
+      const accessToken = generateAccessToken(tokenRecord.user_id, tokenRecord.username, tokenRecord.role);
+
+      res.json({ accessToken, refreshToken: newRefreshToken, expiresIn: 900 });
     } catch (err) {
       logger.error('Refresh error', { error: err.message, stack: err.stack });
       res.status(500).json({ error: 'Внутренняя ошибка сервера' });
@@ -354,7 +372,7 @@ router.post('/logout', requireAuth, async (req, res) => {
 
   try {
     if (refreshToken) {
-      await db.run('DELETE FROM refresh_tokens WHERE token = ?', [refreshToken]);
+      await db.run('DELETE FROM refresh_tokens WHERE token = ?', [hashRefreshToken(refreshToken)]);
     }
 
     await auditLog({

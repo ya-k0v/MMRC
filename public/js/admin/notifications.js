@@ -116,9 +116,7 @@ function subscribeToNotifications() {
   if (!socket) return;
   
   // Подписываемся на уведомления (только для админов)
-  socket.emit('notifications:subscribe', { 
-    userRole: window.user?.role 
-  });
+  socket.emit('notifications:subscribe');
   
   // Получаем начальные уведомления
   socket.on('notifications:initial', ({ notifications, unreadCount: count }) => {

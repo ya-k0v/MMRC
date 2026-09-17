@@ -251,7 +251,12 @@ cmd_reset_password() {
     PROFILES=$(get_compose_profiles)
 
     info "Resetting admin password..."
-    RESULT=$($COMPOSE $COMPOSE_HA $PROFILES exec -T mmrc node --input-type=module -e "
+    EXEC_SVC="mmrc"
+    if [ -n "$COMPOSE_HA" ]; then
+        # В HA-режиме сервис mmrc отключён (профиль ha-disabled) — используем реплику
+        EXEC_SVC="mmrc-replica"
+    fi
+    RESULT=$($COMPOSE $COMPOSE_HA $PROFILES exec -T "$EXEC_SVC" node --input-type=module -e "
         import { getDatabase, getDriverType } from './src/database/database.js';
         import bcrypt from 'bcrypt';
 

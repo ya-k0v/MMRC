@@ -83,6 +83,22 @@ export function generateRefreshToken(userId) {
 }
 
 /**
+ * Верификация Access Token (для HTTP и Socket.IO)
+ * Бросает исключение при невалидном/истёкшем токене
+ */
+export function verifyAccessToken(token) {
+  const decoded = jwt.verify(token, JWT_SECRET);
+
+  if (decoded.type !== 'access') {
+    const error = new Error('Invalid token type');
+    error.name = 'JsonWebTokenError';
+    throw error;
+  }
+
+  return decoded;
+}
+
+/**
  * Middleware: Требует аутентификации
  */
 export async function requireAuth(req, res, next) {
@@ -95,11 +111,7 @@ export async function requireAuth(req, res, next) {
   const token = authHeader.substring(7);
   
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    
-    if (decoded.type !== 'access') {
-      return res.status(401).json({ error: 'Неверный тип токена' });
-    }
+    const decoded = verifyAccessToken(token);
 
     // Check if token was issued before token_valid_from (instant session revocation)
     if (decoded.iat && decoded.userId) {

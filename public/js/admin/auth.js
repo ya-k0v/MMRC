@@ -62,6 +62,9 @@ async function refreshAccessToken() {
     if (response.ok) {
       const data = await response.json();
       localStorage.setItem('accessToken', data.accessToken);
+      if (data.refreshToken) {
+        localStorage.setItem('refreshToken', data.refreshToken);
+      }
       return true;
     }
   } catch (err) {

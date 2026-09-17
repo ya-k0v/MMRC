@@ -6,7 +6,7 @@
 import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getDevicesPath } from '../config/settings-manager.js';
+import { getDevicesPath, getDataRoot } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('video');
@@ -59,6 +59,89 @@ export function createVideoInfoRouter(deps) {
   let currentNightQueueJob = null;
 
   const makeNightQueueKey = (deviceId, fileName) => `${deviceId}::${fileName}`;
+
+  const NIGHT_QUEUE_SNAPSHOT_FILE = 'night-queue.json';
+
+  const getNightQueueSnapshotPath = () => {
+    try {
+      return path.join(getDataRoot(), NIGHT_QUEUE_SNAPSHOT_FILE);
+    } catch {
+      return path.join(process.cwd(), 'data', NIGHT_QUEUE_SNAPSHOT_FILE);
+    }
+  };
+
+  const persistNightQueueSnapshot = () => {
+    try {
+      const snapshot = {
+        version: 1,
+        savedAt: new Date().toISOString(),
+        queue: Array.from(nightQueue.values()).map((job) => ({
+          deviceId: job.deviceId,
+          fileName: job.fileName,
+          queuedAt: job.queuedAt,
+          queuedBy: job.queuedBy || null
+        }))
+      };
+      const filePath = getNightQueueSnapshotPath();
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      const tmpPath = `${filePath}.tmp`;
+      fs.writeFileSync(tmpPath, JSON.stringify(snapshot), 'utf-8');
+      fs.renameSync(tmpPath, filePath);
+    } catch (error) {
+      logger.warn('[video-info] Failed to persist night queue snapshot', { error: error.message });
+    }
+  };
+
+  const rehydrateNightQueue = () => {
+    try {
+      const filePath = getNightQueueSnapshotPath();
+      if (!fs.existsSync(filePath)) {
+        return;
+      }
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      const snapshot = JSON.parse(raw);
+      if (!Array.isArray(snapshot?.queue)) {
+        return;
+      }
+
+      for (const entry of snapshot.queue) {
+        const deviceId = entry?.deviceId;
+        const fileName = entry?.fileName;
+        if (!deviceId || !fileName || !devices[deviceId]) {
+          continue;
+        }
+
+        const key = makeNightQueueKey(deviceId, fileName);
+        if (nightQueue.has(key)) {
+          continue;
+        }
+
+        const status = getFileStatus(deviceId, fileName);
+        const state = normalizeStatus(status?.status);
+        if (state === 'processing' || state === 'checking') {
+          continue;
+        }
+
+        nightQueue.set(key, {
+          deviceId,
+          fileName,
+          queuedAt: Number(entry.queuedAt) || Date.now(),
+          queuedBy: entry.queuedBy || null
+        });
+
+        if (state !== NIGHT_OPT_STATUS) {
+          setFileStatus(deviceId, fileName, { status: NIGHT_OPT_STATUS, progress: 0, canPlay: true });
+        }
+      }
+
+      if (nightQueue.size > 0) {
+        logger.info(`[video-info] Восстановлена ночная очередь после рестарта: ${nightQueue.size} заданий`);
+        syncNightQueueNotification();
+      }
+    } catch (error) {
+      logger.warn('[video-info] Failed to rehydrate night queue', { error: error.message });
+    }
+  };
 
   const getDeviceLabel = (deviceId) => {
     const name = devices[deviceId]?.name;
@@ -199,6 +282,7 @@ export function createVideoInfoRouter(deps) {
       deleteFileStatus(deviceId, fileName);
     }
     if (removed) {
+      persistNightQueueSnapshot();
       syncNightQueueNotification();
     }
     return removed;
@@ -225,6 +309,7 @@ export function createVideoInfoRouter(deps) {
           nightQueue.delete(key);
           deleteFileStatus(job.deviceId, job.fileName);
           pushNightQueueResult(job, 'failed', 'Устройство не найдено');
+          persistNightQueueSnapshot();
           syncNightQueueNotification();
           continue;
         }
@@ -248,6 +333,7 @@ export function createVideoInfoRouter(deps) {
         if (state === NIGHT_OPT_STATUS) {
           deleteFileStatus(job.deviceId, job.fileName);
         }
+        persistNightQueueSnapshot();
 
         currentNightQueueJob = {
           deviceId: job.deviceId,
@@ -561,6 +647,7 @@ export function createVideoInfoRouter(deps) {
       queuedAt: Date.now(),
       queuedBy: req.user?.username || null
     });
+    persistNightQueueSnapshot();
     syncNightQueueNotification();
 
     setFileStatus(id, fileName, {
@@ -585,7 +672,9 @@ export function createVideoInfoRouter(deps) {
       scheduledWindow: `${String(nightStartHour).padStart(2, '0')}:00-${String(nightEndHour).padStart(2, '0')}:00`
     });
   });
-  
+
+  rehydrateNightQueue();
+
   return router;
 }
 

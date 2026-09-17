@@ -64,6 +64,7 @@ import { globalLimiter, apiSpeedLimiter, adminLimiter } from './src/middleware/r
 import { setupExpressMiddleware, setupStaticFiles } from './src/middleware/express-config.js';
 import { setupSocketHandlers } from './src/socket/index.js';
 import { setupNotificationsHandler } from './src/socket/notifications-handler.js';
+import { restoreAllPlaylistLoops } from './src/socket/control-handlers.js';
 import { notifyCriticalError } from './src/utils/notifications.js';
 import { initSystemMonitor, stopSystemMonitor } from './src/utils/system-monitor.js';
 import logger, { httpLoggerMiddleware } from './src/utils/logger.js';
@@ -726,6 +727,13 @@ async function hydrateDevicesFromDatabase() {
 
   // Сохраняем обновленное состояние в БД
   await saveDevicesToDB(devices);
+
+  // Восстанавливаем активные плейлист-лонпы после рестарта
+  try {
+    await restoreAllPlaylistLoops(devices, io, storage);
+  } catch (error) {
+    logger.warn('[Server] Playlist loops restore failed', { error: error.message });
+  }
 
   // КРИТИЧНО: Автоматическая очистка несуществующих файлов из БД при старте
   // По умолчанию ОТКЛЮЧЕНО - установите AUTO_CLEANUP_MISSING_FILES=true только после миграции путей!

@@ -8,6 +8,12 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { validatePath } from './path-validator.js';
 import { createModuleLogger } from './logger.js';
+import {
+  ANDROID_PACKAGE_NAME,
+  ANDROID_CONFIG_RECEIVER,
+  ANDROID_CONFIGURE_ACTION,
+  DEFAULT_ADB_PORT
+} from '../config/android.js';
 const logger = createModuleLogger('device');
 
 const execFileAsync = promisify(execFile);
@@ -138,39 +144,47 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
     throw new Error(`adb не удалось подключиться к ${adbTarget}: ${out}`);
   }
 
-  // Установка APK
-  await runAdb(['connect', adbTarget], { stdio: 'ignore' });
-  await runAdb(['-s', adbTarget, 'install', '-r', safeApkPath], { stdio: 'ignore' });
-
-  // Запуск приложения для создания папок
-  await runAdb(['-s', adbTarget, 'shell', 'monkey', '-p', 'com.videocontrol.mediaplayer', '-c', 'android.intent.category.LAUNCHER', '1'], { stdio: 'ignore' });
-  await new Promise(r => setTimeout(r, 5000));
-
-  // Остановка приложения
-  await runAdb(['-s', adbTarget, 'shell', 'am', 'force-stop', 'com.videocontrol.mediaplayer'], { stdio: 'ignore' });
-  await new Promise(r => setTimeout(r, 1000));
-
-  // Формируем URL для broadcast
-  const urlForBroadcast = normalizeServerUrlForXml(serverUrl);
-
-  logger.info('[APK] Sending config via broadcast', { serverUrl: urlForBroadcast, deviceId: safeDeviceId });
-
-  // Отправка настроек через broadcast (ConfigReceiver) — явный вызов компонента
   try {
-    const broadcastResult = await runAdb(['-s', adbTarget, 'shell', 'am', 'broadcast',
-      '-n', 'com.videocontrol.mediaplayer/.ConfigReceiver',
-      '-a', 'com.videocontrol.mediaplayer.CONFIGURE',
-      '--es', 'server_url', urlForBroadcast,
-      '--es', 'device_id', safeDeviceId,
-      '--ez', 'show_status', 'false'
-    ], { stdio: ['pipe', 'pipe', 'pipe'] });
-    logger.info('[APK] Broadcast result:', { result: broadcastResult });
-  } catch (broadcastErr) {
-    logger.warn('[APK] Broadcast failed, app may need manual configuration', { error: broadcastErr.message });
+    // Установка APK
+    await runAdb(['connect', adbTarget], { stdio: 'ignore' });
+    await runAdb(['-s', adbTarget, 'install', '-r', safeApkPath], { stdio: 'ignore' });
+
+    // Запуск приложения для создания папок
+    await runAdb(['-s', adbTarget, 'shell', 'monkey', '-p', ANDROID_PACKAGE_NAME, '-c', 'android.intent.category.LAUNCHER', '1'], { stdio: 'ignore' });
+    await new Promise(r => setTimeout(r, 5000));
+
+    // Остановка приложения
+    await runAdb(['-s', adbTarget, 'shell', 'am', 'force-stop', ANDROID_PACKAGE_NAME], { stdio: 'ignore' });
+    await new Promise(r => setTimeout(r, 1000));
+
+    // Формируем URL для broadcast
+    const urlForBroadcast = normalizeServerUrlForXml(serverUrl);
+
+    logger.info('[APK] Sending config via broadcast', { serverUrl: urlForBroadcast, deviceId: safeDeviceId });
+
+    // Отправка настроек через broadcast (ConfigReceiver) — явный вызов компонента
+    try {
+      const broadcastResult = await runAdb(['-s', adbTarget, 'shell', 'am', 'broadcast',
+        '-n', ANDROID_CONFIG_RECEIVER,
+        '-a', ANDROID_CONFIGURE_ACTION,
+        '--es', 'server_url', urlForBroadcast,
+        '--es', 'device_id', safeDeviceId,
+        '--ez', 'show_status', 'false'
+      ], { stdio: ['pipe', 'pipe', 'pipe'] });
+      logger.info('[APK] Broadcast result:', { result: broadcastResult });
+    } catch (broadcastErr) {
+      logger.warn('[APK] Broadcast failed, app may need manual configuration', { error: broadcastErr.message });
+    }
+
+    await new Promise(r => setTimeout(r, 1000));
+
+    // Перезапуск приложения чтобы подхватить новые настройки
+    await runAdb(['-s', adbTarget, 'shell', 'monkey', '-p', ANDROID_PACKAGE_NAME, '-c', 'android.intent.category.LAUNCHER', '1'], { stdio: 'ignore' });
+  } finally {
+    try {
+      await runAdb(['disconnect', adbTarget], { stdio: 'ignore' });
+    } catch (disconnectErr) {
+      logger.debug('[APK] adb disconnect failed (ignored)', { error: disconnectErr.message });
+    }
   }
-
-  await new Promise(r => setTimeout(r, 1000));
-
-  // Перезапуск приложения чтобы подхватить новые настройки
-  await runAdb(['-s', adbTarget, 'shell', 'monkey', '-p', 'com.videocontrol.mediaplayer', '-c', 'android.intent.category.LAUNCHER', '1'], { stdio: 'ignore' });
 }

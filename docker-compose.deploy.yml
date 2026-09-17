@@ -28,7 +28,7 @@ services:
       - STREAM_IDLE_TIMEOUT_MS=${STREAM_IDLE_TIMEOUT_MS:-180000}
       - LDAP_URL=${LDAP_URL:-ldap://disabled}
       - LDAP_BIND_DN=${LDAP_BIND_DN:-cn=admin,dc=disabled}
-      - LDAP_SEARCH_BASE=${LDAP_SEARCH_BASE:-dc=disabled}
+      - LDAP_BASE_DN=${LDAP_BASE_DN:-dc=disabled}
       - DB_TYPE=${DB_TYPE:-sqlite}
       - DB_HOST=${DB_HOST:-mmrc-postgres}
       - DB_PORT=${DB_PORT:-5432}
@@ -50,6 +50,11 @@ services:
       - S3_ACCESS_KEY=${S3_ACCESS_KEY:-minioadmin}
       - S3_SECRET_KEY=${S3_SECRET_KEY:-minioadmin}
       - S3_FORCE_PATH_STYLE=${S3_FORCE_PATH_STYLE:-true}
+      - MMRC_CORS_ORIGINS=${MMRC_CORS_ORIGINS:-}
+      - MMRC_ANDROID_PACKAGE=${MMRC_ANDROID_PACKAGE:-com.videocontrol.mediaplayer}
+      - MMRC_ANDROID_ACTIVITY=${MMRC_ANDROID_ACTIVITY:-com.videocontrol.mediaplayer.MainActivity}
+      - MMRC_ADB_PORT=${MMRC_ADB_PORT:-5555}
+      - MMRC_APK_UPLOAD_DIR=${MMRC_APK_UPLOAD_DIR:-/tmp/mmrc-apk-upload}
     ports:
       - "${NGINX_HTTP_PORT:-80}:80"
       - "${NGINX_HTTPS_PORT:-443}:443"
@@ -199,6 +204,11 @@ services:
       - S3_ACCESS_KEY=${S3_ACCESS_KEY:-minioadmin}
       - S3_SECRET_KEY=${S3_SECRET_KEY:-minioadmin}
       - S3_FORCE_PATH_STYLE=${S3_FORCE_PATH_STYLE:-true}
+      - MMRC_CORS_ORIGINS=${MMRC_CORS_ORIGINS:-}
+      - MMRC_ANDROID_PACKAGE=${MMRC_ANDROID_PACKAGE:-com.videocontrol.mediaplayer}
+      - MMRC_ANDROID_ACTIVITY=${MMRC_ANDROID_ACTIVITY:-com.videocontrol.mediaplayer.MainActivity}
+      - MMRC_ADB_PORT=${MMRC_ADB_PORT:-5555}
+      - MMRC_APK_UPLOAD_DIR=${MMRC_APK_UPLOAD_DIR:-/tmp/mmrc-apk-upload}
     expose:
       - "80"
       - "3000"
@@ -230,7 +240,7 @@ services:
       - "${NGINX_HTTPS_PORT:-443}:443"
     volumes:
       - ./docker/nginx/ha-lb.conf:/etc/nginx/conf.d/default.conf:ro
-      - mmrc-certs:/etc/nginx/ssl:ro
+      - /var/lib/mmrc/certs:/etc/nginx/ssl:ro
     depends_on:
       mmrc-replica:
         condition: service_healthy

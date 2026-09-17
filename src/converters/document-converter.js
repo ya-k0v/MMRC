@@ -125,59 +125,93 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null, 
   logger.info(`[Converter] Starting PDF conversion: ${pageCount} pages, target: ${targetWidth}x${targetHeight}`);
 
   const density = 150;
+  const BATCH_SIZE = 25;
   const convertedPages = [];
-  for (let i = 1; i <= pageCount; i++) {
-    let tempFile = null;
+
+  const cleanupPageFile = (filePath) => {
+    if (!filePath) return;
+    try { fs.unlinkSync(filePath); } catch {}
+  };
+
+  const renderGsPage = (page, outputFile) => execFileAsync('gs', [
+    '-dNOPAUSE', '-dBATCH', '-dSAFER',
+    '-dTextAlphaBits=4', '-dGraphicsAlphaBits=4',
+    '-sDEVICE=png16m',
+    `-r${density}`,
+    `-dFirstPage=${page}`, `-dLastPage=${page}`,
+    `-sOutputFile=${outputFile}`,
+    safePdfPath
+  ]);
+
+  const finalizePage = async (page, pngFile) => {
+    const imagePath = path.join(safeOutputDir, `page.${page}.png`);
+
+    await sharp(pngFile)
+      .resize(targetWidth, targetHeight, {
+        fit: 'inside',
+        withoutEnlargement: true,
+        kernel: 'lanczos3'
+      })
+      .png()
+      .toFile(imagePath);
+
+    if (storage) {
+      try {
+        const pngKey = toStorageKey(imagePath);
+        await storage.write(pngKey, fs.createReadStream(imagePath));
+      } catch (uploadErr) {
+        logger.warn(`[Converter] Failed to upload page ${page} to storage`, { error: uploadErr.message });
+      }
+    }
+
+    const stats = fs.statSync(imagePath);
+    if (stats.size > 100) {
+      convertedPages.push({ page, path: imagePath });
+      logger.info(`[Converter] Page ${page} converted: ${imagePath} (${(stats.size / 1024).toFixed(2)} KB)`);
+      if (onProgress) {
+        onProgress(Math.max(0, Math.min(99, Math.round((page / pageCount) * 99))));
+      }
+    } else {
+      logger.warn(`[Converter] Page ${page}: file too small: ${imagePath}`);
+    }
+  };
+
+  for (let start = 1; start <= pageCount; start += BATCH_SIZE) {
+    const end = Math.min(start + BATCH_SIZE - 1, pageCount);
+    const batchPrefix = path.join(os.tmpdir(), `mmrc-pdf-${crypto.randomUUID()}-`);
+    const batchOwnedPages = new Map();
+
     try {
-      const imagePath = path.join(safeOutputDir, `page.${i}.png`);
-
-      tempFile = path.join(os.tmpdir(), `mmrc-pdf-${crypto.randomUUID()}-p${i}.png`);
-
       await execFileAsync('gs', [
         '-dNOPAUSE', '-dBATCH', '-dSAFER',
         '-dTextAlphaBits=4', '-dGraphicsAlphaBits=4',
         '-sDEVICE=png16m',
         `-r${density}`,
-        `-dFirstPage=${i}`, `-dLastPage=${i}`,
-        `-sOutputFile=${tempFile}`,
+        `-dFirstPage=${start}`, `-dLastPage=${end}`,
+        `-sOutputFile=${batchPrefix}%d.png`,
         safePdfPath
       ]);
-
-      await sharp(tempFile)
-        .resize(targetWidth, targetHeight, {
-          fit: 'inside',
-          withoutEnlargement: true,
-          kernel: 'lanczos3'
-        })
-        .png()
-        .toFile(imagePath);
-
-      if (storage) {
-        try {
-          const pngKey = toStorageKey(imagePath);
-          await storage.write(pngKey, fs.createReadStream(imagePath));
-        } catch (uploadErr) {
-          logger.warn(`[Converter] Failed to upload page ${i} to storage`, { error: uploadErr.message });
-        }
+      for (let p = start; p <= end; p++) {
+        batchOwnedPages.set(p, `${batchPrefix}${p}.png`);
       }
+    } catch (batchErr) {
+      logger.warn(`[Converter] Batch ${start}-${end} failed, falling back to per-page rendering`, { error: batchErr.message });
+    }
 
-      const stats = fs.statSync(imagePath);
-      if (stats.size > 100) {
-        convertedPages.push({ page: i, path: imagePath });
-        logger.info(`[Converter] Page ${i} converted: ${imagePath} (${(stats.size / 1024).toFixed(2)} KB)`);
-        if (onProgress) {
-          onProgress(Math.max(0, Math.min(99, Math.round((i / pageCount) * 99))));
+    for (let p = start; p <= end; p++) {
+      let pageFile = batchOwnedPages.get(p);
+      try {
+        if (!pageFile) {
+          pageFile = path.join(os.tmpdir(), `mmrc-pdf-${crypto.randomUUID()}-p${p}.png`);
+          await renderGsPage(p, pageFile);
         }
-      } else {
-        logger.warn(`[Converter] Page ${i}: file too small: ${imagePath}`);
-      }
-    } catch (error) {
-      logger.error(`[Converter] Error converting page ${i}`, {
-        error: error.message, stack: error.stack, page: i
-      });
-    } finally {
-      if (tempFile) {
-        try { fs.unlinkSync(tempFile); } catch {}
+        await finalizePage(p, pageFile);
+      } catch (error) {
+        logger.error(`[Converter] Error converting page ${p}`, {
+          error: error.message, stack: error.stack, page: p
+        });
+      } finally {
+        cleanupPageFile(pageFile);
       }
     }
   }

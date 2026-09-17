@@ -18,6 +18,7 @@ import { removeStreamJob } from '../streams/stream-manager.js';
 import { requireAuth } from '../middleware/auth.js';
 import { getUserDevices, hasDeviceAccess } from '../middleware/device-access.js';
 import { launchAndroidApp } from '../utils/adb-launcher.js';
+import { ANDROID_PACKAGE_NAME, ANDROID_MAIN_ACTIVITY, DEFAULT_ADB_PORT } from '../config/android.js';
 import { validatePath } from '../utils/path-validator.js';
 
 const router = express.Router();
@@ -379,11 +380,13 @@ export function createDevicesRouter(deps) {
     if (!device.ipAddress) {
       return res.status(400).json({ ok: false, error: 'IP адрес устройства не задан' });
     }
-    // Для вашего приложения:
-    const packageName = 'com.videocontrol.mediaplayer'; // замените на актуальный packageName
-    const activity = 'com.videocontrol.mediaplayer.MainActivity'; // замените на актуальный activity
     try {
-      const result = await launchAndroidApp(device.ipAddress, packageName, activity);
+      const result = await launchAndroidApp(
+        device.ipAddress,
+        ANDROID_PACKAGE_NAME,
+        ANDROID_MAIN_ACTIVITY,
+        DEFAULT_ADB_PORT
+      );
       if (result.ok) {
         return res.json({ ok: true });
       } else {

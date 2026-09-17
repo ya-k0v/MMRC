@@ -7,10 +7,35 @@ import { getOnlineDevices, startConnectionCleanup } from './connection-manager.j
 import { setupDeviceHandlers, handleDisconnect } from './device-handlers.js';
 import { setupControlHandlers } from './control-handlers.js';
 import { setupServiceLogsHandler } from './service-logs-handler.js';
+import { verifyAccessToken } from '../middleware/auth.js';
 import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('socket');
 
 let cleanupStarted = false;
+
+/**
+ * Опциональная JWT-аутентификация main-наспейса.
+ * Устройства/плееры подключаются без токена — пропускаем их.
+ * Для аутентифицированных соединений сохраняем user в socket.user.
+ */
+function attachOptionalSocketAuth(io) {
+  io.use((socket, next) => {
+    try {
+      const token = socket.handshake?.auth?.token
+        || socket.handshake?.auth?.accessToken
+        || (socket.request?.headers?.authorization || '').replace(/^Bearer\s+/i, '');
+      if (token) {
+        const user = verifyAccessToken(token);
+        if (user) {
+          socket.user = user;
+        }
+      }
+    } catch {
+      // Aнонимные/устройства — оставляем socket.user незаданным
+    }
+    next();
+  });
+}
 
 /**
  * Настраивает все Socket.IO обработчики
@@ -27,6 +52,8 @@ export function setupSocketHandlers(io, deps) {
     applyVolumeCommand,
     storage
   } = deps;
+
+  attachOptionalSocketAuth(io);
   
   io.on('connection', socket => {
     const transport = socket.conn?.transport?.name;

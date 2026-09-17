@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { createModuleLogger } from '../utils/logger.js';
 import { getMetrics } from '../utils/metrics.js';
 import { getDatabase, getDriverType } from '../database/database.js';
-import { videoOptimizeQueue, streamQueue, converterQueue, queuesReady } from '../queue/queue.js';
+import { videoOptimizeQueue, queuesReady } from '../queue/queue.js';
 import { Redis } from 'ioredis';
 
 const logger = createModuleLogger('api');
@@ -254,7 +254,7 @@ async function getQueueInfo() {
   if (!queuesReady) return null;
 
   const queues = {};
-  const queueMap = { videoOptimize: videoOptimizeQueue, stream: streamQueue, converter: converterQueue };
+  const queueMap = { videoOptimize: videoOptimizeQueue };
 
   for (const [name, q] of Object.entries(queueMap)) {
     if (!q) continue;

@@ -187,6 +187,15 @@ const MIGRATIONS = [
         await driver.exec(`ALTER TABLE devices ADD COLUMN adb_port TEXT DEFAULT '5555'`);
       }
     }
+  },
+  {
+    id: '2026-09-17-refresh-tokens-hashed',
+    description: 'Remove legacy plaintext refresh tokens (tokens are now stored as sha256 hashes)',
+    async up(driver) {
+      if (!(await driver.tableExists('refresh_tokens'))) return;
+      // Legacy tokens are plaintext JWTs (not 64-char hex hashes); keep only hash rows
+      await driver.exec("DELETE FROM refresh_tokens WHERE length(token) != 64");
+    }
   }
 ];
 

@@ -53,6 +53,29 @@ function buildDashManifestRelayUrl(deviceId, safeName) {
 const DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS = 10;
 const serverPlaylistLoops = new Map();
 
+export async function restoreDevicePlaylistLoop(deviceId, devices, io, storage) {
+  const d = devices?.[deviceId];
+  if (!d?.current?.playlistActive || !d.current?.playlistFile) return;
+  if (serverPlaylistLoops.has(deviceId)) return;
+
+  const file = d.current.playlistFile;
+  const intervalSeconds = d.current.playlistInterval || DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS;
+  const startPage = d.current.page || 1;
+
+  logger.info('[Playlist] Restoring playlist loop after restart', { deviceId, file, intervalSeconds, startPage });
+  await startServerPlaylistLoop(deviceId, file, intervalSeconds, startPage, devices, io, storage);
+}
+
+export async function restoreAllPlaylistLoops(devices, io, storage) {
+  for (const deviceId of Object.keys(devices || {})) {
+    try {
+      await restoreDevicePlaylistLoop(deviceId, devices, io, storage);
+    } catch (err) {
+      logger.warn('[Playlist] Failed to restore loop', { deviceId, error: err.message });
+    }
+  }
+}
+
 function stopServerPlaylistLoop(deviceId, reason = 'stopped') {
   const loop = serverPlaylistLoops.get(deviceId);
   if (loop?.timer) {

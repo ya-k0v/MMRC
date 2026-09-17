@@ -10,14 +10,24 @@ import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('socket');
 
 export function createSocketServer(httpServer) {
+  const rawOrigins = String(process.env.MMRC_CORS_ORIGINS || '').trim();
+  const corsOrigins = rawOrigins
+    ? rawOrigins.split(',').map((o) => o.trim()).filter(Boolean)
+    : ['*'];
+
+  if (rawOrigins) {
+    logger.info(`[Socket.IO] CORS origins restricted to: ${corsOrigins.join(', ')}`);
+  } else {
+    logger.warn('[Socket.IO] MMRC_CORS_ORIGINS not set, CORS allows all origins. Set it to restrict access.');
+  }
+
   const io = new Server(httpServer, {
     cors: {
-      origin: '*',
+      origin: corsOrigins,
       methods: ['GET', 'POST'],
-      allowedHeaders: ['Content-Type']
+      allowedHeaders: ['Content-Type', 'Authorization']
     },
     transports: ['websocket', 'polling'],
-    allowEIO3: true,
     pingInterval: 25000,
     pingTimeout: 60000,
     maxHttpBufferSize: 10 * 1024 * 1024

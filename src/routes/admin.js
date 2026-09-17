@@ -201,7 +201,12 @@ async function createDeviceViaApi({ deviceId, deviceName, incomingAuthHeader }) 
 
 async function getAdminAccessToken(apiBaseUrl) {
   const username = process.env.ADMIN_USERNAME || 'admin';
-  const password = process.env.ADMIN_PASSWORD || 'admin123';
+  const password = process.env.ADMIN_PASSWORD;
+
+  if (!password) {
+    throw new Error('ADMIN_PASSWORD не задан. Установите ADMIN_PASSWORD в .env для внутренних API-вызовов.');
+  }
+
   const loginUrl = `${apiBaseUrl.replace(/\/$/, '')}/api/auth/login`;
 
   const resp = await doFetch(loginUrl, {

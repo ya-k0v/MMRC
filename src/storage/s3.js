@@ -1,4 +1,5 @@
 import { StorageProvider } from './provider.js';
+import { PassThrough } from 'node:stream';
 
 let S3;
 let libStorage;
@@ -155,20 +156,41 @@ export class S3Storage extends StorageProvider {
   }
 
   createWriteStream(key) {
-    throw new Error('S3 createWriteStream not yet implemented, use write() instead');
+    if (!libStorage) {
+      // Fallback: буферизуем в память и заливаем одним PutObject
+      const chunks = [];
+      const stream = new PassThrough();
+      stream.on('data', (chunk) => chunks.push(chunk));
+      stream.on('finish', () => {
+        this.write(key, Buffer.concat(chunks)).catch((err) => stream.emit('error', err));
+      });
+      return stream;
+    }
+
+    const stream = new PassThrough();
+    const upload = new libStorage.Upload({
+      client: this.#client,
+      params: {
+        Bucket: this.#bucket,
+        Key: this._key(key),
+        Body: stream
+      },
+      queueSize: 4,
+      partSize: 5 * 1024 * 1024
+    });
+
+    // Пробрасываем ошибки загрузки в стрим, чтобы потребитель не получал unhandled rejection
+    upload.done().catch((err) => stream.destroy(err));
+
+    return stream;
   }
 
   async rm(key) {
     const s3Key = this._key(key);
-    // Сначала пробуем точное удаление (для файлов)
-    try {
-      await this.#client.send(new S3.DeleteObjectCommand({ Bucket: this.#bucket, Key: s3Key }));
-      return;
-    } catch (e) {
-      // Если ключ не найден, возможно это "папка" (префикс) — удаляем по префиксу
-      if (e.name !== 'NotFound' && e.name !== 'NoSuchKey') throw e;
-    }
-    // Префиксное удаление для директорий
+    // S3 не сообщает об отсутствии ключа при DeleteObject (всегда 204),
+    // поэтому листинг по префиксу — единственный надёжный способ.
+    // Удаляем только объекты, принадлежащие искомому ключу/префиксу
+    // (точное совпадение или дети через '/'), чтобы не задеть соседние ключи.
     let continuationToken;
     do {
       const listCmd = new S3.ListObjectsV2Command({
@@ -178,12 +200,17 @@ export class S3Storage extends StorageProvider {
         ContinuationToken: continuationToken
       });
       const response = await this.#client.send(listCmd);
-      if (response.Contents && response.Contents.length > 0) {
+      const owned = (response.Contents || [])
+        .map(obj => obj.Key)
+        .filter(k => k === s3Key || k.startsWith(s3Key + '/'));
+
+      if (owned.length > 0) {
         await this.#client.send(new S3.DeleteObjectsCommand({
           Bucket: this.#bucket,
-          Delete: { Objects: response.Contents.map(obj => ({ Key: obj.Key })), Quiet: true }
+          Delete: { Objects: owned.map(k => ({ Key: k })), Quiet: true }
         }));
       }
+
       continuationToken = response.NextContinuationToken;
     } while (continuationToken);
   }

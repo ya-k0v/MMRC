@@ -34,8 +34,11 @@ export function setupNotificationsHandler(io) {
 
   // Обработчик подключения
   io.on('connection', (socket) => {
-    // Подписка на уведомления (только для админов)
-    socket.on('notifications:subscribe', ({ userRole }) => {
+    // Подписка на уведомления (только для аутентифицированных админов)
+    // Роль берётся из JWT (socket.user), а не из payload клиента
+    socket.on('notifications:subscribe', () => {
+      const userRole = socket.user?.role;
+
       if (userRole === 'admin' || userRole === 'hero_admin') {
         socket.join('admins');
         

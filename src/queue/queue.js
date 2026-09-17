@@ -39,7 +39,5 @@ function createQueue(name) {
 }
 
 export const videoOptimizeQueue = createQueue('video-optimize');
-export const streamQueue = createQueue('stream');
-export const converterQueue = createQueue('converter');
 
 export const queuesReady = !!REDIS_URL;

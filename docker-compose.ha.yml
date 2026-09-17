@@ -1,6 +1,6 @@
 # MMRC High-Availability Override
 # Disables the single-node mmrc service so nginx-ha (defined in docker-compose.yml)
-# can bind port 80/443. Replicas are defined in the main compose file with profile [ha].
+# can bind port 80/443. Replicas are defined in docker-compose.yml with profile [ha].
 # Usage: docker compose -f docker-compose.yml -f docker-compose.ha.yml --profile ha up -d
 # Scale:  docker compose -f docker-compose.yml -f docker-compose.ha.yml --profile ha up -d --scale mmrc-replica=3
 

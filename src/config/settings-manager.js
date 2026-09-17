@@ -351,7 +351,7 @@ function readLdapAuthSettingsFromEnv() {
     url: process.env.LDAP_URL || process.env.LDAP_URI || '',
     bindDN: process.env.LDAP_BIND_DN || '',
     bindPassword: process.env.LDAP_BIND_PASSWORD || '',
-    baseDN: process.env.LDAP_BASE_DN || '',
+    baseDN: process.env.LDAP_BASE_DN || process.env.LDAP_SEARCH_BASE || '',
     userFilter: process.env.LDAP_USER_FILTER || LDAP_DEFAULTS.userFilter,
     usernameAttribute: process.env.LDAP_USERNAME_ATTRIBUTE || LDAP_DEFAULTS.usernameAttribute,
     searchScope: process.env.LDAP_SEARCH_SCOPE || LDAP_DEFAULTS.searchScope,

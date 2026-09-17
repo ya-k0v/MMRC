@@ -479,7 +479,16 @@ MINIO_ROOT_PASSWORD=$S3_SECRET_KEY
 # LDAP (optional)
 LDAP_URL=
 LDAP_BIND_DN=
-LDAP_SEARCH_BASE=
+LDAP_BASE_DN=
+
+# Socket.IO CORS (optional, пусто = разрешены все origins)
+MMRC_CORS_ORIGINS=
+
+# Android (ADB) (optional)
+MMRC_ANDROID_PACKAGE=com.videocontrol.mediaplayer
+MMRC_ANDROID_ACTIVITY=com.videocontrol.mediaplayer.MainActivity
+MMRC_ADB_PORT=5555
+MMRC_APK_UPLOAD_DIR=/tmp/mmrc-apk-upload
 ENVEOF2
 
     # Append PostgreSQL config if needed

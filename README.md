@@ -1,25 +1,58 @@
-# MMRC 3.4.0
+# MMRC
 
-Digital Signage & Media Management Platform
-
-![Version](https://img.shields.io/badge/version-3.4.0-blue)
-![Node](https://img.shields.io/badge/node-22.x-green)
-
-## Описание
-
-Централизованная платформа для управления медиаконтентом на удалённых устройствах (Android TV, Linux, браузеры). Видео, изображения, PDF, PPTX — плейлисты, стриминг, управление через веб-панели.
+Централизованная платформа управления медиаконтентом и цифровыми вывесками (digital signage). Серверное развёртывание через Docker, клиенты — Android TV, Linux (MPV), браузеры.
 
 ## Возможности
 
-- **Docker** — один `docker compose up` поднимает всё
-- **Streaming** — HLS/DASH live-стриминг с автотранскодингом
-- **Плейлисты** — серверные, автолупинг
+- **Streaming** — HLS live-стриминг с автотранскодингом (FFmpeg)
+- **Плейлисты** — серверные, с автолупингом
 - **Конвертация** — PDF/PPTX → изображения (Ghostscript + Sharp)
-- **Ночная оптимизация** — фоновый транскодинг видео
-- **БД** — PostgreSQL или SQLite
-- **HA** — nginx LB, N реплик, S3 (MinIO)
+- **Загрузка видео по URL** — yt-dlp (MP4) + умная оптимизация FFmpeg для совместимости/пережатия
+- **Ночная оптимизация** — фоновый транскодинг видео в нерабочие часы
+- **Управление устройствами** — удалённая установка APK, запуск/остановка, статус через ADB
+- **Многопользовательский доступ** — JWT-аутентификация (access + refresh), роли
 - **LDAP/AD** — корпоративная аутентификация
-- **PWA** — мобильные панели
+- **Высокая доступность** — Nginx LB, N реплик, PostgreSQL + S3 (MinIO)
+- **Хранилище** — локальная ФС или S3 (совместимо с MinIO)
+- **Интеграция** — WebSocket (Socket.IO) для реального времени, Bull-очереди задач (при включенном Redis)
+
+## Архитектура
+
+```
+┌──────────── Docker Host ────────────┐
+│                                     │
+│  ┌───── mmrc (API + Nginx) ──────┐  │
+│  │  Express API     :3000        │  │
+│  │  Nginx           :80/:443     │  │
+│  │  Socket.IO       real-time    │  │
+│  │  FFmpeg workers  (Bull-ready) │  │
+│  └────────────────────────────────┘  │
+│                                     │
+│  ┌─────────┬─────────┬──────────┐  │
+│  │streamer │postgres │  redis   │  │
+│  │ :3001   │  :5432  │  :6379   │  │
+│  └─────────┴─────────┴──────────┘  │
+└─────────────────────────────────────┘
+```
+
+Основные модули (`src/`):
+
+| Директория | Назначение |
+|-----------|------------|
+| `routes/` | REST API: devices, files, folders, admin, auth |
+| `streams/` | HLS stream-manager |
+| `converters/` | PDF/PPTX → изображения, конвертация папок |
+| `queue/` | Bull очереди фоновых задач |
+| `socket/` | Socket.IO обработчики (device, player) |
+| `storage/` | Абстракция хранилища: локальная ФС / S3 |
+| `database/` | SQLite (better-sqlite3) / PostgreSQL (pg) |
+| `auth/` | JWT, роли, LDAP |
+
+## Требования
+
+- Docker 24+ (Docker Compose v2)
+- Node.js 22+ (для разработки)
+- Android TV устройства с ADB (порт 5555)
 
 ## Установка
 
@@ -27,47 +60,32 @@ Digital Signage & Media Management Platform
 curl -fsSL https://raw.githubusercontent.com/ya-k0v/MMRC/v340/install.sh | sudo bash
 ```
 
-## Управление
+Установщик последовательно: проверяет/ставит Docker, ставит CLI `mmrc`, выбирает БД (SQLite/PostgreSQL), хранилище (local/S3), порты 80/443, запускает сервисы и настраивает SSL.
+
+## CLI
 
 ```bash
-mmrc status       # Статус сервисов
-mmrc logs         # Логи
-mmrc update       # Обновление
-mmrc backup       # Бэкап БД
-mmrc ssl          # SSL сертификат
+mmrc status          # Статус сервисов
+mmrc logs            # Логи
+mmrc update          # Обновление до последней версии
+mmrc backup          # Бэкап БД
+mmrc ssl             # SSL-сертификат (self-signed / Let's Encrypt / свой)
+mmrc stop            # Остановить сервисы
+mmrc start           # Запустить сервисы
 ```
 
 ## Разработка
 
 ```bash
-make init          # Создать .env
-make up            # Запустить (SQLite)
-make up-pg         # Запустить + PostgreSQL
-make build         # Собрать образ
-make down          # Остановить
-make logs          # Логи
+make init            # Создать .env из .env.example
+make up              # Запуск (SQLite, local storage)
+make up-pg           # Запуск + PostgreSQL
+make build           # Сборка Docker-образа
+make down            # Остановка
+make logs            # Логи
 ```
 
-## Архитектура
-
-```
-┌─────────────────────────────────────────┐
-│              Docker Host                │
-│                                         │
-│  ┌──────────────────────────────────┐   │
-│  │         mmrc container           │   │
-│  │  Nginx → Node.js (Express)       │   │
-│  │  • API + Socket.IO               │   │
-│  │  • FFmpeg + yt-dlp               │   │
-│  │  • Bull queues                   │   │
-│  └──────────────────────────────────┘   │
-│                                         │
-│  ┌────────────┐ ┌────────────┐          │
-│  │ streamer   │ │ PostgreSQL │          │
-│  │ FFmpeg:3001│ │ (profile)  │          │
-│  └────────────┘ └────────────┘          │
-└─────────────────────────────────────────┘
-```
+Конфигурация — `.env` (см. `.env.example`). Ключевые переменные: `DB_TYPE`, `STORAGE_BACKEND`, `PORT`, `JWT_SECRET`.
 
 ## Сервисы
 
@@ -75,32 +93,32 @@ make logs          # Логи
 |--------|----------|------|
 | `mmrc` | API + Nginx + FFmpeg | 80, 443 |
 | `streamer` | Выносной FFmpeg | 3001 |
-| `postgres` | PostgreSQL 16 | 5432 |
+| `postgres` | PostgreSQL 16 (profile) | 5432 |
 | `redis` | Redis 7 | 6379 |
+| `minio` | S3 (profile) | 9000, 9001 |
 
 ## Панели
 
-| Панель | URL | Назначение |
-|--------|-----|------------|
-| Admin | `/admin.html` | Устройства, файлы, пользователи |
-| Speaker | `/speaker.html` | Управление воспроизведением |
-| Analytics | `/analytics.html` | Метрики, мониторинг |
+| Панель | URL |
+|--------|-----|
+| Admin | `/admin.html` |
+| Speaker | `/speaker.html` |
+| Analytics | `/analytics.html` |
 
 ## Клиенты
 
-- **Android TV** — ExoPlayer, автозапуск, watchdog
-- **MPV Player** — Linux, аппаратное ускорение
-- **Browser** — Video.js (HLS, DASH, MP4)
+| Клиент | Платформа | Стек |
+|--------|-----------|------|
+| Android TV | Android | ExoPlayer, автозапуск, watchdog |
+| MPV Player | Linux | аппаратное ускорение |
+| Browser | Web | Video.js (HLS, DASH, MP4), PWA |
 
-## Требования
+## Диагностика
 
-- Docker
-- Node.js 22+ (для разработки)
+- [ADB.md](ADB.md) — Android TV
+- [DOCKER.md](DOCKER.md) — Docker/Compose
+- [DEBUG.md](DEBUG.md) — логи, ошибки
 
 ## Лицензия
 
-Только личное использование. Юридические лица — запрещено без разрешения.
-
----
-
-**Автор:** [ya-k0v](https://github.com/ya-k0v/)
+[Solo use. Commercial use prohibited.](LICENSE)
