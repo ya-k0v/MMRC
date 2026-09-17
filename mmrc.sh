@@ -735,6 +735,12 @@ issue_new_cert() {
                 export PATH="/root/.acme.sh:$PATH"
             fi
 
+            # Register account with email if not already registered
+            read -p "Enter email for SSL certificate [admin@$domain]: " ssl_email < /dev/tty
+            ssl_email="${ssl_email:-admin@$domain}"
+            info "Registering account with $ssl_email..."
+            acme.sh --register-account -m "$ssl_email" --force 2>/dev/null || true
+
             info "Issuing Let's Encrypt certificate for $domain..."
             acme.sh --issue -d "$domain" --standalone --force
 
