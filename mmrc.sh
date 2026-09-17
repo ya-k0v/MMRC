@@ -725,13 +725,14 @@ issue_new_cert() {
             if ! command -v acme.sh >/dev/null 2>&1; then
                 info "Installing acme.sh..."
                 cd /root
-                curl -fsSL https://get.acme.sh -o /tmp/acme-install.sh
-                chmod +x /tmp/acme-install.sh
-                /tmp/acme-install.sh
-                rm -f /tmp/acme-install.sh
+                # Download and install acme.sh manually (avoids argument issues)
+                curl -fsSL https://github.com/acmesh-official/acme.sh/archive/master.tar.gz -o /tmp/acme.tar.gz
+                tar xzf /tmp/acme.tar.gz -C /tmp
+                cd /tmp/acme.sh-master
+                ./acme.sh --install --force
+                cd /root
+                rm -rf /tmp/acme.tar.gz /tmp/acme.sh-master
                 export PATH="/root/.acme.sh:$PATH"
-                # Add cron job for auto-renewal
-                (crontab -l 2>/dev/null; echo "0 0 * * * /root/.acme.sh/acme.sh --cron --home /root/.acme.sh > /dev/null 2>&1") | crontab - 2>/dev/null || true
             fi
 
             info "Issuing Let's Encrypt certificate for $domain..."
