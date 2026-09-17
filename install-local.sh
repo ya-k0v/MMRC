@@ -222,9 +222,85 @@ select_storage() {
     S3_SECRET_KEY="${S3_SECRET_KEY:-minioadmin}"
 }
 
+check_port_available() {
+    local port=$1
+    if ss -tlnp 2>/dev/null | grep -q ":${port} " || \
+       netstat -tlnp 2>/dev/null | grep -q ":${port} "; then
+        return 1
+    fi
+    return 0
+}
+
+show_port_usage() {
+    local port=$1
+    local using
+    using=$(ss -tlnp 2>/dev/null | grep ":${port} " || \
+            netstat -tlnp 2>/dev/null | grep ":${port} " || true)
+    if [ -n "$using" ]; then
+        echo "$using" | sed 's/^/    /'
+    fi
+}
+
+select_port() {
+    NGINX_HTTP_PORT="${NGINX_HTTP_PORT:-80}"
+    NGINX_HTTPS_PORT="${NGINX_HTTPS_PORT:-443}"
+
+    # Check HTTP port
+    if ! check_port_available "$NGINX_HTTP_PORT"; then
+        warn "Port $NGINX_HTTP_PORT is already in use!"
+        echo ""
+        echo "  Services using port $NGINX_HTTP_PORT:"
+        show_port_usage "$NGINX_HTTP_PORT"
+        echo ""
+    fi
+
+    while true; do
+        read -p "  HTTP port [$NGINX_HTTP_PORT]: " port_input < /dev/tty
+        NGINX_HTTP_PORT="${port_input:-$NGINX_HTTP_PORT}"
+
+        if check_port_available "$NGINX_HTTP_PORT"; then
+            break
+        else
+            warn "Port $NGINX_HTTP_PORT is still in use. Try another port."
+        fi
+    done
+    success "Using HTTP port: $NGINX_HTTP_PORT"
+
+    # Check HTTPS port
+    if ! check_port_available "$NGINX_HTTPS_PORT"; then
+        warn "Port $NGINX_HTTPS_PORT is already in use!"
+        echo ""
+        echo "  Services using port $NGINX_HTTPS_PORT:"
+        show_port_usage "$NGINX_HTTPS_PORT"
+        echo ""
+    fi
+
+    while true; do
+        read -p "  HTTPS port [$NGINX_HTTPS_PORT]: " port_input < /dev/tty
+        NGINX_HTTPS_PORT="${port_input:-$NGINX_HTTPS_PORT}"
+
+        if check_port_available "$NGINX_HTTPS_PORT"; then
+            break
+        else
+            warn "Port $NGINX_HTTPS_PORT is still in use. Try another port."
+        fi
+    done
+    success "Using HTTPS port: $NGINX_HTTPS_PORT"
+}
+
 install_mmrc() {
     check_root
     check_docker
+
+    # Install CLI first (so it's available even if later steps fail)
+    info "Installing MMRC CLI..."
+    if [ -f "$SCRIPT_DIR/mmrc.sh" ]; then
+        cp "$SCRIPT_DIR/mmrc.sh" "$BIN_DIR/mmrc"
+        chmod +x "$BIN_DIR/mmrc"
+        success "CLI installed: mmrc"
+    else
+        warn "mmrc.sh not found in $SCRIPT_DIR"
+    fi
 
     unset COMPOSE_PROJECT_NAME COMPOSE_PROFILES COMPOSE_PATH_SEPARATOR 2>/dev/null || true
     cd /
@@ -239,6 +315,9 @@ install_mmrc() {
 
     select_database
     select_storage
+
+    # Select HTTP port
+    select_port
 
     mkdir -p "$INSTALL_DIR" "$DATA_DIR"
     success "Directories created"
@@ -276,6 +355,10 @@ SILENT_CONSOLE=false
 # JWT Authentication
 JWT_ACCESS_EXPIRES_IN=12h
 JWT_REFRESH_EXPIRES_IN=30d
+
+# HTTP Port
+NGINX_HTTP_PORT=$NGINX_HTTP_PORT
+NGINX_HTTPS_PORT=$NGINX_HTTPS_PORT
 
 # Database type: sqlite | postgres
 DB_TYPE=$DB_TYPE
@@ -460,16 +543,6 @@ ENVEOF3
     fi
     success "Images pulled"
 
-    # Install CLI from local file
-    info "Installing MMRC CLI..."
-    if [ -f "$SCRIPT_DIR/mmrc.sh" ]; then
-        cp "$SCRIPT_DIR/mmrc.sh" "$BIN_DIR/mmrc"
-        chmod +x "$BIN_DIR/mmrc"
-        success "CLI installed: mmrc"
-    else
-        warn "mmrc.sh not found in $SCRIPT_DIR"
-    fi
-
     # Start services
     PROFILES=""
     if [ "$DB_TYPE" = "postgres" ] && [ "$POSTGRES_SOURCE" = "docker" ]; then
@@ -493,7 +566,7 @@ ENVEOF3
 
     # Wait for health
     info "Waiting for server to be ready..."
-    local check_port=80
+    local check_port=$NGINX_HTTP_PORT
     local server_ready=false
     for i in $(seq 1 30); do
         printf "\r  Waiting... %ds" "$i"
@@ -519,12 +592,12 @@ ENVEOF3
     box_line "                                                  MMRC Installed Successfully!                                                  "
     colorized_echo cyan "════════════════════════════════════════════════════════════════════════════════════════════════════"
     box_line ""
-    box_line "  Admin Panel:                         http://localhost:80/admin.html"
-    box_line "  Speaker Panel:                       http://localhost:80/speaker.html"
-    box_line "  Hero Module:                         http://localhost:80/hero/"
-    box_line "  Health Check:                        http://localhost:80/health"
+    box_line "  Admin Panel:                         http://localhost:${NGINX_HTTP_PORT}/admin.html"
+    box_line "  Speaker Panel:                       http://localhost:${NGINX_HTTP_PORT}/speaker.html"
+    box_line "  Hero Module:                         http://localhost:${NGINX_HTTP_PORT}/hero/"
+    box_line "  Health Check:                        http://localhost:${NGINX_HTTP_PORT}/health"
     box_line ""
-    box_line "  From network:                        http://${SERVER_IP}:80/"
+    box_line "  From network:                        http://${SERVER_IP}:${NGINX_HTTP_PORT}/"
     box_line ""
     box_line "  Default login:                       admin / admin123"
     box_line "  CHANGE PASSWORD after first login!"

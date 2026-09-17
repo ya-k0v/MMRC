@@ -132,7 +132,7 @@ services:
       - mmrc-network
 
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:RELEASE.2025-08-13T08-35-41Z
     profiles: [s3]
     container_name: mmrc-minio
     restart: unless-stopped
@@ -155,7 +155,7 @@ services:
       - mmrc-network
 
   minio-setup:
-    image: minio/mc:latest
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
     profiles: [s3]
     container_name: mmrc-minio-setup
     depends_on:
