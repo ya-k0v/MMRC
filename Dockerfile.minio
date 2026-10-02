@@ -5,10 +5,19 @@ ARG TARGETARCH
 ARG MINIO_COMMIT=7aac2a2c5b7c882e68c1ce017d8256be2feea27f
 ARG MC_COMMIT=77f82e18b5401a65958f1619df6ebb994634bd88
 
-ENV CGO_ENABLED=0 GOBIN=/out
+ENV CGO_ENABLED=0
 
-RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} go install -trimpath -ldflags="-s -w" "github.com/minio/minio@${MINIO_COMMIT}" \
-    && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go install -trimpath -ldflags="-s -w" "github.com/minio/mc@${MC_COMMIT}"
+RUN set -eu; \
+        GOOS=${TARGETOS} GOARCH=${TARGETARCH} go install -trimpath -ldflags="-s -w" "github.com/minio/minio@${MINIO_COMMIT}"; \
+        GOOS=${TARGETOS} GOARCH=${TARGETARCH} go install -trimpath -ldflags="-s -w" "github.com/minio/mc@${MC_COMMIT}"; \
+        mkdir -p /out; \
+        if [ -x "/go/bin/${TARGETOS}_${TARGETARCH}/minio" ]; then \
+            cp "/go/bin/${TARGETOS}_${TARGETARCH}/minio" /out/minio; \
+            cp "/go/bin/${TARGETOS}_${TARGETARCH}/mc" /out/mc; \
+        else \
+            cp /go/bin/minio /out/minio; \
+            cp /go/bin/mc /out/mc; \
+        fi
 
 FROM alpine:3.23
 
