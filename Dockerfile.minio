@@ -5,7 +5,7 @@ ARG TARGETARCH
 ARG MINIO_COMMIT=7aac2a2c5b7c882e68c1ce017d8256be2feea27f
 ARG MC_COMMIT=77f82e18b5401a65958f1619df6ebb994634bd88
 
-ENV CGO_ENABLED=0
+ENV CGO_ENABLED=0 GOBIN=/out
 
 RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} go install -trimpath -ldflags="-s -w" "github.com/minio/minio@${MINIO_COMMIT}" \
     && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go install -trimpath -ldflags="-s -w" "github.com/minio/mc@${MC_COMMIT}"
@@ -24,8 +24,8 @@ LABEL org.opencontainers.image.title="MinIO Community with mc" \
 
 RUN apk upgrade --no-cache && apk add --no-cache ca-certificates tzdata
 
-COPY --from=build /go/bin/minio /usr/local/bin/minio
-COPY --from=build /go/bin/mc /usr/local/bin/mc
+COPY --from=build /out/minio /usr/local/bin/minio
+COPY --from=build /out/mc /usr/local/bin/mc
 
 EXPOSE 9000 9001
 VOLUME ["/data"]
