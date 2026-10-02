@@ -86,7 +86,7 @@ NC='\033[0m' # No Color
 DEVICE=$1
 SERVER_URL=$2
 DEVICE_ID=$3
-PACKAGE_NAME="com.videocontrol.mediaplayer"
+PACKAGE_NAME="${MMRC_ANDROID_PACKAGE:-com.videocontrol.mediaplayer}"
 
 # ========================================
 # ВАЛИДАЦИЯ ПАРАМЕТРОВ

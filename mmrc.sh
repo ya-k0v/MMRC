@@ -240,7 +240,7 @@ cmd_reset_password() {
 ══════════════════════════════════════════
 "
 
-    read -p "Reset admin password to 'admin123'? [y/N]: " confirm < /dev/tty
+    read -p "Generate a new random admin password? [y/N]: " confirm < /dev/tty
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
         info "Aborted"
         exit 0
@@ -256,39 +256,58 @@ cmd_reset_password() {
         # В HA-режиме сервис mmrc отключён (профиль ha-disabled) — используем реплику
         EXEC_SVC="mmrc-replica"
     fi
+    EXEC_STATUS=0
     RESULT=$($COMPOSE $COMPOSE_HA $PROFILES exec -T "$EXEC_SVC" node --input-type=module -e "
-        import { getDatabase, getDriverType } from './src/database/database.js';
-        import bcrypt from 'bcrypt';
+import path from 'node:path';
+import { initDatabase, getDatabase, getDriverType, closeDatabase } from './src/database/database.js';
+import crypto from 'node:crypto';
+import bcrypt from 'bcrypt';
 
-        const db = getDatabase();
-        const isPg = getDriverType() === 'postgres';
-        const hash = bcrypt.hashSync('admin123', 10);
+const requestedPg = (process.env.DB_TYPE || 'sqlite').trim().toLowerCase() === 'postgres';
+try {
+    await initDatabase(requestedPg ? undefined : path.join(process.env.MMRC_DATA_DIR || '/app/data', 'db', 'main.db'));
+    const databaseType = getDriverType();
+    console.log('DB:' + (databaseType === 'postgres' ? 'PostgreSQL' : 'SQLite'));
+    const db = getDatabase();
+    const user = await db.get(
+        'SELECT id, username FROM users WHERE role = ? AND auth_source = ? ORDER BY id LIMIT 1',
+        ['admin', 'local']
+    );
 
-        const user = isPg
-          ? await db.get('SELECT id, username FROM users WHERE id = 1')
-          : db.prepare('SELECT id, username FROM users WHERE id = 1').get();
-
-        if (user) {
-          if (isPg) {
-            await db.run('UPDATE users SET password_hash = \$1 WHERE id = \$2', [hash, 1]);
-          } else {
-            db.prepare('UPDATE users SET password_hash = ? WHERE id = 1').run(hash);
-          }
-          console.log('USER:' + user.username);
+    if (!user) {
+        console.log('ERROR:Local admin account not found');
+        process.exitCode = 1;
+    } else {
+        const newPassword = crypto.randomBytes(24).toString('base64url');
+        const hash = await bcrypt.hash(newPassword, 12);
+        const result = await db.run('UPDATE users SET password_hash = ? WHERE id = ?', [hash, user.id]);
+        if (result.changes !== 1) {
+            console.log('ERROR:Admin password was not updated');
+            process.exitCode = 1;
         } else {
-          console.log('ERROR:User ID 1 not found');
+            console.log('USER:' + user.username);
+            console.log('PASSWORD:' + newPassword);
         }
-        process.exit(0);
-    " 2>&1)
+    }
+} finally {
+    await closeDatabase();
+}
+" 2>&1) || EXEC_STATUS=$?
 
-    if echo "$RESULT" | grep -q "^USER:"; then
+    DB_TYPE_RESULT=$(echo "$RESULT" | sed -n 's/^DB://p' | sed -n '1p')
+    [ -n "$DB_TYPE_RESULT" ] && info "База данных: $DB_TYPE_RESULT"
+
+    if [ "$EXEC_STATUS" -eq 0 ] && echo "$RESULT" | grep -q "^USER:" && echo "$RESULT" | grep -q "^PASSWORD:"; then
         USERNAME=$(echo "$RESULT" | grep "^USER:" | sed 's/USER://')
-        success "Логин: $USERNAME - пароль сброшен на admin123"
+        NEW_PASSWORD=$(echo "$RESULT" | sed -n 's/^PASSWORD://p' | sed -n '1p')
+        success "Логин: $USERNAME"
+        success "Новый пароль: $NEW_PASSWORD"
     elif echo "$RESULT" | grep -q "^ERROR:"; then
         ERROR=$(echo "$RESULT" | grep "^ERROR:" | sed 's/ERROR://')
         error "$ERROR"
     else
-        warn "Could not reset password"
+        error "Could not reset password (exit code: $EXEC_STATUS)"
+        [ -n "$RESULT" ] && printf '%s\n' "$RESULT" | tail -n 5
     fi
 }
 
