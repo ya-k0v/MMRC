@@ -415,6 +415,8 @@ S3_FORCE_PATH_STYLE=true
 # MinIO root credentials
 MINIO_ROOT_USER=${S3_ACCESS_KEY:-minioadmin}
 MINIO_ROOT_PASSWORD=${S3_SECRET_KEY:-minioadmin}
+MINIO_IMAGE=${MINIO_IMAGE:-pingwin1900/mmrc:minio-$MMRC_DOCKER_TAG}
+MINIO_MC_IMAGE=${MINIO_MC_IMAGE:-pingwin1900/mmrc:minio-$MMRC_DOCKER_TAG}
 
 # LDAP (optional)
 LDAP_URL=

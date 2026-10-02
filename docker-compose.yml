@@ -215,7 +215,7 @@ services:
       - mmrc-network
 
   minio:
-    image: quay.io/minio/minio:latest
+    image: ${MINIO_IMAGE:-pingwin1900/mmrc:minio-${DOCKER_IMAGE_TAG:-v340}}
     profiles: [s3]
     container_name: mmrc-minio
     restart: unless-stopped
@@ -238,19 +238,18 @@ services:
       - mmrc-network
 
   minio-setup:
-    image: quay.io/minio/mc:latest
+    image: ${MINIO_MC_IMAGE:-pingwin1900/mmrc:minio-${DOCKER_IMAGE_TAG:-v340}}
     profiles: [s3]
     container_name: mmrc-minio-setup
     depends_on:
       minio:
         condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://mmrc-minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin};
-      mc mb local/${S3_BUCKET:-mmrc} --ignore-existing;
-      mc anonymous set download local/${S3_BUCKET:-mmrc};
-      exit 0;
-      "
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set local http://mmrc-minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin};
+        mc mb local/${S3_BUCKET:-mmrc} --ignore-existing;
+        mc anonymous set download local/${S3_BUCKET:-mmrc};
     networks:
       - mmrc-network
 
