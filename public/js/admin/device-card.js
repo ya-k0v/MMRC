@@ -6,7 +6,47 @@ import { adminFetch } from './auth.js';
 import { clearDetail, clearFilesPane } from './ui-helpers.js';
 import { setupUploadUI } from './upload-ui.js';
 
-export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, renderTVList, openDevice, renderFilesPane, socket) {
+export function buildDevicePreviewUrl(device) {
+  if (!device || !device.device_id) return '';
+  const did = encodeURIComponent(device.device_id);
+  let url = `/player-videojs.html?device_id=${did}&preview=1&muted=1`;
+  const cur = device.current;
+  if (cur && cur.file) {
+    url += `&file=${encodeURIComponent(cur.file)}`;
+    if (cur.type) url += `&type=${encodeURIComponent(cur.type)}`;
+    if (typeof cur.currentTime === 'number' && cur.currentTime > 0) {
+      url += `&startTime=${encodeURIComponent(cur.currentTime)}`;
+    }
+    if (typeof cur.page === 'number' && cur.page > 0) {
+      url += `&page=${encodeURIComponent(cur.page)}`;
+    }
+  }
+  return url;
+}
+
+/**
+ * Сигнатура данных, которые карточка устройства выводит как текст.
+ * Если сигнатура не изменилась, карточку пересоздавать не нужно:
+ * это сбрасывало бы очередь загрузки и состояние yt-dlp в setupUploadUI.
+ * Состояние воспроизведения (current) сюда не входит намеренно — оно влияет
+ * только на URL превью, который обновляется точечно.
+ */
+export function deviceCardSignature(d, readyDevices, nodeNames = {}) {
+  if (!d) return '';
+  const name = d.name || nodeNames[d.device_id] || d.device_id;
+  return [
+    d.device_id,
+    name,
+    d.platform || '',
+    d.deviceType || '',
+    d.ipAddress || '',
+    d.appVersion || '',
+    d.files?.length ?? 0,
+    readyDevices && readyDevices.has(d.device_id) ? '1' : '0'
+  ].join('\u0001');
+}
+
+export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, renderTVList, openDevice, renderFilesPane, socket, focusDeviceInList) {
   const did = encodeURIComponent(d.device_id);
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const isAdmin = user.role === 'admin';
@@ -210,22 +250,6 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   
   card.appendChild(metaDiv);
   
-  function buildDevicePreviewUrl(device) {
-    let url = `/player-videojs.html?device_id=${did}&preview=1&muted=1`;
-    const cur = device.current;
-    if (cur && cur.file) {
-      url += `&file=${encodeURIComponent(cur.file)}`;
-      if (cur.type) url += `&type=${encodeURIComponent(cur.type)}`;
-      if (typeof cur.currentTime === 'number' && cur.currentTime > 0) {
-        url += `&startTime=${encodeURIComponent(cur.currentTime)}`;
-      }
-      if (typeof cur.page === 'number' && cur.page > 0) {
-        url += `&page=${encodeURIComponent(cur.page)}`;
-      }
-    }
-    return url;
-  }
-
   // Превью контейнер
   const previewContainer = document.createElement('div');
   previewContainer.className = 'preview-container';
@@ -239,6 +263,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   previewHolderCompact.style.cssText = 'width:100%; height:100%; border-radius:var(--radius-md); overflow:hidden;';
   const iframeCompact = document.createElement('iframe');
   iframeCompact.src = buildDevicePreviewUrl(d);
+  iframeCompact.setAttribute('data-preview-url', buildDevicePreviewUrl(d));
   iframeCompact.style.cssText = 'width:100%; height:100%; border:0;';
   previewHolderCompact.appendChild(iframeCompact);
   previewCompact.appendChild(previewHolderCompact);
@@ -251,6 +276,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   previewHolderExpanded.style.cssText = 'width:100%; height:100%; border-radius:var(--radius-md); overflow:hidden';
   const iframeExpanded = document.createElement('iframe');
   iframeExpanded.src = buildDevicePreviewUrl(d);
+  iframeExpanded.setAttribute('data-preview-url', buildDevicePreviewUrl(d));
   iframeExpanded.style.cssText = 'width:100%; height:100%; border:0';
   previewHolderExpanded.appendChild(iframeExpanded);
   previewExpanded.appendChild(previewHolderExpanded);
@@ -442,6 +468,89 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   queue.className = 'queue';
   queue.style.cssText = 'display:none; margin-top:var(--space-sm); max-height:200px; overflow-y:auto; list-style:none; padding:0; margin-left:0;';
 
+  // Панель активной загрузки: сводный прогресс, скорость и ETA.
+  // Раньше у пользователя был только текстовый процент на каждой строке
+  // очереди, из-за чего загрузка выглядела как «просто бегущие числа».
+  const uploadProgressPanel = document.createElement('div');
+  uploadProgressPanel.className = 'uploadProgressPanel';
+  uploadProgressPanel.style.cssText = [
+    'display:none',
+    'margin-top:var(--space-sm)',
+    'padding:var(--space-sm)',
+    'border:1px solid var(--border-2)',
+    'border-radius:var(--radius-sm)',
+    'background:var(--panel-2)'
+  ].join(';');
+
+  const uploadProgressTop = document.createElement('div');
+  uploadProgressTop.style.cssText = 'display:flex; align-items:baseline; justify-content:space-between; gap:var(--space-sm); margin-bottom:6px;';
+
+  // Типографика задана явно, а не через общий .meta: у этого блока своя
+  // роль (это заголовок состояния), и наследование размера серой подписи
+  // делало его нечитаемым.
+  const uploadProgressLabel = document.createElement('div');
+  uploadProgressLabel.className = 'uploadProgressLabel';
+  uploadProgressLabel.style.cssText = [
+    'font-size:var(--font-size-sm)',
+    'font-weight:var(--font-weight-semibold)',
+    'color:var(--text)',
+    'overflow:hidden',
+    'text-overflow:ellipsis',
+    'white-space:nowrap'
+  ].join(';');
+  uploadProgressLabel.textContent = 'Подготовка...';
+
+  const uploadProgressStats = document.createElement('div');
+  uploadProgressStats.className = 'uploadProgressStats';
+  uploadProgressStats.style.cssText = [
+    'font-size:var(--font-size-xs)',
+    'color:var(--muted)',
+    'white-space:nowrap',
+    'font-variant-numeric:tabular-nums',
+    'flex-shrink:0'
+  ].join(';');
+  uploadProgressStats.textContent = '0%';
+
+  uploadProgressTop.appendChild(uploadProgressLabel);
+  uploadProgressTop.appendChild(uploadProgressStats);
+
+  // Полоса двухтоновая: янтарная часть — проверка (MD5 и поиск дубликата),
+  // синяя — собственно передача. Одна сплошная полоса не объясняла бы,
+  // почему счётчик скачком уходит с 0 на 25%.
+  const uploadProgressBar = document.createElement('div');
+  uploadProgressBar.className = 'uploadProgressBar';
+  uploadProgressBar.style.cssText = [
+    'display:flex',
+    'height:6px',
+    'border-radius:3px',
+    'background:var(--border-2)',
+    'overflow:hidden'
+  ].join(';');
+
+  const uploadProgressCheckFill = document.createElement('div');
+  uploadProgressCheckFill.className = 'uploadProgressCheckFill';
+  uploadProgressCheckFill.style.cssText = [
+    'height:100%',
+    'width:0%',
+    'background:var(--warning)',
+    'transition:width 0.25s ease'
+  ].join(';');
+
+  const uploadProgressSendFill = document.createElement('div');
+  uploadProgressSendFill.className = 'uploadProgressSendFill';
+  uploadProgressSendFill.style.cssText = [
+    'height:100%',
+    'width:0%',
+    'background:var(--brand)',
+    'transition:width 0.25s ease'
+  ].join(';');
+
+  uploadProgressBar.appendChild(uploadProgressCheckFill);
+  uploadProgressBar.appendChild(uploadProgressSendFill);
+
+  uploadProgressPanel.appendChild(uploadProgressTop);
+  uploadProgressPanel.appendChild(uploadProgressBar);
+
   const ytDownloadStatus = document.createElement('div');
   ytDownloadStatus.className = 'ytDownloadStatus';
   ytDownloadStatus.style.cssText = 'display:none; margin-top:var(--space-sm); padding:var(--space-sm); border:1px solid var(--border-2); border-radius:var(--radius-sm); background:var(--panel-2);';
@@ -465,6 +574,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   uploadBox.appendChild(uploadHeader);
   uploadBox.appendChild(uploadButtons);
   uploadBox.appendChild(dropZone);
+  uploadBox.appendChild(uploadProgressPanel);
   uploadBox.appendChild(queue);
   uploadBox.appendChild(ytDownloadStatus);
   card.appendChild(uploadBox);
@@ -602,7 +712,10 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
           body: JSON.stringify({ name: newName })
         });
         await loadDevices();
-        renderTVList();
+        // ИСПРАВЛЕНО: после переименования сортировка по имени может увести
+        // устройство на другую страницу списка — показываем его, а не страницу 1.
+        if (focusDeviceInList) focusDeviceInList(d.device_id);
+        else renderTVList();
         openDevice(d.device_id);
       } catch (err) {
         console.error('Failed to rename device:', err);

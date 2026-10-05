@@ -1,0 +1,396 @@
+/**
+ * Синхронизация между локальным диском и S3-совместимым хранилищем.
+ *
+ * Схема хранения: источником истины является S3. Локальный диск используется
+ * только как временная рабочая область: multer пишет в неё файл, мы его
+ * проверяем/конвертируем и коммитим в S3, после чего локальная копия
+ * удаляется. Всё, что требует обработки (ffmpeg, ffprobe, конвертеры,
+ * трейлеры), материализуется из S3 во временную папку.
+ *
+ * Ключевой принцип: локальный файл НИКОГДА не считается успешно сохранённым,
+ * пока объект не появился в хранилище. Раньше ошибки загрузки глотались
+ * пустым catch, и файл молча оставался только на диске.
+ *
+ * @module storage/sync
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
+import { getDataRoot, getTempDir } from '../config/settings-manager.js';
+import { createModuleLogger } from '../utils/logger.js';
+
+const logger = createModuleLogger('storage');
+
+/**
+ * Является ли хранилище локальным (файловая система).
+ * Для локального бэкенда синхронизация не нужна — файл уже на месте.
+ */
+export function isLocalStorage(storage) {
+  if (!storage) return true;
+  if (storage.isLocal === true) return true;
+  const ctorName = storage.constructor?.name || '';
+  return ctorName === 'LocalStorage';
+}
+
+/**
+ * Преобразовать абсолютный путь в ключ хранилища.
+ * @throws {Error} если путь вне data root
+ */
+export function toStorageKey(absPath) {
+  const root = getDataRoot();
+  const rel = path.relative(root, path.resolve(String(absPath)));
+  if (rel.startsWith('..')) throw new Error('Path outside data root');
+  return rel;
+}
+
+/**
+ * Загрузить локальный файл в S3 и проверить результат.
+ *
+ * @param {string} localPath  абсолютный путь к файлу
+ * @param {object} storage    экземпляр StorageProvider
+ * @param {object} [options]
+ * @param {boolean} [options.force]  перезалить даже если размер совпадает
+ * @param {boolean} [options.removeLocal]  удалить локальную копию после успеха
+ * @returns {Promise<{synced: boolean, key?: string, reason?: string, size?: number|null}>}
+ */
+export async function syncFileToStorage(localPath, storage, options = {}) {
+  const { force = false, removeLocal = false, deviceId = null, fileName = null } = options;
+
+  if (!storage || isLocalStorage(storage)) {
+    return { synced: false, reason: 'local-storage' };
+  }
+
+  if (!localPath || !fs.existsSync(localPath)) {
+    return { synced: false, reason: 'file-missing' };
+  }
+
+  let key;
+  try {
+    key = toStorageKey(localPath);
+  } catch (error) {
+    return { synced: false, reason: 'path-outside-data-root', error: error.message };
+  }
+
+  const localSize = fs.statSync(localPath).size;
+
+  // Уже лежит в хранилище и размер совпадает — не перезаливаем
+  try {
+    if (!force && await storage.exists(key)) {
+      const stat = await storage.stat(key).catch(() => null);
+      if (stat && Number(stat.size) === localSize) {
+        const localRemoved = removeLocal ? await removeLocalCopy(localPath, key) : false;
+        return { synced: true, key, skipped: true, size: localSize, localRemoved };
+      }
+    }
+  } catch {
+    // Проверка не критична — если не удалось, просто зальём заново
+  }
+
+  await uploadStream(storage, key, localPath);
+
+  // КРИТИЧНО: «успешная» загрузка без объекта в хранилище — это ошибка.
+  // Без этой проверки файл молча оставался только на диске.
+  const stored = await storage.exists(key);
+  if (!stored) {
+    throw new Error(`Объект не появился в хранилище после загрузки: ${key}`);
+  }
+
+  const stat = await storage.stat(key).catch(() => null);
+
+  // КРИТИЧНО: существование объекта не доказывает целостность. Обрыв
+  // потока на середине (сеть, рестарт MinIO) оставляет в хранилище
+  // усечённый объект, который раньше молча помечался как успешная загрузка:
+  // видео на 2 ГБ «загружалось», а воспроизвести его было невозможно.
+  const storedSize = Number(stat?.size);
+  if (Number.isFinite(localSize) && Number.isFinite(storedSize) && storedSize !== localSize) {
+    throw new Error(
+      `Размер в хранилище не совпадает с локальным для ${key}: ` +
+      `локально ${localSize}, в хранилище ${storedSize}`
+    );
+  }
+
+  const localRemoved = removeLocal ? await removeLocalCopy(localPath, key) : false;
+
+  logger.info('[StorageSync] ✅ Файл загружен в S3', {
+    deviceId,
+    fileName,
+    key,
+    localSize,
+    storedSize: stat?.size ?? null,
+    localRemoved
+  });
+
+  return { synced: true, key, size: stat?.size ?? null, localRemoved };
+}
+
+/**
+ * Потоковая загрузка: память не растёт вместе с размером файла.
+ * Никогда не читать файл целиком через readFileSync — на видео в 2 ГБ это
+ * синхронное выделение памяти размером с файл, которое блокирует event loop.
+ */
+async function uploadStream(storage, key, localPath) {
+  const size = fs.statSync(localPath).size;
+
+  if (typeof storage.writeStream === 'function') {
+    await storage.writeStream(key, fs.createReadStream(localPath));
+    return;
+  }
+
+  if (typeof storage.uploadStream === 'function') {
+    await storage.uploadStream(key, fs.createReadStream(localPath), { size });
+    return;
+  }
+
+  // Фолбэк: write() понимает только Buffer. Полное чтение допустимо только
+  // для мелких файлов, дальше это вернётся к проблеме с памятью.
+  if (size <= 32 * 1024 * 1024) {
+    await storage.write(key, await fs.promises.readFile(localPath));
+    return;
+  }
+
+  throw new Error(
+    `Хранилище не поддерживает потоковую загрузку (${storage.constructor?.name || 'unknown'}), ` +
+    `файл ${size} байт не может быть загружен безопасно`
+  );
+}
+
+/**
+ * Скачать файл из хранилища в локальный путь.
+ * Нужно всему, что работает с файловой системой: ffmpeg, ffprobe,
+ * конвертеры, генератор трейлеров.
+ *
+ * @returns {Promise<string|null>} локальный путь, либо null если файл недоступен
+ */
+export async function materializeToLocal(localPath, storage, options = {}) {
+  const { deviceId = null, fileName = null, sourcePath = null } = options;
+
+  if (!localPath) return null;
+
+  // Если путь назначения совпадает с источником и файл уже на диске,
+  // материализация не нужна. При разных путях (скачивание во временную
+  // рабочую область) проверять нечего — файла там ещё нет.
+  const samePath = !sourcePath || path.resolve(sourcePath) === path.resolve(localPath);
+  if (samePath && fs.existsSync(localPath)) return localPath;
+
+  if (!storage || isLocalStorage(storage)) {
+    logger.warn('[StorageSync] Файл отсутствует локально и нет S3-хранилища', {
+      deviceId, fileName, localPath
+    });
+    return null;
+  }
+
+  // Ключ всегда строится от логического пути файла в хранилище, а не от
+  // назначения: скачивание во временную папку не должно искать объект
+  // по ключу самой временной папки.
+  let key;
+  try {
+    key = toStorageKey(sourcePath || localPath);
+  } catch (error) {
+    logger.error('[StorageSync] Невозможно построить ключ хранилища', {
+      deviceId, fileName, localPath, error: error.message
+    });
+    return null;
+  }
+
+  const expectedStat = await storage.stat(key).catch(() => null);
+  if (!expectedStat || !(await storage.exists(key).catch(() => false))) {
+    logger.error('[StorageSync] Файл не найден в хранилище', { deviceId, fileName, key });
+    return null;
+  }
+
+  fs.mkdirSync(path.dirname(localPath), { recursive: true });
+
+  // Качаем во временный файл рядом и переименовываем только после успеха.
+  // Прямая запись в localPath при обрыве сети оставила бы на диске
+  // усечённый файл, который затем молча отдавался бы устройству как рабочий.
+  const partPath = `${localPath}.${process.pid}.part`;
+
+  try {
+    const readStream = await storage.createReadStream(key);
+    await pipeline(readStream, fs.createWriteStream(partPath));
+
+    const expectedSize = Number(expectedStat.size);
+    const actualSize = fs.statSync(partPath).size;
+    if (Number.isFinite(expectedSize) && expectedSize > 0 && actualSize !== expectedSize) {
+      throw new Error(`Размер не совпал после скачивания: ожидалось ${expectedSize}, получено ${actualSize}`);
+    }
+
+    fs.renameSync(partPath, localPath);
+  } catch (error) {
+    try {
+      if (fs.existsSync(partPath)) fs.unlinkSync(partPath);
+    } catch {
+      // Частичный файл мог исчезнуть сам
+    }
+    logger.error('[StorageSync] ❌ Не удалось скачать файл из хранилища', {
+      deviceId, fileName, key, error: error.message
+    });
+    return null;
+  }
+
+  logger.info('[StorageSync] ⬇️ Файл скачан из S3 для обработки', {
+    deviceId,
+    fileName,
+    key,
+    sizeMB: (fs.statSync(localPath).size / 1024 / 1024).toFixed(2)
+  });
+
+  return localPath;
+}
+
+/**
+ * Удалить локальную копию файла после успешного коммита в S3.
+ * Ошибка удаления не критична: файл уже в хранилище, чтение сработает
+ * через storage.
+ */
+export async function removeLocalCopy(localPath, key = null) {
+  try {
+    if (localPath && fs.existsSync(localPath)) {
+      fs.unlinkSync(localPath);
+      logger.debug('[StorageSync] Локальная копия удалена', { key, localPath });
+      return true;
+    }
+  } catch (error) {
+    logger.warn('[StorageSync] Не удалось удалить локальную копию', {
+      key, localPath, error: error.message
+    });
+  }
+  return false;
+}
+
+/**
+ * Путь во временной рабочей области (вне devices/, чтобы не попасть
+ * в список файлов и не конфликтовать с содержимым).
+ */
+export function createScratchPath(prefix, fileName = '') {
+  const dir = path.join(getTempDir(), 'scratch', prefix);
+  fs.mkdirSync(dir, { recursive: true });
+  const base = path.basename(String(fileName || 'file'));
+  return path.join(dir, `${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${base}`);
+}
+
+/**
+ * Очистить временную рабочую область от старых файлов.
+ * Вызывается при старте: после падения оптимизации 2 ГБ мусор мог остаться.
+ */
+export function cleanupScratchDir(maxAgeMs = 6 * 60 * 60 * 1000) {
+  const dir = path.join(getTempDir(), 'scratch');
+  if (!fs.existsSync(dir)) return { removed: 0 };
+
+  let removed = 0;
+  const cutoff = Date.now() - maxAgeMs;
+
+  for (const subDir of fs.readdirSync(dir, { withFileTypes: true })) {
+    const subPath = path.join(dir, subDir.name);
+    if (!subDir.isDirectory()) continue;
+
+    for (const entry of fs.readdirSync(subPath, { withFileTypes: true })) {
+      const entryPath = path.join(subPath, entry.name);
+      try {
+        const stat = fs.statSync(entryPath);
+        if (stat.mtimeMs < cutoff) {
+          if (entry.isDirectory()) {
+            fs.rmSync(entryPath, { recursive: true, force: true });
+          } else {
+            fs.unlinkSync(entryPath);
+          }
+          removed++;
+        }
+      } catch {
+        // Файл мог исчезнуть между чтением каталога и удалением
+      }
+    }
+  }
+
+  if (removed > 0) {
+    logger.info('[StorageSync] 🧹 Очищена временная рабочая область', { removed });
+  }
+  return { removed };
+}
+/**
+ * Рекурсивно закоммитить содержимое папки в хранилище.
+ *
+ * Нужно для результатов конвертации: PDF/PPTX/ZIP превращаются в папку
+ * со слайдами, и без этого в S3 попадал бы только исходник, а сами
+ * изображения оставались бы только на диске.
+ *
+ * @param {string} folderPath  абсолютный путь к папке
+ * @param {object} storage  экземпляр StorageProvider
+ * @param {object} [options]
+ * @param {boolean} [options.removeLocal]  удалить локальные копии после загрузки
+ * @param {number} [options.maxFiles]  предохранитель от бесконечного обхода
+ * @returns {Promise<{synced: boolean, count?: number, failed: string[], reason?: string}>}
+ */
+export async function commitFolderToStorage(folderPath, storage, options = {}) {
+  const { removeLocal = false, maxFiles = 5000 } = options;
+
+  if (!storage || isLocalStorage(storage)) {
+    return { synced: false, count: 0, failed: [], reason: 'local-storage' };
+  }
+
+  if (!folderPath || !fs.existsSync(folderPath)) {
+    return { synced: false, count: 0, failed: [], reason: 'folder-missing' };
+  }
+
+  const failed = [];
+  let count = 0;
+
+  const walk = async (dir) => {
+    if (count >= maxFiles) return;
+
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (count >= maxFiles) return;
+
+      const entryPath = path.join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        await walk(entryPath);
+        continue;
+      }
+
+      if (!entry.isFile()) continue;
+
+      try {
+        const result = await syncFileToStorage(entryPath, storage, {
+          force: true,
+          removeLocal
+        });
+        if (result.synced) {
+          count++;
+        } else {
+          failed.push(entryPath);
+        }
+      } catch (error) {
+        failed.push(entryPath);
+        logger.error('[StorageSync] ❌ Не удалось загрузить файл из папки', {
+          entryPath, error: error.message
+        });
+      }
+    }
+  };
+
+  try {
+    await walk(folderPath);
+  } catch (error) {
+    logger.error('[StorageSync] ❌ Ошибка обхода папки', { folderPath, error: error.message });
+    return { synced: false, count, failed, reason: 'walk-failed' };
+  }
+
+  // Удаляем саму папку, только если в ней больше не осталось файлов
+  if (removeLocal && count > 0 && failed.length === 0) {
+    try {
+      fs.rmSync(folderPath, { recursive: true, force: true });
+      logger.info('[StorageSync] 🗑️ Локальная папка удалена после коммита', { folderPath, count });
+    } catch (error) {
+      logger.warn('[StorageSync] Не удалось удалить локальную папку', {
+        folderPath, error: error.message
+      });
+    }
+  }
+
+  logger.info('[StorageSync] ✅ Папка закоммичена в S3', { folderPath, count, failed: failed.length });
+
+  return { synced: failed.length === 0, count, failed };
+}

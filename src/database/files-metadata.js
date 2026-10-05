@@ -11,6 +11,8 @@ import { createModuleLogger, logFile } from '../utils/logger.js';
 const logger = createModuleLogger('file');
 import { isRetryableDatabaseError } from '../utils/retry.js';
 import { STATIC_CONTENT_TYPES } from '../config/file-types.js';
+import { getCurrentStorage } from '../storage/current.js';
+import { isLocalStorage, toStorageKey } from '../storage/sync.js';
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -903,7 +905,9 @@ export async function getAllFilePaths() {
  * @param {boolean} options.dryRun - Если true, только логирует, не удаляет (по умолчанию false)
  * @returns {Promise<Object>} - Статистика проверки: { checked, missing, deleted, errors }
  */
-export async function cleanupMissingFiles({ deviceId = null, dryRun = false } = {}) {
+export async function cleanupMissingFiles({ deviceId = null, dryRun = false, storage = null } = {}) {
+
+  const activeStorage = storage || getCurrentStorage();
   try {
     const db = getDatabase();
     
@@ -948,9 +952,28 @@ export async function cleanupMissingFiles({ deviceId = null, dryRun = false } = 
           continue;
         }
         
-        // Проверяем существование файла на диске
-        const exists = fs.existsSync(record.file_path);
-        
+        // Проверяем существование файла. S3 — основное хранилище, поэтому
+        // проверка только по диску считала бы КАЖДЫЙ успешно загруженный
+        // файл отсутствующим и удаляла его метаданные: один клик в админке
+        // очищал список всей библиотеки, хотя объекты лежали в бакете.
+        let exists = fs.existsSync(record.file_path);
+
+        if (!exists && activeStorage && !isLocalStorage(activeStorage)) {
+          try {
+            if (await activeStorage.exists(toStorageKey(record.file_path))) {
+              exists = true;
+            }
+          } catch {
+            // Хранилище недоступно — считаем файл существующим.
+            // Иначе кратковременный обрыв сети удалил бы метаданные.
+            exists = true;
+            logger.warn('[Cleanup] Storage unavailable, assuming file exists', {
+              deviceId: record.device_id,
+              safeName: record.safe_name
+            });
+          }
+        }
+
         if (!exists) {
           missing++;
           missingFiles.push({
@@ -961,7 +984,7 @@ export async function cleanupMissingFiles({ deviceId = null, dryRun = false } = 
             contentType: record.content_type
           });
           
-          logger.warn('[Cleanup] File not found on disk', {
+          logger.warn('[Cleanup] File not found in disk or storage', {
             deviceId: record.device_id,
             safeName: record.safe_name,
             originalName: record.original_name,

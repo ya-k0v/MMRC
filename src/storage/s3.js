@@ -76,6 +76,77 @@ export class S3Storage extends StorageProvider {
     }
   }
 
+  /**
+   * Потоковая загрузка — память не растёт вместе с размером файла.
+   * Используется при синхронизации больших видео после оптимизации,
+   * где обычный write() требовал бы держать весь файл в памяти.
+   */
+  async writeStream(key, stream) {
+    if (libStorage) {
+      const parallelUpload = new libStorage.Upload({
+        client: this.#client,
+        params: {
+          Bucket: this.#bucket,
+          Key: this._key(key),
+          Body: stream
+        },
+        queueSize: 4,
+        partSize: 5 * 1024 * 1024
+      });
+      await parallelUpload.done();
+      return;
+    }
+
+    // Без lib-storage читаем поток частями в multipart-загрузку вручную
+    const partSize = 5 * 1024 * 1024;
+    const uploadId = (await this.#client.send(new S3.CreateMultipartUploadCommand({
+      Bucket: this.#bucket,
+      Key: this._key(key)
+    }))).UploadId;
+
+    const parts = [];
+    let partNumber = 1;
+    let buffer = Buffer.alloc(0);
+    const source = typeof stream?.pipe === 'function' ? stream : stream;
+    const chunks = source[Symbol.asyncIterator]
+      ? source[Symbol.asyncIterator]()
+      : (async function* () { yield* source; })();
+
+    for await (const chunk of chunks) {
+      buffer = buffer.length ? Buffer.concat([buffer, chunk]) : chunk;
+      while (buffer.length >= partSize) {
+        const part = buffer.subarray(0, partSize);
+        buffer = buffer.subarray(partSize);
+        const uploaded = await this.#client.send(new S3.UploadPartCommand({
+          Bucket: this.#bucket,
+          Key: this._key(key),
+          UploadId: uploadId,
+          PartNumber: partNumber++,
+          Body: part
+        }));
+        parts.push({ ETag: uploaded.ETag, PartNumber: partNumber - 1 });
+      }
+    }
+
+    if (buffer.length || parts.length === 0) {
+      const uploaded = await this.#client.send(new S3.UploadPartCommand({
+        Bucket: this.#bucket,
+        Key: this._key(key),
+        UploadId: uploadId,
+        PartNumber: partNumber++,
+        Body: buffer
+      }));
+      parts.push({ ETag: uploaded.ETag, PartNumber: partNumber - 1 });
+    }
+
+    await this.#client.send(new S3.CompleteMultipartUploadCommand({
+      Bucket: this.#bucket,
+      Key: this._key(key),
+      UploadId: uploadId,
+      MultipartUpload: { Parts: parts }
+    }));
+  }
+
   async delete(key) {
     const cmd = new S3.DeleteObjectCommand({ Bucket: this.#bucket, Key: this._key(key) });
     await this.#client.send(cmd);

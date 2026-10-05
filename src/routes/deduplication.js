@@ -14,6 +14,8 @@ import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import { createModuleLogger, logFile } from '../utils/logger.js';
 const logger = createModuleLogger('file');
 import { VIDEO_EXTENSIONS } from '../config/file-types.js';
+import { getCurrentStorage } from '../storage/current.js';
+import { isLocalStorage, toStorageKey } from '../storage/sync.js';
 
 const router = express.Router();
 
@@ -139,17 +141,43 @@ export function createDeduplicationRouter(deps) {
         return res.status(404).json({ error: 'Метаданные исходного файла не найдены' });
       }
       
-      // НОВОЕ: Проверяем существование физического файла
-      if (!fs.existsSync(sourceMetadata.file_path)) {
-        logFile('error', 'Physical file missing for metadata', {
+      // Проверяем существование файла с учётом S3. Раньше проверка шла только
+      // по диску, поэтому мгновенное копирование было недоступно для любого
+      // закоммиченного файла: возвращался 404 «Исходный файл не найден».
+      const storage = getCurrentStorage();
+      let sourceAvailable = fs.existsSync(sourceMetadata.file_path);
+
+      if (!sourceAvailable && storage && !isLocalStorage(storage)) {
+        try {
+          sourceAvailable = await storage.exists(toStorageKey(sourceMetadata.file_path));
+        } catch {
+          sourceAvailable = false;
+        }
+      }
+
+      if (!sourceAvailable) {
+        logFile('error', 'Source file missing in disk or storage', {
           sourceDevice,
           sourceFile,
           expectedPath: sourceMetadata.file_path
         });
         return res.status(404).json({ error: 'Исходный файл не найден' });
       }
-      
-      const stats = fs.statSync(sourceMetadata.file_path);
+
+      // mtime берём из хранилища: локальной копии может не быть вообще,
+      // и fs.statSync бросил бы исключение (500) вместо успешной операции
+      let mtimeMs = Date.now();
+      const localStat = fs.existsSync(sourceMetadata.file_path)
+        ? fs.statSync(sourceMetadata.file_path)
+        : null;
+      if (localStat) {
+        mtimeMs = localStat.mtimeMs;
+      } else if (storage && !isLocalStorage(storage)) {
+        const storageStat = await storage.stat(toStorageKey(sourceMetadata.file_path)).catch(() => null);
+        if (storageStat?.lastModified) {
+          mtimeMs = new Date(storageStat.lastModified).getTime();
+        }
+      }
       
       logFile('info', '⚡ Instant copy via deduplication (DB only)', {
         sourceDevice,
@@ -184,7 +212,7 @@ export function createDeduplicationRouter(deps) {
           bitrate: sourceMetadata.audio_bitrate,
           channels: sourceMetadata.audio_channels
         },
-        fileMtime: stats.mtimeMs,
+        fileMtime: mtimeMs,
         uploadedBy: sourceMetadata.uploaded_by || null
       });
       

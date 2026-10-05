@@ -21,6 +21,13 @@ export class LocalStorage extends StorageProvider {
     return this.#root;
   }
 
+  // Файлы уже лежат на диске по тому же пути, что и ключ хранилища.
+  // Признак используется, чтобы не выполнять бессмысленную
+  // синхронизацию «файла с самим собой» после обработки.
+  get isLocal() {
+    return true;
+  }
+
   _resolve(key) {
     const resolved = path.resolve(this.#root, String(key));
     if (!resolved.startsWith(this.#root)) {

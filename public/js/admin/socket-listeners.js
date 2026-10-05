@@ -3,7 +3,7 @@
  * @module admin/socket-listeners
  */
 
-import { debounce } from '../shared/socket-base.js';
+import { debounceAsync } from '../shared/socket-base.js';
 
 /**
  * Настраивает все Socket.IO обработчики для админки
@@ -26,8 +26,10 @@ export function setupSocketListeners(socket, callbacks) {
     onVolumeUpdate
   } = callbacks;
   
-  // devices/updated - Обновление списка устройств
-  socket.on('devices/updated', debounce(async () => {
+  // devices/updated - Обновление списка устройств.
+  // Обработчик асинхронный (запрос /api/devices + перерисовка панелей),
+  // поэтому debounceAsync не даёт запустить несколько копий одновременно.
+  socket.on('devices/updated', debounceAsync(async () => {
     if (onDevicesUpdated) await onDevicesUpdated();
   }, 150));
   
@@ -58,7 +60,7 @@ export function setupSocketListeners(socket, callbacks) {
   });
   
   // preview/refresh - Обновить превью
-  socket.on('preview/refresh', debounce(async () => {
+  socket.on('preview/refresh', debounceAsync(async () => {
     if (onPreviewRefresh) await onPreviewRefresh();
   }, 150));
   

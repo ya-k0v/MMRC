@@ -1,7 +1,7 @@
 // Service Worker для MMRC - Production Ready
-// Версия 16 - Migrated from /content/ to /api/files/resolve/ caching
+// Версия 17 - принудительное обновление статики после правок прогресс-баров
 
-const VERSION = 'v16';
+const VERSION = 'v19';
 const CACHE_NAME = `mmrc-static-${VERSION}`;
 const CONTENT_CACHE_NAME = `mmrc-content-${VERSION}`;
 

@@ -15,6 +15,7 @@ import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('resolver');
 import { spawnFfmpeg } from '../utils/docker-ffmpeg.js';
 import { getCurrentStorage } from '../storage/current.js';
+import { isLocalStorage, toStorageKey } from '../storage/sync.js';
 
 const router = express.Router();
 
@@ -354,21 +355,47 @@ router.get('/trailer/:deviceId/*fileName', async (req, res) => {
   if (!md5) return res.status(404).send('Not found');
   
   // Ленивая загрузка модуля, чтобы избежать циклов
-  import('../video/trailer-generator.js').then(mod => {
+  import('../video/trailer-generator.js').then(async mod => {
     const { getTrailerPath, ensureTrailerForFile } = mod;
     const trailerPath = getTrailerPath(md5);
-    
-    if (fs.existsSync(trailerPath)) {
-      res.setHeader('Content-Type', 'video/mp4');
-      res.setHeader('Cache-Control', 'public, max-age=3600');
-      res.setHeader('X-Accel-Buffering', 'no');
-      return res.sendFile(trailerPath, (err) => {
-        if (err && !res.headersSent) res.status(500).end('send trailer failed');
-      });
+
+    const trailerMetadata = {
+      file_path: trailerPath,
+      file_size: null,
+      mime_type: 'video/mp4',
+      safe_name: `${md5}.mp4`,
+      md5_hash: md5
+    };
+
+    // Трейлер — такой же производный файл, как и сам ролик: после коммита
+    // в S3 его на диске может не быть вовсе. Поэтому сначала пробуем
+    // отдать из хранилища, и только потом — с диска.
+    const storage = getCurrentStorage();
+    if (storage && !isLocalStorage(storage)) {
+      try {
+        const trailerKey = toStorageKey(trailerPath);
+        if (await storage.exists(trailerKey)) {
+          return await sendFileFromStorage(
+            res, req, trailerMetadata,
+            { deviceId, fileName, kind: 'trailer' }, storage
+          );
+        }
+      } catch (error) {
+        logger.warn('[Resolver] Не удалось отдать трейлер из хранилища', {
+          deviceId, fileName, md5, error: error.message
+        });
+      }
     }
-    
+
+    if (fs.existsSync(trailerPath)) {
+      return sendFileFromDisk(
+        res, req, trailerMetadata,
+        { deviceId, fileName, kind: 'trailer' }
+      );
+    }
+
     // Если нет — запустить генерацию в фоне и сообщить что пока нет
-    ensureTrailerForFile(md5, metadata.file_path, { seconds: 10 }).catch(()=>{});
+    ensureTrailerForFile(md5, metadata.file_path, { seconds: 10, storage }).catch(()=>{});
     return res.status(404).send('trailer not ready');
   }).catch(() => res.status(500).send('internal error'));
 });

@@ -1,11 +1,21 @@
 // upload-ui.js - ПОЛНЫЙ код setupUploadUI из admin.js
 import { setXhrAuth, adminFetch } from './auth.js';
 import { calculateFileMD5 } from './md5-helper.js';
-import { getFolderIcon, getSuccessIcon } from '../shared/svg-icons.js';
+import { getFolderIcon, getSuccessIcon, getFileIcon, getFilmIcon } from '../shared/svg-icons.js';
 
 const YTDLP_ACTIVE_STATUSES = new Set(['queued', 'waiting_resources', 'preparing', 'downloading', 'processing']);
 const ytDownloadRuntimeByDevice = new Map();
 const ytDownloadUiByDevice = new Map();
+
+// Активные загрузки по всем устройствам.
+// Раньше window.isUploadingFiles перезаписывался на каждый вызов setupUploadUI
+// и закрывался на локальный isUploading последней отрисованной карточки,
+// поэтому гвард в admin.js проверял состояние чужого устройства.
+const uploadingDevices = new Set();
+
+if (typeof window !== 'undefined') {
+  window.isUploadingFiles = () => uploadingDevices.size > 0;
+}
 
 async function reportUploadNotification(payload = {}) {
   try {
@@ -243,6 +253,11 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
   const ytDownloadStatusText = card.querySelector('.ytDownloadStatusText');
   const ytDownloadProgressFill = card.querySelector('.ytDownloadProgressFill');
   const uploadStatusInline = card.querySelector('.uploadStatusInline');
+  const uploadProgressPanel = card.querySelector('.uploadProgressPanel');
+  const uploadProgressLabel = card.querySelector('.uploadProgressLabel');
+  const uploadProgressStats = card.querySelector('.uploadProgressStats');
+  const uploadProgressCheckFill = card.querySelector('.uploadProgressCheckFill');
+  const uploadProgressSendFill = card.querySelector('.uploadProgressSendFill');
   if (!fileInput || !pickBtn || !clearBtn || !uploadBtn || !queue) return;
 
   let pending = [];
@@ -253,9 +268,6 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
   const allowed = /\.(mp4|webm|ogg|mkv|mov|avi|mp3|wav|m4a|png|jpg|jpeg|gif|webp|pdf|pptx|zip)$/i;
   const imageExtensions = /\.(png|jpg|jpeg|gif|webp)$/i;
   const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024; // 5GB
-  
-  // Экспортируем функцию для проверки состояния загрузки
-  window.isUploadingFiles = () => isUploading;
 
   function trackUploadRequest(xhr) {
     activeUploadRequests.add(xhr);
@@ -327,7 +339,6 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
 
       Promise.resolve().then(async () => {
         await renderFilesPane(deviceId);
-        socket.emit('devices/updated');
       }).catch((error) => {
         console.error('[Upload] Ошибка обновления списка после yt-dlp:', error);
       });
@@ -341,76 +352,405 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
   }
   syncYtDownloadUI();
 
-  function renderQueue() {
-    if (!pending.length) { 
-      queue.innerHTML = ''; 
-      folderName = null;
-      return; 
+  // Состояния строки очереди. Цвет НЕ единственный носитель смысла:
+  // у каждого состояния есть своя подпись, иначе по одним оттенкам
+  // отличить «ошибка» от «копирование» невозможно.
+  const UPLOAD_STATES = {
+    queued:    { label: 'В очереди',     color: 'var(--muted)' },
+    checking:  { label: 'Проверка',      color: 'var(--warning)' },
+    duplicate: { label: 'Дубликат',      color: 'var(--brand)' },
+    sending:   { label: 'Отправка',      color: 'var(--brand)' },
+    done:      { label: 'Готово',        color: 'var(--success)' },
+    error:     { label: 'Ошибка',        color: 'var(--danger)' }
+  };
+
+  const BAR_BASE = 'height:100%; width:0%; transition:width 0.3s ease;';
+
+  // Строка очереди разделена на три смысловые зоны, чтобы «название»,
+  // «размер» и «проценты» больше не стояли одной строкой и не сливались:
+  //   глиф | имя + метаданные | колонка процентов
+  //     └── полоса под строкой на всю ширину
+  function buildQueueRow(deviceId, key, { name, sizeText, glyph, isFolder = false }) {
+    const li = document.createElement('li');
+    li.className = 'uploadRow';
+    li.style.cssText = [
+      'display:flex',
+      'flex-direction:column',
+      // .queue li в app.css оставляет align-items:center и
+      // justify-content:space-between от горизонтального списка. В
+      // колоночной раскладке align-items действует на ГОРИЗОНТАЛЬНУЮ ось,
+      // из-за чего всё в строке центрировалось по ширине. Обе оси задаём
+      // явно, чтобы правило .queue li не протекало в новую вёрстку.
+      'align-items:stretch',
+      'justify-content:flex-start',
+      'gap:6px',
+      'padding:8px 10px',
+      'border-radius:var(--radius-sm)',
+      'background:var(--panel-2)',
+      // Пунктир от .queue li не нужен: у строки своя карточка с фоном.
+      'border-bottom:none',
+      isFolder ? 'border:1px solid var(--border-2)' : ''
+    ].filter(Boolean).join(';');
+
+    const top = document.createElement('div');
+    top.style.cssText = 'display:flex; align-items:center; gap:10px; min-width:0;';
+
+    const glyphBox = document.createElement('span');
+    glyphBox.className = 'uploadRowGlyph';
+    glyphBox.id = `g_${deviceId}_${key}`;
+    glyphBox.style.cssText = [
+      'flex-shrink:0',
+      'width:32px',
+      'height:32px',
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'border-radius:var(--radius-sm)',
+      'background:var(--panel)',
+      'color:var(--muted)'
+    ].join(';');
+    glyphBox.insertAdjacentHTML('beforeend', glyph);
+    top.appendChild(glyphBox);
+
+    const main = document.createElement('div');
+    main.style.cssText = 'flex:1; min-width:0;';
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'uploadRowName';
+    nameEl.textContent = name;
+    nameEl.title = name;
+    nameEl.style.cssText = [
+      'font-size:var(--font-size-sm)',
+      'font-weight:var(--font-weight-medium)',
+      'color:var(--text)',
+      'overflow:hidden',
+      'text-overflow:ellipsis',
+      'white-space:nowrap',
+      'text-align:left'
+    ].join(';');
+
+    const metaEl = document.createElement('div');
+    metaEl.className = 'uploadRowMeta';
+    metaEl.id = `m_${deviceId}_${key}`;
+    metaEl.style.cssText = [
+      'font-size:var(--font-size-xs)',
+      'color:var(--muted)',
+      'overflow:hidden',
+      'text-overflow:ellipsis',
+      'white-space:nowrap',
+      'margin-top:2px'
+    ].join(';');
+
+    main.appendChild(nameEl);
+    main.appendChild(metaEl);
+    top.appendChild(main);
+
+    // Проценты живут в отдельной колонке фиксированной ширины с
+    // табличными цифрами: без этого цифры «прыгают» по горизонтали
+    // при каждом обновлении, и строка визуально дрожит.
+    const pctEl = document.createElement('span');
+    pctEl.className = 'uploadRowPct';
+    pctEl.id = `p_${deviceId}_${key}`;
+    pctEl.style.cssText = [
+      'flex-shrink:0',
+      'min-width:46px',
+      'text-align:right',
+      'font-size:var(--font-size-sm)',
+      'font-weight:var(--font-weight-semibold)',
+      'font-variant-numeric:tabular-nums',
+      'font-feature-settings:"tnum"',
+      'color:var(--text-2)'
+    ].join(';');
+    pctEl.textContent = '0%';
+    top.appendChild(pctEl);
+
+    const bar = document.createElement('div');
+    bar.className = 'uploadBar';
+    bar.style.cssText = 'height:3px; border-radius:2px; background:var(--border-2); overflow:hidden;';
+
+    const fill = document.createElement('div');
+    fill.className = 'uploadBarFill';
+    fill.id = `b_${deviceId}_${key}`;
+    fill.style.cssText = BAR_BASE;
+    bar.appendChild(fill);
+
+    li.appendChild(top);
+    li.appendChild(bar);
+
+    li.dataset.sizeText = sizeText || '';
+    li.dataset.state = 'queued';
+    return li;
+  }
+
+  function rowParts(deviceId, key) {
+    return {
+      li: queue.querySelector(`#g_${deviceId}_${key}`)?.closest('.uploadRow') || null,
+      pct: queue.querySelector(`#p_${deviceId}_${key}`),
+      fill: queue.querySelector(`#b_${deviceId}_${key}`),
+      meta: queue.querySelector(`#m_${deviceId}_${key}`),
+      glyph: queue.querySelector(`#g_${deviceId}_${key}`)
+    };
+  }
+
+  // Ширина полосы и цифры обновляются из одного места — разойтись они
+  // уже не могут.
+  function setUploadProgress(deviceId, key, percent) {
+    const { pct, fill } = rowParts(deviceId, key);
+    const value = Number(percent);
+    const safe = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0;
+    if (fill) fill.style.width = `${safe}%`;
+    if (pct) pct.textContent = `${Math.round(safe)}%`;
+    return safe;
+  }
+
+  // Состояние перекрашивает полосу и подпись. Подпись остаётся читаемой
+  // при любом цвете, а размер файла в метаданных не теряется.
+  function setUploadState(deviceId, key, stateName, note) {
+    const def = UPLOAD_STATES[stateName] || UPLOAD_STATES.queued;
+    const { li, fill, meta, glyph } = rowParts(deviceId, key);
+    if (fill) fill.style.background = def.color;
+    if (glyph) glyph.style.color = def.color;
+    if (meta) {
+      const size = li?.dataset.sizeText || '';
+      const parts = [size, def.label];
+      if (note) parts.push(note);
+      meta.textContent = parts.filter(Boolean).join(' · ');
     }
-    
-    // Используем DOM методы вместо innerHTML для безопасности
+    if (li) li.dataset.state = stateName;
+  }
+
+  // Галочка в глифе вместо процентов: у завершённого файла результат
+  // важнее числа, которое всё равно равно 100.
+  function markRowDone(deviceId, key, note) {
+    const { glyph, pct } = rowParts(deviceId, key);
+    setUploadState(deviceId, key, 'done', note);
+    if (glyph) {
+      glyph.innerHTML = '';
+      glyph.insertAdjacentHTML('beforeend', getSuccessIcon(16));
+      glyph.style.color = 'var(--success)';
+    }
+    if (pct) pct.textContent = '100%';
+  }
+
+  // ---- Сводный прогресс загрузки ---------------------------------------
+  // Отслеживает пофазовый вклад каждого файла, взвешенный по размеру,
+  // поэтому крупный файл двигает общую полосу заметнее мелких.
+  // Фазы одного файла: проверка (MD5 + поиск дубликата) 0-25%,
+  // передача 25-100%. Итог пересчитывается по байтам, а не по числу файлов.
+  const PHASE_CHECK_END = 25;
+
+  // Сколько байт уже учтено по каждому индексу: события onprogress иногда
+  // приходят повторно с тем же loaded, и без этого скорость завышалась бы.
+  const lastSentBytes = new Map();
+  let folderSentBytes = 0;
+
+  const overall = {
+    totalBytes: 0,
+    sizesByKey: new Map(),    // key -> размер в байтах
+    progressByFile: new Map(), // key -> 0..100
+    transferBytes: 0,
+    transferStartedAt: 0,
+    shown: 0,          // максимум показанного: полоса не откатывается
+    hideTimer: null,
+    completed: false
+  };
+
+  function overallPercent() {
+    if (!overall.totalBytes) return 0;
+    let acc = 0;
+    let bytes = 0;
+    for (const [key, size] of overall.sizesByKey) {
+      acc += size * (overall.progressByFile.get(key) || 0);
+      bytes += size;
+    }
+    if (!bytes) return 0;
+    return Math.max(0, Math.min(100, acc / bytes));
+  }
+
+  // Разбивка по фазам для двухтоновой полосы. Считается по той же
+  // байтовой формуле, что и общий процент, поэтому сегменты всегда
+  // в сумме дают ровно показанный итог.
+  function overallPhaseSplit() {
+    let checkAcc = 0;
+    let sendAcc = 0;
+    let bytes = 0;
+    for (const [key, size] of overall.sizesByKey) {
+      const p = overall.progressByFile.get(key) || 0;
+      checkAcc += size * Math.min(p, PHASE_CHECK_END);
+      sendAcc += size * Math.max(0, p - PHASE_CHECK_END);
+      bytes += size;
+    }
+    if (!bytes) return { check: 0, send: 0 };
+    return {
+      check: Math.max(0, Math.min(100, checkAcc / bytes)),
+      send: Math.max(0, Math.min(100, sendAcc / bytes))
+    };
+  }
+
+  // Русские единицы с пробелом и без скобок: интерфейс на русском,
+  // поэтому «12.4 МБ» вместо «(11.78 MB)».
+  function formatBytes(value) {
+    const bytes = Number(value);
+    if (!Number.isFinite(bytes) || bytes < 0) return '0 Б';
+    const units = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ'];
+    let unitIndex = 0;
+    let scaled = bytes;
+    while (scaled >= 1024 && unitIndex < units.length - 1) {
+      scaled /= 1024;
+      unitIndex += 1;
+    }
+    // Байты целые, остальные единицы — с одним знаком, но без хвоста «.0».
+    const digits = unitIndex === 0 ? 0 : (scaled < 10 ? 1 : 0);
+    return `${Number(scaled.toFixed(digits))} ${units[unitIndex]}`;
+  }
+
+  function renderOverall(labelText) {
+    // Проверяем сегменты, а не контейнер: контейнер существует всегда,
+    // а сегменты — то, что реально рисуется.
+    if (!uploadProgressPanel || (!uploadProgressCheckFill && !uploadProgressSendFill)) return;
+    // Полоса не должна «откатываться» назад: дубликат отдавал свои 100%
+    // ещё на фазе проверки, и следующий файл съедал их обратно — визуально
+    // это выглядело как зависание на 100%. Показываем максимум.
+    overall.shown = Math.max(overall.shown, overallPercent());
+    const percent = overall.shown;
+    const rounded = Math.round(percent);
+    const split = overallPhaseSplit();
+    if (uploadProgressCheckFill) uploadProgressCheckFill.style.width = `${split.check}%`;
+    if (uploadProgressSendFill) uploadProgressSendFill.style.width = `${split.send}%`;
+
+    if (labelText && uploadProgressLabel) uploadProgressLabel.textContent = labelText;
+
+    // Скорость считаем только по реально переданным байтам и только пока
+    // передача идёт, иначе среднее «размазывается» паузами проверки.
+    let stats = `${rounded}%`;
+    const elapsedMs = overall.transferStartedAt ? Date.now() - overall.transferStartedAt : 0;
+    if (overall.transferBytes > 0 && elapsedMs > 500) {
+      const bytesPerSec = overall.transferBytes / (elapsedMs / 1000);
+      if (bytesPerSec > 1) {
+        stats += ` · ${formatBytes(bytesPerSec)}/с`;
+        const remainingBytes = overall.totalBytes * (1 - percent / 100);
+        if (remainingBytes > 0) {
+          const etaSec = remainingBytes / bytesPerSec;
+          if (etaSec < 90) stats += ` · ~${Math.ceil(etaSec)} с`;
+          else stats += ` · ~${Math.ceil(etaSec / 60)} мин`;
+        }
+      }
+    }
+    if (uploadProgressStats) uploadProgressStats.textContent = stats;
+  }
+
+  function showOverall(labelText) {
+    if (!uploadProgressPanel) return;
+    uploadProgressPanel.style.display = 'block';
+    renderOverall(labelText);
+  }
+
+  function hideOverall() {
+    if (uploadProgressPanel) uploadProgressPanel.style.display = 'none';
+  }
+
+  function setFileOverall(key, percent) {
+    overall.progressByFile.set(key, Math.max(0, Math.min(100, percent)));
+    renderOverall();
+  }
+
+  // Загрузка папки идёт одним XHR, поэтому у события onprogress нет
+  // индекса файла. Раскладываем этот процент по всем ключам папки —
+  // иначе сводная полоса оставалась бы на 0%, пока строка папки идёт.
+  // Проверки дубликатов у папки нет, поэтому фаза отправки идёт с нуля.
+  function setFolderOverall(percent) {
+    for (const key of overall.sizesByKey.keys()) {
+      overall.progressByFile.set(key, Math.max(0, Math.min(100, percent)));
+    }
+  }
+
+  function accountTransferBytes(deltaBytes) {
+    if (!(deltaBytes > 0)) return;
+    if (!overall.transferStartedAt) overall.transferStartedAt = Date.now();
+    overall.transferBytes += deltaBytes;
+  }
+
+  function resetOverall(sizesByKey) {
+    overall.sizesByKey = sizesByKey instanceof Map ? sizesByKey : new Map();
+    overall.totalBytes = Array.from(overall.sizesByKey.values())
+      .reduce((sum, size) => sum + (Number(size) || 0), 0);
+    overall.progressByFile = new Map();
+    overall.transferBytes = 0;
+    overall.transferStartedAt = 0;
+    overall.shown = 0;
+    overall.completed = false;
+    if (overall.hideTimer) {
+      clearTimeout(overall.hideTimer);
+      overall.hideTimer = null;
+    }
+  }
+
+  function renderQueue() {
+    if (!pending.length) {
+      queue.innerHTML = '';
+      folderName = null;
+      return;
+    }
+
     queue.innerHTML = '';
-    
-    // Если это папка с изображениями, показываем специальное сообщение
+
+    // Папка показывается одной сводной строкой: в S3 она кладётся одним
+    // объектом, поэтому и прогресс у неё один, а не по каждому файлу.
     if (folderName) {
       const imageCount = pending.filter(f => imageExtensions.test(f.name)).length;
       const totalSize = pending.reduce((sum, f) => sum + f.size, 0);
-      
-      const li = document.createElement('li');
-      li.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:8px; background:var(--panel-2); border-radius:var(--radius-sm)';
-      
-      const leftSpan = document.createElement('span');
-      leftSpan.style.cssText = 'display:flex; align-items:center; gap:4px;';
-      // getFolderIcon возвращает безопасную SVG иконку из константы
-      // Используем временный контейнер для безопасного парсинга
-      const iconTemp = document.createElement('span');
-      iconTemp.insertAdjacentHTML('beforeend', getFolderIcon(16));
-      while (iconTemp.firstChild) {
-        leftSpan.appendChild(iconTemp.firstChild);
-      }
-      
-      const folderNameStrong = document.createElement('strong');
-      folderNameStrong.textContent = folderName; // Используем textContent для безопасности
-      leftSpan.appendChild(folderNameStrong);
-      
-      const metaSpan = document.createElement('span');
-      metaSpan.className = 'meta';
-      metaSpan.textContent = `(${imageCount} изображений, ${(totalSize/1024/1024).toFixed(2)} MB)`;
-      leftSpan.appendChild(metaSpan);
-      
-      const progressSpan = document.createElement('span');
-      progressSpan.className = 'meta';
-      progressSpan.id = `p_${deviceId}_folder`;
-      progressSpan.textContent = '0%';
-      
-      li.appendChild(leftSpan);
-      li.appendChild(progressSpan);
-      queue.appendChild(li);
-    } else {
-      pending.forEach((f, i) => {
-        const li = document.createElement('li');
-        li.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border-2);';
-        
-        const nameSpan = document.createElement('span');
-        nameSpan.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
-        nameSpan.textContent = f.name; // Используем textContent для безопасности
-        
-        const sizeMetaSpan = document.createElement('span');
-        sizeMetaSpan.className = 'meta';
-        sizeMetaSpan.textContent = `(${(f.size/1024/1024).toFixed(2)} MB)`;
-        nameSpan.appendChild(sizeMetaSpan);
-        
-        const progressSpan = document.createElement('span');
-        progressSpan.className = 'meta';
-        progressSpan.id = `p_${deviceId}_${i}`;
-        progressSpan.style.cssText = 'flex-shrink:0; margin-left:var(--space-sm);';
-        progressSpan.textContent = '0%';
-        
-        li.appendChild(nameSpan);
-        li.appendChild(progressSpan);
-        queue.appendChild(li);
+
+      const li = buildQueueRow(deviceId, 'folder', {
+        name: folderName,
+        sizeText: formatBytes(totalSize),
+        glyph: getFolderIcon(18)
       });
+
+      const meta = li.querySelector(`#m_${deviceId}_folder`);
+      if (meta) {
+        meta.textContent = [
+          formatBytes(totalSize),
+          `${imageCount} ${pluralFiles(imageCount)}`,
+          UPLOAD_STATES.queued.label
+        ].join(' · ');
+      }
+
+      queue.appendChild(li);
+      setUploadState(deviceId, 'folder', 'queued');
+      return;
     }
+
+    pending.forEach((f, i) => {
+      const li = buildQueueRow(deviceId, i, {
+        name: f.name,
+        sizeText: formatBytes(f.size),
+        glyph: getFileGlyph(f.name)
+      });
+      queue.appendChild(li);
+      setUploadState(deviceId, i, 'queued');
+    });
+  }
+
+  // «1 файл / 2 файла / 5 файлов» — без этого в интерфейсе появляются
+  // конструкции вроде «1 файла».
+  function pluralFiles(count) {
+    const n = Math.abs(Number(count) || 0);
+    const mod10 = n % 10;
+    const mod100 = n % 100;
+    if (mod10 === 1 && mod100 !== 11) return 'файл';
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'файла';
+    return 'файлов';
+  }
+
+  // Глиф по типу файла: видео, изображение, документ, архив. Помогает
+  // сканировать очередь глазами, не читая названия.
+  const VIDEO_RE = /\.(mp4|mkv|webm|mov|m4v|avi|mpe?g)$/i;
+
+  // Набор иконок в проекте ограничен (общие svg-icons.js), поэтому глиф
+  // различается только по принципу «видео против остального»: плёнка
+  // читается мгновенно, остальное — обычный файл.
+  function getFileGlyph(name) {
+    return VIDEO_RE.test(name) ? getFilmIcon(18) : getFileIcon(18);
   }
 
   function addToQueue(files) {
@@ -464,6 +804,9 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
     pending = [];
     folderName = null;
     renderQueue();
+    // «Очистить» сбрасывает и идущую загрузку: панель не должна остаться
+    // висеть с процентами по уже отменённым файлам.
+    hideOverall();
 
     isClearingUploads = true;
 
@@ -480,6 +823,7 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
 
     if (isUploading) {
       isUploading = false;
+      uploadingDevices.delete(deviceId);
       uploadBtn.disabled = false;
       uploadBtn.textContent = 'Загрузить';
     }
@@ -842,10 +1186,20 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
     if (!pending.length) return;
 
     isUploading = true;
+    uploadingDevices.add(deviceId);
     syncYtDownloadUI();
     
     uploadBtn.disabled = true;
     uploadBtn.textContent = 'Проверка...';
+
+    // Взвешиваем файлы по размеру: без этого общая полоса считала бы файлы
+    // равными и 2 ГБ видео висело бы на 0% столько же, сколько 1 МБ картинка.
+    const initialSizes = new Map();
+    pending.forEach((f, i) => initialSizes.set(i, Number(f.size) || 0));
+    resetOverall(initialSizes);
+    lastSentBytes.clear();
+    folderSentBytes = 0;
+    showOverall('Проверка файлов...');
     
     try {
       // STEP 1: Проверяем дубликаты ДО загрузки (экономим трафик!)
@@ -855,21 +1209,27 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       
       for (let i = 0; i < pending.length; i++) {
         const file = pending[i];
-        const progressEl = queue.querySelector(`#p_${deviceId}_${i}`);
         fileIndexMap.set(file, i); // Запоминаем индекс
         
         
         // Вычисляем MD5 (первые 10MB для больших файлов)
-        if (progressEl) progressEl.textContent = 'MD5...';
+        setUploadProgress(deviceId, i, 0);
+        setUploadState(deviceId, i, 'checking');
+        setFileOverall(i, 0);
+        renderOverall(`Проверка ${i + 1}/${pending.length}…`);
         const startTime = Date.now();
         const md5 = await calculateFileMD5(file, (progress) => {
-          if (progressEl) progressEl.textContent = `MD5: ${progress}%`;
+          setUploadProgress(deviceId, i, progress);
+          setFileOverall(i, (progress / 100) * PHASE_CHECK_END);
         });
         const md5Time = Date.now() - startTime;
         
         
-        // Проверяем дубликат на сервере
-        if (progressEl) progressEl.textContent = 'Проверка...';
+        // Проверяем дубликат на сервере. Бар остаётся на 100% от фазы MD5,
+        // чтобы строка не «прыгала» назад без видимой причины.
+        setUploadProgress(deviceId, i, 100);
+        setUploadState(deviceId, i, 'checking', 'поиск дубликата');
+        setFileOverall(i, PHASE_CHECK_END);
         
         const checkRes = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/check-duplicate`, {
           method: 'POST',
@@ -885,7 +1245,12 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
         
         if (checkData.duplicate) {
           // Дубликат найден! Копируем с другого устройства
-          if (progressEl) progressEl.textContent = 'Копирование...';
+          setUploadProgress(deviceId, i, 100);
+          setUploadState(deviceId, i, 'duplicate', 'копирование');
+          renderOverall(`Копирование дубликата ${i + 1}/${pending.length}…`);
+          // Дубликат не передаётся по сети: его вклад ограничен фазой
+          // проверки, иначе он «съедал» 75% синего сегмента без единого байта.
+          setFileOverall(i, PHASE_CHECK_END);
           
           const copyRes = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/copy-from-duplicate`, {
             method: 'POST',
@@ -908,12 +1273,15 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
               from: checkData.sourceDevice,
               savedMB: copyData.savedTrafficMB
             });
-            if (progressEl) progressEl.innerHTML = `${getSuccessIcon(14)} Скопирован`;
+            // «Скопирован» — это состояние строки, а не процент:
+            // текст принадлежит meta-строке, колонка % остаётся числовой.
+            markRowDone(deviceId, i, `скопирован с ${checkData.sourceDevice}`);
           }
         } else {
           // Уникальный файл - добавляем в очередь загрузки
           filesToUpload.push(file);
-          if (progressEl) progressEl.textContent = '0%';
+          setUploadProgress(deviceId, i, 0);
+          setUploadState(deviceId, i, 'queued');
         }
       }
       
@@ -943,7 +1311,6 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
             form.append('files', f, relativePath);
           });
 
-          const folderProgressEl = queue.querySelector(`#p_${deviceId}_folder`);
           await new Promise((resolve, reject) => {
             const xhr = trackUploadRequest(new XMLHttpRequest());
             xhr.open('POST', `/api/devices/${encodeURIComponent(deviceId)}/upload`);
@@ -951,7 +1318,12 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
             xhr.upload.onprogress = e => {
               if (!e.lengthComputable) return;
               const percent = Math.round((e.loaded / e.total) * 100);
-              if (folderProgressEl) folderProgressEl.textContent = `${percent}%`;
+              setUploadProgress(deviceId, 'folder', percent);
+              setUploadState(deviceId, 'folder', 'sending');
+              accountTransferBytes(e.loaded - folderSentBytes);
+              folderSentBytes = e.loaded;
+              setFolderOverall(percent);
+              renderOverall(`Загрузка папки (${percent}%)`);
             };
             xhr.onload = () => xhr.status<300 ? resolve() : reject(new Error(xhr.statusText || 'Ошибка загрузки'));
             xhr.onerror = () => reject(new Error('Ошибка сети'));
@@ -965,10 +1337,10 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
           for (let i = 0; i < filesToUpload.length; i++) {
             const file = filesToUpload[i];
             const origIdx = fileIndexMap.get(file);
-            const progressEl = queue.querySelector(`#p_${deviceId}_${origIdx}`);
-            
-            if (progressEl) progressEl.textContent = 'Подготовка...';
+            setUploadProgress(deviceId, origIdx, 0);
+            setUploadState(deviceId, origIdx, 'sending', 'подготовка');
             uploadBtn.textContent = `Загрузка (${i + 1}/${filesToUpload.length})...`;
+            renderOverall(`Отправка ${i + 1}/${filesToUpload.length}…`);
             
             const form = new FormData();
             form.append('files', file);
@@ -981,12 +1353,22 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
               xhr.upload.onprogress = e => {
                 if (!e.lengthComputable) return;
                 const percent = Math.round((e.loaded / e.total) * 100);
-                if (progressEl) progressEl.textContent = `${percent}%`;
+                setUploadProgress(deviceId, origIdx, percent);
+                setUploadState(deviceId, origIdx, 'sending');
+                accountTransferBytes(e.loaded - lastSentBytes[origIdx]);
+                lastSentBytes[origIdx] = e.loaded;
+                setFileOverall(
+                  origIdx,
+                  PHASE_CHECK_END + (e.loaded / e.total) * (100 - PHASE_CHECK_END)
+                );
+                renderOverall(`Отправка ${i + 1}/${filesToUpload.length}…`);
               };
               
               xhr.onload = () => {
                 if (xhr.status < 300) {
-                  if (progressEl) progressEl.innerHTML = getSuccessIcon(14);
+                  setUploadProgress(deviceId, origIdx, 100);
+                  setFileOverall(origIdx, 100);
+                  markRowDone(deviceId, origIdx);
                   resolve();
                 } else {
                   let errorMsg = xhr.statusText || `HTTP ${xhr.status}`;
@@ -1005,7 +1387,8 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
               xhr.send(form);
             }).catch(err => {
               // Обрабатываем ошибку для текущего файла
-              if (progressEl) progressEl.textContent = `❌ ${err.message}`;
+              setUploadProgress(deviceId, origIdx, 0);
+              setUploadState(deviceId, origIdx, 'error', err.message);
               throw err; // Пробрасываем дальше, чтобы остановить загрузку
             });
             
@@ -1024,17 +1407,55 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
         ).join('\n\n');
       }
       
+      // Итог по реальной скорости до очистки состояния, иначе панель
+      // гаснет раньше, чем пользователь успевает её прочитать.
+      const totalSec = overall.transferStartedAt
+        ? (Date.now() - overall.transferStartedAt) / 1000
+        : 0;
+      const avgSpeed = totalSec > 0 ? overall.transferBytes / totalSec : 0;
+      // Сегменты дводим до реального соотношения фаз, а не рисуем
+      // жёсткие 100%/0%: иначе полностью «янтарная» полоса выглядит как
+      // зависшая проверка, хотя всё давно отправлено.
+      for (const key of overall.sizesByKey.keys()) {
+        overall.progressByFile.set(key, 100);
+      }
+      overall.shown = 100;
+      const finalSplit = overallPhaseSplit();
+      if (uploadProgressCheckFill) {
+        uploadProgressCheckFill.style.width = `${finalSplit.check}%`;
+      }
+      if (uploadProgressSendFill) {
+        uploadProgressSendFill.style.width = `${finalSplit.send}%`;
+      }
+      if (uploadProgressLabel) {
+        uploadProgressLabel.textContent = 'Загрузка завершена';
+      }
+      if (uploadProgressStats) {
+        uploadProgressStats.textContent = avgSpeed > 1
+          ? `100% · средняя ${formatBytes(avgSpeed)}/с`
+          : '100%';
+      }
+      // Успешный финал держим несколько секунд, поэтому отмечаем completed:
+      // блок finally не должен погасить панель раньше времени.
+      overall.completed = true;
+      if (overall.hideTimer) clearTimeout(overall.hideTimer);
+      overall.hideTimer = setTimeout(() => {
+        hideOverall();
+        overall.hideTimer = null;
+      }, 4000);
+
       pending = [];
       folderName = null;
       renderQueue();
       
-      // Сбрасываем флаг загрузки ПЕРЕД обновлением UI
+      // Сбрасываем флаг загрузки ПЕРЕД обновлением UI,
+      // чтобы emit ниже не попал под гвард isUploadingFiles
       isUploading = false;
+      uploadingDevices.delete(deviceId);
       syncYtDownloadUI();
       
       // После загрузки — обновить правую колонку файлов
       await renderFilesPane(deviceId);
-      socket.emit('devices/updated');
       
     } catch (error) {
       console.error('[Upload] Ошибка:', error);
@@ -1061,8 +1482,18 @@ export function setupUploadUI(card, deviceId, filesPanelEl, renderFilesPane, soc
       }
     } finally {
       isUploading = false; // Сбрасываем флаг в любом случае
+      uploadingDevices.delete(deviceId);
       uploadBtn.disabled = false;
       uploadBtn.textContent = 'Загрузить';
+      // Гасим панель сразу только если загрузка сорвалась. Успешный итог
+      // уже запланировал собственный таймер.
+      if (!overall.completed) {
+        if (overall.hideTimer) {
+          clearTimeout(overall.hideTimer);
+          overall.hideTimer = null;
+        }
+        hideOverall();
+      }
       syncYtDownloadUI();
     }
   };

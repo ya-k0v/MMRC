@@ -13,6 +13,13 @@ const logger = createModuleLogger('video');
 import { notificationsManager } from '../utils/notifications.js';
 import { setFileStatus, deleteFileStatus } from '../video/file-status.js';
 import { cancelOptimizationJob, hasActiveOptimizationJob } from '../video/optimizer.js';
+import { getCurrentStorage } from '../storage/current.js';
+import {
+  isLocalStorage,
+  materializeToLocal,
+  createScratchPath,
+  removeLocalCopy
+} from '../storage/sync.js';
 
 const router = express.Router();
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.webm', '.ogg', '.mkv', '.mov', '.avi']);
@@ -44,6 +51,8 @@ export function createVideoInfoRouter(deps) {
     io = null,
     requireAdmin = (_req, _res, next) => next()
   } = deps;
+
+  const storage = deps.storage || getCurrentStorage();
 
   const NIGHT_OPT_STATUS = 'scheduled_night';
   const NIGHT_QUEUE_NOTIFICATION_KEY = 'night_optimize_queue';
@@ -476,12 +485,30 @@ export function createVideoInfoRouter(deps) {
     const fileName = decodeURIComponent(req.params.name);
     const filePath = path.join(devicesPath, d.folder, fileName);
     
+    // S3 — основное хранилище, поэтому файла на диске может не быть.
+    // ffprobe читает только файловую систему: скачиваем во временную рабочую
+    // область, опрашиваем и сразу удаляем, чтобы не держать копию ролика.
+    let probePath = filePath;
+    let isScratch = false;
+
     if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: 'Файл не найден' });
+      if (!storage || isLocalStorage(storage)) {
+        return res.status(404).json({ error: 'Файл не найден' });
+      }
+
+      probePath = createScratchPath('video-info', fileName);
+      const fetched = await materializeToLocal(probePath, storage, {
+        fileName,
+        sourcePath: filePath
+      });
+      if (!fetched) {
+        return res.status(404).json({ error: 'Файл не найден' });
+      }
+      isScratch = true;
     }
-    
+
     try {
-      const params = await checkVideoParameters(filePath);
+      const params = await checkVideoParameters(probePath);
       
       if (!params) {
         return res.status(500).json({ error: 'Не удалось прочитать параметры видео' });
@@ -494,10 +521,17 @@ export function createVideoInfoRouter(deps) {
       
     } catch (error) {
       logger.error(`[video-info] ❌ Ошибка`, { error: error.message, stack: error.stack, deviceId: id, fileName });
-      res.status(500).json({ 
-        error: 'Не удалось получить информацию о видео', 
-        detail: error.message 
-      });
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: 'Не удалось получить информацию о видео',
+          detail: error.message
+        });
+      }
+    } finally {
+      // Опрашиваемый во временной папке копия не должна оставаться на диске
+      if (isScratch) {
+        await removeLocalCopy(probePath);
+      }
     }
   });
   

@@ -15,6 +15,14 @@ import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('video');
 import { jobResourceManager } from '../utils/job-resource-manager.js';
 import { spawnFfmpeg, spawnFfprobe } from '../utils/docker-ffmpeg.js';
+import {
+  isLocalStorage as isLocalStorageBackend,
+  toStorageKey,
+  syncFileToStorage,
+  materializeToLocal,
+  removeLocalCopy,
+  createScratchPath
+} from '../storage/sync.js';
 
 function parseNonNegativeInt(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -42,12 +50,6 @@ function isOptimizationCancelError(error) {
   return error?.code === 'EOPT_CANCELLED';
 }
 
-function toStorageKey(absPath) {
-  const root = getDataRoot();
-  const rel = path.relative(root, path.resolve(String(absPath)));
-  if (rel.startsWith('..')) throw new Error('Path outside data root');
-  return rel;
-}
 
 function hasOptimizationCancelRequest(jobKey) {
   return optimizationCancelRequests.has(jobKey);
@@ -639,13 +641,25 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       filePath = path.join(deviceFolder, fileName);
     }
 
-    if (!fs.existsSync(filePath)) {
-      return { success: false, message: 'File not found' };
-    }
-
     const ext = path.extname(fileName).toLowerCase();
     if (!VIDEO_EXTENSIONS.has(ext)) {
       return { success: false, message: 'Not a video file' };
+    }
+
+    // S3 — основное хранилище, поэтому файла может не быть на диске.
+    // Перед ffmpeg/ffprobe материализуем его из хранилища: все последующие
+    // шаги (ffprobe, ffmpeg, faststart, MD5) работают с файловой системой.
+    if (!fs.existsSync(filePath)) {
+      const materialized = await materializeToLocal(filePath, storage, { deviceId, fileName });
+      if (!materialized) {
+        return { success: false, message: 'File not found locally or in storage' };
+      }
+      filePath = materialized;
+      logger.info('[VideoOpt] ⬇️ Файл получен из хранилища для обработки', {
+        deviceId,
+        fileName,
+        filePath
+      });
     }
 
     logger.info(`[VideoOpt] 🔍 Проверка: ${fileName}`, { deviceId, fileName });
@@ -736,6 +750,32 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
 
     if (!requiresWork) {
       logger.info(`[VideoOpt] ✅ Видео оптимально: ${fileName}`, { deviceId, fileName });
+
+      // Даже оптимальное видео должно попасть в S3: хранилище — источник
+      // истины, иначе после удаления локальной копии файла не существовало бы
+      // нигде. Раньше этот путь просто возвращал управление, оставляя файл
+      // только на диске.
+      if (storage && !isLocalStorageBackend(storage)) {
+        try {
+          const syncResult = await syncFileToStorage(filePath, storage, {
+            deviceId,
+            fileName,
+            force: true,
+            removeLocal: true
+          });
+          if (!syncResult.synced) {
+            logger.warn('[VideoOpt] ⚠️ Оптимальное видео не попало в S3', {
+              deviceId, fileName, reason: syncResult.reason
+            });
+          }
+        } catch (error) {
+          // Локальная копия остаётся на диске — файл рабочий, ошибка не критична
+          logger.error('[VideoOpt] ❌ Ошибка загрузки оптимального видео в S3', {
+            deviceId, fileName, error: error.message
+          });
+        }
+      }
+
       setFileStatus(deviceId, fileName, { status: 'ready', progress: 100, canPlay: true });
 
       // КРИТИЧНО: Отправляем событие клиентам даже если оптимизация не требуется
@@ -766,9 +806,11 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
   // КРИТИЧНО: Всегда конвертируем в MP4 (даже если оригинал WebM/MKV/AVI)
     const outputExt = '.mp4';
 
-  // ИСПРАВЛЕНО: Временный файл сохраняем в той же папке что и оригинал
+  // Временный результат пишем в рабочую область (data/temp/scratch), а не в
+    // папку устройства: при S3 основном хранилище папка устройства не должна
+    // накапливать мусор, а temp одноразово вычищается.
     const fileDir = path.dirname(filePath);
-    let tempPath = path.join(fileDir, `.optimizing_${Date.now()}${outputExt}`);
+    let tempPath = createScratchPath('video-opt', `optimizing${outputExt}`);
 
   // Определяем финальное имя файла
     const baseFileName = path.basename(fileName, ext);
@@ -899,17 +941,76 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       logger.info(`[VideoOpt] 🎉 Видео оптимизировано: ${fileName}`, { deviceId, fileName, sizeMB: Math.round(stats.size / 1024 / 1024) });
     }
 
-    // Синхронизируем с storage (S3)
-    if (storage) {
-      try { await storage.delete(toStorageKey(filePath)); } catch {}
-      try {
-        const data = fs.readFileSync(resultingPath);
-        await storage.write(toStorageKey(resultingPath), data);
-      } catch {}
+    // Снимаем метрики ДО коммита в хранилище.
+    //
+    // Успешный syncFileToStorage удаляет локальные копии: диск — только
+    // рабочая область. Замер после коммита падал бы с ENOENT на уже
+    // удалённом resultingPath, и в БД записывались бы параметры
+    // ИСХОДНОГО файла, а не результата — после масштабирования это
+    // неверное разрешение в карточке файла.
+    const finalStats = fs.statSync(resultingPath);
+    let finalParams = params;
+    try {
+      finalParams = (await checkVideoParameters(resultingPath)) || params;
+    } catch (probeErr) {
+      // Проба не критична: размер уже известен по tempPath, параметры
+      // останутся исходными. Результат обработки терять нельзя.
+      logger.warn('[VideoOpt] Не удалось уточнить параметры результата', {
+        deviceId,
+        fileName: resultingSafeName,
+        error: probeErr.message
+      });
     }
 
-    const finalStats = fs.statSync(resultingPath);
-    const finalParams = (await checkVideoParameters(resultingPath)) || params;
+    // Синхронизируем с storage (S3)
+    //
+    // S3 — источник истины. Результат коммитим в хранилище и только после
+    // подтверждённой записи удаляем локальные копии: до этого файл должен
+    // оставаться на диске, иначе он потеряется.
+    if (storage && !isLocalStorageBackend(storage)) {
+      const originalKey = toStorageKey(filePath);
+      const resultKey = toStorageKey(resultingPath);
+      try {
+        // Сначала загружаем результат. Оригинал из S3 удаляется только
+        // после подтверждённой записи: при обрыве загрузки (сеть, рестарт
+        // MinIO) старый порядок оставлял бы хранилище вообще без объекта,
+        // потому что локальный оригинал к этому моменту уже переименован.
+        const syncResult = await syncFileToStorage(resultingPath, storage, {
+          deviceId,
+          fileName: resultingSafeName,
+          force: true
+        });
+        if (!syncResult.synced) {
+          logger.warn('[VideoOpt] ⚠️ Файл не синхронизирован с S3', {
+            deviceId,
+            fileName: resultingSafeName,
+            reason: syncResult.reason
+          });
+        } else {
+          if (originalKey !== resultKey) {
+            try {
+              await storage.delete(originalKey);
+            } catch (err) {
+              logger.warn('[VideoOpt] Не удалось удалить оригинал из S3', { deviceId, key: originalKey, error: err.message });
+            }
+          }
+          // Хранилище подтвердило запись — локальные копии больше не нужны
+          await removeLocalCopy(resultingPath, resultKey);
+          if (filePath !== resultingPath) {
+            await removeLocalCopy(filePath, originalKey);
+          }
+        }
+      } catch (err) {
+        // Ошибка синхронизации не должна ломать обработку — файл остаётся
+        // на диске, оттуда его подхватит повторная синхронизация
+        logger.error('[VideoOpt] ❌ Ошибка синхронизации с S3', {
+          deviceId,
+          fileName,
+          key: resultKey,
+          error: err.message
+        });
+      }
+    }
 
     // Обновляем метаданные в БД после обработки
     if (metadata) {

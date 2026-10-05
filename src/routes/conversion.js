@@ -13,6 +13,7 @@ import { hasDeviceAccess } from '../middleware/device-access.js';
 import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('convert');
 import { getFolderImagesCount } from '../converters/folder-converter.js';
+import { isLocalStorage, toStorageKey } from '../storage/sync.js';
 
 const router = express.Router();
 
@@ -124,35 +125,61 @@ export function createConversionRouter(deps) {
     // КРИТИЧНО: Используем devices[id].folder для получения правильного пути
     // Это важно, так как folder может отличаться от deviceId (хотя обычно совпадает)
     const deviceFolder = devices[id]?.folder || id;
-    let convertedDir = findFileFolder(deviceFolder, fileName, storage);
+    let convertedDir = await findFileFolder(deviceFolder, fileName, storage);
     
     if (!convertedDir) {
       const count = await autoConvertFileWrapper(id, fileName);
       if (count === 0) {
         return res.status(500).json({ error: 'Конвертация не удалась или выполняется' });
       }
-      convertedDir = findFileFolder(deviceFolder, fileName, storage);
+      convertedDir = await findFileFolder(deviceFolder, fileName, storage);
       if (!convertedDir) {
         return res.status(404).json({ error: 'Файл не найден' });
       }
     }
     
     try {
-      const pngFiles = fs.readdirSync(convertedDir)
-        .filter(f => f.toLowerCase().endsWith('.png'))
-        .sort();
-      
-      if (num > pngFiles.length) {
-        return res.status(404).json({ error: 'Страница не найдена' });
+      // Слайды после коммита лежат в S3, а не на диске. Собираем список
+      // PNG из того места, где они реально есть, и отдаём нужный потоком
+      // из хранилища: иначе fs.readdirSync падал бы на несуществующем пути
+      // и PDF/PPTX не отображались бы в плеере вообще.
+      let pngKeys = [];
+      let imagePath = null;
+
+      if (fs.existsSync(convertedDir)) {
+        const pngFiles = fs.readdirSync(convertedDir)
+          .filter(f => f.toLowerCase().endsWith('.png'))
+          .sort();
+
+        if (num > pngFiles.length) {
+          return res.status(404).json({ error: 'Страница не найдена' });
+        }
+        imagePath = path.join(convertedDir, pngFiles[num - 1]);
+      } else {
+        if (!storage || isLocalStorage(storage)) {
+          return res.status(404).json({ error: 'Слайды не найдены' });
+        }
+
+        const prefix = `${toStorageKey(convertedDir).replace(/\\/g, '/')}/`;
+        const entries = await storage.list(prefix);
+        pngKeys = entries
+          .filter(e => e.toLowerCase().endsWith('.png'))
+          .sort();
+
+        if (num > pngKeys.length) {
+          return res.status(404).json({ error: 'Страница не найдена' });
+        }
+        imagePath = pngKeys[num - 1];
       }
-      
-      const imagePath = path.join(convertedDir, pngFiles[num - 1]);
+
       const mimeType = mime.getType(imagePath) || 'application/octet-stream';
       
       res.setHeader('Content-Type', mimeType);
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       
-      const stream = fs.createReadStream(imagePath);
+      const stream = pngKeys.length > 0
+        ? await storage.createReadStream(imagePath)
+        : fs.createReadStream(imagePath);
       
       // КРИТИЧНО: Обрабатываем закрытие соединения клиентом
       let isAborted = false;

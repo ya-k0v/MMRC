@@ -2061,7 +2061,7 @@ function showStreamPlayer(streamProxyUrl, deviceId, safeName, streamProtocol) {
 
 async function loadDevices() {
   try {
-    const res = await speakerFetch('/api/devices');
+    const res = await speakerFetch('/api/devices?includeFileMeta=1');
     if (!res.ok) {
       console.error('Не удалось загрузить устройства:', res.status);
       return;
@@ -5044,7 +5044,7 @@ const onPreviewRefresh = debounce(async ({ device_id }) => {
   });
   
   try {
-    const res = await speakerFetch('/api/devices');
+    const res = await speakerFetch('/api/devices?includeFileMeta=1');
     if (!res.ok) return;
     const newDevices = sortDevices(await res.json());
     

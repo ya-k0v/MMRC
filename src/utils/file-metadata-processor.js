@@ -11,10 +11,124 @@ import { createModuleLogger, logFile } from '../utils/logger.js';
 const logger = createModuleLogger('file');
 import { ensureTrailerForFile } from '../video/trailer-generator.js';
 import { getConvertedCache } from '../config/settings-manager.js';
-import { applyFaststartAsync } from '../video/mp4-faststart.js';
 import { getFolderImagesCount } from '../converters/folder-converter.js';
 import { getDevicesPath } from '../config/settings-manager.js';
 import { IMAGE_EXTENSIONS } from '../config/file-types.js';
+
+const STATIC_EXTENSIONS = new Set(['.pdf', '.pptx', '.zip']);
+
+function inferMimeTypeFromExt(ext) {
+  if (['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) return `video/${ext.substring(1)}`;
+  if (['.mp3', '.wav', '.m4a'].includes(ext)) return 'audio/*';
+  if (['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext)) return 'image/*';
+  if (ext === '.pdf') return 'application/pdf';
+  if (ext === '.pptx') return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  return null;
+}
+
+/**
+ * КРИТИЧНО: Зарегистрировать загруженные файлы в БД СРАЗУ после multer.
+ *
+ * Список файлов устройства строится исключительно из БД
+ * (см. updateDeviceFilesFromDB), поэтому файл, который ещё не имеет строки
+ * в files_metadata, невидим в админке — даже если он уже лежит на диске.
+ *
+ * Раньше запись появлялась только в самом конце processUploadedFile, после
+ * faststart (полный ремукс через ffmpeg), полного MD5 и ffprobe. Для файла на
+ * 2 ГБ это минуты ожидания, а любая ошибка в этой цепочке (ENOSPC и т.п.)
+ * проглатывалась через Promise.allSettled — файл навсегда оставался
+ * невидимым и «пропал».
+ *
+ * Здесь мы только ЗАБИРАЕМ файл: пишем минимальные метаданные (путь, размер,
+ * mtime) без хэшей и без ffmpeg. Всё остальное (faststart, MD5, дедупликация,
+ * ffprobe, оптимизация) дорабатывается позже фоновым пайплайном, который
+ * обновляет ту же строку через UPSERT.
+ *
+ * @returns {Promise<{registered: string[], failed: Array<{file: string, error: string}>}>}
+ */
+export async function registerUploadedFilesImmediately(deviceId, files, devicesPath, fileNamesMap, uploadedBy = null) {
+  const registered = [];
+  const failed = [];
+
+  if (!files || files.length === 0) {
+    return { registered, failed };
+  }
+
+  for (const file of files) {
+    const safeName = file.filename;
+    const ext = path.extname(safeName).toLowerCase();
+
+    // Статический контент (PDF/PPTX/ZIP) идёт по своему сценарию обработки
+    if (STATIC_EXTENSIONS.has(ext)) continue;
+
+    try {
+      const filePath = (file.path && fs.existsSync(file.path))
+        ? file.path
+        : path.join(devicesPath, safeName);
+
+      if (!fs.existsSync(filePath)) {
+        failed.push({ file: safeName, error: `Файл не найден: ${filePath}` });
+        logFile('warn', 'Immediate registration skipped, file missing', { deviceId, safeName, filePath });
+        continue;
+      }
+
+      const stats = fs.statSync(filePath);
+      const originalName = fileNamesMap?.[deviceId]?.[safeName] || file.originalname || safeName;
+      const mimeType = inferMimeTypeFromExt(ext);
+
+      await saveFileMetadata({
+        deviceId,
+        safeName,
+        originalName,
+        filePath,
+        fileSize: stats.size,
+        md5Hash: '',
+        partialMd5: null,
+        mimeType: mimeType === 'audio/*' ? 'audio/mpeg' : (mimeType === 'image/*'
+          ? `image/${ext.substring(1) === 'jpg' ? 'jpeg' : ext.substring(1)}`
+          : mimeType),
+        videoParams: {},
+        audioParams: {},
+        fileMtime: stats.mtimeMs,
+        uploadedBy
+      });
+
+      // КРИТИЧНО: saveFileMetadata проглатывает ошибки БД (логирует и
+      // возвращает управление), поэтому успешный await НЕ означает, что
+      // строка записана. Без этой проверки файл числился бы
+      // зарегистрированным, оставаясь невидимым в списке — ровно та
+      // проблема, которую мы чиним.
+      const saved = await getFileMetadata(deviceId, safeName);
+      if (!saved) {
+        failed.push({ file: safeName, error: 'Запись не появилась в БД после сохранения' });
+        logFile('error', 'Immediate registration did not persist to DB', {
+          deviceId,
+          safeName,
+          filePath
+        });
+        continue;
+      }
+
+      registered.push(safeName);
+      logFile('info', '⚡ File registered in DB immediately after upload', {
+        deviceId,
+        safeName,
+        filePath,
+        sizeMB: (stats.size / 1024 / 1024).toFixed(2)
+      });
+    } catch (error) {
+      failed.push({ file: safeName, error: error.message });
+      logFile('error', 'Immediate file registration failed', {
+        deviceId,
+        safeName,
+        error: error.message,
+        stack: error.stack
+      });
+    }
+  }
+
+  return { registered, failed };
+}
 
 /**
  * Обработать загруженный файл: вычислить MD5, получить метаданные, сохранить в БД
@@ -25,6 +139,7 @@ import { IMAGE_EXTENSIONS } from '../config/file-types.js';
  * @param {string} folder - Папка устройства
  */
 export async function processUploadedFile(deviceId, safeName, originalName, filePath, folder, uploadedBy = null) {
+  const optionsStorage = getCurrentStorage();
   try {
     // Проверяем существование файла
     if (!fs.existsSync(filePath)) {
@@ -39,56 +154,21 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
     
     logFile('debug', 'Processing file metadata', { deviceId, safeName, fileSize });
     
-    // КРИТИЧНО: НОВЫЙ ПОРЯДОК ОПЕРАЦИЙ
-    // 1. Сначала обрабатываем MP4 файлы (faststart) - это может изменить файл
-    // 2. Потом вычисляем MD5 обработанного файла
-    // 3. Затем проверяем дедупликацию по MD5 обработанного файла
-    // Это гарантирует что все файлы обработаны перед дедупликацией
-    
+    // ПОРЯДОК ОПЕРАЦИЙ
+    // 1. MD5 файла
+    // 2. Проверка дедупликации по MD5
+    //
+    // Раньше здесь первым шагом шёл applyFaststart — полный ремукс файла через
+    // ffmpeg С await. Для видео в 2 ГБ это перезапись всего файла прямо в
+    // конвейере загрузки: клиент уже видел 100% и дальше молча ждал минуты,
+    // не понимая, что происходит. Кроме того, S3 теперь основное хранилище,
+    // и переписывать файл на диске ради последующей загрузки в S3 смысла не
+    // имеет. Faststart выполняется в стадии оптимизации (там, где он нужен
+    // для воспроизводимости) силами needsFaststart/ffmpeg -movflags.
+
     let deduplicationApplied = false;
     let duplicate = null;
-    
-    // ШАГ 1: Обрабатываем MP4 файлы ДО вычисления MD5 и дедупликации
-    if (ext === '.mp4' || ext === '.m4v' || ext === '.m4a') {
-      logFile('info', '🚀 Обработка MP4 файла перед дедупликацией', {
-        deviceId,
-        safeName,
-        filePath
-      });
-      
-      // Синхронно обрабатываем файл (ждем завершения)
-      // Это важно, чтобы MD5 вычислялся для обработанного файла
-      // КРИТИЧНО: Обрабатываем только когда реально требуется,
-      // чтобы не переписывать каждый MP4 без необходимости.
-      try {
-        const { applyFaststart } = await import('../video/mp4-faststart.js');
-        const processed = await applyFaststart(filePath, { checkFirst: true });
-        
-        if (processed) {
-          logFile('info', '✅ MP4 файл обработан перед дедупликацией', {
-            deviceId,
-            safeName
-          });
-          // Обновляем размер файла после обработки
-          const newStats = fs.statSync(filePath);
-          fileSize = newStats.size;
-          fileMtime = newStats.mtimeMs;
-        } else {
-          logFile('warn', '⚠️ MP4 файл не был обработан (возможна ошибка)', {
-            deviceId,
-            safeName
-          });
-        }
-      } catch (error) {
-        logFile('error', 'Ошибка обработки MP4 перед дедупликацией', {
-          deviceId,
-          safeName,
-          error: error.message
-        });
-        // Продолжаем даже при ошибке обработки
-      }
-    }
-    
+
     // ШАГ 2: Вычисляем MD5 обработанного файла
     const isBigFile = fileSize > 100 * 1024 * 1024;
     
@@ -114,7 +194,23 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
       const searchMd5 = partialMd5 || md5Hash;
       duplicate = await findDuplicateFile(searchMd5, fileSize, deviceId, !!partialMd5);
       
-      if (duplicate && fs.existsSync(duplicate.file_path)) {
+      // Дубликат подтверждаем с учётом S3: раньше проверка шла только по
+      // диску, поэтому дубликат, уже лежащий в MinIO, не подтверждался —
+      // в библиотеке появлялись дубли и лишние объекты в бакете.
+      let duplicatePresent = false;
+      if (duplicate) {
+        duplicatePresent = fs.existsSync(duplicate.file_path);
+        if (!duplicatePresent && optionsStorage && !isLocalStorage(optionsStorage)) {
+          try {
+            duplicatePresent = await optionsStorage.exists(toStorageKey(duplicate.file_path));
+          } catch {
+            // Хранилище недоступно — лучше не дедуплицировать, чем потерять файл
+            duplicatePresent = false;
+          }
+        }
+      }
+
+      if (duplicate && duplicatePresent) {
         // Дубликат найден! Удаляем обработанный новый файл, используем существующий
         logFile('info', '⚡ Duplicate detected - using existing file (instant deduplication)', {
           deviceId,
@@ -308,33 +404,10 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
       throw saveError; // Пробрасываем ошибку дальше для обработки в processUploadedFilesAsync
     }
     
-    // КРИТИЧНО: Faststart обработка уже выполнена ДО дедупликации (см. выше в коде)
-    // Для дедуплицированных файлов проверяем нужна ли обработка существующего файла в фоне
-    if (deduplicationApplied && (ext === '.mp4' || ext === '.m4v' || ext === '.m4a') && filePath && fs.existsSync(filePath)) {
-      // Дедуплицированный файл - проверяем нужна ли обработка существующего файла
-      logFile('debug', 'Проверка faststart для дедуплицированного файла (фоновая)', {
-        deviceId,
-        safeName,
-        filePath
-      });
-      
-      // Запускаем в фоне, не блокируем ответ
-      applyFaststartAsync(filePath).then((success) => {
-        if (success) {
-          logFile('info', '✅ Дедуплицированный файл обработан', {
-            deviceId,
-            safeName
-          });
-        }
-      }).catch((error) => {
-        logFile('warn', 'Ошибка обработки дедуплицированного файла', {
-          deviceId,
-          safeName,
-          error: error.message
-        });
-      });
-    }
-    
+    // Faststart для дедуплицированных файлов больше не запускается здесь:
+    // обработкой занимается стадия оптимизации. Локальная копия после
+    // дедупликации удаляется, а основной файл лежит в S3.
+
     // Фоновая генерация трейлера для видео (не блокирует ответ)
     if (['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext) && md5Hash && filePath) {
       ensureTrailerForFile(md5Hash, filePath, { seconds: 10 }).catch(() => {});
@@ -713,6 +786,36 @@ export async function processUploadedStaticContent(
               pagesCount: convertedCount,
               uploadedBy: options.uploadedBy || null
             });
+
+            // Коммитим слайды в S3: S3 — основное хранилище, а слайды
+            // остались бы только на диске, и после рестарта/переезда папка
+            // была бы пустой. Коммит выполняется ПОСЛЕ сохранения метаданных
+            // и не удаляет папку, если хоть один файл не загрузился.
+            if (options.storage) {
+              try {
+                const { commitFolderToStorage } = await import('../storage/sync.js');
+                const commitResult = await commitFolderToStorage(convertedFolderPath, options.storage, {
+                  removeLocal: false
+                });
+                if (commitResult.synced) {
+                  logger.info('[FileMetadata] ✅ Слайды закоммичены в S3', {
+                    deviceId, folderName, count: commitResult.count
+                  });
+                } else {
+                  logger.warn('[FileMetadata] ⚠️ Часть слайдов не попала в S3', {
+                    deviceId, folderName,
+                    count: commitResult.count,
+                    failed: commitResult.failed.length
+                  });
+                }
+              } catch (commitError) {
+                // Ошибка S3 не должна ломать успешную конвертацию:
+                // слайды уже на диске и доступны устройствам
+                logger.error('[FileMetadata] ❌ Ошибка коммита слайдов в S3', {
+                  deviceId, folderName, error: commitError.message
+                });
+              }
+            }
 
             logger.info('[FileMetadata] ✅ PDF/PPTX конвертирован, метаданные обновлены на папку', {
               deviceId,

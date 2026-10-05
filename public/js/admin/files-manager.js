@@ -618,10 +618,15 @@ export async function loadFilesWithStatus(deviceId) {
   return await res.json();
 }
 
-export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, filePage, socket, onPageUpdate = null) {
+export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, filePage, socket, onPageUpdate = null, isStale = null) {
   // НОВОЕ: Используем API с статусами файлов
   const res = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/files-with-status`);
   const filesData = await res.json();
+
+  // Пока шёл запрос, панель могли начать перерисовывать для другого устройства.
+  // Дальше до конца функции await-ов нет, поэтому одной проверки достаточно,
+  // чтобы устаревший ответ не записал данные поверх актуальных.
+  if (isStale && isStale()) return;
   
   // Файлы уже в формате { safeName, originalName, status, progress, canPlay, error, resolution, isPlaceholder }
   const allFiles = filesData.map(item => {
@@ -1381,7 +1386,6 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         streamProtocol: currentProtocol,
         onSuccess: async () => {
           await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
-          socket.emit('devices/updated');
         }
       });
     };
@@ -1663,7 +1667,6 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         }
 
         await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
-        socket.emit('devices/updated');
       } catch (error) {
         await reportFilesManagerNotification({
           type: 'file_cancel_processing_error',
@@ -1734,7 +1737,6 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         }
 
         await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
-        socket.emit('devices/updated');
       } catch (error) {
         await reportFilesManagerNotification({
           type: 'file_optimize_start_error',
@@ -1774,7 +1776,6 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         }
 
         await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
-        socket.emit('devices/updated');
       } catch (error) {
         await reportFilesManagerNotification({
           type: 'file_optimize_night_error',
@@ -1812,7 +1813,6 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         }
 
         await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
-        socket.emit('devices/updated');
       } catch (error) {
         await reportFilesManagerNotification({
           type: 'file_optimize_night_cancel_error',
@@ -1843,7 +1843,6 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         await new Promise(resolve => setTimeout(resolve, 600));
         
         await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
-        socket.emit('devices/updated');
       } catch (e) { console.error(e); }
     };
   });
@@ -1855,7 +1854,6 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       if (!confirm(`Удалить файл ${originalName}?`)) return;
       await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(safeName)}`, { method: 'DELETE' });
       await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
-      socket.emit('devices/updated');
     };
   });
   
@@ -1965,7 +1963,6 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           }
           
           await refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSize, currentPage, socket, onPageUpdate);
-          socket.emit('devices/updated');
         } else {
           await reportFilesManagerNotification({
             type: 'file_rename_error',

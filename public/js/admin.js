@@ -3,13 +3,13 @@ import { sortDevices, debounce, getPageSize, loadNodeNames } from './utils.js';
 import { DEVICE_ICONS, DEVICE_TYPE_NAMES } from './shared/constants.js';
 import { ensureAuth, adminFetch, setXhrAuth, logout } from './admin/auth.js';
 import { setupSocketListeners } from './admin/socket-listeners.js';
-import { loadDevices as loadDevicesModule, renderTVList as renderTVListModule } from './admin/devices-manager.js';
+import { loadDevices as loadDevicesModule, renderTVList as renderTVListModule, syncDeviceStatuses, updateDeviceTile, focusDeviceInList as focusDeviceInListModule } from './admin/devices-manager.js';
 import { createDevice, renameDevice, deleteDevice } from './admin/device-crud.js';
 import { loadFilesWithStatus, refreshFilesPanel as refreshFilesPanelModule } from './admin/files-manager.js';
 import { previewFile, makeDefault, renameFile, deleteFile } from './admin/file-actions.js';
 import { uploadFiles, copyFile } from './admin/upload-manager.js';
 import { clearDetail, clearFilesPane, openDevice as openDeviceHelper } from './admin/ui-helpers.js';
-import { renderDeviceCard as renderDeviceCardModule } from './admin/device-card.js';
+import { renderDeviceCard as renderDeviceCardModule, deviceCardSignature, buildDevicePreviewUrl } from './admin/device-card.js';
 import { setupUploadUI as setupUploadUIModule } from './admin/upload-ui.js';
 import { showDevicesModal, showUsersModal, showSettingsModal } from './admin/modal.js';
 import { initSystemMonitor, stopSystemMonitor } from './admin/system-monitor.js';
@@ -25,7 +25,6 @@ const grid = document.getElementById('grid');
 let readyDevices = new Set();
 let devicesCache = [];
 let currentDeviceId = null;
-let tvPage = 0;
 let filePage = 0;
 // ИСПРАВЛЕНО: Сохраняем пагинацию для каждого устройства отдельно
 const filePageByDevice = new Map();
@@ -33,6 +32,21 @@ let nodeNames = {};
 let user = null;
 const volumeStateByDevice = new Map();
 const VOLUME_STEP = 5;
+
+// Контекст списка устройств. Передаётся геттерами, а не значениями,
+// чтобы обработчики и замыкания плиток всегда видели актуальное состояние
+// и не работали со снимком на момент рендера.
+const deviceListCtx = {
+  getDevicesCache: () => devicesCache,
+  getReadyDevices: () => readyDevices,
+  getCurrentDeviceId: () => currentDeviceId,
+  getNodeNames: () => nodeNames,
+  getPageSize: () => getPageSize(),
+  sortDevices,
+  openDevice,
+  renderFilesPane,
+  adminFetch
+};
 
 async function reportAdminUiNotification(payload = {}) {
   try {
@@ -65,9 +79,6 @@ setupSocketListeners(socket, {
     const prev = currentDeviceId;
     await loadDevices();
     updateDevicesCount(); // Обновляем счетчик после загрузки устройств
-    const pageSize = getPageSize();
-    const totalPages = Math.max(1, Math.ceil(devicesCache.length / pageSize));
-    if (tvPage >= totalPages) tvPage = totalPages - 1;
     let hasSelection = false;
     if (prev && devicesCache.find(d => d.device_id === prev)) {
       openDevice(prev);
@@ -98,46 +109,26 @@ setupSocketListeners(socket, {
     }
   },
   onFileReady: (device_id, file) => {
-    if (currentDeviceId === device_id) {
-      const panel = document.getElementById('filesPanel');
-      // ИСПРАВЛЕНО: Обновляем панель с сохранением текущей страницы
-      if (panel) {
-        const savedPage = filePageByDevice.get(device_id) || 0;
-        refreshFilesPanel(device_id, panel).then(updatedPage => {
-          if (updatedPage !== undefined) {
-            filePageByDevice.set(device_id, updatedPage);
-            filePage = updatedPage;
-          }
-        });
-      }
-    }
+    if (currentDeviceId === device_id) refreshFilesPaneContent(device_id);
   },
   onFileError: (device_id, file, error) => {
-    if (currentDeviceId === device_id) {
-      const panel = document.getElementById('filesPanel');
-      // ИСПРАВЛЕНО: Обновляем панель с сохранением текущей страницы
-      if (panel) {
-        const savedPage = filePageByDevice.get(device_id) || 0;
-        refreshFilesPanel(device_id, panel).then(updatedPage => {
-          if (updatedPage !== undefined) {
-            filePageByDevice.set(device_id, updatedPage);
-            filePage = updatedPage;
-          }
-        });
-      }
-    }
+    clearFileProgress(device_id, file);
+    if (currentDeviceId === device_id) refreshFilesPaneContent(device_id);
   },
   onPreviewRefresh: async () => {
-
+    // ИСПРАВЛЕНО: раньше обработчик был пустым, и единственным способом
+    // обновить превью был полный пересоздан карточки на devices/updated.
+    if (!currentDeviceId) return;
+    refreshDevicePreview(devicesCache.find(x => x.device_id === currentDeviceId));
   },
   onPlayerOnline: (device_id) => {
     readyDevices.add(device_id);
-    renderTVList();
+    syncDeviceListStatuses();
     if (currentDeviceId === device_id) openDevice(device_id);
   },
   onPlayerOffline: (device_id) => {
     readyDevices.delete(device_id);
-    renderTVList();
+    syncDeviceListStatuses();
     if (currentDeviceId === device_id) openDevice(device_id);
   },
   onPlayersSnapshot: (list) => {
@@ -146,7 +137,7 @@ setupSocketListeners(socket, {
     } catch {
       readyDevices = new Set();
     }
-    renderTVList();
+    syncDeviceListStatuses();
     if (currentDeviceId) openDevice(currentDeviceId);
   },
   onVolumeBatch: handleVolumeBatch,
@@ -161,17 +152,9 @@ setupSocketListeners(socket, {
         ...device
       };
       
-      // Обновляем отображение в списке устройств (tvTile)
-      const tvList = document.getElementById('tvList');
-      if (tvList) {
-        const tile = tvList.querySelector(`[data-id="${device_id}"]`);
-        if (tile) {
-          const metaEl = tile.querySelector('.tvTile-meta');
-          if (metaEl) {
-            metaEl.textContent = `ID: ${device_id}${device.ipAddress ? ` • IP: ${device.ipAddress}` : ''}`;
-          }
-        }
-      }
+      // Обновляем отображение в списке устройств (tvTile) точечно,
+      // без перерисовки списка и без сброса пагинации
+      updateDeviceTile(device_id, devicesCache[deviceIndex], deviceListCtx);
       
       // Обновляем отображение в карточке устройства, если оно открыто
       if (currentDeviceId === device_id) {
@@ -1761,16 +1744,32 @@ function updateDevicesCount() {
   }
 }
 
-// renderTVList перенесена в devices-manager.js  
+// renderTVList перенесена в devices-manager.js
 function renderTVList() {
-  return renderTVListModule(devicesCache, readyDevices, currentDeviceId, nodeNames, tvPage, getPageSize, sortDevices, openDevice, renderFilesPane, adminFetch);
+  return renderTVListModule(deviceListCtx);
+}
+
+// Точечное обновление статусов устройств без перерисовки списка
+function syncDeviceListStatuses() {
+  syncDeviceStatuses(deviceListCtx);
+}
+
+// Переводит список устройств на страницу с нужным устройством
+function focusDeviceInList(deviceId) {
+  focusDeviceInListModule(deviceId, deviceListCtx);
 }
 
 // Пересчет пагинации при изменении размера экрана (desktop/mobile)
+// Перерисовка только если размер страницы реально изменился,
+// иначе resize-шторм (например, при появлении скроллбара) не трогает список.
+let lastDevicePageSize = null;
 let resizeTimeout;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimeout);
   resizeTimeout = setTimeout(() => {
+    const nextPageSize = getPageSize();
+    if (lastDevicePageSize !== null && nextPageSize === lastDevicePageSize) return;
+    lastDevicePageSize = nextPageSize;
     if (document.getElementById('tvList')) renderTVList();
     // Также перерисовываем список файлов если он открыт
     if (currentDeviceId) renderFilesPane(currentDeviceId);
@@ -1930,67 +1929,149 @@ async function initSelectionFromUrl() {
 // clearDetail, clearFilesPane перенесены в ui-helpers.js
 
 // ------ Открыть выбранную ноду ------
+
+// Сигнатура карточки, которая сейчас отрисована в #detailPane.
+// Пока она совпадает с сигнатурой пришедших данных, пересоздавать карточку
+// не нужно: это заново вызывало setupUploadUI() и сбрасывало очередь
+// загрузки/yt-dlp на каждом событии devices/updated.
+let renderedDeviceCardSignature = '';
+
+function refreshDevicePreview(device) {
+  const pane = document.getElementById('detailPane');
+  if (!pane || !device) return;
+  const url = buildDevicePreviewUrl(device);
+  if (!url) return;
+  pane.querySelectorAll('iframe[data-preview-url]').forEach((iframe) => {
+    const base = (iframe.getAttribute('data-preview-url') || '').split('&t=')[0];
+    if (base !== url) iframe.setAttribute('data-preview-url', url);
+    iframe.src = `${url}&t=${Date.now()}`;
+  });
+}
+
 function openDevice(id) {
   currentDeviceId = id;
   // ИСПРАВЛЕНО: Восстанавливаем сохраненную страницу для устройства или сбрасываем на 0
   filePage = filePageByDevice.get(id) || 0;
-  
+
   // Обновляем URL при переключении устройства
   openDeviceHelper(id);
-  
+
   const d = devicesCache.find(x => x.device_id === id);
   const pane = document.getElementById('detailPane');
   if (!pane) return;
   if (!d) {
     clearDetail('Устройство не найдено', 'Выберите другое устройство в списке слева.');
     clearFilesPane();
+    renderedDeviceCardSignature = '';
     return;
   }
+
+  const signature = deviceCardSignature(d, readyDevices, nodeNames);
+  if (pane.dataset.deviceId === id && renderedDeviceCardSignature === signature) {
+    // Данные не изменились — только освежаем превью, карточку не трогаем
+    refreshDevicePreview(d);
+    return;
+  }
+
   pane.innerHTML = '';
   pane.appendChild(renderDeviceCard(d));
+  pane.dataset.deviceId = id;
+  renderedDeviceCardSignature = signature;
   setupVolumePanel(d.device_id);
 }
 
 // renderDeviceCard перенесена в device-card.js
 function renderDeviceCard(d) {
-  return renderDeviceCardModule(d, nodeNames, readyDevices, loadDevices, renderTVList, openDevice, renderFilesPane, socket);
+  return renderDeviceCardModule(d, nodeNames, readyDevices, loadDevices, renderTVList, openDevice, renderFilesPane, socket, focusDeviceInList);
 }
 
 // ------ Правая колонка: файлы выбранной ноды ------
+
+// Порядковый номер последнего запуска перерисовки панели файлов.
+// Нужен, чтобы устаревший ответ сетевого запроса не перерисовал панель
+// поверх более свежего (панель уходит в "Загрузка списка..." и остаётся с
+// устаревшими данными).
+let filesPaneRenderToken = 0;
+
+function formatFilesCountLabel(count) {
+  const word = count === 1 ? '' : count > 1 && count < 5 ? 'а' : 'ов';
+  return `${count} файл${word}`;
+}
+
+// Точечное обновление панели файлов текущего устройства (file/ready, file/error).
+// ИСПРАВЛЕНО: используется тот же счётчик, что и renderFilesPane, поэтому
+// устаревший ответ не перезапишет панель, обновляемую более новым запросом.
+function refreshFilesPaneContent(deviceId) {
+  const panel = document.getElementById('filesPanel');
+  if (!panel) return;
+  const token = filesPaneRenderToken;
+  refreshFilesPanel(deviceId, panel, () => token !== filesPaneRenderToken).then(updatedPage => {
+    if (token !== filesPaneRenderToken) return;
+    if (updatedPage !== undefined) {
+      filePageByDevice.set(deviceId, updatedPage);
+      filePage = updatedPage;
+    }
+    reapplyFileProgress(panel, deviceId);
+  });
+}
+
 async function renderFilesPane(deviceId) {
   const title = document.getElementById('filesPaneTitle');
   const meta = document.getElementById('filesPaneMeta');
   const panel = document.getElementById('filesPanel');
   if (!panel) return;
-  
+
+  const token = ++filesPaneRenderToken;
+
   // Находим устройство для отображения имени и количества файлов
   const device = devicesCache.find(d => d.device_id === deviceId);
   const deviceName = device ? (device.name || nodeNames[deviceId] || deviceId) : deviceId;
   const filesCount = device ? (device.files?.length || 0) : 0;
-  
+
   // Обновляем заголовок и meta
   if (title) title.textContent = `Файлы на ${deviceName}`;
-  if (meta) meta.textContent = `${filesCount} файл${filesCount === 1 ? '' : filesCount > 1 && filesCount < 5 ? 'а' : 'ов'}`;
-  
-  panel.innerHTML = `<div class="meta">Загрузка списка...</div>`;
+  if (meta) meta.textContent = formatFilesCountLabel(filesCount);
+
+  // Плейсхолдер показываем только когда панель ещё не содержит этого
+  // устройства. Иначе каждое фоновое обновление очищало бы панель
+  // и затем перерисовывала её — то самое мерцание, которого быть не должно.
+  const panelDeviceId = panel.dataset.deviceId || '';
+  const showingSameDevice = panelDeviceId === deviceId && panel.childElementCount > 0;
+  if (!showingSameDevice) {
+    panel.dataset.deviceId = deviceId;
+    panel.innerHTML = `<div class="meta">Загрузка списка...</div>`;
+  }
+
+  const scrollTop = panel.scrollTop;
+
   // ИСПРАВЛЕНО: Восстанавливаем сохраненную страницу для устройства
   const savedPage = filePageByDevice.get(deviceId) || 0;
   filePage = savedPage;
-  const updatedPage = await refreshFilesPanel(deviceId, panel);
+  const updatedPage = await refreshFilesPanel(deviceId, panel, () => token !== filesPaneRenderToken);
+
+  // Пока ждал ответ, панель могли перерисовать для другого устройства
+  if (token !== filesPaneRenderToken) return;
+
   if (updatedPage !== undefined) {
     filePageByDevice.set(deviceId, updatedPage);
     filePage = updatedPage;
   }
-  
+
+  // Фоновое обновление не должно прокручивать панель к началу
+  if (showingSameDevice) panel.scrollTop = scrollTop;
+
+  // Панель перерисована — возвращаем полосы прогресса, которые удалил innerHTML
+  reapplyFileProgress(panel, deviceId);
+
   // Обновляем счетчик файлов после загрузки
   const updatedDevice = devicesCache.find(d => d.device_id === deviceId);
   const updatedFilesCount = updatedDevice ? (updatedDevice.files?.length || 0) : filesCount;
-  if (meta) meta.textContent = `${updatedFilesCount} файл${updatedFilesCount === 1 ? '' : updatedFilesCount > 1 && updatedFilesCount < 5 ? 'а' : 'ов'}`;
+  if (meta) meta.textContent = formatFilesCountLabel(updatedFilesCount);
 }
 
 
 // refreshFilesPanel перенесена в files-manager.js
-async function refreshFilesPanel(deviceId, panelEl) {
+async function refreshFilesPanel(deviceId, panelEl, isStale = null) {
   // ИСПРАВЛЕНО: Используем сохраненную страницу для устройства или текущую глобальную
   const savedPage = filePageByDevice.get(deviceId) ?? filePage;
   // ИСПРАВЛЕНО: Передаем callback для обновления страницы при пагинации
@@ -1998,7 +2079,8 @@ async function refreshFilesPanel(deviceId, panelEl) {
     filePageByDevice.set(deviceId, updatedPage);
     filePage = updatedPage;
   };
-  const updatedPage = await refreshFilesPanelModule(deviceId, panelEl, adminFetch, getPageSize, savedPage, socket, onPageUpdate);
+  const updatedPage = await refreshFilesPanelModule(deviceId, panelEl, adminFetch, getPageSize, savedPage, socket, onPageUpdate, isStale);
+  if (isStale && isStale()) return undefined;
   // ИСПРАВЛЕНО: Сохраняем обновленную страницу для устройства
   if (updatedPage !== undefined) {
     filePageByDevice.set(deviceId, updatedPage);
@@ -2007,49 +2089,171 @@ async function refreshFilesPanel(deviceId, panelEl) {
   return updatedPage;
 }
 
-// НОВАЯ: Функция для обновления только прогресса файла без перерисовки всей панели
-function updateFileProgress(deviceId, fileName, progress) {
-  // Находим элемент файла в списке
-  const fileElements = document.querySelectorAll('.file-item');
-  
-  for (const fileEl of fileElements) {
-    const fileNameEl = fileEl.querySelector('.file-name');
-    if (fileNameEl && fileNameEl.textContent === fileName) {
-      // Находим или создаем прогресс-бар
-      let progressBar = fileEl.querySelector('.optimization-progress');
-      
-      if (!progressBar) {
-        // Создаем прогресс-бар, если его нет
-        progressBar = document.createElement('div');
-        progressBar.className = 'optimization-progress';
-        progressBar.style.cssText = 'height: 4px; background: #e0e0e0; border-radius: 2px; margin-top: 4px; overflow: hidden;';
-        
-        const progressFill = document.createElement('div');
-        progressFill.className = 'optimization-progress-fill';
-        progressFill.style.cssText = 'height: 100%; background: linear-gradient(90deg, #4CAF50, #8BC34A); transition: width 0.3s ease;';
-        
-        progressBar.appendChild(progressFill);
-        fileEl.appendChild(progressBar);
+// Обновление только прогресс-бара файла без перерисовки всей панели.
+// Раньше искался класс .file-name, которого в разметке нет (там .file-item-name),
+// поэтому прогресс-бар не появлялся никогда, а поиск шёл по всему документу
+// и совпадал по отображаемому имени, а не по устройству.
+// Актуальный прогресс обработки хранится вне DOM: любая перерисовка панели
+// файлов (devices/updated, file/ready, смена устройства) удаляет элементы
+// вместе с прогресс-баром. Раньше это выглядело как мигание — бар исчезал и
+// появлялся заново уже на другом значении.
+const fileProgressByDevice = new Map(); // deviceId -> Map<safeName, {progress, done, ts}>
+
+function setFileProgress(deviceId, fileName, progress) {
+  if (!deviceId || !fileName) return null;
+  const numeric = Number(progress);
+  let byFile = fileProgressByDevice.get(deviceId);
+  if (!byFile) {
+    byFile = new Map();
+    fileProgressByDevice.set(deviceId, byFile);
+  }
+
+  const prev = byFile.get(fileName);
+
+  // Мусорное значение (undefined, NaN, не строка) не должно обнулять полосу —
+  // иначе одно битое событие откатывало бы уже показанный прогресс на 0%.
+  if (!Number.isFinite(numeric)) return prev || null;
+
+  const value = Math.max(0, Math.min(100, numeric));
+
+  let next = value;
+  if (prev && !prev.done) {
+    // Новый запуск обработки начинается с 0/5 — это законный сброс.
+    const isNewRun = value > 0 && value <= 5 && prev.progress > 5;
+    // Иначе прогресс не должен идти назад: ffmpeg иногда повторно печатает
+    // time= (несколько входов, concat), и без этого полоса дёргалась назад.
+    if (!isNewRun && value < prev.progress) {
+      next = prev.progress;
+    }
+  } else if (prev && prev.done && value < 100) {
+    // Файл уже дошёл до 100% — не откатываем назад после завершения.
+    return prev;
+  }
+
+  const entry = { progress: next, done: next >= 100, ts: Date.now() };
+  byFile.set(fileName, entry);
+  return entry;
+}
+
+function getFileProgress(deviceId, fileName) {
+  return fileProgressByDevice.get(deviceId)?.get(fileName) || null;
+}
+
+function clearFileProgress(deviceId, fileName) {
+  if (!deviceId) return;
+  const byFile = fileProgressByDevice.get(deviceId);
+  if (!byFile) return;
+  if (fileName) byFile.delete(fileName);
+  else byFile.clear();
+  if (!byFile.size) fileProgressByDevice.delete(deviceId);
+}
+
+function ensureProgressBar(fileEl) {
+  let progressBar = fileEl.querySelector('.optimization-progress');
+  if (progressBar) return progressBar;
+
+  // Геометрию задаём инлайном, а не только через CSS.
+  // Статика отдаётся service worker по стратегии stale-while-revalidate:
+  // при первом обращении браузер получает СТАРЫЙ app.css из кэша, и полоса,
+  // оформленная только таблицей стилей, оказывалась обычным flex-потом
+  // внутри карточки с фиксированной высотой и overflow:hidden — то есть
+  // то появлялась, то исчезала. Инлайн не зависит от версии кэша.
+  const currentPos = window.getComputedStyle?.(fileEl)?.position;
+  if (!currentPos || currentPos === 'static') {
+    fileEl.style.position = 'relative';
+  }
+
+  progressBar = document.createElement('div');
+  progressBar.className = 'optimization-progress';
+  progressBar.style.cssText = [
+    'position:absolute',
+    'left:0',
+    'right:0',
+    'bottom:0',
+    'height:4px',
+    'background:rgba(0,0,0,0.12)',
+    'border-radius:0 0 var(--radius-sm,6px) var(--radius-sm,6px)',
+    'overflow:hidden',
+    'pointer-events:none'
+  ].join(';');
+
+  const progressFill = document.createElement('div');
+  progressFill.className = 'optimization-progress-fill';
+  progressFill.style.cssText = [
+    'height:100%',
+    'width:0%',
+    'background:linear-gradient(90deg, #4CAF50, #8BC34A)',
+    'transition:width 0.3s ease'
+  ].join(';');
+
+  progressBar.appendChild(progressFill);
+  fileEl.appendChild(progressBar);
+  return progressBar;
+}
+
+function applyProgressToElement(fileEl, entry, { animate = true } = {}) {
+  const progressBar = ensureProgressBar(fileEl);
+  const fill = progressBar.querySelector('.optimization-progress-fill');
+  if (fill) {
+    // При восстановлении после перерисовки анимация не нужна: bar только что
+    // появился с нулевой шириной, и проигрывание transition выглядит как моргание.
+    if (!animate) {
+      const prevTransition = fill.style.transition;
+      fill.style.transition = 'none';
+      fill.style.width = `${entry.progress}%`;
+      // Возвращаем transition после того, как браузер применит новую ширину
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => { fill.style.transition = prevTransition; });
+      } else {
+        fill.style.transition = prevTransition;
       }
-      
-      // Обновляем ширину прогресс-бара
-      const progressFill = progressBar.querySelector('.optimization-progress-fill');
-      if (progressFill) {
-        progressFill.style.width = `${progress}%`;
-      }
-      
-      // Если оптимизация завершена (100%), удаляем прогресс-бар через 1 секунду
-      if (progress >= 100) {
-        setTimeout(() => {
-          if (progressBar && progressBar.parentNode) {
-            progressBar.remove();
-          }
-        }, 1000);
-      }
-      
-      break;
+    } else {
+      fill.style.width = `${entry.progress}%`;
     }
   }
+  // Завершённый бар не удаляем: иначе следующее событие создаёт его заново
+  // и полоса визуально «моргает». Гасим ровно один раз, когда прогресс 100.
+  progressBar.style.opacity = entry.done ? '0.35' : '1';
+}
+
+// Восстанавливает полосы прогресса после перерисовки панели файлов
+function reapplyFileProgress(panelEl, deviceId) {
+  if (!panelEl) return;
+  const byFile = fileProgressByDevice.get(deviceId);
+  if (!byFile || !byFile.size) return;
+  panelEl.querySelectorAll('.file-item').forEach((item) => {
+    if ((item.getAttribute('data-device-id') || '') !== (deviceId || '')) return;
+    let safeName = '';
+    try {
+      safeName = decodeURIComponent(item.getAttribute('data-file-name') || '');
+    } catch {
+      return;
+    }
+    const entry = byFile.get(safeName);
+    if (entry) applyProgressToElement(item, entry, { animate: false });
+  });
+}
+
+function updateFileProgress(deviceId, fileName, progress) {
+  if (!fileName) return;
+  const entry = setFileProgress(deviceId, fileName, progress);
+  if (!entry) return;
+
+  const panel = document.getElementById('filesPanel');
+  if (!panel) return;
+
+  // Точное совпадение по устройству и безопасному имени файла
+  const fileEl = Array.from(panel.querySelectorAll('.file-item')).find((item) => {
+    if ((item.getAttribute('data-device-id') || '') !== (deviceId || '')) return false;
+    try {
+      return decodeURIComponent(item.getAttribute('data-file-name') || '') === fileName;
+    } catch {
+      return false;
+    }
+  });
+  if (!fileEl) return;
+
+  applyProgressToElement(fileEl, entry);
 }
 
 // setupUploadUI перенесена в upload-ui.js

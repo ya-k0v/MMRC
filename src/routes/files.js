@@ -17,15 +17,17 @@ import { ROOT } from '../config/constants.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
 import { extractZipToFolder, getFolderImagesCount } from '../converters/folder-converter.js';
 import { makeSafeFolderName, makeSafeFilename } from '../utils/transliterate.js';
+import { fixEncoding } from '../utils/encoding.js';
 import { uploadLimiter, deleteLimiter, readLimiter } from '../middleware/rate-limit.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import { createModuleLogger, logFile, logSecurity } from '../utils/logger.js';
 const logger = createModuleLogger('file');
 import { setCurrentStorage, getCurrentStorage } from '../storage/current.js';
+import { commitFolderToStorage, isLocalStorage, toStorageKey } from '../storage/sync.js';
 import { LocalStorage } from '../storage/local.js';
 import { validatePath } from '../utils/path-validator.js';
 import { getCachedResolution, clearResolutionCache } from '../video/resolution-cache.js';
-import { processUploadedFilesAsync, processUploadedStaticContent } from '../utils/file-metadata-processor.js';
+import { processUploadedFilesAsync, processUploadedStaticContent, registerUploadedFilesImmediately } from '../utils/file-metadata-processor.js';
 import { getFileMetadata, deleteFileMetadata, getDeviceFilesMetadata, deleteDeviceFilesMetadata, saveFileMetadata, countFileReferences, updateFileOriginalName, createStreamingEntry, updateStreamMetadata, cleanupMissingFiles } from '../database/files-metadata.js';
 import { setFileStatus as setGlobalFileStatus } from '../video/file-status.js';
 import { removeStreamJob } from '../streams/stream-manager.js';
@@ -411,6 +413,37 @@ async function createZipArchiveFromFolder(sourceFolderPath, outputZipPath) {
   });
 }
 
+/**
+ * Скачать содержимое папки из хранилища во временный каталог.
+ *
+ * Нужно для скачивания PDF/PPTX/папки изображений: после перехода на
+ * S3-primary на диске их нет, а archiver.directory() умеет работать только
+ * с файловой системой. Раскладка вложенности сохраняется.
+ */
+async function downloadFolderFromStorage(folderPath, targetDir, storage) {
+  const prefix = `${toStorageKey(folderPath).replace(/\\/g, '/')}/`;
+  const keys = (await storage.list(prefix)) || [];
+
+  for (const key of keys) {
+    if (!key.startsWith(prefix) || key.endsWith('/')) continue;
+
+    const relative = key.slice(prefix.length);
+    const destination = validatePath(path.join(targetDir, relative), targetDir);
+
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    const readStream = await storage.createReadStream(key);
+    await new Promise((resolve, reject) => {
+      const out = fs.createWriteStream(destination);
+      out.on('close', resolve);
+      out.on('error', reject);
+      readStream.on('error', reject);
+      readStream.pipe(out);
+    });
+  }
+
+  return keys.length;
+}
+
 function safeDownloadFileName(fileName = '', fallback = 'download') {
   const normalized = String(fileName || '')
     .replace(/[\r\n]/g, '')
@@ -446,7 +479,175 @@ function findFileOnDisk(metadataPath, deviceSubdirPath, rootPath) {
   return null;
 }
 
+/**
+ * Существует ли папка — локально или в хранилище.
+ *
+ * В S3 папки не существуют как объекты: «папка» это лишь префикс ключей.
+ * Поэтому проверка только через fs давала false для всех слайдов, и удаление
+ * PDF/PPTX уходило в ветку «обычный файл»: ответ был {ok:true}, но префикс
+ * в бакете и запись БД оставались на месте.
+ */
+async function isFolderPresent(folderPath) {
+  if (fs.existsSync(folderPath)) {
+    try {
+      return fs.statSync(folderPath).isDirectory();
+    } catch {
+      return false;
+    }
+  }
+
+  const storage = getCurrentStorage();
+  if (!storage || isLocalStorage(storage)) return false;
+
+  try {
+    const prefix = `${toStorageKey(folderPath).replace(/\\/g, '/')}/`;
+    const entries = await storage.list(prefix);
+    return Array.isArray(entries) && entries.length > 0;
+  } catch (error) {
+    logger.debug('[files] Не удалось проверить папку в хранилище', {
+      folderPath, error: error.message
+    });
+    return false;
+  }
+}
+
+/**
+ * Удалить папку из хранилища и с диска.
+ * Диск удаляем только если в хранилище папки уже нет — иначе получится
+ * «успешное» удаление, потерявшее данные.
+ */
+async function removeFolderEverywhere(folderPath) {
+  const storage = getCurrentStorage();
+  let removedInStorage = false;
+
+  if (storage && !isLocalStorage(storage)) {
+    const prefix = `${toStorageKey(folderPath).replace(/\\/g, '/')}/`;
+    const entries = await storage.list(prefix);
+    if (Array.isArray(entries) && entries.length > 0) {
+      for (const key of entries) {
+        try {
+          await storage.delete(key);
+        } catch (error) {
+          logger.warn('[files] Не удалось удалить объект папки', { key, error: error.message });
+        }
+      }
+      removedInStorage = true;
+    }
+  } else if (fs.existsSync(folderPath)) {
+    fs.rmSync(folderPath, { recursive: true, force: true });
+    return true;
+  }
+
+  // Локальную копию убираем только когда содержимое уже удалено из бакета
+  if (removedInStorage && fs.existsSync(folderPath)) {
+    try {
+      fs.rmSync(folderPath, { recursive: true, force: true });
+    } catch (error) {
+      logger.warn('[files] Не удалось удалить локальную папку', {
+        folderPath, error: error.message
+      });
+    }
+  }
+
+  return removedInStorage || !fs.existsSync(folderPath);
+}
+
+/**
+ * Проверить существование файла с учётом того, что хранилище основное — S3.
+ *
+ * Раньше проверка шла только по диску, и после перехода на S3-primary любой
+ * файл, успешно лежащий в MinIO, считался «не найденным на диске» и молча
+ * исключался из списка: файл загружался, обрабатывался, был в S3 — но не
+ * появлялся в интерфейсе.
+ *
+ * @returns {Promise<boolean>}
+ */
+async function fileExists(metadataPath, deviceSubdirPath, rootPath, storage) {
+  if (findFileOnDisk(metadataPath, deviceSubdirPath, rootPath)) {
+    return true;
+  }
+
+  if (!storage || isLocalStorage(storage)) {
+    return false;
+  }
+
+  // Пробуем все кандидаты: пока хранилище отвечает и ничего не найдено,
+  // файл действительно отсутствует и его надо исключить.
+  let probeFailed = false;
+
+  for (const candidate of [metadataPath, deviceSubdirPath, rootPath]) {
+    if (!candidate) continue;
+
+    try {
+      if (await storage.exists(toStorageKey(candidate))) {
+        return true;
+      }
+      // Папки в S3 не существуют как объекты — они лишь префикс.
+      // Проверяем, есть ли под префиксом хотя бы один объект.
+      const prefix = `${toStorageKey(candidate).replace(/\\/g, '/')}/`;
+      const entries = await storage.list(prefix);
+      if (Array.isArray(entries) && entries.length > 0) {
+        return true;
+      }
+    } catch {
+      // Сеть отвалилась — это не «файла нет», а «не смогли проверить».
+      probeFailed = true;
+    }
+  }
+
+  // Fail-open: недоступное хранилище не должно выбрасывать файл из списка.
+  // При обрыве MinIO/S3 лучше показать файл, чем скрыть рабочий; без связи
+  // пользователь увидит ошибку загрузки, а с пустым списком потеряет файл.
+  if (probeFailed) {
+    logger.warn('[fileExists] Хранилище недоступно, показываем файл без проверки', {
+      metadataPath,
+      deviceSubdirPath
+    });
+    return true;
+  }
+
+  return false;
+}
+
 const router = express.Router();
+
+/**
+ * Найти фактический локальный путь загруженного файла.
+ *
+ * Файл может оказаться в разных местах в зависимости от типа:
+ *  - медиафайлы переносятся в content/{папка устройства}/
+ *  - PDF/PPTX/ZIP остаются плоско в content/
+ *  - дубликаты удаляются после дедупликации
+ *
+ * @returns {string|null}
+ */
+function findUploadedFilePath(deviceFolder, fileName) {
+  const candidates = [
+    path.join(getDevicesPath(), deviceFolder, fileName),
+    path.join(getDevicesPath(), fileName)
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Закоммитить загруженный файл в S3 и убрать локальную копию.
+ *
+ * force: true обязателен — файл только что записан multer, и проверка
+ * «размер совпал с уже существующим объектом» иначе может оставить в S3
+ * устаревшую версию того же ключа.
+ */
+async function commitUploadedFile(localPath, storage, options = {}) {
+  const { syncFileToStorage } = await import('../storage/sync.js');
+  return syncFileToStorage(localPath, storage, {
+    ...options,
+    force: true,
+    removeLocal: true
+  });
+}
 
 /**
  * Копировать папку физически (асинхронно через streams)
@@ -725,8 +926,17 @@ export async function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
   });
   
   const nameMap = fileNamesMap[deviceId] || {};
+
+  // Имена приходят из БД, маппинга и хранилища, где часть записей могла
+  // сохраниться дважды закодированной (multipart отдаёт latin1, часть
+  // клиентов шлёт уже испорченные байты). На границе вывода приводим
+  // имя к UTF-8: fixEncoding идемпотентен — корректная кириллица и
+  // чистый ASCII остаются нетронутыми, поэтому это безопасно.
+  const displayNameOf = (f) =>
+    fixEncoding(f.original_name || nameMap[f.safe_name] || f.safe_name);
+
   let files = filteredMetadata.map(f => f.safe_name);
-  let fileNames = filteredMetadata.map(f => f.original_name || nameMap[f.safe_name] || f.safe_name);
+  let fileNames = filteredMetadata.map(displayNameOf);
 
   const metadataList = filteredMetadata.map(f => {
     const streamProtocol = f.content_type === 'streaming'
@@ -737,7 +947,7 @@ export async function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
       : null;
     return {
       safeName: f.safe_name,
-      originalName: f.original_name || nameMap[f.safe_name] || f.safe_name,
+      originalName: displayNameOf(f),
       folderImageCount: f.pages_count || null,  // Используем pages_count из БД
       contentType: f.content_type || null,
       streamUrl: f.stream_url || null,
@@ -753,7 +963,7 @@ export async function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
     const safeName = f.safe_name;
     // КРИТИЧНО: Плейсхолдеры НЕ фильтруем здесь - они должны быть видны в обычных списках устройств
     // Фильтрация плейсхолдеров только в GET /api/devices/all/files (агрегированный список)
-    const displayName = f.original_name || nameMap[safeName] || safeName;
+    const displayName = fixEncoding(f.original_name || nameMap[safeName] || safeName);
     
     // КРИТИЧНО: Пропускаем стримы без stream_url - они невалидны и не могут быть воспроизведены
     if (!f.stream_url) {
@@ -810,7 +1020,7 @@ export async function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
     const safeName = f.safe_name;
     // КРИТИЧНО: Плейсхолдеры НЕ фильтруем здесь - они должны быть видны в обычных списках устройств
     // Фильтрация плейсхолдеров только в GET /api/devices/all/files (агрегированный список)
-    const displayName = f.original_name || nameMap[safeName] || safeName;
+    const displayName = fixEncoding(f.original_name || nameMap[safeName] || safeName);
     
     // Проверяем существование папки/файла
     if (!f.file_path) {
@@ -3139,6 +3349,48 @@ export function createFilesRouter(deps) {
 
       const folderName = req.body.folderName; // Имя папки если загружается через выбор папки
 
+      // КРИТИЧНО: Регистрируем файлы в БД ДО отправки ответа.
+      // Список устройства строится только из БД, поэтому без этой записи
+      // загруженный файл невидим в админке, пока тяжёлая обработка
+      // (faststart на весь файл + полный MD5 + ffprobe) не завершится.
+      // Для больших файлов это минуты «зависания» на 100%, а при ошибке
+      // в этой цепочке файл пропадал навсегда.
+      try {
+        const immediateFiles = (req.files || []).filter(f => {
+          const ext = path.extname(f.filename).toLowerCase();
+          return !['.pdf', '.pptx', '.zip'].includes(ext);
+        });
+
+        if (immediateFiles.length > 0) {
+          const immediateResult = await registerUploadedFilesImmediately(
+            id,
+            immediateFiles,
+            getDevicesPath(),
+            fileNamesMap,
+            req.user?.userId || null
+          );
+
+          if (immediateResult.registered.length > 0) {
+            // Файл уже виден в списке — клиент сразу получит его при обновлении
+            await updateDeviceFilesFromDB(id, devices, fileNamesMap);
+            io.emit('devices/updated');
+
+            logger.info('[Upload] ⚡ Files registered immediately after upload', {
+              deviceId: id,
+              registered: immediateResult.registered,
+              failed: immediateResult.failed
+            });
+          }
+        }
+      } catch (registerError) {
+        // Регистрация не должна ронять загрузку — фоновый пайплайн попробует ещё раз
+        logger.error('[Upload] Immediate registration failed, will rely on background processing', {
+          error: registerError.message,
+          deviceId: id,
+          stack: registerError.stack
+        });
+      }
+
       logger.debug('[Upload] Files uploaded', {
         deviceId: id,
         filesCount: uploaded.length,
@@ -3298,11 +3550,19 @@ export function createFilesRouter(deps) {
                       updateDeviceFilesFromDB,
                       devices,
                       fileNamesMap,
+                      storage,
                       uploadedBy: req.user?.userId || null
                     }
                   );
                   
                   if (result.success) {
+                    // Папка изображений — такой же файл, как и видео:
+                    // коммитим содержимое в S3, иначе после рестарта
+                    // или переезда на другой хост папка пропадёт.
+                    commitFolderToStorage(folderPath, storage, { deviceId: id })
+                      .catch((err) => logger.error('[Upload] Ошибка коммита папки в S3', {
+                        deviceId: id, folder: folderName, error: err.message
+                      }));
                     // Сохраняем маппинг
                     if (!fileNamesMap[id]) fileNamesMap[id] = {};
                     fileNamesMap[id][folderName] = originalFolderName;
@@ -3403,6 +3663,7 @@ export function createFilesRouter(deps) {
                   saveFileNamesMapFn: saveFileNamesMap,
                   updateDeviceFilesFromDB,
                   io,
+                  storage,
                   uploadedBy: req.user?.userId || null
                 }
               );
@@ -3668,11 +3929,16 @@ export function createFilesRouter(deps) {
               targetFolder,
               'folder',
               {
+                storage,
                 uploadedBy: req.user?.userId || null
               }
             );
 
             if (processResult.success) {
+              commitFolderToStorage(targetFolder, storage, { deviceId: id })
+                .catch((err) => logger.error('[Upload] Ошибка коммита папки в S3', {
+                  deviceId: id, folder: safeFolderName, error: err.message
+                }));
               logFile('info', `✅ Папка сохранена в БД: ${safeFolderName} (${processResult.pagesCount} изображений)`, {
                 deviceId: id,
                 folderName: safeFolderName,
@@ -3838,7 +4104,63 @@ export function createFilesRouter(deps) {
                 // Обновляем список файлов после обработки метаданных
                 updateDeviceFilesFromDB(id, devices, fileNamesMap);
                 io.emit('devices/updated');
-                
+
+                // КРИТИЧНО: Коммитим ВСЕ загруженные файлы в S3.
+                // S3 — основное хранилище, поэтому после подтверждённой
+                // записи локальная копия удаляется: на диске остаётся лишь
+                // рабочая область для оптимизации. Раньше в S3 попадали
+                // только видео, прошедшие оптимизацию, а всё остальное
+                // оставалось на диске навсегда.
+                for (const fileName of uploaded) {
+                  // Видео коммитит оптимизатор: он либо кладёт в S3 результат
+                  // конвертации, либо сам заливает файл, если оптимизация
+                  // не требуется. Если коммитить здесь параллельно, файл на
+                  // 2 ГБ уйдёт в S3 дважды.
+                  const ext = path.extname(fileName).toLowerCase();
+                  if (VIDEO_PROCESSING_EXTENSIONS.has(ext)) continue;
+
+                  Promise.resolve().then(async () => {
+                    try {
+                      const deviceFolder = devices[id]?.folder || id;
+                      const localPath = findUploadedFilePath(deviceFolder, fileName);
+
+                      if (!localPath || !fs.existsSync(localPath)) {
+                        // Файл уже мог быть уложен в папку устройства
+                        // (PDF/PPTX/ZIP) или удалён как дубликат
+                        return;
+                      }
+
+                      const result = await commitUploadedFile(localPath, storage, {
+                        deviceId: id,
+                        fileName
+                      });
+
+                      if (result.synced) {
+                        logger.info('[Upload] ✅ Файл закоммичен в S3', {
+                          deviceId: id,
+                          fileName,
+                          key: result.key,
+                          sizeMB: result.size ? (result.size / 1024 / 1024).toFixed(2) : null,
+                          localRemoved: result.localRemoved
+                        });
+                      } else if (result.reason !== 'local-storage') {
+                        logger.warn('[Upload] ⚠️ Файл не попал в S3', {
+                          deviceId: id,
+                          fileName,
+                          reason: result.reason
+                        });
+                      }
+                    } catch (err) {
+                      logger.error('[Upload] ❌ Ошибка коммита файла в S3', {
+                        error: err.message,
+                        deviceId: id,
+                        fileName,
+                        stack: err.stack
+                      });
+                    }
+                  });
+                }
+
                 // Автоматическая оптимизация видео в фоне (после обработки метаданных)
           for (const fileName of uploaded) {
             const ext = path.extname(fileName).toLowerCase();
@@ -3912,8 +4234,11 @@ export function createFilesRouter(deps) {
       const sourceFolder = path.join(devicesPath, devices[sourceId].folder);
       const sourcePath = path.join(sourceFolder, fileName);
       
-      // Если это папка (PPTX/PDF/изображения) - используем физическое копирование
-      if (fs.existsSync(sourcePath) && fs.statSync(sourcePath).isDirectory()) {
+      // Если это папка (PPTX/PDF/изображения) - используем физическое копирование.
+      // Проверяем с учётом S3: папки на диске после коммита нет, и раньше такая
+      // папка проваливала проверку и уходила в ветку «мгновенного копирования»,
+      // где «копия» на устройстве B оказывалась ссылкой на контент устройства A.
+      if (await isFolderPresent(sourcePath)) {
         return await copyFolderPhysically(sourceId, targetId, fileName, move, devices, fileNamesMap, saveFileNamesMap, io, res, req.user?.userId || null);
     } 
       
@@ -4446,7 +4771,14 @@ export function createFilesRouter(deps) {
       stat = null;
     }
 
-    if (stat && stat.isDirectory()) {
+    // Папка в S3 не имеет локального stat, поэтому одного fs.statSync мало:
+    // раньше архивная ветка не выполнялась, и код пытался отдать папку как
+    // один объект, что завершалось 500.
+    const targetIsFolder = stat
+      ? stat.isDirectory()
+      : await isFolderPresent(downloadTargetPath);
+
+    if (targetIsFolder) {
       const originalName = metadata?.original_name || name.replace(/\.(zip|pdf|pptx)$/i, '') || path.basename(safeTargetPath);
       const zipName = safeDownloadFileName(
         /\.zip$/i.test(originalName) ? originalName : `${originalName}.zip`,
@@ -4465,7 +4797,20 @@ export function createFilesRouter(deps) {
         tempDirPath = fs.mkdtempSync(path.join(os.tmpdir(), 'videocontrol-download-'));
         const zipPath = path.join(tempDirPath, `${Date.now()}-${crypto.randomBytes(4).toString('hex')}.zip`);
 
+        if (fs.existsSync(downloadTargetPath)) {
           await createZipArchiveFromFolder(downloadTargetPath, zipPath);
+        } else {
+          // Папка живёт только в S3 — сначала собираем её локально,
+          // затем архивируем как обычный каталог
+          const stagedDir = path.join(tempDirPath, 'content');
+          fs.mkdirSync(stagedDir, { recursive: true });
+          const staged = await downloadFolderFromStorage(downloadTargetPath, stagedDir, storage);
+          if (staged === 0) {
+            cleanupTemp();
+            return res.status(404).json({ error: 'Папка пуста или не найдена в хранилище' });
+          }
+          await createZipArchiveFromFolder(stagedDir, zipPath);
+        }
 
         setSafeDownloadFileNameHeader(res, zipName);
         return res.download(zipPath, zipName, (error) => {
@@ -4489,7 +4834,7 @@ export function createFilesRouter(deps) {
       }
     }
 
-    if (stat && !stat.isFile()) {
+    if (stat && !stat.isFile() && !stat.isDirectory()) {
       return res.status(400).json({ error: 'Поддерживается скачивание только файлов и папок' });
     }
 
@@ -4760,9 +5105,9 @@ export function createFilesRouter(deps) {
     let isFolder = false;
     
     // Проверяем PDF/PPTX папку
-    if (fs.existsSync(possibleFolder) && fs.statSync(possibleFolder).isDirectory()) {
+    if (await isFolderPresent(possibleFolder)) {
       try {
-        try { await storage.rm(toStorageKey(possibleFolder)); } catch { fs.rmSync(possibleFolder, { recursive: true, force: true }); }
+        await removeFolderEverywhere(possibleFolder);
         deletedFileName = folderName;
         isFolder = true;
         logFile('info', `Удалена папка PDF/PPTX: ${folderName}`, { deviceId: id, fileName: name, folderName });
@@ -4777,9 +5122,9 @@ export function createFilesRouter(deps) {
     // Проверяем папку с изображениями (без расширения)
     else if (!name.includes('.')) {
       const imageFolderPath = path.join(deviceFolder, name);
-      if (fs.existsSync(imageFolderPath) && fs.statSync(imageFolderPath).isDirectory()) {
+      if (await isFolderPresent(imageFolderPath)) {
         try {
-          try { await storage.rm(toStorageKey(imageFolderPath)); } catch { fs.rmSync(imageFolderPath, { recursive: true, force: true }); }
+          await removeFolderEverywhere(imageFolderPath);
           deletedFileName = name;
           isFolder = true;
           logFile('info', `Удалена папка с изображениями: ${name}`, { deviceId: id, fileName: name });
@@ -4816,13 +5161,46 @@ export function createFilesRouter(deps) {
         });
         
         // 4. Если никто не используем - удаляем физический файл
+        //
+        // Проверять существование только на диске нельзя: после перехода на
+        // S3-primary локальной копии закономерно нет, условие всегда было
+        // ложным, и объект оставался в бакете навсегда — при том, что UI
+        // рапортовал об успешном удалении. Раньше устаревший комментарий
+        // делал вид, что удаление работает.
         if (refCount === 0) {
           try {
-            if (fs.existsSync(physicalPath)) {
-              try { await storage.delete(toStorageKey(physicalPath)); } catch { fs.unlinkSync(physicalPath); }
+            let deletedAnywhere = false;
+
+            if (isLocalStorage(storage)) {
+              if (fs.existsSync(physicalPath)) {
+                fs.unlinkSync(physicalPath);
+                deletedAnywhere = true;
+              }
+            } else {
+              const key = toStorageKey(physicalPath);
+              if (await storage.exists(key)) {
+                await storage.delete(key);
+                deletedAnywhere = true;
+              }
+              // Подчищаем возможную локальную копию (например, после сбоя
+              // коммита), но её отсутствие — не ошибка
+              if (fs.existsSync(physicalPath)) {
+                try {
+                  fs.unlinkSync(physicalPath);
+                } catch {
+                  // Файл занят — коммит не выполнился, но объект в S3 есть
+                }
+              }
+            }
+
+            if (deletedAnywhere) {
               logFile('info', '🗑️ Physical file deleted (no references)', {
                 filePath: physicalPath,
                 sizeMB: (metadata.file_size / 1024 / 1024).toFixed(2)
+              });
+            } else {
+              logFile('warn', '⚠️ Файл не найден ни в хранилище, ни на диске', {
+                filePath: physicalPath
               });
             }
           } catch (e) {
@@ -5103,7 +5481,20 @@ export function createFilesRouter(deps) {
         if (metadata.md5_hash && ['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) {
           try {
             const trailerPath = getTrailerPath(metadata.md5_hash);
-            if (fs.existsSync(trailerPath)) {
+            // Трейлер коммитится в S3 и локальной копии не имеет, поэтому
+            // одной проверки по диску мало: иначе кнопка превью пропадала бы
+            // у всех видео, хотя сам трейлер отдаётся из хранилища.
+            let trailerFound = fs.existsSync(trailerPath);
+            if (!trailerFound && !isLocalStorage(storage)) {
+              try {
+                trailerFound = await storage.exists(toStorageKey(trailerPath));
+              } catch (error) {
+                logger.debug('[files-with-status] Trailer lookup in storage failed', {
+                  deviceId: id, safeName, error: error.message
+                });
+              }
+            }
+            if (trailerFound) {
               hasTrailer = true;
               trailerUrl = `/api/files/trailer/${encodeURIComponent(id)}/${encodeURIComponent(safeName)}`;
             }
@@ -5266,13 +5657,14 @@ export function createFilesRouter(deps) {
       // КРИТИЧНО: Проверяем существование файла/папки перед добавлением в список
       // Для статического контента (папки/PDF/PPTX) проверяем существование папки
       if (STATIC_CONTENT_TYPES.has(contentType)) {
-        const checkPath = findFileOnDisk(
+        const checkPath = await fileExists(
           metadata?.file_path,
           path.join(getDevicesPath(), devices[id]?.folder || id, safeName),
-          path.join(getDevicesPath(), safeName)
+          path.join(getDevicesPath(), safeName),
+          storage
         );
         if (!checkPath) {
-          logger.warn('[files-with-status] Статический контент не найден на диске, пропускаем', {
+          logger.warn('[files-with-status] Статический контент не найден ни на диске, ни в хранилище, пропускаем', {
             deviceId: id,
             safeName,
             contentType,
@@ -5281,37 +5673,51 @@ export function createFilesRouter(deps) {
           continue; // Пропускаем этот файл
         }
         
-        // Дополнительная проверка для папок
+        // Дополнительная проверка для папок.
+        // Тип проверяем ТОЛЬКО если путь действительно локальный: при
+        // S3-primary папки на диске может не быть вовсе, и statSync
+        // на несуществующем пути выбросил бы исключение и скрыл рабочую
+        // папку со слайдами. Наличие объектов под префиксом уже подтверждено
+        // в fileExists.
         if (contentType === 'folder') {
-          try {
-            const stat = fs.statSync(checkPath);
-            if (!stat.isDirectory()) {
-              logger.warn('[files-with-status] Путь существует, но это не папка, пропускаем', {
+          const localFolder = findFileOnDisk(
+            metadata?.file_path,
+            path.join(getDevicesPath(), devices[id]?.folder || id, safeName),
+            path.join(getDevicesPath(), safeName)
+          );
+
+          if (localFolder) {
+            try {
+              const stat = fs.statSync(localFolder);
+              if (!stat.isDirectory()) {
+                logger.warn('[files-with-status] Путь существует, но это не папка, пропускаем', {
+                  deviceId: id,
+                  safeName,
+                  filePath: localFolder
+                });
+                continue; // Пропускаем этот файл
+              }
+            } catch (statErr) {
+              logger.warn('[files-with-status] Ошибка проверки папки, пропускаем', {
                 deviceId: id,
                 safeName,
-                filePath: checkPath
+                filePath: localFolder,
+                error: statErr.message
               });
               continue; // Пропускаем этот файл
             }
-          } catch (statErr) {
-            logger.warn('[files-with-status] Ошибка проверки папки, пропускаем', {
-              deviceId: id,
-              safeName,
-              filePath: checkPath,
-              error: statErr.message
-            });
-            continue; // Пропускаем этот файл
           }
         }
       } else if (contentType !== 'streaming') {
         // Для обычных файлов проверяем существование
-        const checkPath = findFileOnDisk(
+        const checkPath = await fileExists(
           metadata?.file_path,
           path.join(getDevicesPath(), devices[id]?.folder || id, safeName),
-          path.join(getDevicesPath(), safeName)
+          path.join(getDevicesPath(), safeName),
+          storage
         );
         if (!checkPath) {
-          logger.warn('[files-with-status] Файл не найден на диске, пропускаем', {
+          logger.warn('[files-with-status] Файл не найден ни на диске, ни в хранилище, пропускаем', {
             deviceId: id,
             safeName,
             contentType,

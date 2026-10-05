@@ -767,6 +767,37 @@ body.light .tvTile.active {
   height: var(--item-min-height);  /* Фиксированная высота */
   min-height: var(--item-min-height);
   overflow: hidden;
+  /* position:relative обязателен: полоса прогресса позиционируется
+     абсолютно по нижней кромке карточки (см. .optimization-progress).
+     Без него бар участвовал бы в flex-раскладке внутри контейнера с
+     overflow:hidden и фиксированной высотой — то есть либо обрезался,
+     либо сдвигал содержимое. Именно это давало мигание при изменении
+     процентов: каждый апдейт менял высоту содержимого. */
+  position: relative;
+}
+
+/* Полоса прогресса обработки — оверлей поверх нижней кромки карточки.
+   Абсолютное позиционирование гарантирует, что полоса:
+   - не влияет на раскладку (нет сдвига контента при смене процентов);
+   - не может быть обрезана содержимым фиксированной высоты;
+   - остаётся на месте при перерисовке панели. */
+.optimization-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.optimization-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #4CAF50, #8BC34A);
+  transition: width 0.3s ease;
 }
 
 .file-item:hover {

@@ -101,29 +101,42 @@ export function createDevicesRouter(deps) {
       return res.json([]);
     }
 
-    let devicesList = Object.entries(devices).map(([id, d]) => ({
-      device_id: id, 
-      name: d.name, 
-      folder: d.folder, 
-      files: d.files, 
-      fileNames: d.fileNames || d.files,
-      fileMetadata: d.fileMetadata || [],
-      current: d.current,
-      deviceType: d.deviceType || 'browser',
-      capabilities: d.capabilities || { 
-        video: true, 
-        audio: true, 
-        images: true, 
-        pdf: true, 
-        pptx: true, 
-        streaming: true 
-      },
-      platform: d.platform || 'Unknown',
-      appVersion: d.appVersion || null,
-      lastSeen: d.lastSeen || null,
-      ipAddress: d.ipAddress || null,
-      adbPort: d.adbPort || '5555'
-    }));
+    // fileNames дублирует files, а fileMetadata весит не меньше самого списка.
+    // Эти поля нужны только панели спикера (оригинальные имена файлов),
+    // поэтому по умолчанию они не отдаются: админка, loadNodeNames и плеер
+    // берут /api/devices часто и им они не нужны.
+    const includeFileMeta = req.query.includeFileMeta === '1';
+
+    let devicesList = Object.entries(devices).map(([id, d]) => {
+      const item = {
+        device_id: id,
+        name: d.name,
+        folder: d.folder,
+        files: d.files,
+        current: d.current,
+        deviceType: d.deviceType || 'browser',
+        platform: d.platform || 'Unknown',
+        appVersion: d.appVersion || null,
+        lastSeen: d.lastSeen || null,
+        ipAddress: d.ipAddress || null,
+        adbPort: d.adbPort || '5555'
+      };
+
+      if (includeFileMeta) {
+        item.fileNames = d.fileNames || d.files;
+        item.fileMetadata = d.fileMetadata || [];
+        item.capabilities = d.capabilities || {
+          video: true,
+          audio: true,
+          images: true,
+          pdf: true,
+          pptx: true,
+          streaming: true
+        };
+      }
+
+      return item;
+    });
 
     // Если пользователь не admin, фильтруем по назначенным устройствам
     if (req.user.role !== 'admin') {

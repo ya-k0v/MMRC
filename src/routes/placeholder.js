@@ -11,6 +11,8 @@ import { sanitizeDeviceId, isSystemFile } from '../utils/sanitize.js';
 import { scanDeviceFiles } from '../utils/file-scanner.js';
 import { getDatabase } from '../database/database.js';
 import { createModuleLogger } from '../utils/logger.js';
+import { getCurrentStorage } from '../storage/current.js';
+import { isLocalStorage, toStorageKey } from '../storage/sync.js';
 const logger = createModuleLogger('api');
 
 const router = express.Router();
@@ -22,6 +24,7 @@ const router = express.Router();
  */
 export function createPlaceholderRouter(deps) {
   const { devices, io, fileNamesMap } = deps;
+  const storage = deps.storage || getCurrentStorage();
   
   // GET /api/devices/:id/placeholder - Получить текущую заглушку устройства
   // НОВОЕ: Используем БД вместо поиска файла default.*
@@ -46,7 +49,22 @@ export function createPlaceholderRouter(deps) {
         LIMIT 1
       `, [id]);
       
-      if (placeholder && fs.existsSync(placeholder.file_path)) {
+      // Флаг заглушки проверяем с учётом S3: раньше проверка шла только по
+      // диску, и для любого файла, закоммиченного в MinIO, API возвращал
+      // placeholder: null, хотя флаг is_placeholder в БД стоял.
+      let placeholderPresent = false;
+      if (placeholder) {
+        placeholderPresent = fs.existsSync(placeholder.file_path);
+        if (!placeholderPresent && !isLocalStorage(storage)) {
+          try {
+            placeholderPresent = await storage.exists(toStorageKey(placeholder.file_path));
+          } catch {
+            placeholderPresent = false;
+          }
+        }
+      }
+
+      if (placeholder && placeholderPresent) {
         logger.info('[placeholder] ✅ Placeholder found in DB', { 
           deviceId: id, 
           fileName: placeholder.safe_name,
