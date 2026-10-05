@@ -10,6 +10,7 @@ import { getDatabase, getDriverType } from './database.js';
 import { createModuleLogger, logFile } from '../utils/logger.js';
 const logger = createModuleLogger('file');
 import { isRetryableDatabaseError } from '../utils/retry.js';
+import { fixEncoding } from '../utils/encoding.js';
 import { STATIC_CONTENT_TYPES } from '../config/file-types.js';
 import { getCurrentStorage } from '../storage/current.js';
 import { isLocalStorage, toStorageKey } from '../storage/sync.js';
@@ -131,7 +132,11 @@ export async function saveFileMetadata({
       const result = await db.run(insertSql, [
         deviceId,
         safeName,
-        originalName,
+        // Имя приходит из multipart в latin1, поэтому в БД без нормализации
+        // попадает мусор вида «Ð°Ð·Ð°Ð±Ð¾ÐºÐ¸». Чиним в единственной точке
+        // записи: fixEncoding идемпотентен, поэтому корректные кириллица и
+        // чистый ASCII остаются нетронутыми, а новые строки всегда чистые.
+        fixEncoding(originalName),
         filePath,
         fileSize,
         finalMd5Hash,
