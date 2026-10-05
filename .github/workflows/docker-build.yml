@@ -29,8 +29,101 @@ jobs:
       security-events: write
       contents: read
 
+  # Определяем, какие образы реально нужно пересобрать. Без этого каждый
+  # пуш собирал и пушил все пять образов, в том числе MinIO, который
+  # собирается из Go под две архитектуры и не содержит кода проекта.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      server: ${{ steps.detect.outputs.server }}
+      converter: ${{ steps.detect.outputs.converter }}
+      ffmpeg: ${{ steps.detect.outputs.ffmpeg }}
+      streamer: ${{ steps.detect.outputs.streamer }}
+      minio: ${{ steps.detect.outputs.minio }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect which images need rebuilding
+        id: detect
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          base="$BEFORE"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            # Первый пуш в ветку: отступаем на коммит назад. Если и его нет,
+            # считаем изменённым весь репозиторий — пересобрать всё безопаснее,
+            # чем задеплоить несуществующий образ.
+            base="$(git rev-parse HEAD^ 2>/dev/null || true)"
+          fi
+
+          if [ -z "$base" ]; then
+            files="$(git ls-files)"
+          else
+            files="$(git diff --name-only "$base" HEAD)"
+          fi
+
+          echo "Сравнение с ${base:-<корень репозитория>}; изменённые файлы:"
+          echo "$files" | sed 's/^/  /'
+
+          hit() { echo "$files" | grep -qE "$1"; }
+
+          # version.json задаёт dockerTag, а compose ставит его прямо в имя
+          # образа (mmrc:minio-${DOCKER_IMAGE_TAG}). Смена тега требует, чтобы
+          # новый тег существовал у всех образов, иначе деплой не найдёт MinIO.
+          if hit '^version\.json$'; then
+            echo "version.json изменён — пересобираем все образы ради нового тега"
+            for key in server converter ffmpeg streamer minio; do
+              echo "$key=true" >> "$GITHUB_OUTPUT"
+            done
+            exit 0
+          fi
+
+          # server: Dockerfile копирует server.js, весь src, public, scripts,
+          # config, nginx-конфиги и entrypoint — то есть практически весь проект.
+          if hit '^(Dockerfile|server\.js|package\.json|package-lock\.json|docker-entrypoint\.sh)$' \
+          || hit '^(src|public|scripts|config)/' \
+          || hit '^docker/nginx/'; then
+            echo "server=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "server=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # converter и ffmpeg состоят только из Dockerfile и apt-пакетов.
+          # Кода проекта в них нет, поэтому пересобираются лишь при правке
+          # самого Dockerfile (смена версии пакета, базы, entrypoint).
+          hit '^Dockerfile\.converter$'   && echo "converter=true" >> "$GITHUB_OUTPUT" || echo "converter=false" >> "$GITHUB_OUTPUT"
+          hit '^Dockerfile\.ffmpeg$'      && echo "ffmpeg=true"    >> "$GITHUB_OUTPUT" || echo "ffmpeg=false"    >> "$GITHUB_OUTPUT"
+
+          # streamer: Dockerfile плюс единственный файл src/streamer/.
+          if hit '^Dockerfile\.streamer$' || hit '^src/streamer/'; then
+            echo "streamer=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "streamer=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # MinIO: Dockerfile.minio собирает minio и mc из Go по зафиксированным
+          # в ARG коммитам и кладёт бинари в alpine. Ни одного файла проекта.
+          # Пересборка оправдана только сменой MINIO_COMMIT/MC_COMMIT.
+          if hit '^Dockerfile\.minio$'; then
+            echo "minio=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "minio=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          {
+            echo "### Что пересобирается"
+            for key in server converter ffmpeg streamer minio; do
+              val="$(grep -oE "^$key=(true|false)$" "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)"
+              echo "- **$key**: $val"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
   build:
-    needs: [ci, codeql]
+    needs: [ci, codeql, changes]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -96,6 +189,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push server
+        if: needs.changes.outputs.server == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -105,10 +199,11 @@ jobs:
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
             INCLUDE_DOCKER_CLI=true
-          cache-from: type=gha,scope=server-${{ github.sha }}
-          cache-to: type=gha,mode=max,scope=server-${{ github.sha }}
+          cache-from: type=gha,scope=server
+          cache-to: type=gha,mode=max,scope=server
 
       - name: Build and push converter
+        if: needs.changes.outputs.converter == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -117,10 +212,11 @@ jobs:
           tags: ${{ steps.meta-converter.outputs.tags }}
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=gha,scope=converter-${{ github.sha }}
-          cache-to: type=gha,mode=max,scope=converter-${{ github.sha }}
+          cache-from: type=gha,scope=converter
+          cache-to: type=gha,mode=max,scope=converter
 
       - name: Build and push ffmpeg
+        if: needs.changes.outputs.ffmpeg == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -129,10 +225,11 @@ jobs:
           tags: ${{ steps.meta-ffmpeg.outputs.tags }}
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=gha,scope=ffmpeg-${{ github.sha }}
-          cache-to: type=gha,mode=max,scope=ffmpeg-${{ github.sha }}
+          cache-from: type=gha,scope=ffmpeg
+          cache-to: type=gha,mode=max,scope=ffmpeg
 
       - name: Build and push streamer
+        if: needs.changes.outputs.streamer == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -141,10 +238,11 @@ jobs:
           tags: ${{ steps.meta-streamer.outputs.tags }}
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=gha,scope=streamer-${{ github.sha }}
-          cache-to: type=gha,mode=max,scope=streamer-${{ github.sha }}
+          cache-from: type=gha,scope=streamer
+          cache-to: type=gha,mode=max,scope=streamer
 
       - name: Build and push MinIO Community
+        if: needs.changes.outputs.minio == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -152,5 +250,26 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta-minio.outputs.tags }}
-          cache-from: type=gha,scope=minio-${{ github.sha }}
-          cache-to: type=gha,mode=max,scope=minio-${{ github.sha }}
+          cache-from: type=gha,scope=minio
+          cache-to: type=gha,mode=max,scope=minio
+
+      - name: Build summary
+        if: always()
+        env:
+          SERVER: ${{ needs.changes.outputs.server }}
+          CONVERTER: ${{ needs.changes.outputs.converter }}
+          FFMPEG: ${{ needs.changes.outputs.ffmpeg }}
+          STREAMER: ${{ needs.changes.outputs.streamer }}
+          MINIO: ${{ needs.changes.outputs.minio }}
+        run: |
+          {
+            echo "### Образы за этот пуш"
+            for key in SERVER CONVERTER FFMPEG STREAMER MINIO; do
+              val="$(eval "printf '%s' \"\$$key\"")"
+              if [ "$val" = "true" ]; then
+                echo "- \`$key\` — **собран**"
+              else
+                echo "- \`$key\` — пропущен, изменения его не касались"
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
