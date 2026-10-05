@@ -45,6 +45,7 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
     settings: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
     users: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
     apk: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+    notifications: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
     logs: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>',
     restart: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>',
     hero: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>',
@@ -58,6 +59,7 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
   // Build menu items
   const menuItems = [
     { id: 'devices', label: 'Устройства', icon: icons.devices, adminOnly: false },
+    { id: 'notifications', label: 'Уведомления', icon: icons.notifications, adminOnly: false },
     { id: 'users', label: 'Пользователи', icon: icons.users, adminOnly: true },
     { id: 'settings', label: 'Настройки', icon: icons.settings, adminOnly: true },
     { id: 'logs', label: 'Логи сервиса', icon: icons.logs, adminOnly: true },
@@ -98,10 +100,16 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
           }
           const isActive = state.activeSection === item.id;
           const target = item.external ? `href="${item.external}" target="_blank"` : `href="#" data-section="${item.id}"`;
+          // Уведомления открывают модальное окно, а не раздел, поэтому
+          // пункт никогда не бывает активным, но счётчик в нём обязателен.
+          const badge = item.id === 'notifications'
+            ? '<span class="sidebar-item-badge" id="notificationsBadge"></span>'
+            : '';
           return `
             <a class="sidebar-item${isActive ? ' active' : ''}" ${target} title="${item.label}">
               <span class="sidebar-item-icon">${item.icon}</span>
               <span class="sidebar-item-label">${item.label}</span>
+              ${badge}
             </a>
           `;
         }).join('')}
@@ -119,6 +127,11 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
 
     // Bind events
     bindEvents();
+
+    // render() пересобирает innerHTML, поэтому счётчик непрочитанных
+    // на новом элементе нужно проставить заново — иначе после загрузки
+    // модулей он показывал бы пустым до следующего события.
+    document.dispatchEvent(new CustomEvent('mmrc:sidebar-rendered'));
   }
 
   function bindEvents() {
@@ -136,9 +149,18 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
       item.onclick = (e) => {
         e.preventDefault();
         const section = item.dataset.section;
-        if (section) {
-          setActiveSection(section);
+        if (!section) return;
+
+        if (section === 'notifications') {
+          // Модальное окно, а не навигация: активный раздел не меняем.
+          document.dispatchEvent(new CustomEvent('mmrc:notifications-open'));
+          if (window.innerWidth < 768) {
+            closeMobile();
+          }
+          return;
         }
+
+        setActiveSection(section);
       };
     });
 

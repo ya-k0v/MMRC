@@ -7,7 +7,6 @@ import { adminFetch } from './auth.js';
 import { showNotificationsModal } from './notifications-modal.js';
 
 let unreadCount = 0;
-let notificationsBell = null;
 let socket = null;
 let updateInterval = null;
 
@@ -18,8 +17,10 @@ let updateInterval = null;
 export function initNotifications(socketIO) {
   socket = socketIO;
   
-  // Создаем элемент колокольчика
-  createBellElement();
+  // Пункт в сайдбаре и обработчик открытия модального окна
+  mountBadgeIntoSidebar();
+  document.addEventListener('mmrc:notifications-open', openNotificationsModal);
+  document.addEventListener('mmrc:sidebar-rendered', mountBadgeIntoSidebar);
   
   // Подписываемся на уведомления через Socket.IO
   subscribeToNotifications();
@@ -31,82 +32,50 @@ export function initNotifications(socketIO) {
   updateInterval = setInterval(loadUnreadCount, 30000);
 }
 
+let attempts = 0;
+
 /**
- * Создает элемент колокольчика в toolbar
+ * Встраивает счётчик в пункт «Уведомления» левого бара.
+ *
+ * Раньше колокольчик вставлялся в шапку рядом с кнопкой настроек. Но
+ * навигация админки переехала в сайдбар и кнопки шапки скрываются, поэтому
+ * колокольчик остался в мёртвой зоне шапки и пропал из интерфейса.
+ *
+ * Пункт сайдбара рендерится асинхронно (init ждёт /api/admin/modules), так
+ * что ищем его с повтором, а не один раз.
  */
-function createBellElement() {
-  const settingsBtn = document.getElementById('settingsBtn');
-  if (!settingsBtn) {
-    // Если кнопка настроек еще не загружена, ждем
-    setTimeout(createBellElement, 100);
+function mountBadgeIntoSidebar() {
+  const item = document.querySelector('#adminSidebar .sidebar-item[data-section="notifications"]');
+  if (!item) {
+    attempts += 1;
+    if (attempts < 50) {
+      setTimeout(mountBadgeIntoSidebar, 100);
+    } else {
+      console.warn('[Notifications] Пункт «Уведомления» в сайдбаре не найден, счётчик не показан');
+    }
     return;
   }
-  
-  // Проверяем, не создан ли уже колокольчик
-  if (document.getElementById('notificationsBell')) {
-    return;
+  attempts = 0;
+
+  // render() сайдбара пересобирает разметку, поэтому бейдж создаём заново,
+  // если его ещё нет в этом пункте.
+  if (!item.querySelector('#notificationsBadge')) {
+    const badge = document.createElement('span');
+    badge.id = 'notificationsBadge';
+    badge.className = 'sidebar-item-badge';
+    item.appendChild(badge);
   }
-  
-  // Создаем колокольчик перед кнопкой настроек
-  notificationsBell = document.createElement('button');
-  notificationsBell.id = 'notificationsBell';
-  notificationsBell.className = 'meta-lg';
-  notificationsBell.setAttribute('aria-label', 'Уведомления');
-  notificationsBell.style.cssText = `
-    padding: 8px 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    position: relative;
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    color: var(--text, inherit);
-    transition: opacity 0.2s;
-  `;
-  
-  notificationsBell.onmouseenter = () => {
-    notificationsBell.style.opacity = '0.7';
-  };
-  notificationsBell.onmouseleave = () => {
-    notificationsBell.style.opacity = '1';
-  };
-  
-  notificationsBell.innerHTML = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-      <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
-    </svg>
-  `;
-  
-  // Бейдж с количеством
-  const badge = document.createElement('span');
-  badge.id = 'notificationsBadge';
-  badge.style.cssText = `
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    background: var(--error);
-    color: var(--panel);
-    border-radius: 10px;
-    padding: 2px 6px;
-    font-size: 11px;
-    font-weight: bold;
-    min-width: 18px;
-    text-align: center;
-    display: none;
-    line-height: 1.2;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-  `;
-  notificationsBell.appendChild(badge);
-  
-  // Клик открывает модальное окно
-  notificationsBell.onclick = () => {
-    showNotificationsModal(socket);
-  };
-  
-  // Вставляем перед кнопкой настроек
-  settingsBtn.parentNode.insertBefore(notificationsBell, settingsBtn);
+
+  item.setAttribute('aria-label', 'Уведомления');
+  updateBadge();
+}
+
+/**
+ * Открывает модальное окно уведомлений
+ */
+function openNotificationsModal() {
+  if (!socket) return;
+  showNotificationsModal(socket);
 }
 
 /**
@@ -120,14 +89,12 @@ function subscribeToNotifications() {
   
   // Получаем начальные уведомления
   socket.on('notifications:initial', ({ notifications, unreadCount: count }) => {
-    unreadCount = count;
-    updateBadge();
+    applyCount(count);
   });
   
   // Новое уведомление
   socket.on('notification', ({ notification, action, unreadCount: count }) => {
-    unreadCount = count;
-    updateBadge();
+    applyCount(count);
     
     // Для обновлений (progress/status) не дублируем всплывающие тосты
     if (!action || action === 'new') {
@@ -137,29 +104,46 @@ function subscribeToNotifications() {
   
   // Уведомление прочитано
   socket.on('notification:acknowledged', ({ unreadCount: count }) => {
-    unreadCount = count;
-    updateBadge();
+    applyCount(count);
   });
   
   // Уведомление удалено
   socket.on('notification:removed', ({ unreadCount: count }) => {
-    unreadCount = count;
-    updateBadge();
+    applyCount(count);
   });
+}
+
+// Счётчик приходит двумя путями: сокетом и HTTP-опросом раз в 30 секунд.
+// Ревизия растёт при каждом применении значения и нужна, чтобы опрос не
+// затирал более свежие данные сокета. Сравнение по времени не годится:
+// события часто приходят в пределах одной миллисекунды.
+let countRevision = 0;
+
+/**
+ * Единственная точка обновления счётчика
+ */
+function applyCount(count) {
+  unreadCount = count || 0;
+  countRevision += 1;
+  updateBadge();
 }
 
 /**
  * Загружает количество непрочитанных уведомлений
  */
 async function loadUnreadCount() {
+  // Ревизия на момент старта запроса. Если пока шёл запрос, сокет принёс
+  // новое значение, ответ HTTP устарел и применять его нельзя. Без этой
+  // проверки счётчик сбрасывался на 0 сразу после события сокета.
+  const revisionAtStart = countRevision;
   try {
     const response = await adminFetch('/api/notifications/unread-count');
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
     const data = await response.json();
-    unreadCount = data.count || 0;
-    updateBadge();
+    if (countRevision !== revisionAtStart) return;
+    applyCount(data.count);
   } catch (error) {
     console.error('[Notifications] Error loading unread count:', error);
   }
@@ -171,16 +155,18 @@ async function loadUnreadCount() {
 function updateBadge() {
   const badge = document.getElementById('notificationsBadge');
   if (!badge) return;
-  
+
+  // Видимостью управляет класс has-badge на пункте сайдбара: инлайновый
+  // display перебивал бы правила для свёрнутого сайдбара.
+  const item = badge.closest('.sidebar-item');
+  if (item) {
+    item.classList.toggle('has-badge', unreadCount > 0);
+  }
+
   if (unreadCount > 0) {
     badge.textContent = unreadCount > 99 ? '99+' : unreadCount.toString();
-    badge.style.display = 'block';
-    
-    // Добавляем анимацию пульсации для критических уведомлений
-    badge.style.animation = 'pulse 2s infinite';
   } else {
-    badge.style.display = 'none';
-    badge.style.animation = 'none';
+    badge.textContent = '';
   }
 }
 

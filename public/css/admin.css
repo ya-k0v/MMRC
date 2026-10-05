@@ -184,6 +184,44 @@ body.admin-page .sidebar-item-label {
   transition: opacity 0.2s;
 }
 
+/* Счётчик непрочитанных уведомлений в пункте сайдбара */
+body.admin-page .sidebar-item-badge {
+  margin-left: auto;
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--error);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  display: none;
+}
+
+/* Показывать счётчик нужно по наличию класса, а не инлайновым display,
+   иначе он перебьёт правила ниже для свёрнутого сайдбара. */
+body.admin-page .sidebar-item.has-badge .sidebar-item-badge {
+  display: block;
+}
+
+/* Свёрнутый сайдбар: подпись скрыта, счётчик висит на иконке */
+body.admin-page .sidebar.collapsed .sidebar-item {
+  position: relative;
+}
+
+body.admin-page .sidebar.collapsed .sidebar-item-badge {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  margin-left: 0;
+  min-width: 16px;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
 body.admin-page .sidebar-footer {
   border-top: var(--border);
   padding: var(--space-sm);
