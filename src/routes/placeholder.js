@@ -26,6 +26,33 @@ export function createPlaceholderRouter(deps) {
   const { devices, io, fileNamesMap } = deps;
   const storage = deps.storage || getCurrentStorage();
   
+  // Фоновая проверка заглушки в хранилище. Ответ не блокирует и результат
+  // не влияет на выдачу: нужен только чтобы в логах было видно реальное
+  // состояние объекта, когда заглушка не проигрывается.
+  function probePlaceholderInStorage(placeholder, deviceId, storage) {
+    if (!placeholder.file_path || !storage || isLocalStorage(storage)) return;
+    let key;
+    try {
+      key = toStorageKey(placeholder.file_path);
+    } catch {
+      return;
+    }
+    Promise.resolve()
+      .then(() => storage.exists(key))
+      .then((present) => {
+        if (!present) {
+          logger.warn('[placeholder] Флаг is_placeholder стоит, но объекта в хранилище нет', {
+            deviceId, fileName: placeholder.safe_name, key
+          });
+        }
+      })
+      .catch((error) => {
+        logger.warn('[placeholder] Не удалось проверить заглушку в хранилище', {
+          deviceId, fileName: placeholder.safe_name, key, error: error.message
+        });
+      });
+  }
+
   // GET /api/devices/:id/placeholder - Получить текущую заглушку устройства
   // НОВОЕ: Используем БД вместо поиска файла default.*
   router.get('/:id/placeholder', async (req, res) => {
@@ -49,22 +76,21 @@ export function createPlaceholderRouter(deps) {
         LIMIT 1
       `, [id]);
       
-      // Флаг заглушки проверяем с учётом S3: раньше проверка шла только по
-      // диску, и для любого файла, закоммиченного в MinIO, API возвращал
-      // placeholder: null, хотя флаг is_placeholder в БД стоял.
-      let placeholderPresent = false;
+      // Источник истины — флаг is_placeholder в БД, а не наличие файла.
+      // Раньше здесь стояла проверка fs.existsSync(), и после перехода на S3
+      // заглушки перестали работать: файл лежит в MinIO, локальной копии нет,
+      // проверка проваливалась и API отдавал placeholder: null при живом флаге.
+      //
+      // Проверку существования в ответ не встраиваем намеренно. Иначе MinIO
+      // становится fail-closed точкой: любой таймаут или ошибка сети снова
+      // превращали бы заглушку в «не найдена», хотя флаг стоит. Плеер сам
+      // обработает ошибку загрузки видео (см. player-videojs.js: не проверяем
+      // доступность файла через HEAD). Ниже — только фоновая диагностика.
       if (placeholder) {
-        placeholderPresent = fs.existsSync(placeholder.file_path);
-        if (!placeholderPresent && !isLocalStorage(storage)) {
-          try {
-            placeholderPresent = await storage.exists(toStorageKey(placeholder.file_path));
-          } catch {
-            placeholderPresent = false;
-          }
-        }
+        probePlaceholderInStorage(placeholder, id, storage);
       }
 
-      if (placeholder && placeholderPresent) {
+      if (placeholder) {
         logger.info('[placeholder] ✅ Placeholder found in DB', { 
           deviceId: id, 
           fileName: placeholder.safe_name,

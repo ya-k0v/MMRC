@@ -31,7 +31,12 @@ export class S3Storage extends StorageProvider {
         accessKeyId: accessKeyId || 'minioadmin',
         secretAccessKey: secretAccessKey || 'minioadmin'
       },
-      forcePathStyle: forcePathStyle !== false
+      forcePathStyle: forcePathStyle !== false,
+      // Таймаут только на установку соединения: без него зависший MinIO
+      // держал HTTP-запросы бесконечно, и запросы к /api/devices/:id/placeholder
+      // упирались в клиентский таймаут. socketTimeout намеренно НЕ задаём —
+      // он обрывал бы долгие передачи больших видео.
+      connectTimeout: Number(process.env.S3_CONNECT_TIMEOUT_MS) || 5000
     });
   }
 
@@ -153,14 +158,31 @@ export class S3Storage extends StorageProvider {
   }
 
   async exists(key) {
+    // exists() зовут из синхронных путей API (список файлов, заглушки,
+    // превью), поэтому зависшая проба не должна держать запрос. HEAD сам по
+    // себе мгновенный: превышение времени означает проблему со связью, а не
+    // отсутствие объекта, поэтому такой таймаут считаем «не знаю» (false).
+    const controller = new AbortController();
+    const timeoutMs = Number(process.env.S3_HEAD_TIMEOUT_MS) || 4000;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const cmd = new S3.HeadObjectCommand({ Bucket: this.#bucket, Key: this._key(key) });
+      const cmd = new S3.HeadObjectCommand({
+        Bucket: this.#bucket,
+        Key: this._key(key),
+        ...(controller.signal ? { abortController: controller } : {})
+      });
       await this.#client.send(cmd);
       return true;
     } catch (err) {
       if (err.name === 'NotFound' || err.name === 'NoSuchKey') return false;
       if (err.name === 'AccessDenied') return false;
+      if (err.name === 'AbortError' || err.name === 'TimeoutError') {
+        console.warn('[S3Storage] exists() timeout', { key: String(key), timeoutMs });
+        return false;
+      }
       throw err;
+    } finally {
+      clearTimeout(timer);
     }
   }
 

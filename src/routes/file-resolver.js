@@ -16,6 +16,7 @@ const logger = createModuleLogger('resolver');
 import { spawnFfmpeg } from '../utils/docker-ffmpeg.js';
 import { getCurrentStorage } from '../storage/current.js';
 import { isLocalStorage, toStorageKey } from '../storage/sync.js';
+import { getMimeType, resolveContentType } from '../config/file-types.js';
 
 const router = express.Router();
 
@@ -105,7 +106,7 @@ function sendFileFromDisk(res, req, metadata, context = {}) {
 
 // Отправка файла через storage (S3 и др.)
 async function sendFileFromStorage(res, req, metadata, context = {}, storage) {
-  const { file_path, file_size, mime_type, safe_name, md5_hash } = metadata;
+  const { file_path, file_size, mime_type, safe_name, md5_hash, content_type } = metadata;
   const dataRoot = getDataRoot();
 
   const storageKey = path.relative(dataRoot, file_path);
@@ -114,38 +115,100 @@ async function sendFileFromStorage(res, req, metadata, context = {}, storage) {
     return res.status(403).send('Forbidden');
   }
 
-  const totalSize = file_size || 0;
+  // Размер обязателен для корректной Range-отдачи. Раньше он брался только
+  // из БД, и при file_size = 0 клиент получал 416 на любой Range, а без
+  // Range — пустой 200 с Content-Length: 0, то есть видео не играло вообще.
+  // Для части записей (в том числе у только что помеченных заглушек) размер
+  // в БД не заполнен, поэтому берём его из самого объекта хранилища.
+  let totalSize = Number(file_size) || 0;
+  if (totalSize <= 0) {
+    const stat = await storage.stat(storageKey).catch((error) => {
+      logger.warn('[Resolver] Не удалось получить размер объекта', {
+        ...context, storageKey, error: error.message
+      });
+      return null;
+    });
+    totalSize = Number(stat?.size) || 0;
+  }
+
+  if (totalSize <= 0) {
+    logger.error('[Resolver] Размер файла неизвестен, отдавать нечего', {
+      ...context, storageKey, fileSize: file_size
+    });
+    if (!res.headersSent) return res.status(404).send('File not found in storage');
+    return;
+  }
+
   let start = 0;
   let end = totalSize - 1;
   let statusCode = 200;
 
-  if (req.headers.range) {
-    const parts = req.headers.range.replace(/bytes=/, '').split('-');
-    start = parseInt(parts[0], 10) || 0;
-    end = parts[1] ? parseInt(parts[1], 10) : (totalSize - 1);
+  const rangeHeader = req.headers.range;
+  if (rangeHeader) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(String(rangeHeader).trim());
+    const hasRange = match && (match[1] !== '' || match[2] !== '');
 
-    if (start >= totalSize) {
-      logger.warn('[Resolver] Range not satisfiable (storage)', { ...context, range: req.headers.range, fileSize: totalSize });
-      return res.status(416).set('Content-Range', `bytes */${totalSize}`).end();
+    if (!hasRange) {
+      // Нераспознанный Range отдаём целиком, а не 416: раньше неразбираемое
+      // значение превращалось в start=0 и молча ломало перемотку.
+      logger.warn('[Resolver] Range не распознан, отдаём файл целиком', {
+        ...context, range: rangeHeader
+      });
+    } else {
+      const rawStart = match[1] === '' ? null : parseInt(match[1], 10);
+      const rawEnd = match[2] === '' ? null : parseInt(match[2], 10);
+
+      if (rawStart === null) {
+        // bytes=-N — последние N байт
+        const suffixLength = rawEnd ?? 0;
+        if (suffixLength > 0) {
+          start = Math.max(0, totalSize - suffixLength);
+          end = totalSize - 1;
+        }
+      } else {
+        start = rawStart;
+        // end обязан быть в пределах файла: без клампа S3 отвечает
+        // InvalidRange и клиент получает 500 вместо 206.
+        end = rawEnd === null ? totalSize - 1 : Math.min(rawEnd, totalSize - 1);
+      }
+
+      if (start >= totalSize || start > end) {
+        logger.warn('[Resolver] Range not satisfiable (storage)', {
+          ...context, range: rangeHeader, fileSize: totalSize
+        });
+        return res.status(416).set('Content-Range', `bytes */${totalSize}`).end();
+      }
+      statusCode = 206;
+
+      logger.info('[Resolver] Range request (storage)', {
+        ...context, range: rangeHeader, start, end,
+        requestedSize: end - start + 1, fileSize: totalSize
+      });
     }
-    statusCode = 206;
-
-    logger.info('[Resolver] Range request (storage)', {
-      ...context, range: req.headers.range, start, end,
-      requestedSize: end - start + 1, fileSize: totalSize
-    });
   }
 
+  // Content-Type из БД часто пустой или generic. Для video.js нужен настоящий
+  // MIME, иначе источник не стартует — раньше здесь был только
+  // application/octet-stream.
+  const contentType = mime_type && mime_type !== 'application/octet-stream'
+    ? mime_type
+    : getMimeType(resolveContentType({ contentType: content_type, fileName: safe_name }), safe_name);
+
   res.status(statusCode);
-  res.set({
-    'Content-Type': mime_type || 'application/octet-stream',
-    'Content-Range': `bytes ${start}-${end}/${totalSize}`,
+  const headers = {
+    'Content-Type': contentType,
     'Content-Length': end - start + 1,
     'Accept-Ranges': 'bytes',
     'X-Accel-Buffering': 'no',
     'Cache-Control': 'public, max-age=3600',
     'X-File-Hash': md5_hash?.substring(0, 12) || 'unknown'
-  });
+  };
+  // Content-Range допустим только для 206: на 200 он невалиден и сбивает
+  // клиентов, которые ориентируются на заголовок.
+  if (statusCode === 206) {
+    headers['Content-Range'] = `bytes ${start}-${end}/${totalSize}`;
+  }
+  res.set(headers);
 
   try {
     const stream = await storage.createReadStream(storageKey, { start, end });
