@@ -119,6 +119,45 @@ make logs            # Логи
 - [DOCKER.md](DOCKER.md) — Docker/Compose
 - [DEBUG.md](DEBUG.md) — логи, ошибки
 
+## Безопасность
+
+### docker.sock: известный и принятый риск
+
+В `docker-compose.yml` и `docker-compose.deploy.yml` в контейнер монтируется
+`/var/run/docker.sock`. Процесс при этом работает от root, поэтому компрометация
+приложения даёт **root-доступ к Docker-демону на хосте**, а через него — к любой
+службе хоста.
+
+Сокет оставлен намеренно. Без него перестают работать ровно две функции:
+
+- **self-update из админки** — `docker pull` / `docker rm` / `docker compose`
+  (`src/utils/docker-update-manager.js`);
+- **конвертация PPTX → PDF** — стоит `MMRC_DOCKER=1`, а `soffice` в образ не
+  входит, поэтому единственный рабочий путь идёт через docker-контейнер
+  (`src/converters/document-converter.js:319`).
+
+Чтобы сокет убрать: удалите строку `- /var/run/docker.sock:/var/run/docker.sock`
+из обоих compose-файлов и уберите `INCLUDE_DOCKER_CLI` из `build.args` — тогда
+CLI в образе тоже не будет установлен. Аналитика (`docker stats`, логи HA-nginx)
+завёрнута в `try/catch` и без сокета просто станет пустой, а не упадёт.
+Обновления после этого придётся делать на хосте через `install.sh`.
+
+Внутри контейнера включён `security_opt: [no-new-privileges:true]` — он запрещает
+повышать привилегии через setuid/setcap-бинарники; nginx, tini и docker CLI этого
+не требуют.
+
+### JWT_SECRET
+
+`JWT_SECRET` обязателен: значение по умолчанию `change-me-in-production` убрано,
+compose-файл откажется ставить сервис без него. Сгенерируйте и положите в `.env`:
+
+```bash
+openssl rand -hex 64
+```
+
+Также задайте секрет при деплое через `docker-compose.deploy.yml` — он читается
+из окружения без значения по умолчанию.
+
 ## Лицензия
 
 [Solo use. Commercial use prohibited.](LICENSE)

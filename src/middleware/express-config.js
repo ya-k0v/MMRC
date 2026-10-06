@@ -58,6 +58,44 @@ export function setupExpressMiddleware(app) {
   // КРИТИЧНО: Настраиваем доверие к прокси (nginx)
   // Позволяет Express читать реальный IP клиента из заголовков X-Forwarded-For и X-Real-IP
   app.set('trust proxy', true);
+
+  app.disable('x-powered-by');
+
+  // Security-заголовки ставим в приложении, а не только в nginx: ответы уходят
+  // и напрямую на :3000, и через прокси. В nginx эти же заголовки прописаны
+  // точечно в location с alias (/content/, /streams/, /converted/trailers/) —
+  // там add_header от http-блока не наследуется, если в location есть свои.
+  //
+  // default-src, media-src и connect-src сознательно не задаются: плеер в
+  // fallback-режиме грузит stream_url напрямую с внешнего CDN
+  // (public/js/player-videojs.js), и ограничение по 'self' сломало бы видео.
+  // blob: нужен worker'ам video.js и hls.js, без него шифрование AES не стартует.
+  const SECURITY_HEADERS = {
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'SAMEORIGIN',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+    'Content-Security-Policy': [
+      "script-src 'self' 'unsafe-inline' blob: https://cdn.jsdelivr.net",
+      "worker-src 'self' blob:",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'self'"
+    ].join('; ')
+  };
+
+  app.use((req, res, next) => {
+    for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+      res.setHeader(name, value);
+    }
+    // HSTS выставляем только на реальном HTTPS: иначе он заблокировал бы
+    // доступ по http тем, у кого сертификата ещё нет.
+    if (req.secure) {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+    }
+    next();
+  });
   
   // Таймауты для всех запросов (30 секунд по умолчанию)
   app.use(requestTimeout(30000));

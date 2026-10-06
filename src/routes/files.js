@@ -26,6 +26,7 @@ import { setCurrentStorage, getCurrentStorage } from '../storage/current.js';
 import { commitFolderToStorage, isLocalStorage, toStorageKey } from '../storage/sync.js';
 import { LocalStorage } from '../storage/local.js';
 import { validatePath } from '../utils/path-validator.js';
+import { fetchPublicUrl, assertPublicHttpUrl } from '../utils/ssrf.js';
 import { getCachedResolution, clearResolutionCache } from '../video/resolution-cache.js';
 import { processUploadedFilesAsync, processUploadedStaticContent, registerUploadedFilesImmediately } from '../utils/file-metadata-processor.js';
 import { getFileMetadata, deleteFileMetadata, getDeviceFilesMetadata, deleteDeviceFilesMetadata, saveFileMetadata, countFileReferences, updateFileOriginalName, createStreamingEntry, updateStreamMetadata, cleanupMissingFiles } from '../database/files-metadata.js';
@@ -2493,13 +2494,16 @@ export function createFilesRouter(deps) {
     if (!upstreamUrl) return res.status(400).send('No URL');
 
     try {
-      new URL(upstreamUrl);
-    } catch {
+      await assertPublicHttpUrl(upstreamUrl);
+    } catch (error) {
+      logSecurity('warn', 'HLS proxy blocked upstream URL', {
+        deviceId: id, safeName, upstreamUrl, reason: error.message, ip: req.ip
+      });
       return res.status(400).send('Invalid upstream URL');
     }
 
     try {
-      const upstreamResponse = await fetch(upstreamUrl, {
+      const upstreamResponse = await fetchPublicUrl(upstreamUrl, {
         headers: { 'User-Agent': 'MMRC-HLS-Proxy/1.0' },
         signal: AbortSignal.timeout(15000)
       });

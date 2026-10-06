@@ -65,9 +65,17 @@ services:
       - /var/lib/mmrc/certs:/var/lib/mmrc/certs:ro
       # Frontend files baked into Docker image (COPY public ./public in Dockerfile)
       # Docker socket — для авто-обновления из админки. Удалите, если не нужно.
+      # РИЗК: docker.sock = root на хосте при компрометации приложения.
+      # Оставлен для self-update и конвертации PPTX→PDF (MMRC_DOCKER=1,
+      # soffice в образ не входит). Без них удалите строку и INCLUDE_DOCKER_CLI.
       - /var/run/docker.sock:/var/run/docker.sock
       # Project dir — для доступа к compose-файлу при обновлении.
       - .:/host:ro
+    # Запрет повышения привилегий через setuid/setcap внутри контейнера.
+    # nginx (мастер root → воркеры www-data), tini и docker CLI это не требуют,
+    # а post-pull-sync.sh запускается с SKIP_SERVICE_RESTART=1 (sudo не достигается).
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:80/health"]
       interval: 30s
@@ -217,8 +225,16 @@ services:
       - mmrc-config:/app/config
       - mmrc-temp:/app/.tmp
       - /var/lib/mmrc/certs:/var/lib/mmrc/certs:ro
+      # РИЗК: docker.sock = root на хосте при компрометации приложения.
+      # Оставлен для self-update и конвертации PPTX→PDF (MMRC_DOCKER=1,
+      # soffice в образ не входит). Без них удалите строку и INCLUDE_DOCKER_CLI.
       - /var/run/docker.sock:/var/run/docker.sock
       - .:/host:ro
+    # Запрет повышения привилегий через setuid/setcap внутри контейнера.
+    # nginx (мастер root → воркеры www-data), tini и docker CLI это не требуют,
+    # а post-pull-sync.sh запускается с SKIP_SERVICE_RESTART=1 (sudo не достигается).
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:80/health"]
       interval: 30s
