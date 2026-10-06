@@ -449,6 +449,12 @@ export function createAdminRouter(deps = {}) {
           });
         } else {
           logger.info('[APK] adb_port сохранён', { deviceId, adbPort, ip });
+          // Порт живёт и в памяти, иначе /api/devices и массовое обновление
+          // до рестарта продолжали бы отдавать старое значение.
+          if (devices[deviceId]) {
+            devices[deviceId].adbPort = String(adbPort);
+            devices[deviceId].ipAddress = ip;
+          }
         }
       } catch (e) {
         logger.warn('[APK] Failed to save adb_port', { error: e.message });

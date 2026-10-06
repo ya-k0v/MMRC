@@ -460,7 +460,9 @@ export async function getAllDevices() {
             deviceType: row.device_type,
             platform: row.platform,
             ipAddress: row.ip_address || null,
-            adbPort: row.adb_port || '5555',
+            // Реальное значение, а не дефолт: выдуманный '5555' в памяти
+            // при следующем saveDevice затёр бы порт, заданный при установке APK.
+            adbPort: row.adb_port || null,
             capabilities: row.capabilities ? JSON.parse(row.capabilities) : null,
             lastSeen: row.last_seen,
             current: row.current_state ? JSON.parse(row.current_state) : { type: 'idle', file: null, state: 'idle' },

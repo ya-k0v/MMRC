@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getDevicesPath, getDataRoot } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
-import { deleteDevice as deleteDeviceFromDB, deleteDeviceFileNames } from '../database/database.js';
+import { deleteDevice as deleteDeviceFromDB, deleteDeviceFileNames, getDatabase } from '../database/database.js';
 import { createLimiter, deleteLimiter } from '../middleware/rate-limit.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import { createModuleLogger, logDevice } from '../utils/logger.js';
@@ -69,6 +69,36 @@ function resolveDeviceEntry(rawId, devicesMap) {
   }
 
   return null;
+}
+
+/**
+ * ADB-порт устройства для удалённых операций.
+ *
+ * Порт задаётся при установке APK и живёт в БД (devices.adb_port), но в
+ * памяти его может не быть: устройство могло зарегистрироваться до того, как
+ * порт записали, либо строка создавалась с дефолтом. Поэтому память — только
+ * кэш, а при её промахе смотрим в базу, и лишь потом берём дефолт.
+ */
+async function resolveDeviceAdbPort(deviceId, device) {
+  if (device && device.adbPort) {
+    return String(device.adbPort);
+  }
+
+  try {
+    const row = await getDatabase().get(
+      'SELECT adb_port FROM devices WHERE device_id = ?',
+      [deviceId]
+    );
+    const stored = row && row.adb_port;
+    if (stored) {
+      if (device) device.adbPort = String(stored);
+      return String(stored);
+    }
+  } catch (e) {
+    logger.warn('[ADB] Не удалось прочитать adb_port из БД', { deviceId, error: e.message });
+  }
+
+  return String(DEFAULT_ADB_PORT);
 }
 
 /**
@@ -394,11 +424,12 @@ export function createDevicesRouter(deps) {
       return res.status(400).json({ ok: false, error: 'IP адрес устройства не задан' });
     }
     try {
+      const adbPort = await resolveDeviceAdbPort(id, device);
       const result = await launchAndroidApp(
         device.ipAddress,
         ANDROID_PACKAGE_NAME,
         ANDROID_MAIN_ACTIVITY,
-        DEFAULT_ADB_PORT
+        adbPort
       );
       if (result.ok) {
         return res.json({ ok: true });

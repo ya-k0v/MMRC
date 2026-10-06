@@ -2330,6 +2330,13 @@ async function loadSettingsContent(adminFetch) {
   apkIpInput.className = 'input';
   apkIpInput.style.cssText = 'width:120px; max-width:20vw;';
   apkIpInput.required = true;
+  const apkPortInput = document.createElement('input');
+  apkPortInput.type = 'text';
+  apkPortInput.placeholder = 'Порт';
+  apkPortInput.className = 'input';
+  apkPortInput.style.cssText = 'width:70px; max-width:8vw;';
+  apkPortInput.value = '5555';
+  apkPortInput.required = true;
   const apkIdInput = document.createElement('input');
   apkIdInput.type = 'text';
   apkIdInput.placeholder = 'ID устройства';
@@ -2371,6 +2378,7 @@ async function loadSettingsContent(adminFetch) {
   apkActionsWrap.appendChild(apkMenuToggleBtn);
   apkActionsWrap.appendChild(apkMenu);
   apkForm.appendChild(apkIpInput);
+  apkForm.appendChild(apkPortInput);
   apkForm.appendChild(apkIdInput);
   apkForm.appendChild(apkNameInput);
   apkForm.appendChild(apkActionsWrap);
@@ -2405,6 +2413,7 @@ async function loadSettingsContent(adminFetch) {
     apkStatus.textContent = 'Установка...';
     apkStatus.style.color = 'var(--text-secondary)';
     const ip = apkIpInput.value.trim();
+    const port = apkPortInput.value.trim() || '5555';
     const deviceId = apkIdInput.value.trim();
     const deviceName = apkNameInput.value.trim();
     if (!ip || !deviceId || !deviceName) {
@@ -2418,7 +2427,7 @@ async function loadSettingsContent(adminFetch) {
       const resp = await adminFetch('/api/admin/install-apk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ip, deviceId, deviceName })
+        body: JSON.stringify({ ip, port, deviceId, deviceName })
       });
       const result = await resp.json();
       if (result.ok) {
