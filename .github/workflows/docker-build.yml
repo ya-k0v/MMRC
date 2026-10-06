@@ -136,7 +136,7 @@ jobs:
 
       - name: Docker metadata (server)
         id: meta-server
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.DOCKER_ORG }}/mmrc
           tags: |
@@ -145,7 +145,7 @@ jobs:
 
       - name: Docker metadata (converter)
         id: meta-converter
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.DOCKER_ORG }}/mmrc-converter
           tags: |
@@ -154,7 +154,7 @@ jobs:
 
       - name: Docker metadata (ffmpeg)
         id: meta-ffmpeg
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.DOCKER_ORG }}/mmrc-ffmpeg
           tags: |
@@ -163,7 +163,7 @@ jobs:
 
       - name: Docker metadata (streamer)
         id: meta-streamer
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.DOCKER_ORG }}/mmrc-streamer
           tags: |
@@ -172,7 +172,7 @@ jobs:
 
       - name: Docker metadata (MinIO)
         id: meta-minio
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.DOCKER_ORG }}/mmrc
           tags: |
@@ -180,10 +180,10 @@ jobs:
             type=raw,value=minio-latest,enable={{is_default_branch}}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}

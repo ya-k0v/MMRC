@@ -59,7 +59,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && sed -i 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml
 
 # yt-dlp (pinned version)
-ARG YTDLP_VERSION=2026.07.04
+ARG YTDLP_VERSION=2026.08.19
 RUN wget -q -O /usr/local/bin/yt-dlp "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp" \
     && chmod +x /usr/local/bin/yt-dlp
 
@@ -100,7 +100,8 @@ RUN mkdir -p /app/data/{db,content,streams,converted/trailers,logs,temp,hero} /a
 
 ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0 LOG_LEVEL=info \
     MMRC_DATA_DIR=/app/data CONTENT_ROOT=/app/data \
-    STREAMS_OUTPUT_DIR=/app/data/streams LOGS_DIR=/app/data/logs
+    STREAMS_OUTPUT_DIR=/app/data/streams LOGS_DIR=/app/data/logs \
+    YTDLP_PINNED_BIN=/usr/local/bin/yt-dlp
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://127.0.0.1:80/health || exit 1

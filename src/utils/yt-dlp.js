@@ -7,6 +7,7 @@ const REDIRECT_STATUS_CODES = new Set([301, 302, 303, 307, 308]);
 const LOCAL_BIN_DIR = path.join(process.cwd(), 'bin');
 const LOCAL_BIN_NAME = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
 const LOCAL_BIN_PATH = path.join(LOCAL_BIN_DIR, LOCAL_BIN_NAME);
+const PINNED_BIN_ENV = 'YTDLP_PINNED_BIN';
 
 let installPromise = null;
 
@@ -64,6 +65,18 @@ function ensureExecutablePermissions(filePath) {
     }
   } catch {
     // Ignore chmod errors here, caller will fail later if execution is not possible.
+  }
+}
+
+function resolvePinnedBinaryPath() {
+  const configured = process.env[PINNED_BIN_ENV];
+  if (!configured) return null;
+  try {
+    fs.accessSync(configured, fs.constants.F_OK);
+    fs.accessSync(configured, fs.constants.X_OK);
+    return configured;
+  } catch {
+    return null;
   }
 }
 
@@ -170,6 +183,14 @@ export function getLocalYtDlpBinaryPath() {
 
 export async function ensureLocalYtDlpBinary(options = {}) {
   const { force = false, logger = null } = options;
+
+  if (!force) {
+    const pinned = resolvePinnedBinaryPath();
+    if (pinned) {
+      logWithFallback(logger, 'info', '[yt-dlp] Using image-pinned binary', { path: pinned });
+      return pinned;
+    }
+  }
 
   if (!force && fs.existsSync(LOCAL_BIN_PATH)) {
     ensureExecutablePermissions(LOCAL_BIN_PATH);
