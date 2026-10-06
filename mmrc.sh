@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 set -e
+# pipefail обязателен: без него `curl ... | bash` при обрыве сети отдаёт
+# bash пустой ввод, тот завершается с кодом 0, и установка «проходит успешно»,
+# хотя ничего не установилось. Остальные скрипты репозитория pipefail уже ставят.
+set -o pipefail
 
 # MMRC CLI - One-command deployment and management
 # Usage: mmrc <command> [options]
@@ -18,8 +22,14 @@ MMRC_SCRIPTS_REPO="https://github.com/ya-k0v/MMRC"
 
 # Загружаем версию из version.json на GitHub
 __MMRC_VER=$(curl -fsSL "https://raw.githubusercontent.com/ya-k0v/MMRC/v340/version.json" 2>/dev/null || echo '{"branch":"v340","dockerTag":"v340","dockerImages":{"server":"pingwin1900/mmrc","converter":"pingwin1900/mmrc-converter","ffmpeg":"pingwin1900/mmrc-ffmpeg","streamer":"pingwin1900/mmrc-streamer"}}')
-MMRC_BRANCH=$(echo "$__MMRC_VER" | grep -o '"branch":"[^"]*"' | cut -d'"' -f4)
-DOCKER_IMAGE_TAG=$(echo "$__MMRC_VER" | grep -o '"dockerTag":"[^"]*"' | cut -d'"' -f4)
+# Если GitHub отдал не JSON (страница rate-limit, пустой ответ, HTML-заглушка
+# прокси), grep ничего не находит и переменная становится пустой. Дальше это
+# давало битые URL вида .../MMRC//install.sh и теги образов pingwin1900/mmrc:.
+# Поэтому пустое значение заменяем безопасным дефолтом.
+MMRC_BRANCH=$(echo "$__MMRC_VER" | grep -o '"branch":"[^"]*"' | cut -d'"' -f4 || true)
+[ -n "$MMRC_BRANCH" ] || MMRC_BRANCH="v340"
+DOCKER_IMAGE_TAG=$(echo "$__MMRC_VER" | grep -o '"dockerTag":"[^"]*"' | cut -d'"' -f4 || true)
+[ -n "$DOCKER_IMAGE_TAG" ] || DOCKER_IMAGE_TAG="v340"
 DOCKER_ORG="pingwin1900"
 DOCKER_IMAGE="${DOCKER_ORG}/mmrc"
 CONVERTER_IMAGE="${DOCKER_ORG}/mmrc-converter"
@@ -58,9 +68,11 @@ box_line() {
     local content="$1"
     local box_width=100
     # Remove zero-width variation selectors (U+FE0F) for accurate counting
-    local clean=$(printf '%s' "$content" | tr -d '\357\270\217')
+    local clean
+    clean=$(printf '%s' "$content" | tr -d '\357\270\217') || return 1
     local char_count=${#clean}
-    local byte_count=$(printf '%s' "$clean" | wc -c)
+    local byte_count
+    byte_count=$(printf '%s' "$clean" | wc -c) || return 1
     local four_byte=$(( (byte_count - char_count) / 3 ))
     local display_width=$(( char_count + four_byte ))
     local pad=$((box_width - display_width))
@@ -70,8 +82,8 @@ box_line() {
 
 info() { colorized_echo blue "  $1"; }
 success() { colorized_echo green "✔ $1"; }
-warn() { colorized_echo yellow "⚠ $1"; }
-error() { colorized_echo red "✖ $1"; }
+warn() { colorized_echo yellow "⚠ $1" >&2; }
+error() { colorized_echo red "✖ $1" >&2; }
 
 check_root() {
     if [ "$(id -u)" != "0" ]; then
@@ -112,6 +124,147 @@ replace_or_append_env() {
     fi
 }
 
+# Читает переменную из .env.
+#
+# Раньше это писалось как `grep "^KEY=" file | cut -d= -f2 || echo default`.
+# Fallback там не срабатывал никогда: код возврата пайпа берётся от последней
+# команды, а cut завершается успехом даже на пустом вводе. Переменная
+# оставалась пустой, и в cmd_reset `rm -rf "$CONTENT_DIR"/*` превращался в
+# `rm -rf /*` — стирание всей файловой системы.
+get_env_value() {
+    local key="$1"
+    local default="${2:-}"
+    local value
+    value=$(grep -E "^[[:space:]]*${key}=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- \
+        | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/") || true
+    [ -n "$value" ] && printf '%s' "$value" || printf '%s' "$default"
+}
+
+# Приводит путь к каноническому виду без обращения к симлинкам: убирает
+# повторные и хвостовые слэши, а также сегменты «./». Нужна, чтобы проверки
+# безопасности не обходились через «/etc/», «//etc» или «/etc/.».
+normalize_path() {
+    local IFS='/'
+    local -a parts
+    local part=""
+    local out=""
+    # read -ra не раскрывает glob-паттерны (в отличие от присваивания $p),
+    # поэтому «*» в пути не превратится в список файлов.
+    read -r -a parts <<< "$1"
+    for part in ${parts[@]+"${parts[@]}"}; do
+        case "$part" in
+            ''|'.') continue ;;
+            '..') out="$out/.." ;;
+            *) out="$out/$part" ;;
+        esac
+    done
+    printf '%s' "$out"
+}
+
+# Проверяет, что путь годится для массового удаления содержимого.
+# Отказываем на пустом значении, на "/", на относительном пути и на
+# системных каталогах верхнего уровня.
+assert_safe_clean_target() {
+    local target="$1"
+    local label="$2"
+
+    if [ -z "$target" ]; then
+        error "$label is empty. Refusing to delete anything."
+        return 1
+    fi
+    case "$target" in
+        /*) : ;;
+        *)
+            error "$label must be an absolute path, got: $target"
+            return 1
+            ;;
+    esac
+
+    # Нормализуем ДО проверки. Иначе "/etc/", "//etc" и "/etc/." не совпадали
+    # со списком запрещённых каталогов, и очистка проходила по системной
+    # директории.
+    local normalized
+    normalized=$(normalize_path "$target")
+
+    if [ -z "$normalized" ] || [ "$normalized" = "/" ]; then
+        error "$label resolves to '$target' (filesystem root). Refusing to delete."
+        return 1
+    fi
+    case "$normalized" in
+        */../*|*/..)
+            error "$label contains '..': $target. Refusing to delete."
+            return 1
+            ;;
+    esac
+    # Защита от каталогов, которые не могут быть хранилищем контента
+    case "$normalized" in
+        /bin|/boot|/cdrom|/dev|/etc|/home|/lib|/lib64|/media|/mnt|/opt|/proc|/root|/run|/sbin|/srv|/sys|/usr|/var)
+            error "$label points at a system directory: $normalized. Refusing to delete."
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+# Качает файл во временный путь и только потом переносит на место.
+#
+# `curl -o file` создаёт файл сразу и при обрыве по таймауту оставляет
+# обрезанный файл. Раньше `mmrc pull`/`mmrc update` писали прямо в
+# docker-compose.yml: при --max-time истёкшем файл оставался огрызком, а
+# скрипт рапортовал «Could not update compose file, using existing version».
+download_atomic() {
+    local url="$1"
+    local dest="$2"
+    local tmp="${dest}.part.$$"
+    if curl -fSL --connect-timeout 10 --max-time 60 -o "$tmp" "$url" 2>/dev/null && [ -s "$tmp" ]; then
+        mv -f "$tmp" "$dest"
+        return 0
+    fi
+    rm -f "$tmp"
+    return 1
+}
+
+# Читает ответ пользователя. В CI/cron/`docker exec` без -t терминала нет,
+# и `read < /dev/tty` падал с «No such device or address».
+# Базовый URL для health-check. Порт брали из .env: там бывает 3000 или 8080,
+# а проверка ходила только на :80 и рапортовала «Server is not responding»
+# на полностью рабочей установке.
+health_base_url() {
+    local port
+    port=$(get_env_value "PORT" "")
+    if [ -z "$port" ]; then
+        port=$(get_env_value "HEALTH_PORT" "")
+    fi
+    [ -n "$port" ] || port=80
+    printf 'http://localhost:%s' "$port"
+}
+
+# Читает строку с TTY. Если терминала нет (cron, CI, пайп) — не падает с
+# «No such device or address», а честно отказывается выполнять интерактивный шаг.
+read_from_tty() {
+    local prompt="$1"
+    local default="${2-}"
+    local reply=""
+    if [ -r /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
+        read -r -p "$prompt" reply < /dev/tty || reply=""
+    else
+        printf '✖ %s\n' "Interactive input required (no TTY available). Re-run from a terminal." >&2
+        return 1
+    fi
+    printf '%s' "${reply:-$default}"
+}
+
+confirm() {
+    local prompt="$1"
+    local reply
+    if [ -r /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
+        read -r -p "$prompt" reply < /dev/tty || reply=""
+    else
+        read -r -p "$prompt" reply || reply=""
+    fi
+    printf '%s' "$reply"
+}
+
 # ========================
 # Commands
 # ========================
@@ -132,7 +285,10 @@ cmd_install() {
 ══════════════════════════════════════════
 "
 
-    curl -fsSL "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/install.sh" | bash
+    if ! curl -fsSL --connect-timeout 15 --max-time 120 "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/install.sh" | bash; then
+        error "Installer download or execution failed (branch '$MMRC_BRANCH'). Nothing was installed."
+        exit 1
+    fi
 }
 
 cmd_reinstall() {
@@ -140,13 +296,16 @@ cmd_reinstall() {
     require_installed
 
     colorized_echo yellow "⚠️  This will reinstall MMRC. Configuration will be preserved."
-    read -p "  Continue? [y/N]: " confirm < /dev/tty
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    confirm_reply=$(confirm "  Continue? [y/N]: ")
+    if [[ ! "$confirm_reply" =~ ^[Yy]$ ]]; then
         info "Aborted"
         exit 0
     fi
 
-    curl -fsSL "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/install.sh" | bash
+    if ! curl -fsSL --connect-timeout 15 --max-time 120 "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/install.sh" | bash; then
+        error "Installer download or execution failed (branch '$MMRC_BRANCH')."
+        exit 1
+    fi
 }
 
 cmd_pull() {
@@ -157,10 +316,10 @@ cmd_pull() {
     # Update compose file from repo
     info "Updating compose configuration..."
     MMRC_RAW="https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}"
-    if curl -fSL --connect-timeout 10 --max-time 30 -o "$COMPOSE_FILE" "$MMRC_RAW/docker-compose.deploy.yml" 2>/dev/null; then
+    if download_atomic "$MMRC_RAW/docker-compose.deploy.yml" "$COMPOSE_FILE"; then
         success "Compose file updated"
     else
-        warn "Could not update compose file, using existing version"
+        warn "Could not update compose file, keeping the existing one"
     fi
 
     info "Pulling latest Docker images..."
@@ -204,8 +363,8 @@ cmd_reset() {
 ══════════════════════════════════════════
 "
 
-    read -p "Are you sure? Type 'reset' to confirm: " confirm < /dev/tty
-    if [ "$confirm" != "reset" ]; then
+    confirm_reply=$(confirm "Are you sure? Type 'reset' to confirm: ")
+    if [ "$confirm_reply" != "reset" ]; then
         info "Aborted"
         exit 0
     fi
@@ -220,9 +379,26 @@ cmd_reset() {
     success "Services stopped, volumes removed"
 
     info "Cleaning content data..."
-    CONTENT_DIR=$(grep "^CONTENT_DIR=" "$ENV_FILE" | cut -d= -f2 || echo "$APP_DIR/data")
-    rm -rf "$CONTENT_DIR"/*
-    success "Content data cleaned"
+    # CONTENT_DIR помечен как legacy: dev/scripts/quick-install.sh его в .env
+    # не пишет (там DATA_ROOT), поэтому переменная часто отсутствует. Пустое
+    # значение в `rm -rf "$CONTENT_DIR"/*` давало `rm -rf /*` — удаление всей
+    # файловой системы вместо очистки контента.
+    DATA_ROOT_DIR=$(get_env_value "DATA_ROOT")
+    CONTENT_DIR=$(get_env_value "CONTENT_DIR" "")
+    if [ -z "$CONTENT_DIR" ] && [ -n "$DATA_ROOT_DIR" ]; then
+        CONTENT_DIR="$DATA_ROOT_DIR/content"
+    fi
+
+    assert_safe_clean_target "$CONTENT_DIR" "CONTENT_DIR" || exit 1
+    CONTENT_DIR=$(normalize_path "$CONTENT_DIR")
+
+    if [ -d "$CONTENT_DIR" ]; then
+        # find -mindepth 1, а не "$DIR"/*: удаляет и скрытые файлы вроде .thumbnails
+        find "$CONTENT_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+        success "Content data cleaned"
+    else
+        warn "Content directory does not exist, nothing to clean: $CONTENT_DIR"
+    fi
 
     echo ""
     success "MMRC has been reset to clean state."
@@ -240,8 +416,8 @@ cmd_reset_password() {
 ══════════════════════════════════════════
 "
 
-    read -p "Generate a new random admin password? [y/N]: " confirm < /dev/tty
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    confirm_reply=$(confirm "Generate a new random admin password? [y/N]: ")
+    if [[ ! "$confirm_reply" =~ ^[Yy]$ ]]; then
         info "Aborted"
         exit 0
     fi
@@ -294,16 +470,16 @@ try {
 }
 " 2>&1) || EXEC_STATUS=$?
 
-    DB_TYPE_RESULT=$(echo "$RESULT" | sed -n 's/^DB://p' | sed -n '1p')
+    DB_TYPE_RESULT=$(echo "$RESULT" | sed -n 's/^DB://p' | sed -n '1p' || true)
     [ -n "$DB_TYPE_RESULT" ] && info "База данных: $DB_TYPE_RESULT"
 
     if [ "$EXEC_STATUS" -eq 0 ] && echo "$RESULT" | grep -q "^USER:" && echo "$RESULT" | grep -q "^PASSWORD:"; then
-        USERNAME=$(echo "$RESULT" | grep "^USER:" | sed 's/USER://')
-        NEW_PASSWORD=$(echo "$RESULT" | sed -n 's/^PASSWORD://p' | sed -n '1p')
+        USERNAME=$(echo "$RESULT" | grep "^USER:" | sed 's/USER://' || true)
+        NEW_PASSWORD=$(echo "$RESULT" | sed -n 's/^PASSWORD://p' | sed -n '1p' || true)
         success "Логин: $USERNAME"
         success "Новый пароль: $NEW_PASSWORD"
     elif echo "$RESULT" | grep -q "^ERROR:"; then
-        ERROR=$(echo "$RESULT" | grep "^ERROR:" | sed 's/ERROR://')
+        ERROR=$(echo "$RESULT" | grep "^ERROR:" | sed 's/ERROR://' || true)
         error "$ERROR"
     else
         error "Could not reset password (exit code: $EXEC_STATUS)"
@@ -357,7 +533,9 @@ cmd_start() {
         docker stop mmrc 2>/dev/null || true
         docker rm mmrc 2>/dev/null || true
         HA_REPLICAS=$(get_ha_replicas)
-        [ "$HA_REPLICAS" -le 0 ] 2>/dev/null && HA_REPLICAS=1
+        if ! [[ "$HA_REPLICAS" =~ ^[0-9]+$ ]] || [ "$HA_REPLICAS" -lt 1 ]; then
+            HA_REPLICAS=1
+        fi
         HA_SCALE="--scale mmrc-replica=$HA_REPLICAS"
     else
         HA_SCALE=""
@@ -410,14 +588,15 @@ cmd_status() {
     fi
 
     # Health check
-    if curl -fsS http://localhost:80/health >/dev/null 2>&1; then
-        success "Server is healthy"
+    HEALTH_URL="$(health_base_url)/health"
+    if curl -fsS --connect-timeout 5 --max-time 10 "$HEALTH_URL" >/dev/null 2>&1; then
+        success "Server is healthy ($HEALTH_URL)"
     else
-        warn "Server is not responding on port 80"
+        warn "Server is not responding on $HEALTH_URL"
     fi
 
     # Database info
-    DB_TYPE_VAL=$(grep "^DB_TYPE=" "$ENV_FILE" | cut -d= -f2)
+    DB_TYPE_VAL=$(get_env_value "DB_TYPE")
     if [ "$DB_TYPE_VAL" = "postgres" ]; then
         info "Database: PostgreSQL"
         if docker ps --format '{{.Names}}' | grep -q '^mmrc-postgres$'; then
@@ -434,7 +613,7 @@ cmd_status() {
     fi
 
     # Disk usage
-    CONTENT_DIR=$(grep "^CONTENT_DIR=" "$ENV_FILE" | cut -d= -f2)
+    CONTENT_DIR=$(get_env_value "CONTENT_DIR")
     if [ -n "$CONTENT_DIR" ] && [ -d "$CONTENT_DIR" ]; then
         echo ""
         info "Content storage usage:"
@@ -545,10 +724,10 @@ cmd_update() {
     # Update compose file from repo
     info "Updating compose configuration..."
     MMRC_RAW="https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}"
-    if curl -fSL --connect-timeout 10 --max-time 30 -o "$COMPOSE_FILE" "$MMRC_RAW/docker-compose.deploy.yml" 2>/dev/null; then
+    if download_atomic "$MMRC_RAW/docker-compose.deploy.yml" "$COMPOSE_FILE"; then
         success "Compose file updated"
     else
-        warn "Could not update compose file, using existing version"
+        warn "Could not update compose file, keeping the existing one"
     fi
 
     # Pull new images
@@ -563,7 +742,9 @@ cmd_update() {
     info "Restarting services..."
     HA_REPLICAS=$(get_ha_replicas)
     HA_SCALE=""
-    [ "$HA_REPLICAS" -gt 0 ] 2>/dev/null && HA_SCALE="--scale mmrc-replica=$HA_REPLICAS"
+    if [[ "$HA_REPLICAS" =~ ^[0-9]+$ ]] && [ "$HA_REPLICAS" -gt 0 ]; then
+        HA_SCALE="--scale mmrc-replica=$HA_REPLICAS"
+    fi
     $COMPOSE $COMPOSE_HA $PROFILES up -d $HA_SCALE
     success "Services restarted"
 
@@ -571,7 +752,7 @@ cmd_update() {
     info "Waiting for server to be ready..."
     sleep 10
 
-    if curl -fsS http://localhost:80/health >/dev/null 2>&1; then
+    if curl -fsS --connect-timeout 5 --max-time 10 "$(health_base_url)/health" >/dev/null 2>&1; then
         success "Update completed successfully!"
     else
         warn "Server may still be starting. Check logs: mmrc logs"
@@ -602,14 +783,14 @@ cmd_backup() {
     info "Backing up databases..."
     cd "$APP_DIR"
 
-    DB_TYPE_VAL=$(grep "^DB_TYPE=" "$ENV_FILE" | cut -d= -f2)
+    DB_TYPE_VAL=$(get_env_value "DB_TYPE")
     if [ "$DB_TYPE_VAL" = "postgres" ]; then
         # PostgreSQL backup via pg_dump
-        DB_HOST=$(grep "^DB_HOST=" "$ENV_FILE" | cut -d= -f2)
-        DB_PORT=$(grep "^DB_PORT=" "$ENV_FILE" | cut -d= -f2)
-        DB_NAME=$(grep "^DB_NAME=" "$ENV_FILE" | cut -d= -f2)
-        DB_USER=$(grep "^DB_USER=" "$ENV_FILE" | cut -d= -f2)
-        DB_PASSWORD=$(grep "^DB_PASSWORD=" "$ENV_FILE" | cut -d= -f2)
+        DB_HOST=$(get_env_value "DB_HOST")
+        DB_PORT=$(get_env_value "DB_PORT")
+        DB_NAME=$(get_env_value "DB_NAME")
+        DB_USER=$(get_env_value "DB_USER")
+        DB_PASSWORD=$(get_env_value "DB_PASSWORD")
 
         if command -v pg_dump >/dev/null 2>&1; then
             PGPASSWORD="$DB_PASSWORD" pg_dump -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" \
@@ -626,19 +807,25 @@ cmd_backup() {
         fi
     else
         PROFILES=$(get_compose_profiles)
-        $COMPOSE $PROFILES exec -T mmrc sqlite3 /app/data/db/main.db \
+        # Удаление временного файла вынесено из цепочки &&: раньше его сбой
+        # печатал «Main database backup failed», хотя дамп уже был скопирован.
+        if $COMPOSE $PROFILES exec -T mmrc sqlite3 /app/data/db/main.db \
             ".backup '/tmp/main-${TIMESTAMP}.db'" 2>/dev/null && \
-        $COMPOSE $PROFILES cp "mmrc:/tmp/main-${TIMESTAMP}.db" "$BACKUP_DIR/main-${TIMESTAMP}.db" && \
-        $COMPOSE $PROFILES exec -T mmrc rm "/tmp/main-${TIMESTAMP}.db" 2>/dev/null && \
-        success "Main database backed up" || \
-        warn "Main database backup failed"
+           $COMPOSE $PROFILES cp "mmrc:/tmp/main-${TIMESTAMP}.db" "$BACKUP_DIR/main-${TIMESTAMP}.db"; then
+            success "Main database backed up"
+            $COMPOSE $PROFILES exec -T mmrc rm "/tmp/main-${TIMESTAMP}.db" 2>/dev/null || true
+        else
+            warn "Main database backup failed"
+        fi
 
-        $COMPOSE $PROFILES exec -T mmrc sqlite3 /app/data/db/heroes.db \
+        if $COMPOSE $PROFILES exec -T mmrc sqlite3 /app/data/db/heroes.db \
             ".backup '/tmp/heroes-${TIMESTAMP}.db'" 2>/dev/null && \
-        $COMPOSE $PROFILES cp "mmrc:/tmp/heroes-${TIMESTAMP}.db" "$BACKUP_DIR/heroes-${TIMESTAMP}.db" && \
-        $COMPOSE $PROFILES exec -T mmrc rm "/tmp/heroes-${TIMESTAMP}.db" 2>/dev/null && \
-        success "Heroes database backed up" || \
-        warn "Heroes database backup failed"
+           $COMPOSE $PROFILES cp "mmrc:/tmp/heroes-${TIMESTAMP}.db" "$BACKUP_DIR/heroes-${TIMESTAMP}.db"; then
+            success "Heroes database backed up"
+            $COMPOSE $PROFILES exec -T mmrc rm "/tmp/heroes-${TIMESTAMP}.db" 2>/dev/null || true
+        else
+            warn "Heroes database backup failed"
+        fi
     fi
 
     # Backup config
@@ -651,6 +838,16 @@ cmd_backup() {
 }
 
 cmd_ssl() {
+    local subcommand="${1:-}"
+
+    # Статус сертификатов не должен запускать мастер и перезапускать сервисы
+    if [ "$subcommand" = "status" ]; then
+        check_root
+        require_installed
+        show_ssl_status
+        return 0
+    fi
+
     check_root
     require_installed
     detect_compose
@@ -675,8 +872,7 @@ cmd_ssl() {
         echo ""
         echo "1) Use existing certificate"
         echo "2) Issue new certificate"
-        read -p "Choose [1]: " choice < /dev/tty
-        choice=${choice:-1}
+        choice=$(read_from_tty "Choose [1]: " "1") || exit 1
 
         if [ "$choice" = "2" ]; then
             issue_new_cert
@@ -697,18 +893,43 @@ cmd_ssl() {
     success "MMRC started with SSL on port 443"
 }
 
+show_ssl_status() {
+    local cert_dir env_domain
+    cert_dir=$(find "$DATA_DIR/certs" -name "fullchain.pem" -exec dirname {} \; 2>/dev/null | head -1 || true)
+
+    if [ -n "$cert_dir" ] && [ -f "$cert_dir/fullchain.pem" ] && [ -f "$cert_dir/privkey.pem" ]; then
+        success "SSL certificate present"
+        info "  Domain:   $(basename "$cert_dir")"
+        info "  Cert:     $cert_dir/fullchain.pem"
+        info "  Key:      $cert_dir/privkey.pem"
+        if command -v openssl >/dev/null 2>&1; then
+            info "  Expires:  $(openssl x509 -enddate -noout -in "$cert_dir/fullchain.pem" 2>/dev/null | sed 's/notAfter=//' || echo unknown)"
+        fi
+    else
+        info "No SSL certificate installed"
+        info "  Run 'mmrc ssl' to set one up"
+    fi
+
+    env_domain=$(get_env_value "SSL_DOMAIN" "")
+    if [ -n "$env_domain" ]; then
+        info "  .env SSL_DOMAIN: $env_domain"
+    else
+        warn "  .env has no SSL_DOMAIN - MMRC still serves plain HTTP on port 80"
+    fi
+}
+
 issue_new_cert() {
     echo ""
     echo "How to get SSL certificate?"
     echo "1) Self-signed (for IP addresses)"
     echo "2) Let's Encrypt (for public domains)"
     echo "3) I have certificate files"
-    read -p "Choose [1]: " cert_type < /dev/tty
+    cert_type=$(read_from_tty "Choose [1]: " "1") || return 1
     cert_type=${cert_type:-1}
 
     case $cert_type in
         1)
-            read -p "Enter IP address: " domain < /dev/tty
+            domain=$(read_from_tty "Enter IP address: ") || return 1
             if [ -z "$domain" ] || ! echo "$domain" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
                 error "Valid IP address is required"
                 return 1
@@ -717,14 +938,16 @@ issue_new_cert() {
             info "Generating self-signed certificate for $domain..."
             mkdir -p "$DATA_DIR/certs/$domain"
 
-            openssl req -x509 -nodes -days 3650 \
+            # Раньше стоял `if [ $? -eq 0 ]` сразу после openssl. Под set -e
+            # неудачный openssl прерывал скрипт, а stderr был заглушен через
+            # 2>/dev/null, так что ветка else не выполнялась никогда, а
+            # пользователь видел только молчаливое завершение.
+            if openssl req -x509 -nodes -days 3650 \
                 -newkey rsa:2048 \
                 -keyout "$DATA_DIR/certs/$domain/privkey.pem" \
                 -out "$DATA_DIR/certs/$domain/fullchain.pem" \
                 -subj "/CN=$domain" \
-                -addext "subjectAltName=IP:$domain" 2>/dev/null
-
-            if [ $? -eq 0 ]; then
+                -addext "subjectAltName=IP:$domain"; then
                 success "Self-signed certificate generated!"
                 # Copy to fixed path for nginx
                 mkdir -p "$DATA_DIR/certs/ssl"
@@ -737,7 +960,7 @@ issue_new_cert() {
             fi
             ;;
         2)
-            read -p "Enter domain name: " domain < /dev/tty
+            domain=$(read_from_tty "Enter domain name: ") || return 1
             if [ -z "$domain" ]; then
                 error "Domain name is required"
                 return 1
@@ -754,8 +977,7 @@ issue_new_cert() {
                 tar xzf /tmp/acme.tar.gz -C /tmp
                 cd /tmp/acme.sh-master
                 # Install with email for certificate notifications
-                read -p "Enter email for SSL certificate [admin@$domain]: " ssl_email < /dev/tty
-                ssl_email="${ssl_email:-admin@$domain}"
+                ssl_email=$(read_from_tty "Enter email for SSL certificate [admin@$domain]: " "admin@$domain") || return 1
                 ./acme.sh --install -m "$ssl_email"
                 cd /root
                 rm -rf /tmp/acme.tar.gz /tmp/acme.sh-master
@@ -763,9 +985,7 @@ issue_new_cert() {
             fi
 
             info "Issuing Let's Encrypt certificate for $domain..."
-            acme.sh --issue -d "$domain" --standalone --server letsencrypt --force
-
-            if [ $? -eq 0 ]; then
+            if acme.sh --issue -d "$domain" --standalone --server letsencrypt; then
                 mkdir -p "$DATA_DIR/certs/$domain"
                 acme.sh --install-cert -d "$domain" \
                     --key-file "$DATA_DIR/certs/$domain/privkey.pem" \
@@ -783,15 +1003,15 @@ issue_new_cert() {
             fi
             ;;
         3)
-            read -p "Enter full path to certificate: " cert_path < /dev/tty
-            read -p "Enter full path to private key: " key_path < /dev/tty
+            cert_path=$(read_from_tty "Enter full path to certificate: ") || return 1
+            key_path=$(read_from_tty "Enter full path to private key: ") || return 1
 
             if [ ! -f "$cert_path" ] || [ ! -f "$key_path" ]; then
                 error "Certificate or key file not found"
                 return 1
             fi
 
-            read -p "Enter domain/IP for this certificate: " domain < /dev/tty
+            domain=$(read_from_tty "Enter domain/IP for this certificate: ") || return 1
             if [ -z "$domain" ]; then
                 error "Domain/IP is required"
                 return 1
@@ -840,8 +1060,8 @@ cmd_uninstall() {
 ══════════════════════════════════════════
 "
 
-    read -p "Are you sure? Type 'yes' to confirm: " confirm < /dev/tty
-    if [ "$confirm" != "yes" ]; then
+    confirm_reply=$(read_from_tty "Are you sure? Type 'yes' to confirm: ") || return 1
+    if [ "$confirm_reply" != "yes" ]; then
         info "Aborted"
         exit 0
     fi
@@ -870,9 +1090,9 @@ cmd_edit_env() {
     EDITOR="${EDITOR:-}"
     if [ -z "$EDITOR" ]; then
         if command -v nano >/dev/null 2>&1; then
-            EDITOR=nano
+            EDITOR="nano"
         elif command -v vi >/dev/null 2>&1; then
-            EDITOR=vi
+            EDITOR="vi"
         else
             error "No text editor found. Install nano or vi, or set \$EDITOR."
             exit 1
@@ -889,7 +1109,7 @@ cmd_edit_env() {
 
 warn_ha_sqlite() {
     local db_type
-    db_type=$(grep "^DB_TYPE=" "$ENV_FILE" 2>/dev/null | cut -d= -f2)
+    db_type=$(get_env_value "DB_TYPE")
     if [ -z "$db_type" ] || [ "$db_type" = "sqlite" ]; then
         warn "HA mode requires PostgreSQL! SQLite не поддерживает multi-process запись."
         warn "Установите DB_TYPE=postgres в $ENV_FILE"
@@ -903,22 +1123,24 @@ cmd_ha() {
     case "${1:-status}" in
         setup|init)
             check_root
+            HA_REPLICAS="${2:-2}"
+            # Валидируем аргумент ДО любых проверок окружения: иначе `ha setup abc`
+            # отвечал «нужен PostgreSQL» и вышел с кодом 0, не показав, что
+            # сам аргумент бессмысленен.
+            if ! [[ "$HA_REPLICAS" =~ ^[0-9]+$ ]] || [ "$HA_REPLICAS" -lt 1 ]; then
+                error "Invalid replica count: '$HA_REPLICAS' (expected a positive integer, e.g. 'mmrc ha setup 2')"
+                exit 1
+            fi
             warn_ha_sqlite
             cd "$APP_DIR"
 
             if [ -f "docker-compose.ha.yml" ]; then
                 warn "HA is already configured."
-                read -p "  Re-download and reconfigure? [y/N]: " confirm < /dev/tty
-                if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+                confirm_reply=$(confirm "  Re-download and reconfigure? [y/N]: ")
+                if [[ ! "$confirm_reply" =~ ^[Yy]$ ]]; then
                     info "Aborted"
                     exit 0
                 fi
-            fi
-
-            HA_REPLICAS="${2:-2}"
-            if [ "$HA_REPLICAS" -lt 1 ] 2>/dev/null; then
-                error "Invalid replica count: $HA_REPLICAS"
-                exit 1
             fi
 
             info "Downloading HA configuration..."
@@ -929,8 +1151,7 @@ cmd_ha() {
                 warn "GitHub download unavailable; using existing docker-compose.ha.yml"
                 ha_yml_ok=true
             else
-                if curl -fSL --connect-timeout 10 --max-time 30 -o "docker-compose.ha.yml" \
-                    "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/docker-compose.ha.yml" 2>/dev/null; then
+                if download_atomic "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/docker-compose.ha.yml" "docker-compose.ha.yml"; then
                     ha_yml_ok=true
                 else
                     error "Failed to download docker-compose.ha.yml (check network)"
@@ -943,8 +1164,7 @@ cmd_ha() {
                 warn "GitHub download unavailable; using existing ha-lb.conf"
                 ha_lb_ok=true
             else
-                if curl -fSL --connect-timeout 10 --max-time 30 -o "docker/nginx/ha-lb.conf" \
-                    "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/docker/nginx/ha-lb.conf" 2>/dev/null; then
+                if download_atomic "https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}/docker/nginx/ha-lb.conf" "docker/nginx/ha-lb.conf"; then
                     ha_lb_ok=true
                 else
                     error "Failed to download ha-lb.conf (check network)"
@@ -977,8 +1197,8 @@ cmd_ha() {
             cd "$APP_DIR"
 
             HA_REPLICAS="${2:-}"
-            if [ -z "$HA_REPLICAS" ] || [ "$HA_REPLICAS" -lt 1 ] 2>/dev/null; then
-                error "Usage: mmrc ha scale <N> (N >= 1)"
+            if ! [[ "$HA_REPLICAS" =~ ^[0-9]+$ ]] || [ "$HA_REPLICAS" -lt 1 ]; then
+                error "Invalid replica count: '$HA_REPLICAS' (expected a positive integer, e.g. 'mmrc ha scale 2')"
                 exit 1
             fi
 
@@ -1000,8 +1220,8 @@ cmd_ha() {
                 exit 0
             fi
 
-            read -p "Remove HA and return to single-node mode? [y/N]: " confirm < /dev/tty
-            if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+            confirm_reply=$(confirm "Remove HA and return to single-node mode? [y/N]: ")
+            if [[ ! "$confirm_reply" =~ ^[Yy]$ ]]; then
                 info "Aborted"
                 exit 0
             fi
@@ -1032,7 +1252,7 @@ cmd_ha() {
                 COMPOSE_HA="-f docker-compose.yml -f docker-compose.ha.yml"
                 PROFILES=$(get_compose_profiles)
                 HA_REPLICAS=$(get_ha_replicas)
-                if [ "$HA_REPLICAS" -gt 0 ] 2>/dev/null; then
+                if [[ "$HA_REPLICAS" =~ ^[0-9]+$ ]] && [ "$HA_REPLICAS" -gt 0 ]; then
                     success "$HA_REPLICAS replica(s) running"
                 else
                     warn "No replicas running (run 'mmrc ha scale <N>')"
@@ -1132,7 +1352,7 @@ case "${1:-help}" in
     reset) cmd_reset ;;
     reset-password) cmd_reset_password ;;
     backup) cmd_backup ;;
-    ssl) cmd_ssl ;;
+    ssl) cmd_ssl "${@:2}" ;;
     shell) cmd_shell "${@:2}" ;;
     ha) cmd_ha "${@:2}" ;;
     edit-env) cmd_edit_env ;;
