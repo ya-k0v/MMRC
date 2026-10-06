@@ -375,7 +375,7 @@ function renderHeroList() {
   // Показываем индикатор загрузки, если есть еще элементы
   if (state.displayedCount < state.filtered.length) {
     html += `
-      <li class="hero-list__item hero-list__loading" style="text-align:center; padding:var(--space-md); color:var(--muted);">
+      <li class="hero-list__item hero-list__loading" style="text-align:center; padding:var(--space-sm); color:var(--muted);">
         <div class="meta">Загружено ${state.displayedCount} из ${state.filtered.length}</div>
       </li>
     `;

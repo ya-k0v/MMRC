@@ -2428,7 +2428,7 @@ async function loadFiles(stabilizeAttempt = 0) {
     const res = await speakerFetch(`/api/devices/${encodeURIComponent(currentDevice)}/files-with-status?readyOnly=1`);
     if (!res.ok) {
       console.error('Не удалось загрузить файлы:', res.status);
-      fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-xl)"><div class="meta">Ошибка загрузки файлов</div></li>';
+      fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-lg)"><div class="meta">Ошибка загрузки файлов</div></li>';
       if (meta) meta.textContent = formatFilesMetaWithSelection('0 файлов');
       return;
     }
@@ -2469,7 +2469,7 @@ async function loadFiles(stabilizeAttempt = 0) {
 
   if (!allFiles || allFiles.length === 0) {
     fileList.innerHTML = `
-      <li class="item" style="text-align:center; padding:var(--space-xl)">
+      <li class="item" style="text-align:center; padding:var(--space-lg)">
         <div class="meta">Нет файлов</div>
       </li>
     `;
@@ -2584,7 +2584,7 @@ async function loadFiles(stabilizeAttempt = 0) {
             border:1px solid var(--border);
             overflow:hidden;
             background:transparent;
-            transition:all 0.2s;
+            transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s;
             min-height:var(--speaker-file-item-min-height,52px);
           ">
         
@@ -3008,7 +3008,7 @@ async function loadFiles(stabilizeAttempt = 0) {
   
   } catch (error) {
     console.error('Не удалось отобразить файлы:', error);
-    fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-xl)"><div class="meta">Ошибка загрузки файлов</div></li>';
+    fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-lg)"><div class="meta">Ошибка загрузки файлов</div></li>';
   }
 
   await syncPreviewWithPlayerState();
@@ -3023,7 +3023,7 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
   if (!currentDevice) {
     if (title) title.textContent = 'Все файлы';
     if (meta) meta.textContent = 'Выберите устройство слева';
-    fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-xl)"><div class="meta">Выберите устройство слева</div></li>';
+    fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-lg)"><div class="meta">Выберите устройство слева</div></li>';
     return;
   }
 
@@ -3034,7 +3034,7 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
     const res = await speakerFetch(`/api/devices/all/files?limit=${ALL_FILES_LIMIT}&readyOnly=1`);
     if (!res.ok) {
       console.error('Не удалось загрузить все файлы:', res.status);
-      fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-xl)"><div class="meta">Ошибка загрузки файлов</div></li>';
+      fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-lg)"><div class="meta">Ошибка загрузки файлов</div></li>';
       if (meta) meta.textContent = formatFilesMetaWithSelection('0 файлов');
       return;
     }
@@ -3080,7 +3080,7 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
 
     if (!allFiles.length) {
       fileList.innerHTML = `
-        <li class="item" style="text-align:center; padding:var(--space-xl)">
+        <li class="item" style="text-align:center; padding:var(--space-lg)">
           <div class="meta">Нет файлов</div>
         </li>
       `;
@@ -3168,7 +3168,7 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
               border:1px solid var(--border);
               overflow:hidden;
               background:transparent;
-              transition:all 0.2s;
+              transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s;
               min-height:var(--speaker-file-item-min-height,52px);
             ">
           
@@ -3409,7 +3409,7 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
 
   } catch (error) {
     console.error('Не удалось отобразить все файлы:', error);
-    fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-xl)"><div class="meta">Ошибка загрузки файлов</div></li>';
+    fileList.innerHTML = '<li class="item" style="text-align:center; padding:var(--space-lg)"><div class="meta">Ошибка загрузки файлов</div></li>';
   }
 }
 

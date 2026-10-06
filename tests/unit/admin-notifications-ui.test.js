@@ -4,7 +4,6 @@
 import { jest } from '@jest/globals';
 
 const mockAdminFetch = jest.fn();
-const mockShowNotificationsModal = jest.fn();
 
 jest.unstable_mockModule('../../public/js/admin/auth.js', () => ({
   adminFetch: (...args) => mockAdminFetch(...args),
@@ -12,7 +11,7 @@ jest.unstable_mockModule('../../public/js/admin/auth.js', () => ({
 }));
 
 jest.unstable_mockModule('../../public/js/admin/notifications-modal.js', () => ({
-  showNotificationsModal: (...args) => mockShowNotificationsModal(...args)
+  mountNotificationsSection: jest.fn()
 }));
 
 const { createSidebar } = await import('../../public/js/admin/sidebar.js');
@@ -51,16 +50,55 @@ describe('пункт «Уведомления» в левом баре', () => {
     expect(item.querySelector('#notificationsBadge')).not.toBeNull();
   });
 
-  it('открывает модальное окно и не меняет активный раздел', async () => {
+  it('переходит в раздел, а не открывает модальное окно', async () => {
     const sidebar = createSidebar({ adminFetch: mockAdminFetch, user: USER, onNavigate: jest.fn() });
     await sidebar.init();
 
-    const opened = jest.fn();
-    document.addEventListener('mmrc:notifications-open', opened);
-
+    // От модальных окон отказались: пункт уведомлений стал обычным
+    // разделом навигации, как «Устройства» или «Пользователи».
     sidebarItem().onclick({ preventDefault: () => {} });
 
-    expect(opened).toHaveBeenCalledTimes(1);
+    expect(sidebar.getActiveSection()).toBe('notifications');
+    expect(document.querySelector('#adminSidebar .sidebar-item[data-section="notifications"]').classList.contains('active')).toBe(true);
+  });
+
+  it('клик по всплывающему уведомлению открывает раздел', async () => {
+    const sidebar = createSidebar({ adminFetch: mockAdminFetch, user: USER, onNavigate: jest.fn() });
+    await sidebar.init();
+
+    const socket = fakeSocket();
+    initNotifications(socket);
+
+    // Прилетает событие — появляется toast
+    socket.__handlers['notification']({
+      notification: {
+        id: 'n1',
+        title: 'Ошибка',
+        message: 'Что-то пошло не так',
+        severity: 'error',
+        createdAt: '2026-10-06T00:00:00.000Z'
+      },
+      unreadCount: 1
+    });
+
+    const toast = document.querySelector('.notification-toast');
+    expect(toast).not.toBeNull();
+
+    // Клик по toast ведёт в тот же раздел, что и пункт сайдбара
+    toast.onclick({ target: toast.querySelector('div') });
+
+    expect(sidebar.getActiveSection()).toBe('notifications');
+
+    // Сбрасываем счётчик: unreadCount живёт в модуле и утекает в следующие тесты
+    socket.__handlers['notification:acknowledged']({ unreadCount: 0 });
+  });
+
+  it('mmrc:navigate игнорирует несуществующий раздел', async () => {
+    const sidebar = createSidebar({ adminFetch: mockAdminFetch, user: USER, onNavigate: jest.fn() });
+    await sidebar.init();
+
+    document.dispatchEvent(new CustomEvent('mmrc:navigate', { detail: { section: 'nope' } }));
+
     expect(sidebar.getActiveSection()).toBe('devices');
   });
 

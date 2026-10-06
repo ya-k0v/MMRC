@@ -202,10 +202,10 @@
     
     #unmute {
       position: fixed;
-      right: var(--space-md);
-      bottom: var(--space-md);
+      right: var(--space-sm);
+      bottom: var(--space-sm);
       z-index: var(--z-sticky);
-      padding: var(--space-md) var(--space-lg);
+      padding: var(--space-sm) var(--space-md);
       border-radius: var(--radius-md);
       border: 1px solid rgba(255, 255, 255, 0.2);
       background: rgba(0, 0, 0, 0.8);
@@ -215,7 +215,7 @@
       box-shadow: var(--shadow-lg);
       font-size: var(--font-size-base);
       font-weight: var(--font-weight-medium);
-      transition: all var(--transition-base);
+      transition: color, background-color, border-color, box-shadow, opacity, transform var(--transition-base);
     }
     
     #unmute:hover {
@@ -265,14 +265,14 @@
       #unmute {
         right: var(--space-sm);
         bottom: var(--space-sm);
-        padding: var(--space-sm) var(--space-md);
+        padding: var(--space-sm) var(--space-sm);
         font-size: var(--font-size-sm);
       }
     }
     
     @media (orientation: landscape) and (max-height: 500px) {
       #unmute {
-        padding: var(--space-xs) var(--space-sm);
+        padding: var(--space-2xs) var(--space-sm);
         font-size: var(--font-size-xs);
       }
     }

@@ -597,7 +597,7 @@ export function showModal(title, content, options = {}) {
   modalContent.appendChild(header);
   
   const contentDiv = document.createElement('div');
-  contentDiv.style.cssText = 'margin-top:var(--space-md);';
+  contentDiv.style.cssText = 'margin-top:var(--space-sm);';
   
   // Используем временный контейнер для безопасного парсинга HTML
   // Примечание: вызывающий код должен экранировать пользовательские данные через escapeHtml
@@ -653,7 +653,7 @@ export function showDevicesModal(adminFetch, loadDevices, renderTVList, openDevi
   const DEVICE_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
   const content = `
-    <div style="display:flex; flex-direction:column; gap:var(--space-md);">
+    <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
       <div>
         <label style="display:block; margin-bottom:4px; font-weight:500;">ID устройства</label>
         <input id="modalDeviceId" class="input" placeholder="TV001" required />
@@ -771,11 +771,11 @@ export async function showUsersModal(adminFetch) {
       #usersModalLayout {
         display: grid;
         grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
-        gap: var(--space-md);
+        gap: var(--space-sm);
       }
 
       #usersModalLayout .users-modal-panel {
-        padding: var(--space-md);
+        padding: var(--space-sm);
         background: var(--panel-2);
         border: 1px solid var(--border);
         border-radius: var(--radius-sm);
@@ -810,9 +810,9 @@ export async function showUsersModal(adminFetch) {
     </style>
 
     <div id="usersModalLayout">
-      <div style="display:flex; flex-direction:column; gap:var(--space-md);">
+      <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
         <div class="users-modal-panel">
-          <div style="margin-bottom:var(--space-md); font-weight:600;">Создать пользователя</div>
+          <div style="margin-bottom:var(--space-sm); font-weight:600;">Создать пользователя</div>
           <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
             <input id="modalUsername" class="input" placeholder="Логин" />
             <input id="modalFullName" class="input" placeholder="ФИО" />
@@ -833,16 +833,16 @@ export async function showUsersModal(adminFetch) {
             <div style="font-weight:600;">Устройства пользователя</div>
             <div class="meta" id="modalSelectedUserDevicesCount" style="color:var(--text-secondary);"></div>
           </div>
-          <div id="modalSelectedUserDevicesPanel" style="display:flex; flex-direction:column; gap:var(--space-xs); min-height:140px; max-height:280px; overflow-y:auto;">
+          <div id="modalSelectedUserDevicesPanel" style="display:flex; flex-direction:column; gap:var(--space-2xs); min-height:140px; max-height:280px; overflow-y:auto;">
             <div class="meta" style="color:var(--text-secondary);">Выберите пользователя в списке справа, чтобы увидеть доступные ему устройства.</div>
           </div>
         </div>
       </div>
 
       <div class="users-modal-panel" style="display:flex; flex-direction:column; min-height:520px;">
-        <div style="margin-bottom:var(--space-md); font-weight:600;">Список пользователей</div>
+        <div style="margin-bottom:var(--space-sm); font-weight:600;">Список пользователей</div>
 
-        <div style="display:flex; gap:var(--space-xs); margin-bottom:var(--space-sm);">
+        <div style="display:flex; gap:var(--space-2xs); margin-bottom:var(--space-sm);">
           <button id="modalUsersTabLocal" class="secondary users-tab-btn active" data-users-auth-tab="local" style="flex:1;">LOCAL</button>
           <button id="modalUsersTabLdap" class="secondary users-tab-btn" data-users-auth-tab="ldap" style="flex:1;">LDAP</button>
         </div>
@@ -858,12 +858,12 @@ export async function showUsersModal(adminFetch) {
         </div>
 
         <div id="modalUsersList" style="display:flex; flex-direction:column; gap:var(--space-sm); min-height:280px;">
-          <div class="meta" style="text-align:center; padding:var(--space-lg);">Загрузка...</div>
+          <div class="meta" style="text-align:center; padding:var(--space-md);">Загрузка...</div>
         </div>
 
-        <div id="modalUsersPagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:auto; padding-top:var(--space-md); border-top:1px solid var(--border);">
+        <div id="modalUsersPagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:auto; padding-top:var(--space-sm); border-top:1px solid var(--border);">
           <div class="meta" id="modalUsersPaginationInfo" style="color:var(--text-secondary);"></div>
-          <div style="display:flex; gap:var(--space-xs); align-items:center;">
+          <div style="display:flex; gap:var(--space-2xs); align-items:center;">
             <button 
               id="modalUsersPrevPage" 
               class="secondary" 
@@ -1155,8 +1155,8 @@ function filterAndRenderUsers(adminFetch) {
   // Рендерим пользователей текущей страницы
   if (pageUsers.length === 0) {
     container.innerHTML = state.searchQuery 
-      ? '<div class="meta" style="text-align:center; padding:var(--space-lg);">Ничего не найдено</div>'
-      : '<div class="meta" style="text-align:center; padding:var(--space-lg);">Нет пользователей</div>';
+      ? '<div class="meta" style="text-align:center; padding:var(--space-md);">Ничего не найдено</div>'
+      : '<div class="meta" style="text-align:center; padding:var(--space-md);">Нет пользователей</div>';
     renderSelectedUserDevicesPanel();
     return;
   }
@@ -1174,7 +1174,7 @@ function filterAndRenderUsers(adminFetch) {
     return `
       <div class="item modal-user-row ${isSelected ? 'selected' : ''}" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm);" onclick="selectUserInUsersModal(${safeUserId})">
         <div style="flex:1; min-width:0;">
-          <div style="display:flex; align-items:center; gap:var(--space-xs); flex-wrap:wrap;">
+          <div style="display:flex; align-items:center; gap:var(--space-2xs); flex-wrap:wrap;">
             <strong>${safeUsername}</strong>
             ${isLdapUser ? '<span style="background:var(--warning); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">LDAP</span>' : '<span style="background:var(--panel-2); color:var(--text-secondary); padding:2px 6px; border-radius:4px; font-size:0.7rem;">LOCAL</span>'}
             ${u.role === 'admin' ? '<span style="background:var(--brand); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">ADMIN</span>' : ''}
@@ -1286,17 +1286,17 @@ function filterAndRenderUsers(adminFetch) {
       const isLdap = currentRole === 'ldap';
 
       const editContent = `
-        <div style="display:flex; flex-direction:column; gap:var(--space-md);">
+        <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
           <div style="color:var(--text-secondary);">
             Пользователь: <strong>${safeUsername}</strong>
           </div>
 
-          <label style="display:flex; flex-direction:column; gap:var(--space-xs);">
+          <label style="display:flex; flex-direction:column; gap:var(--space-2xs);">
             <span style="font-size:0.875rem; color:var(--text-secondary);">ФИО</span>
             <input id="editFullName" class="input" type="text" value="${safeFullName}" placeholder="Введите ФИО" ${isLdap ? 'disabled' : ''} />
           </label>
 
-          <label style="display:flex; flex-direction:column; gap:var(--space-xs);">
+          <label style="display:flex; flex-direction:column; gap:var(--space-2xs);">
             <span style="font-size:0.875rem; color:var(--text-secondary);">Роль</span>
             <select id="editRole" class="input" ${isLdap ? 'disabled' : ''}>
               <option value="admin" ${currentRole === 'admin' ? 'selected' : ''}>Admin</option>
@@ -1377,7 +1377,7 @@ function filterAndRenderUsers(adminFetch) {
     window.resetUserPasswordInModal = async (userId, username) => {
       const safeUsername = escapeHtml(username || '');
       const passwordResetContent = `
-        <div style="display:flex; flex-direction:column; gap:var(--space-md);">
+        <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
           <div style="color:var(--text-secondary);">
             Сброс пароля для пользователя: <strong>${safeUsername}</strong>
           </div>
@@ -1431,7 +1431,7 @@ function filterAndRenderUsers(adminFetch) {
             if (res.ok) {
               closeModal();
               showModal(`${getSuccessIcon(18)} Успешно`, `
-                <div style="text-align:center; padding:var(--space-lg);">
+                <div style="text-align:center; padding:var(--space-md);">
                   Пароль для <strong>${safeUsername}</strong> успешно изменен
                 </div>
                 <button onclick="closeModal(); setTimeout(() => window.showUsersModal && window.showUsersModal(window.adminFetch), 100)" class="primary" style="width:100%;">OK</button>
@@ -1523,12 +1523,12 @@ function renderSelectedUserDevicesPanel() {
   }).join('');
 
   panel.innerHTML = `
-    <div style="display:flex; align-items:center; justify-content:space-between; gap:var(--space-sm); margin-bottom:var(--space-xs);">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:var(--space-sm); margin-bottom:var(--space-2xs);">
       <div style="font-weight:600; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${safeUsername}</div>
       <button class="secondary meta" style="min-width:auto; padding:6px 10px;" onclick="showUserDevicesModalInModal(${safeUserId}, ${usernameArg}, ${roleArg})">Изменить</button>
     </div>
-    <div class="meta" style="color:var(--text-secondary); margin-bottom:var(--space-xs);">Роль: ${safeRole}</div>
-    <div style="display:grid; gap:var(--space-xs);">${devicesHtml}</div>
+    <div class="meta" style="color:var(--text-secondary); margin-bottom:var(--space-2xs);">Роль: ${safeRole}</div>
+    <div style="display:grid; gap:var(--space-2xs);">${devicesHtml}</div>
   `;
 }
 
@@ -1540,14 +1540,14 @@ window.showUserDevicesModalInModal = async function(userId, username, userRole) 
   // Если admin, показываем сообщение что ему доступны все устройства
   if (userRole === 'admin') {
     showModal(`${getSettingsIcon(18)} Управление устройствами`, `
-      <div style="text-align:center; padding:var(--space-lg);">
-        <div class="meta" style="margin-bottom:var(--space-md);">
+      <div style="text-align:center; padding:var(--space-md);">
+        <div class="meta" style="margin-bottom:var(--space-sm);">
           Пользователь <strong>${safeUsername}</strong> имеет роль <strong>ADMIN</strong>
         </div>
         <div class="meta" style="color:var(--text-secondary);">
           Администраторам доступны все устройства автоматически
         </div>
-        <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-md);">OK</button>
+        <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-sm);">OK</button>
       </div>
     `);
     return;
@@ -1556,14 +1556,14 @@ window.showUserDevicesModalInModal = async function(userId, username, userRole) 
   // Если hero_admin, показываем сообщение что у него своя панель
   if (userRole === 'hero_admin') {
     showModal(`${getSettingsIcon(18)} Управление устройствами`, `
-      <div style="text-align:center; padding:var(--space-lg);">
-        <div class="meta" style="margin-bottom:var(--space-md);">
+      <div style="text-align:center; padding:var(--space-md);">
+        <div class="meta" style="margin-bottom:var(--space-sm);">
           Пользователь <strong>${safeUsername}</strong> имеет роль <strong>HERO ADMIN</strong>
         </div>
         <div class="meta" style="color:var(--text-secondary);">
           Hero Admin имеет свою панель управления и не имеет доступа к устройствам
         </div>
-        <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-md);">OK</button>
+        <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-sm);">OK</button>
       </div>
     `);
     return;
@@ -1580,8 +1580,8 @@ window.showUserDevicesModalInModal = async function(userId, username, userRole) 
   };
   
   const content = `
-    <div style="display:flex; flex-direction:column; gap:var(--space-lg);">
-      <div style="padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm);">
+    <div style="display:flex; flex-direction:column; gap:var(--space-md);">
+      <div style="padding:var(--space-sm); background:var(--panel-2); border-radius:var(--radius-sm);">
         <div style="margin-bottom:var(--space-sm);">
           <div class="meta" style="color:var(--text-secondary);">Пользователь:</div>
           <div style="font-weight:600; margin-top:4px;">${safeUsername}</div>
@@ -1589,7 +1589,7 @@ window.showUserDevicesModalInModal = async function(userId, username, userRole) 
       </div>
       
       <div>
-        <div style="margin-bottom:var(--space-md); font-weight:600;">Доступные устройства</div>
+        <div style="margin-bottom:var(--space-sm); font-weight:600;">Доступные устройства</div>
         
         <!-- Поле поиска -->
         <div style="margin-bottom:var(--space-sm);">
@@ -1603,23 +1603,23 @@ window.showUserDevicesModalInModal = async function(userId, username, userRole) 
         </div>
         
         <!-- Кнопки выбора -->
-        <div style="display:flex; gap:var(--space-xs); margin-bottom:var(--space-sm);">
+        <div style="display:flex; gap:var(--space-2xs); margin-bottom:var(--space-sm);">
           <button id="modalDevicesSelectAll" class="secondary meta" style="flex:1;">Выбрать все</button>
           <button id="modalDevicesDeselectAll" class="secondary meta" style="flex:1;">Снять все</button>
         </div>
         
         <!-- Список устройств -->
-        <div id="modalDevicesList" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:var(--space-sm); min-height:200px; max-height:400px; overflow-y:auto; padding:var(--space-xs);">
-          <div class="meta" style="text-align:center; padding:var(--space-lg); grid-column:1/-1;">Загрузка...</div>
+        <div id="modalDevicesList" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:var(--space-sm); min-height:200px; max-height:400px; overflow-y:auto; padding:var(--space-2xs);">
+          <div class="meta" style="text-align:center; padding:var(--space-md); grid-column:1/-1;">Загрузка...</div>
         </div>
         
         <!-- Информация о выборе -->
         <div id="modalDevicesSelectedInfo" class="meta" style="margin-top:var(--space-sm); color:var(--text-secondary);"></div>
         
         <!-- Пагинация -->
-        <div id="modalDevicesPagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:var(--space-md); padding-top:var(--space-md); border-top:1px solid var(--border);">
+        <div id="modalDevicesPagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:var(--space-sm); padding-top:var(--space-sm); border-top:1px solid var(--border);">
           <div class="meta" id="modalDevicesPaginationInfo" style="color:var(--text-secondary);"></div>
-          <div style="display:flex; gap:var(--space-xs); align-items:center;">
+          <div style="display:flex; gap:var(--space-2xs); align-items:center;">
             <button 
               id="modalDevicesPrevPage" 
               class="secondary" 
@@ -1641,7 +1641,7 @@ window.showUserDevicesModalInModal = async function(userId, username, userRole) 
         </div>
         
         <!-- Кнопки действий -->
-        <div style="display:flex; gap:var(--space-sm); margin-top:var(--space-md);">
+        <div style="display:flex; gap:var(--space-sm); margin-top:var(--space-sm);">
           <button id="modalDevicesSaveBtn" class="primary" style="flex:1;">Сохранить</button>
           <button onclick="closeModal()" class="secondary" style="flex:1;">Отмена</button>
         </div>
@@ -1740,7 +1740,7 @@ function setupUserDevicesModalHandlers(adminFetch, userId, username) {
       if (res.ok) {
         closeModal();
         showModal(`${getSuccessIcon(18)} Успешно`, `
-          <div style="text-align:center; padding:var(--space-lg);">
+          <div style="text-align:center; padding:var(--space-md);">
             Устройства для <strong>${safeUsername}</strong> успешно обновлены
           </div>
           <button onclick="closeModal(); setTimeout(() => window.showUsersModal && window.showUsersModal(window.adminFetch), 100)" class="primary" style="width:100%;">OK</button>
@@ -1848,8 +1848,8 @@ function filterAndRenderDevices() {
   // Рендерим устройства
   if (pageDevices.length === 0) {
     container.innerHTML = state.searchQuery 
-      ? '<div class="meta" style="text-align:center; padding:var(--space-lg); grid-column:1/-1;">Ничего не найдено</div>'
-      : '<div class="meta" style="text-align:center; padding:var(--space-lg); grid-column:1/-1;">Нет устройств</div>';
+      ? '<div class="meta" style="text-align:center; padding:var(--space-md); grid-column:1/-1;">Ничего не найдено</div>'
+      : '<div class="meta" style="text-align:center; padding:var(--space-md); grid-column:1/-1;">Нет устройств</div>';
     return;
   }
   
@@ -1860,8 +1860,8 @@ function filterAndRenderDevices() {
     const safeDeviceId = escapeHtml(d.device_id || '');
     const deviceIdArg = escapeJsStringForAttr(d.device_id || '');
     return `
-      <label style="display:flex; flex-direction:column; gap:var(--space-xs); padding:var(--space-sm); border:1px solid var(--border); border-radius:var(--radius-sm); cursor:pointer; transition:all 0.2s; ${isSelected ? 'background:var(--panel-2); border-color:var(--brand);' : 'background:var(--panel);'}" onmouseover="this.style.background='var(--panel-hover)'; this.style.borderColor='var(--border-hover)'" onmouseout="this.style.background=${isSelected ? "'var(--panel-2)'" : "'var(--panel)'"}; this.style.borderColor=${isSelected ? "'var(--brand)'" : "'var(--border)'"}">
-        <div style="display:flex; align-items:center; gap:var(--space-xs);">
+      <label style="display:flex; flex-direction:column; gap:var(--space-2xs); padding:var(--space-sm); border:1px solid var(--border); border-radius:var(--radius-sm); cursor:pointer; transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s; ${isSelected ? 'background:var(--panel-2); border-color:var(--brand);' : 'background:var(--panel);'}" onmouseover="this.style.background='var(--panel-hover)'; this.style.borderColor='var(--border-hover)'" onmouseout="this.style.background=${isSelected ? "'var(--panel-2)'" : "'var(--panel)'"}; this.style.borderColor=${isSelected ? "'var(--brand)'" : "'var(--border)'"}">
+        <div style="display:flex; align-items:center; gap:var(--space-2xs);">
           <input 
             type="checkbox" 
             ${isSelected ? 'checked' : ''} 
@@ -1870,7 +1870,7 @@ function filterAndRenderDevices() {
           />
           <div style="flex:1; min-width:0; font-weight:500; font-size:var(--font-size-sm);">${safeDeviceName}</div>
         </div>
-        <div class="meta" style="font-size:0.7rem; padding-left:calc(var(--space-xs) + 16px); color:var(--muted);">${safeDeviceId}</div>
+        <div class="meta" style="font-size:0.7rem; padding-left:calc(var(--space-2xs) + 16px); color:var(--muted);">${safeDeviceId}</div>
       </label>
     `;
   }).join('');
@@ -1915,10 +1915,10 @@ export function showSettingsModal() {
         const message = result.message || 'Перезапуск сервиса запущен. Подождите несколько секунд.';
 
         showModal(`${getSuccessIcon(18)} Перезапуск`, `
-          <div style="text-align:center; padding:var(--space-lg);">
+          <div style="text-align:center; padding:var(--space-md);">
             ${escapeHtml(message)}
           </div>
-          <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-md);">OK</button>
+          <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-sm);">OK</button>
         `);
       } catch (err) {
         await reportModalNotification({
@@ -1933,10 +1933,10 @@ export function showSettingsModal() {
     };
 
     const content = `
-      <div id="settingsModalSystemMonitor" style="margin-bottom:var(--space-md);">
+      <div id="settingsModalSystemMonitor" style="margin-bottom:var(--space-sm);">
         ${getSystemMonitorHTML()}
       </div>
-      <div id="settingsModalContainer" style="display:flex; flex-direction:column; gap:var(--space-lg);">
+      <div id="settingsModalContainer" style="display:flex; flex-direction:column; gap:var(--space-md);">
         <div class="meta" style="text-align:center;">Загрузка настроек...</div>
       </div>
     `;
@@ -1980,10 +1980,10 @@ export function showSettingsModal() {
           const message = result.message || 'Перезапуск сервиса запущен. Подождите несколько секунд.';
 
           showModal(`${getSuccessIcon(18)} Перезапуск`, `
-            <div style="text-align:center; padding:var(--space-lg);">
+            <div style="text-align:center; padding:var(--space-md);">
               ${escapeHtml(message)}
             </div>
-            <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-md);">OK</button>
+            <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-sm);">OK</button>
           `);
         } catch (err) {
           await reportModalNotification({
@@ -1998,7 +1998,7 @@ export function showSettingsModal() {
       };
 
       const content = `
-        <div id="settingsModalContainer" style="display:flex; flex-direction:column; gap:var(--space-lg);">
+        <div id="settingsModalContainer" style="display:flex; flex-direction:column; gap:var(--space-md);">
           <div class="meta" style="text-align:center;">Загрузка настроек...</div>
         </div>
       `;
@@ -2041,21 +2041,21 @@ async function loadSettingsContent(adminFetch) {
   
   // Используем DOM методы вместо innerHTML для безопасности
   const mainDiv = document.createElement('div');
-  mainDiv.style.cssText = 'padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm); display:flex; flex-direction:column; gap:0;';
+  mainDiv.style.cssText = 'padding:var(--space-sm); background:var(--panel-2); border-radius:var(--radius-sm); display:flex; flex-direction:column; gap:0;';
   
   // Хранилище контента
   const storageSection = document.createElement('div');
-  storageSection.style.cssText = 'padding-bottom:var(--space-md);';
+  storageSection.style.cssText = 'padding-bottom:var(--space-sm);';
   
   const storageTitle = document.createElement('div');
   storageTitle.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary); margin-bottom:var(--space-sm);';
   storageTitle.textContent = 'Хранилище контента';
   
   const storageContent = document.createElement('div');
-  storageContent.style.cssText = 'display:flex; align-items:center; gap:var(--space-md);';
+  storageContent.style.cssText = 'display:flex; align-items:center; gap:var(--space-sm);';
   
   const storageInputContainer = document.createElement('div');
-  storageInputContainer.style.cssText = 'flex:1; display:flex; flex-direction:column; gap:var(--space-xs);';
+  storageInputContainer.style.cssText = 'flex:1; display:flex; flex-direction:column; gap:var(--space-2xs);';
   
   const contentRootInput = document.createElement('input');
   contentRootInput.id = 'contentRootInput';
@@ -2102,14 +2102,14 @@ async function loadSettingsContent(adminFetch) {
   
   if (settingsData.dbType === 'sqlite') {
     dbSection = document.createElement('div');
-    dbSection.style.cssText = 'padding:var(--space-md) 0;';
+    dbSection.style.cssText = 'padding:var(--space-sm) 0;';
     
     const dbTitle = document.createElement('div');
     dbTitle.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary); margin-bottom:var(--space-sm);';
     dbTitle.textContent = 'База данных';
     
     const dbContent = document.createElement('div');
-    dbContent.style.cssText = 'display:flex; align-items:center; gap:var(--space-md);';
+    dbContent.style.cssText = 'display:flex; align-items:center; gap:var(--space-sm);';
     
     const dbDescription = document.createElement('div');
     dbDescription.className = 'meta';
@@ -2150,7 +2150,7 @@ async function loadSettingsContent(adminFetch) {
   
   // Контейнер для обеих секций очистки (рядом друг с другом)
   const cleanupContainer = document.createElement('div');
-  cleanupContainer.style.cssText = 'display:flex; gap:var(--space-lg); padding-top:var(--space-md);';
+  cleanupContainer.style.cssText = 'display:flex; gap:var(--space-md); padding-top:var(--space-sm);';
   
   // Очистка базы данных
   const cleanupSection = document.createElement('div');
@@ -2161,10 +2161,10 @@ async function loadSettingsContent(adminFetch) {
   cleanupTitle.textContent = 'Очистка базы данных';
   
   const cleanupContent = document.createElement('div');
-  cleanupContent.style.cssText = 'display:flex; align-items:center; gap:var(--space-md);';
+  cleanupContent.style.cssText = 'display:flex; align-items:center; gap:var(--space-sm);';
   
   const cleanupLeft = document.createElement('div');
-  cleanupLeft.style.cssText = 'flex:1; display:flex; flex-direction:column; gap:var(--space-xs);';
+  cleanupLeft.style.cssText = 'flex:1; display:flex; flex-direction:column; gap:var(--space-2xs);';
   
   const cleanupDescription = document.createElement('div');
   cleanupDescription.className = 'meta';
@@ -2180,7 +2180,7 @@ async function loadSettingsContent(adminFetch) {
   cleanupLeft.appendChild(cleanupStatus);
   
   const cleanupButtons = document.createElement('div');
-  cleanupButtons.style.cssText = 'flex-shrink:0; display:flex; gap:var(--space-xs);';
+  cleanupButtons.style.cssText = 'flex-shrink:0; display:flex; gap:var(--space-2xs);';
   
   const checkFilesBtn = document.createElement('button');
   checkFilesBtn.id = 'checkFilesBtn';
@@ -2213,10 +2213,10 @@ async function loadSettingsContent(adminFetch) {
   orphanedTitle.textContent = 'Очистка осиротевших файлов';
   
   const orphanedContent = document.createElement('div');
-  orphanedContent.style.cssText = 'display:flex; align-items:center; gap:var(--space-md);';
+  orphanedContent.style.cssText = 'display:flex; align-items:center; gap:var(--space-sm);';
   
   const orphanedLeft = document.createElement('div');
-  orphanedLeft.style.cssText = 'flex:1; display:flex; flex-direction:column; gap:var(--space-xs);';
+  orphanedLeft.style.cssText = 'flex:1; display:flex; flex-direction:column; gap:var(--space-2xs);';
   
   const orphanedDescription = document.createElement('div');
   orphanedDescription.className = 'meta';
@@ -2232,7 +2232,7 @@ async function loadSettingsContent(adminFetch) {
   orphanedLeft.appendChild(orphanedStatus);
   
   const orphanedButtons = document.createElement('div');
-  orphanedButtons.style.cssText = 'flex-shrink:0; display:flex; gap:var(--space-xs);';
+  orphanedButtons.style.cssText = 'flex-shrink:0; display:flex; gap:var(--space-2xs);';
   
   const checkOrphanedBtn = document.createElement('button');
   checkOrphanedBtn.id = 'checkOrphanedBtn';
@@ -2263,9 +2263,9 @@ async function loadSettingsContent(adminFetch) {
 
   // --- Секция установки APK с автозаполнением ---
   const apkSection = document.createElement('div');
-  apkSection.style.cssText = 'padding:var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm); margin-bottom:var(--space-md);';
+  apkSection.style.cssText = 'padding:var(--space-sm); background:var(--panel-2); border-radius:var(--radius-sm); margin-bottom:var(--space-sm);';
   const apkTitle = document.createElement('div');
-  apkTitle.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary); margin-bottom:var(--space-xs);';
+  apkTitle.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary); margin-bottom:var(--space-2xs);';
   apkTitle.textContent = 'Установка Android-приложения (APK)';
 
   // APK version info
@@ -2322,7 +2322,7 @@ async function loadSettingsContent(adminFetch) {
   });
 
   const apkForm = document.createElement('form');
-  apkForm.style.cssText = 'display:flex; gap:var(--space-xs); align-items:center; flex-wrap:nowrap;';
+  apkForm.style.cssText = 'display:flex; gap:var(--space-2xs); align-items:center; flex-wrap:nowrap;';
   apkForm.onsubmit = e => { e.preventDefault(); };
   const apkIpInput = document.createElement('input');
   apkIpInput.type = 'text';
@@ -2486,7 +2486,7 @@ async function loadSettingsContent(adminFetch) {
   modulesDivider.style.cssText = 'border-top:1px solid var(--border-color, rgba(255,255,255,0.1)); margin:0;';
 
   const modulesSection = document.createElement('div');
-  modulesSection.style.cssText = 'padding:var(--space-md) 0;';
+  modulesSection.style.cssText = 'padding:var(--space-sm) 0;';
 
   const modulesTitle = document.createElement('div');
   modulesTitle.style.cssText = 'font-weight:600; font-size:1.1rem; color:var(--text-primary); margin-bottom:var(--space-sm);';
@@ -2504,7 +2504,7 @@ async function loadSettingsContent(adminFetch) {
       const modId = escapeHtml(mod.id || '');
 
       const row = document.createElement('label');
-      row.style.cssText = 'display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-xs) 0; cursor:pointer;';
+      row.style.cssText = 'display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-2xs) 0; cursor:pointer;';
 
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
@@ -2835,10 +2835,10 @@ async function loadSettingsContent(adminFetch) {
             : 'Импорт базы данных завершён успешно.';
 
           showModal(`${getSuccessIcon(18)} Успешно`, `
-            <div style="text-align:center; padding:var(--space-lg);">
+            <div style="text-align:center; padding:var(--space-md);">
               ${statusText}
             </div>
-            <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-md);">OK</button>
+            <button onclick="closeModal()" class="primary" style="width:100%; margin-top:var(--space-sm);">OK</button>
           `);
         } else {
           await reportModalNotification({

@@ -13,10 +13,10 @@ import { renderDeviceCard as renderDeviceCardModule, deviceCardSignature, buildD
 import { setupUploadUI as setupUploadUIModule } from './admin/upload-ui.js';
 import { showDevicesModal, showUsersModal, showSettingsModal } from './admin/modal.js';
 import { initSystemMonitor, stopSystemMonitor } from './admin/system-monitor.js';
-import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon, getCloseIcon, getCheckIcon, getUnlockIcon, getLockIcon, getDeviceIcon, getKeyIcon, getTrashIcon, getPauseIcon, getPlayIcon, getCopyIcon, getDownloadIcon } from './shared/svg-icons.js';
+import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon, getCloseIcon, getCheckIcon, getUnlockIcon, getLockIcon, getDeviceIcon, getKeyIcon, getTrashIcon, getPauseIcon, getPlayIcon, getCopyIcon, getDownloadIcon, getBellIcon } from './shared/svg-icons.js';
 import { escapeHtml } from './shared/utils.js';
 import { initNotifications } from './admin/notifications.js';
-import { showNotificationsModal } from './admin/notifications-modal.js';
+import { mountNotificationsSection } from './admin/notifications-modal.js';
 import { createSidebar } from './admin/sidebar.js';
 
 const socket = io({ auth: { token: localStorage.getItem('accessToken') } });
@@ -108,9 +108,12 @@ setupSocketListeners(socket, {
       updateFileProgress(device_id, file, progress);
     }
   },
-  onFileReady: (device_id, file) => {
-    if (currentDeviceId === device_id) refreshFilesPaneContent(device_id);
-  },
+onFileReady: (device_id, file) => {
+      // Запись прогресса очищаем: файл готов, а оставленная полоса на 100%
+      // воскресала при каждой перерисовке панели.
+      clearFileProgress(device_id, file);
+      if (currentDeviceId === device_id) refreshFilesPaneContent(device_id);
+    },
   onFileError: (device_id, file, error) => {
     clearFileProgress(device_id, file);
     if (currentDeviceId === device_id) refreshFilesPaneContent(device_id);
@@ -231,15 +234,18 @@ function handleSidebarNavigation(section, action) {
     case 'logs':
       grid.appendChild(createLogsSection());
       break;
+    case 'notifications':
+      grid.appendChild(createNotificationsSection());
+      break;
   }
 }
 
 function createSectionWrapper(title, icon) {
   const el = document.createElement('div');
   el.className = 'admin-section card';
-  el.style.cssText = 'padding:var(--space-lg); overflow-y:auto; height:100%;';
+  el.style.cssText = 'padding:var(--space-md); overflow-y:auto; height:100%;';
   el.innerHTML = `
-    <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-lg);">
+    <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-md);">
       ${icon}
       <h2 style="margin:0; font-size:var(--font-size-xl);">${title}</h2>
     </div>
@@ -252,7 +258,7 @@ function createSettingsSection() {
   const el = createSectionWrapper('Настройки сервера', getSettingsIcon(24));
   const body = el.querySelector('.admin-section-body');
   body.style.cssText = 'display:flex; flex-direction:column; min-height:0; height:100%;';
-  body.innerHTML = '<div class="meta" style="padding:var(--space-lg); text-align:center; color:var(--muted);">Загрузка...</div>';
+  body.innerHTML = '<div class="meta" style="padding:var(--space-md); text-align:center; color:var(--muted);">Загрузка...</div>';
 
   adminFetch('/api/admin/settings/extended').then(async r => {
     if (!r.ok) { const e = await r.json().catch(() => ({ error: 'Ошибка загрузки' })); throw new Error(e.error || 'Ошибка загрузки'); }
@@ -268,13 +274,23 @@ function createSettingsSection() {
     const docker = result.docker;
     const services = result.services || {};
     const ldap = data?.ldapAuth || {};
+    // Тип хранилища приходит из бэкенда. Раньше его в ответе не было, и
+    // карточка «Хранилище» не могла отличить локальное хранилище от S3.
+    const storageInfo = {
+      backend: 'local',
+      isRemote: false,
+      bucket: null,
+      endpoint: null,
+      region: null,
+      ...(result.storage || {})
+    };
 
     body.innerHTML = `
       <div class="admin-section-content">
 
         <!-- Система + Uptime + Перезапуск (компактная строка) -->
         <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div style="padding:var(--space-sm) var(--space-md); display:flex; align-items:center; gap:var(--space-md); flex-wrap:wrap; font-size:0.8rem;">
+          <div style="padding:var(--space-sm) var(--space-sm); display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; font-size:0.8rem;">
             <span style="font-weight:600;" id="stSysVersion">v${escapeHtml(version)}</span>
             <span id="stUpdateBranch" class="meta" style="color:var(--muted);"></span>
             <span style="color:var(--muted);">·</span>
@@ -288,24 +304,37 @@ function createSettingsSection() {
 
         <!-- Системный монитор -->
         <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div id="stSysMonitorBody" style="padding:var(--space-md);">
+          <div id="stSysMonitorBody" style="padding:var(--space-sm);">
             <div class="meta" style="font-size:0.8rem; color:var(--muted);">Загрузка...</div>
           </div>
         </div>
 
-        <!-- Сервисы (компактно: только статусы) -->
+        <!-- Используемое ПО (компактно: статус + версия) -->
         <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div style="padding:var(--space-sm) var(--space-md); display:flex; align-items:center; gap:var(--space-md); flex-wrap:wrap; font-size:0.8rem;">
+          <div style="padding:var(--space-sm) var(--space-sm); display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; font-size:0.8rem;">
             ${[
               { label: 'FFmpeg', s: services.ffmpeg },
               { label: 'FFprobe', s: services.ffprobe },
               { label: 'Node', s: services.node },
-              { label: 'Docker', s: services.docker }
+              { label: 'Docker', s: services.docker },
+              { label: 'Git', s: services.git },
+              { label: 'OpenSSL', s: services.openssl }
             ].map(c => {
               const ok = c.s?.status === 'ok';
-              return `<span style="display:inline-flex; align-items:center; gap:4px;">
-                <span style="width:6px; height:6px; border-radius:50%; background:${ok ? 'var(--success)' : 'var(--danger)'};"></span>
-                ${escapeHtml(c.label)}
+              const disabled = c.s?.status === 'disabled';
+              const dot = disabled ? 'var(--muted)' : (ok ? 'var(--success)' : 'var(--danger)');
+              // Версию показываем урезанной: ffmpeg отдаёт «ffmpeg version 6.1.1»,
+              // node — «v22.0.0», openssl — длинную строку со сборкой.
+              const raw = c.s?.version ? String(c.s.version) : '';
+              const short = raw
+                .replace(/^(ffmpeg|ffprobe)\s+version\s+/i, '')
+                .replace(/^v/i, '')
+                .split(/\s+/)[0]
+                .slice(0, 24);
+              const title = raw ? ` title="${escapeHtml(raw)}"` : '';
+              return `<span style="display:inline-flex; align-items:center; gap:5px;"${title}>
+                <span style="width:6px; height:6px; border-radius:50%; background:${dot}; flex:none;"></span>
+                ${escapeHtml(c.label)}${short ? `<span style="color:var(--muted);">${escapeHtml(short)}</span>` : ''}
               </span>`;
             }).join('<span style="color:var(--muted);">·</span>')}
           </div>
@@ -313,19 +342,28 @@ function createSettingsSection() {
 
         <!-- Хранилище контента -->
         <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
+          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-sm); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
             Хранилище
+            <span class="meta" id="stStorageBadge" style="margin-left:auto; padding:2px 10px; border-radius:999px; font-size:0.75rem; font-weight:600; ${storageInfo.isRemote ? 'background:rgba(96,165,250,0.14); color:#93c5fd; border:1px solid rgba(96,165,250,0.28);' : 'background:rgba(148,163,184,0.12); color:var(--muted); border:1px solid var(--border);'}">${storageInfo.isRemote ? 'S3' : 'Локальное'}</span>
           </div>
-          <div style="padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);">
+          <div style="padding:var(--space-sm); display:flex; flex-direction:column; gap:var(--space-sm);">
+            ${storageInfo.isRemote ? `
+              <div style="display:flex; flex-direction:column; gap:var(--space-2xs); font-size:0.8rem;">
+                <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:110px; color:var(--muted);">Endpoint</span><code style="font-family:monospace; word-break:break-all;">${escapeHtml(storageInfo.endpoint || 'не задан')}</code></div>
+                <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:110px; color:var(--muted);">Bucket</span><code style="font-family:monospace; word-break:break-all;">${escapeHtml(storageInfo.bucket || 'не задан')}</code></div>
+                <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:110px; color:var(--muted);">Регион</span><code style="font-family:monospace; word-break:break-all;">${escapeHtml(storageInfo.region || 'по умолчанию')}</code></div>
+              </div>
+            ` : ''}
             <div style="display:flex; gap:var(--space-sm); align-items:center;">
-              <input id="stCrInput" class="input" value="${escapeHtml(contentRoot)}" placeholder="Путь к хранилищу" style="flex:1;" />
+              <input id="stCrInput" class="input" value="${escapeHtml(contentRoot)}" placeholder="${storageInfo.isRemote ? 'Префикс внутри бакета' : 'Путь к хранилищу'}" style="flex:1;" />
               <button id="stCrSave" class="primary">Сохранить</button>
             </div>
             <div id="stCrStatus" class="meta" style="min-height:1.2em; font-size:0.8rem;"></div>
+            ${storageInfo.isRemote ? '<div class="meta" style="font-size:0.75rem; color:var(--muted);">Бэкенд выбирается переменными STORAGE_BACKEND, S3_ENDPOINT, S3_BUCKET, S3_REGION.</div>' : ''}
             <details style="font-size:0.8rem;">
               <summary class="meta" style="cursor:pointer; color:var(--muted);">Рабочие директории</summary>
-              <div style="display:flex; flex-direction:column; gap:2px; margin-top:var(--space-xs);">
+              <div style="display:flex; flex-direction:column; gap:2px; margin-top:var(--space-2xs);">
                 ${Object.entries(runtime).filter(([k]) => k !== 'contentRoot').map(([k, v]) =>
                   `<div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:100px; color:var(--muted);">${escapeHtml(k)}</span><code style="font-family:monospace; word-break:break-all;">${escapeHtml(v || '')}</code></div>`
                 ).join('')}
@@ -336,19 +374,22 @@ function createSettingsSection() {
 
         <!-- Модули -->
         <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
+          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-sm); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
             Модули
           </div>
-          <div style="padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);">
-            <div id="stModList" style="display:flex; flex-direction:column; gap:var(--space-sm);">
+          <div style="padding:var(--space-sm); display:flex; flex-direction:column; gap:var(--space-sm);">
+            <div id="stModList" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:var(--space-sm);">
               ${modules.length === 0 ? '<div class="meta" style="color:var(--muted);">Нет доступных модулей</div>' :
                 modules.map(m => `
-                  <label class="st-mod-item" style="display:flex; align-items:center; gap:8px; padding:8px; border:1px solid var(--border); border-radius:var(--radius-sm); cursor:pointer; transition:background 0.15s;">
-                    <input type="checkbox" data-module-id="${escapeHtml(m.id)}" ${m.enabled ? 'checked' : ''} style="width:18px; height:18px;" />
-                    <div style="min-width:0;">
-                      <div style="font-weight:500; font-size:0.85rem;">${escapeHtml(m.name)}</div>
-                      ${m.description ? `<div class="meta" style="font-size:0.75rem;">${escapeHtml(m.description)}</div>` : ''}
+                  <label class="st-mod-item" style="display:flex; align-items:flex-start; gap:8px; padding:10px; border:1px solid var(--border); border-radius:var(--radius-sm); cursor:pointer; transition:background 0.15s, border-color 0.15s; min-width:0;">
+                    <input type="checkbox" data-module-id="${escapeHtml(m.id)}" ${m.enabled ? 'checked' : ''} style="width:18px; height:18px; flex:none; margin-top:2px;" />
+                    <div style="min-width:0; flex:1;">
+                      <div style="font-weight:500; font-size:0.85rem; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                        ${escapeHtml(m.name)}
+                        <span class="meta" data-mod-state style="font-size:0.65rem; padding:1px 6px; border-radius:999px; background:${m.enabled ? 'rgba(34,197,94,0.14)' : 'rgba(148,163,184,0.12)'}; color:${m.enabled ? 'var(--success)' : 'var(--muted)'};">${m.enabled ? 'вкл' : 'выкл'}</span>
+                      </div>
+                      ${m.description ? `<div class="meta" style="font-size:0.75rem; line-height:1.4;">${escapeHtml(m.description)}</div>` : ''}
                     </div>
                   </label>
                 `).join('')}
@@ -359,11 +400,11 @@ function createSettingsSection() {
 
         <!-- APK -->
         <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
+          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-sm); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
             APK устройств
           </div>
-          <div style="padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);">
+          <div style="padding:var(--space-sm); display:flex; flex-direction:column; gap:var(--space-sm);">
             <div id="stApkVersion" class="meta" style="font-size:0.8rem; color:var(--muted); display:flex; align-items:center; gap:var(--space-sm);">Загрузка...</div>
             <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center;">
               <input id="stApkIp" class="input" placeholder="IP" style="width:120px;" />
@@ -385,11 +426,11 @@ function createSettingsSection() {
         <!-- База данных (только SQLite) -->
         ${isSqlite ? `
         <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
+          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-sm); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
             База данных
           </div>
-          <div style="padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);">
+          <div style="padding:var(--space-sm); display:flex; flex-direction:column; gap:var(--space-sm);">
             <div style="display:flex; gap:var(--space-sm); align-items:center; flex-wrap:wrap;">
               <button id="stDbExport" class="primary">Экспорт</button>
               <button id="stDbImport" class="secondary">Импорт</button>
@@ -411,7 +452,7 @@ function createSettingsSection() {
         <!-- LDAP (только если настроен) -->
         ${ldap && ldap.enabled ? `
         <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div style="padding:var(--space-sm) var(--space-md); display:flex; align-items:center; gap:var(--space-sm); font-size:0.8rem;">
+          <div style="padding:var(--space-sm) var(--space-sm); display:flex; align-items:center; gap:var(--space-sm); font-size:0.8rem;">
             <span style="width:6px; height:6px; border-radius:50%; background:var(--success);"></span>
             LDAP: <code style="font-family:monospace;">${escapeHtml(ldap.url || '—')}</code>
             <span style="color:var(--muted);">·</span>
@@ -457,6 +498,15 @@ function createSettingsSection() {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: cb.checked })
           });
           const result = await r.json().catch(() => ({}));
+          // Бейдж вкл/выкл рисуется при рендере, поэтому после переключения
+          // его надо обновить вручную — иначе ячейка противоречит самой себе.
+          const badge = cb.closest('.st-mod-item')?.querySelector('[data-mod-state]');
+          if (badge) {
+            const on = cb.checked;
+            badge.textContent = on ? 'вкл' : 'выкл';
+            badge.style.background = on ? 'rgba(34,197,94,0.14)' : 'rgba(148,163,184,0.12)';
+            badge.style.color = on ? 'var(--success)' : 'var(--muted)';
+          }
           if (modStatus) { modStatus.innerHTML = result.message || (r.ok ? getCheckIcon(14, 'var(--success)') + ' Сохранено' : 'Ошибка'); modStatus.style.color = r.ok ? 'var(--success)' : 'var(--danger)'; }
         } catch { if (modStatus) { modStatus.textContent = 'Ошибка соединения'; modStatus.style.color = 'var(--danger)'; } }
       };
@@ -641,7 +691,7 @@ function createSettingsSection() {
 
   }).catch(() => {
     const root = body;
-    if (root) root.innerHTML = '<div class="meta" style="padding:var(--space-lg); text-align:center; color:var(--danger);">Ошибка загрузки настроек</div>';
+    if (root) root.innerHTML = '<div class="meta" style="padding:var(--space-md); text-align:center; color:var(--danger);">Ошибка загрузки настроек</div>';
   });
 
   // Cleanup system monitor when section is removed
@@ -664,7 +714,7 @@ function createUsersSection() {
   body.style.cssText = 'display:flex; flex-direction:column; min-height:0; height:100%;';
 
   body.innerHTML = `
-    <div class="us-toolbar" style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; margin-bottom:var(--space-md); padding:var(--space-sm) var(--space-md); background:var(--panel-2); border-radius:var(--radius-sm); border:1px solid var(--border);">
+    <div class="us-toolbar" style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; margin-bottom:var(--space-sm); padding:var(--space-sm) var(--space-sm); background:var(--panel-2); border-radius:var(--radius-sm); border:1px solid var(--border);">
       <div style="display:flex; gap:4px;">
         <button id="usTabLocal" class="secondary meta us-tab-btn" style="background:var(--brand); color:#fff; border-color:var(--brand);">LOCAL</button>
         <button id="usTabLdap" class="secondary meta us-tab-btn">LDAP</button>
@@ -687,12 +737,12 @@ function createUsersSection() {
         </thead>
         <tbody id="usTbody"></tbody>
       </table>
-      <div id="usEmpty" style="display:none; text-align:center; padding:var(--space-xl); color:var(--muted);">Нет пользователей</div>
+      <div id="usEmpty" style="display:none; text-align:center; padding:var(--space-lg); color:var(--muted);">Нет пользователей</div>
     </div>
 
     <div id="usPager" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); padding-top:var(--space-sm); margin-top:var(--space-sm);">
       <div class="meta" id="usPagInfo"></div>
-      <div style="display:flex; gap:var(--space-xs); align-items:center;">
+      <div style="display:flex; gap:var(--space-2xs); align-items:center;">
         <button id="usPrev" class="secondary meta" disabled>← Назад</button>
         <span class="meta" id="usPageInfo" style="min-width:80px; text-align:center;"></span>
         <button id="usNext" class="secondary meta" disabled>Вперёд →</button>
@@ -713,11 +763,11 @@ function createUsersSection() {
     modal.style.cssText = 'background:var(--panel); border-radius:var(--radius-lg); width:480px; max-height:80vh; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,0.3);';
 
     modal.innerHTML = `
-      <div style="padding:var(--space-md) var(--space-lg); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
+      <div style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
         <div style="font-weight:600; font-size:var(--font-size-base); display:flex; align-items:center;">${titleHtml || escapeHtml(title)}</div>
         <button id="usModalClose" class="secondary meta" style="min-width:auto; width:28px; height:28px; padding:0; border:none; background:transparent; font-size:18px; line-height:1;">${getCloseIcon(12)}</button>
       </div>
-      <div style="padding:var(--space-lg); flex:1; overflow:auto; max-height:calc(80vh - 120px);">${bodyHtml}</div>
+      <div style="padding:var(--space-md); flex:1; overflow:auto; max-height:calc(80vh - 120px);">${bodyHtml}</div>
     `;
 
     overlay.appendChild(modal);
@@ -894,7 +944,7 @@ function createUsersSection() {
         const icon = isAndroid ? '📱' : isMpv ? '🖥️' : isBrowser ? '🌐' : '📺';
         const statusColor = d.is_online ? 'var(--success)' : 'var(--muted)';
         return `
-          <label class="device-card ${checked ? 'assigned' : ''}" style="display:flex; flex-direction:column; align-items:center; gap:6px; padding:12px 8px; border:2px solid ${checked ? 'var(--brand)' : 'var(--border)'}; border-radius:12px; cursor:pointer; transition:all 0.2s; background:${checked ? 'rgba(var(--brand-rgb, 59,130,246),0.08)' : 'var(--panel-2)'};">
+          <label class="device-card ${checked ? 'assigned' : ''}" style="display:flex; flex-direction:column; align-items:center; gap:6px; padding:12px 8px; border:2px solid ${checked ? 'var(--brand)' : 'var(--border)'}; border-radius:12px; cursor:pointer; transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s; background:${checked ? 'rgba(var(--brand-rgb, 59,130,246),0.08)' : 'var(--panel-2)'};">
             <input type="checkbox" class="us-device-cb" value="${escapeHtml(d.device_id)}" ${checked ? 'checked' : ''} style="display:none;" />
             <div style="font-size:1.5rem;">${icon}</div>
             <div style="font-weight:500; font-size:0.85rem; text-align:center; line-height:1.2; word-break:break-word;">${escapeHtml(d.device_name || d.device_id)}</div>
@@ -908,7 +958,7 @@ function createUsersSection() {
       showUsModal({
         title: `Устройства — ${escapeHtml(username)}`,
         bodyHtml: `
-          <div style="margin-bottom:var(--space-md);">
+          <div style="margin-bottom:var(--space-sm);">
             <div class="meta" style="margin-bottom:var(--space-sm);">Выбрано: <span id="deviceCount">${assigned.size}</span> из ${allDevices.length}</div>
             <button id="selectAllDevices" class="secondary meta" style="font-size:0.75rem; padding:4px 8px;">Выбрать все</button>
             <button id="deselectAllDevices" class="secondary meta" style="font-size:0.75rem; padding:4px 8px;">Снять все</button>
@@ -917,7 +967,7 @@ function createUsersSection() {
             ${listHtml || '<div class="meta" style="color:var(--muted); grid-column:1/-1; text-align:center;">Нет устройств</div>'}
           </div>
           <div class="us-modal-error meta" style="color:var(--danger); display:none;"></div>
-          <div style="display:flex; gap:var(--space-sm); justify-content:flex-end; border-top:1px solid var(--border); padding-top:var(--space-md); margin-top:var(--space-md);">
+          <div style="display:flex; gap:var(--space-sm); justify-content:flex-end; border-top:1px solid var(--border); padding-top:var(--space-sm); margin-top:var(--space-sm);">
             <button id="usModalSave" class="primary">Сохранить</button>
           </div>
         `,
@@ -1007,7 +1057,7 @@ function createUsersSection() {
         const checked = assigned.has(d.device_id);
         const isOnline = d.is_online || d.online;
         return `
-          <label style="display:flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid ${checked ? 'var(--brand)' : 'var(--border)'}; border-radius:8px; cursor:pointer; background:${checked ? 'rgba(59,130,246,0.08)' : 'transparent'}; transition:all 0.15s;">
+          <label style="display:flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid ${checked ? 'var(--brand)' : 'var(--border)'}; border-radius:8px; cursor:pointer; background:${checked ? 'rgba(59,130,246,0.08)' : 'transparent'}; transition: color, background-color, border-color, box-shadow, opacity, transform 0.15s;">
             <input type="checkbox" class="us-device-cb" value="${escapeHtml(d.device_id)}" ${checked ? 'checked' : ''} style="display:none;" />
             <div style="flex:1; min-width:0;">
               <div style="font-weight:500; font-size:0.85rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(d.device_name || d.device_id)}</div>
@@ -1020,7 +1070,7 @@ function createUsersSection() {
     };
 
     const deviceSection = (role !== 'admin' && role !== 'hero_admin' && allDevices.length > 0) ? `
-      <div style="border-top:1px solid var(--border); padding-top:var(--space-md); margin-top:var(--space-md);">
+      <div style="border-top:1px solid var(--border); padding-top:var(--space-sm); margin-top:var(--space-sm);">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-sm);">
           <span style="font-size:0.875rem; color:var(--text-secondary);">Устройства: <span id="usDeviceCount">${assigned.size}</span>/${allDevices.length}</span>
           <div style="display:flex; gap:4px;">
@@ -1042,13 +1092,13 @@ function createUsersSection() {
     showUsModal({
       titleHtml: `<span id="usToggleActive" style="cursor:pointer; display:inline-flex; align-items:center; gap:6px;" title="Нажмите для смены статуса"><span id="usToggleDot" style="width:8px; height:8px; border-radius:50%; background:${userActive ? 'var(--success)' : 'var(--danger)'}; display:inline-block;"></span><span style="color:${userActive ? 'var(--success)' : 'var(--danger)'}">${escapeHtml(username)}</span></span>`,
       bodyHtml: `
-        <div style="display:flex; flex-direction:column; gap:var(--space-md);">
+        <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
           ${isLdap ? '<div style="font-size:0.75rem; color:var(--warning); background:rgba(245,158,11,0.1); padding:6px 10px; border-radius:6px;">LDAP пользователь — редактируется в Active Directory</div>' : ''}
-          <label style="display:flex; flex-direction:column; gap:var(--space-xs);">
+          <label style="display:flex; flex-direction:column; gap:var(--space-2xs);">
             <span style="font-size:0.8rem; color:var(--text-secondary);">ФИО</span>
             <input id="usEditFullName" class="input" type="text" value="${escapeHtml(fullName)}" placeholder="Введите ФИО" ${isLdap ? 'disabled' : ''} />
           </label>
-          <label style="display:flex; flex-direction:column; gap:var(--space-xs);">
+          <label style="display:flex; flex-direction:column; gap:var(--space-2xs);">
             <span style="font-size:0.8rem; color:var(--text-secondary);">Роль</span>
             <select id="usEditRole" class="input" ${isLdap ? 'disabled' : ''}>
               <option value="admin" ${role === 'admin' ? 'selected' : ''}>Admin</option>
@@ -1060,7 +1110,7 @@ function createUsersSection() {
           ${deviceSection}
         </div>
         <div id="usEditError" class="meta" style="color:var(--danger); display:none;"></div>
-        <div style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:var(--space-sm); margin-top:var(--space-md);">
+        <div style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:var(--space-sm); margin-top:var(--space-sm);">
           <div id="usDevicePager" style="display:flex; align-items:center; gap:4px;">
             ${hasDevices && totalPages > 1 ? `
               <button id="usDevicePrev" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage <= 1 ? 'disabled' : ''}>◀</button>
@@ -1210,7 +1260,7 @@ function createUsersSection() {
 async function loadUsersSection() {
   const tbody = document.getElementById('usTbody');
   if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:var(--space-xl); color:var(--muted);">Загрузка...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:var(--space-lg); color:var(--muted);">Загрузка...</td></tr>';
   try {
     const [usersRes, devicesRes, sessionsRes] = await Promise.all([
       adminFetch('/api/auth/users'),
@@ -1251,7 +1301,7 @@ async function loadUsersSection() {
     window._usState.allSessions = Array.isArray(sessions) ? sessions : [];
     renderUsersSectionList();
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:var(--space-xl); color:var(--danger);">Ошибка загрузки: ${escapeHtml(e.message || '')}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:var(--space-lg); color:var(--danger);">Ошибка загрузки: ${escapeHtml(e.message || '')}</td></tr>`;
   }
 }
 
@@ -1345,6 +1395,23 @@ function renderUsersSectionList() {
   }).join('');
 }
 
+/**
+ * Раздел «Уведомления».
+ *
+ * От модальных окон в проекте отказались, поэтому уведомления вынесены в
+ * обычный раздел навигации наравне с «Пользователями» и «Логами». Разметка
+ * списка остаётся прежней — её переиспользует notifications-modal.js,
+ * теперь просто монтируя её в контейнер раздела.
+ */
+function createNotificationsSection() {
+  const el = createSectionWrapper('Уведомления', getBellIcon(24));
+  const body = el.querySelector('.admin-section-body');
+  body.style.cssText = 'display:flex; flex-direction:column; min-height:0; height:100%; overflow:hidden;';
+  body.innerHTML = '<div class="meta" style="padding:var(--space-md); text-align:center; color:var(--muted);">Загрузка...</div>';
+  mountNotificationsSection(body, socket);
+  return el;
+}
+
 function createLogsSection() {
   const el = createSectionWrapper('Логи сервиса', `
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
@@ -1356,7 +1423,7 @@ function createLogsSection() {
     <div style="display:flex; flex-direction:column; gap:var(--space-sm); flex:1; min-height:0;">
 
       <!-- Toolbar -->
-      <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center; padding:var(--space-sm) var(--space-md); background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); flex-shrink:0;">
+      <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center; padding:var(--space-sm) var(--space-sm); background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); flex-shrink:0;">
         <select id="lgLevel" class="input" style="width:110px; height:30px; min-height:30px; padding:2px 8px; font-size:0.8rem;">
           <option value="combined">все</option>
         </select>
@@ -1794,7 +1861,7 @@ function renderLayout() {
           </button>
         </div>
       </div>
-      <div class="admin-panel-body" style="display:flex; flex-direction:column; gap:var(--space-md); flex:1 1 auto; min-height:0">
+      <div class="admin-panel-body" style="display:flex; flex-direction:column; gap:var(--space-sm); flex:1 1 auto; min-height:0">
         <ul id="tvList" class="list" style="flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; display:flex; flex-direction:column; gap:var(--space-sm)"></ul>
         <div id="tvPager" class="meta" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); flex-wrap:wrap"></div>
       </div>
@@ -1809,7 +1876,7 @@ function renderLayout() {
           <div class="meta" id="filesPaneMeta" style="margin:0; white-space:nowrap">Выберите устройство слева</div>
         </div>
       </div>
-      <div class="admin-panel-body" style="display:flex; flex-direction:column; gap:var(--space-md); flex:1 1 auto; min-height:0">
+      <div class="admin-panel-body" style="display:flex; flex-direction:column; gap:var(--space-sm); flex:1 1 auto; min-height:0">
       <div id="filesPanel" style="flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden"></div>
         <div id="filePagerAdmin" class="meta" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); flex-wrap:wrap"></div>
       </div>
@@ -2116,19 +2183,20 @@ function setFileProgress(deviceId, fileName, progress) {
 
   const value = Math.max(0, Math.min(100, numeric));
 
-  let next = value;
-  if (prev && !prev.done) {
-    // Новый запуск обработки начинается с 0/5 — это законный сброс.
-    const isNewRun = value > 0 && value <= 5 && prev.progress > 5;
-    // Иначе прогресс не должен идти назад: ffmpeg иногда повторно печатает
-    // time= (несколько входов, concat), и без этого полоса дёргалась назад.
-    if (!isNewRun && value < prev.progress) {
+let next = value;
+    if (prev && !prev.done && value < prev.progress) {
+      // Внутри одного запуска прогресс не откатывается назад. Раньше здесь
+      // был отдельный случай «нового запуска» (0-5 при прогрессе > 5),
+      // но файл проходит несколько стадий подряд (метаданные -> оптимизация
+      // -> конвертация), и каждая начинает с 0, из-за чего полоса прыгала
+      // назад и цикл 0->100% повторялся по кругу.
       next = prev.progress;
+    } else if (prev && prev.done && value > 0 && value < 100) {
+      // Файл уже дошёл до 100%, пришло запоздалое событие прошлой стадии —
+      // готовый файл обратно в обработку не отправляем. Сброс на 0 при этом
+      // остаётся легальным: это уже новый запуск.
+      return prev;
     }
-  } else if (prev && prev.done && value < 100) {
-    // Файл уже дошёл до 100% — не откатываем назад после завершения.
-    return prev;
-  }
 
   const entry = { progress: next, done: next >= 100, ts: Date.now() };
   byFile.set(fileName, entry);
@@ -2211,17 +2279,21 @@ function applyProgressToElement(fileEl, entry, { animate = true } = {}) {
       fill.style.width = `${entry.progress}%`;
     }
   }
-  // Завершённый бар не удаляем: иначе следующее событие создаёт его заново
-  // и полоса визуально «моргает». Гасим ровно один раз, когда прогресс 100.
-  progressBar.style.opacity = entry.done ? '0.35' : '1';
+// Полосу не гасим на 100%: раньше здесь ставилась прозрачность 0.35,
+    // и на переходах вид/готово бар резко бледнел, а при перерисовке панели
+    // вообще пересоздавался с нулевой шириной — отсюда «мигание».
+    // Готовый файл просто не рисует полосу: запись прогресса очищается
+    // по file/ready.
+    progressBar.style.opacity = '1';
 }
 
 // Восстанавливает полосы прогресса после перерисовки панели файлов
 function reapplyFileProgress(panelEl, deviceId) {
-  if (!panelEl) return;
-  const byFile = fileProgressByDevice.get(deviceId);
-  if (!byFile || !byFile.size) return;
-  panelEl.querySelectorAll('.file-item').forEach((item) => {
+    if (!panelEl) return;
+    // Ранний выход по пустому хранилищу убран: у папок прогресс приходит
+    // не из сокета, а из data-progress, и хранилище в этом случае пустое.
+    const byFile = fileProgressByDevice.get(deviceId);
+    panelEl.querySelectorAll('.file-item').forEach((item) => {
     if ((item.getAttribute('data-device-id') || '') !== (deviceId || '')) return;
     let safeName = '';
     try {
@@ -2229,10 +2301,25 @@ function reapplyFileProgress(panelEl, deviceId) {
     } catch {
       return;
     }
-    const entry = byFile.get(safeName);
-    if (entry) applyProgressToElement(item, entry, { animate: false });
-  });
-}
+const entry = byFile?.get(safeName);
+      if (entry) {
+        applyProgressToElement(item, entry, { animate: false });
+        return;
+      }
+      // События сокета может не быть: для папок прогресс пишется в статусе
+      // исходного PDF, а в списке лежит имя папки. Тогда берём значение из
+      // data-progress, который проставлен при рендере, — иначе подпись
+      // показывала «Обработка N%», а полоса бы не появилась вовсе.
+      // Проверяем наличие атрибута явно: у готового файла его нет, а
+      // Number(null) === 0 и молча посадил бы прогресс 0.
+      const raw = item.getAttribute('data-progress');
+      if (raw === null) return;
+      const attr = Number(raw);
+      if (!Number.isFinite(attr)) return;
+const seeded = setFileProgress(deviceId, safeName, attr);
+      if (seeded) applyProgressToElement(item, seeded, { animate: false });
+    });
+  }
 
 function updateFileProgress(deviceId, fileName, progress) {
   if (!fileName) return;

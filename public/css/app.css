@@ -39,12 +39,18 @@
   --border-2: 1px solid rgba(255, 255, 255, 0.12);
   --border-hover: 1px solid rgba(255, 255, 255, 0.18);
   
-  /* Spacing - Стандартизированные отступы */
-  --space-xs: 4px;
-  --space-sm: 8px;
-  --space-md: 8px;
-  --space-lg: 12px;
-  --space-xl: 16px;  /* Только для больших отступов */
+  /* Spacing — шкала отступов.
+     Ступени подобраны по фактическому использованию в проекте,
+     чтобы существующие места не требовали подгонки. */
+  --space-3xs: 2px;   /* хайрлайн-зазоры, padding бейджей */
+  --space-2xs: 4px;   /* зазоры внутри строк */
+  --space-xs: 6px;    /* метки, узкие контролы */
+  --space-sm: 8px;    /* базовый внутренний отступ */
+  --space-md: 12px;   /* отступ между блоками внутри панели */
+  --space-lg: 16px;   /* отступ между карточками */
+  --space-xl: 20px;   /* отступы секций */
+  --space-2xl: 24px;  /* крупные разрывы */
+  --space-3xl: 40px;  /* ритм секций */
   
   /* Стандартные размеры элементов */
   --button-height: 40px;
@@ -78,9 +84,22 @@
   
   --line-height: 1.6;
   
-  /* Transitions */
-  --transition-fast: 150ms ease;
-  --transition-base: 200ms ease;
+  /* Transitions — длительности и кривые.
+     Выход короче входа: закрытие не должно «залипать». */
+  --duration-instant: 50ms;
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-slow: 300ms;
+  --duration-slower: 500ms;
+
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-entrance: cubic-bezier(0, 0, 0, 1);
+  --ease-exit: cubic-bezier(0.3, 0, 1, 1);
+  --ease-progress: linear;
+
+  /* Готовые связки, обратно совместимые с прежними именами */
+  --transition-fast: var(--duration-fast) ease;
+  --transition-base: var(--duration-base) ease;
   
   /* Z-index */
   --z-sticky: 200;
@@ -209,15 +228,15 @@ h1, h2, h3, h4, h5, h6 {
 #filePreview .static-preview-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-md);
+  padding: var(--space-sm);
 }
 
 .folder-playlist-toolbar {
   border-top: 1px solid var(--border);
-  padding: var(--space-md);
+  padding: var(--space-sm);
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: var(--space-2xs);
   align-items: center;
   background: var(--panel-2);
 }
@@ -264,7 +283,7 @@ h1, h2, h3, h4, h5, h6 {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
-  transition: all var(--transition-base);
+  transition: color, background-color, border-color, box-shadow, opacity, transform var(--transition-base);
   /* Убираем hover эффект для сенсорных панелей */
   -webkit-tap-highlight-color: transparent;
 }
@@ -312,11 +331,11 @@ button {
   padding: var(--button-padding);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all var(--transition-base);
+  transition: color, background-color, border-color, box-shadow, opacity, transform var(--transition-base);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-xs);
+  gap: var(--space-2xs);
   min-height: var(--button-height);
   height: var(--button-height);
   white-space: nowrap;
@@ -472,7 +491,7 @@ body.light button.danger:hover:not(:disabled) {
   color: var(--text);
   font-family: inherit;
   font-size: var(--font-size-base);
-  transition: all var(--transition-base);
+  transition: color, background-color, border-color, box-shadow, opacity, transform var(--transition-base);
   min-height: var(--button-height);
   height: var(--button-height);
 }
@@ -500,7 +519,7 @@ body.light .input {
   border-radius: var(--radius-md);
   padding: var(--item-padding);
   box-shadow: var(--shadow-md);
-  transition: all var(--transition-base);
+  transition: color, background-color, border-color, box-shadow, opacity, transform var(--transition-base);
 }
 
 .card:hover {
@@ -511,8 +530,8 @@ body.light .input {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-md);
-  margin-bottom: var(--space-md);
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
   flex-wrap: wrap;
 }
 
@@ -542,8 +561,8 @@ body.light .input {
   z-index: var(--z-sticky);
   display: flex;
   align-items: center;
-  gap: var(--space-md);
-  padding: var(--space-md);
+  gap: var(--space-sm);
+  padding: var(--space-sm);
   background: linear-gradient(180deg, var(--panel), var(--panel-2));
   border-bottom: var(--border);
   box-shadow: var(--shadow-sm);
@@ -557,7 +576,7 @@ body.light .input {
 
 .toolbar .button-group {
   display: flex;
-  gap: var(--space-xs);
+  gap: var(--space-2xs);
   flex-wrap: nowrap;
   flex-shrink: 1;
   min-width: 0;
@@ -583,7 +602,7 @@ body.light .input {
   border-radius: var(--radius-md);
   padding: var(--item-padding);
   background: linear-gradient(180deg, var(--panel), var(--panel-2));
-  transition: all var(--transition-base);
+  transition: color, background-color, border-color, box-shadow, opacity, transform var(--transition-base);
   cursor: pointer;
   box-sizing: border-box;
   height: calc(var(--item-min-height) - 8px);  /* Фиксированная высота, уменьшена на 8px */
@@ -763,7 +782,7 @@ body.light .tvTile.active {
   border-radius: var(--radius-sm);
   border: var(--border);
   background: var(--panel-2);
-  transition: all var(--transition-fast);
+  transition: color, background-color, border-color, box-shadow, opacity, transform var(--transition-fast);
   height: var(--item-min-height);  /* Фиксированная высота */
   min-height: var(--item-min-height);
   overflow: hidden;
@@ -873,7 +892,7 @@ body.light .resolution-badge {
 .devices-panel .title,
 .files-panel .title,
 .preview-panel .title {
-  margin: 0 0 var(--space-md) 0;
+  margin: 0 0 var(--space-sm) 0;
   padding: 0;
 }
 
@@ -905,7 +924,7 @@ body.light .resolution-badge {
 }
 
 .preview-panel {
-  gap: var(--space-md);
+  gap: var(--space-sm);
 }
 
 .preview-panel .miniPreview {
@@ -1206,14 +1225,14 @@ body.light .resolution-badge {
 }
 
 .dropZone {
-  margin-top: var(--space-md);
-  padding: var(--space-xl);
+  margin-top: var(--space-sm);
+  padding: var(--space-lg);
   border: 2px dashed var(--border);
   border-radius: var(--radius-md);
   text-align: center;
   color: var(--muted);
   background: var(--panel);
-  transition: all var(--transition-base);
+  transition: color, background-color, border-color, box-shadow, opacity, transform var(--transition-base);
   cursor: pointer;
 }
 
@@ -1226,7 +1245,7 @@ body.light .resolution-badge {
 .queue {
   list-style: none;
   padding: 0;
-  margin: var(--space-md) 0 0 0;
+  margin: var(--space-sm) 0 0 0;
 }
 
 .queue li {
@@ -1365,11 +1384,11 @@ body.light .queue li {
   .toolbar > div:last-child {
     order: 2;
     justify-content: center;
-    margin-top: var(--space-xs);
+    margin-top: var(--space-2xs);
   }
   
   .toolbar .button-group {
-    gap: var(--space-xs);
+    gap: var(--space-2xs);
     flex-wrap: wrap;
     justify-content: center;
   }
@@ -1553,7 +1572,7 @@ body.light .queue li {
 .device-controls-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--space-md);
+  gap: var(--space-sm);
   align-items: start;
 }
 
@@ -1589,7 +1608,7 @@ body.light .queue li {
 /* Компактная панель загрузки */
 .uploadBox .dropZone {
   min-height: 60px;
-  padding: var(--space-md);
+  padding: var(--space-sm);
   font-size: var(--font-size-sm);
 }
 
@@ -2336,7 +2355,7 @@ body.admin-page a.device-meta-chip.is-link {
   color: var(--brand-hover);
   text-decoration: none;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: color, background-color, border-color, box-shadow, opacity, transform var(--transition-fast);
 }
 
 body.admin-page a.device-meta-chip.is-link:hover {
@@ -2500,4 +2519,78 @@ button.meta-lg.android-pastel {
   color: var(--panel) !important;
   border: 1px solid rgba(16, 185, 129, 0.22) !important;
   box-shadow: 0 2px 6px rgba(16, 185, 129, 0.12) !important;
+}
+
+/* ==========================================================================
+   Всплывающие уведомления (тосты)
+   Перенесено из public/js/admin/notifications.js: инъекция в <head>
+   всегда шла после внешних таблиц и перебивала prefers-reduced-motion.
+   ========================================================================== */
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideOutRight {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+.notification-toast {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--brand);
+  padding: 16px;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  z-index: 10000;
+  max-width: 400px;
+  min-width: 300px;
+  animation: slideInRight var(--duration-slow) var(--ease-entrance);
+  cursor: pointer;
+}
+
+/* Выход короче входа — закрытие не должно «залипать». */
+.notification-toast--out {
+  animation: slideOutRight var(--duration-fast) var(--ease-exit) forwards;
+}
+
+/* ==========================================================================
+   Доступность: движение
+   Пользователь просит систему уменьшить анимацию — уважаем это глобально.
+   Длительность не обнуляется до нуля, а схлопывается до 0.01ms, чтобы
+   событие animationend всё равно пришло и элемент был удалён.
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Элементы, которые появляются/уезжают по position или transform,
+     при схлопнутой анимации не должны оставлять сдвинутый след. */
+  .notification-toast {
+    transform: none;
+  }
 }

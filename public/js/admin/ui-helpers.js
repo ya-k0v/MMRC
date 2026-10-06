@@ -23,7 +23,7 @@ export function clearFilesPane(metaText = 'Выберите устройство
   if (title) title.textContent = 'Файлы';
   if (meta) meta.textContent = metaText;
   if (panel) {
-    panel.innerHTML = `<div class="meta" style="padding:var(--space-md); text-align:center;">${placeholderText}</div>`;
+    panel.innerHTML = `<div class="meta" style="padding:var(--space-sm); text-align:center;">${placeholderText}</div>`;
   }
   if (pager) pager.innerHTML = '';
 }

@@ -1,7 +1,7 @@
 // Service Worker для MMRC - Production Ready
 // Версия 17 - принудительное обновление статики после правок прогресс-баров
 
-const VERSION = 'v19';
+const VERSION = 'v20';
 const CACHE_NAME = `mmrc-static-${VERSION}`;
 const CONTENT_CACHE_NAME = `mmrc-content-${VERSION}`;
 
@@ -151,7 +151,7 @@ self.addEventListener('fetch', (event) => {
             });
           }
           return response;
-        }).catch(() => {
+        }).catch(async () => {
           // Offline - возвращаем из кэша или офлайн страницу
           if (cached) return cached;
           
@@ -191,6 +191,21 @@ self.addEventListener('fetch', (event) => {
             });
           }
           
+          // Для запроса картинки текстовый ответ бесполезен: <img> никогда
+          // не отрисует body, а вызывающий увидит битую картинку. Раньше здесь
+          // возвращался Response('Offline', {status: 503}) на ЛЮБОЙ запрос,
+          // не попавший в кэш, и сетка превью получала 503 вместо файла.
+          if (event.request.destination === 'image' ||
+              event.request.headers.get('accept')?.includes('image/')) {
+            const stale = await caches.match(event.request, { ignoreSearch: true });
+            if (stale) return stale;
+            // Прозрачный 1x1 PNG, чтобы не было битой иконки
+            return new Response(
+              Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='), c => c),
+              { status: 200, headers: { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' } }
+            );
+          }
+
           return new Response('Offline', { status: 503 });
         });
         

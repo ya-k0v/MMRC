@@ -267,8 +267,8 @@ function addSystemMonitorStyles() {
     .system-monitor {
       display: flex;
       align-items: center;
-      gap: var(--space-lg);
-      padding: var(--space-sm) var(--space-xl);
+      gap: var(--space-md);
+      padding: var(--space-sm) var(--space-lg);
       background: var(--brand-light);
       border-radius: var(--radius-sm);
       border: var(--border-2);
@@ -324,14 +324,14 @@ function addSystemMonitorStyles() {
     .disk-container {
       display: flex;
       flex-direction: column;
-      gap: var(--space-xs);
+      gap: var(--space-2xs);
       min-width: 120px;
     }
 
     .disk-item {
       display: flex;
       align-items: center;
-      gap: var(--space-xs);
+      gap: var(--space-2xs);
       font-size: var(--font-size-xs);
     }
 
@@ -367,7 +367,7 @@ function addSystemMonitorStyles() {
     @media (max-width: 900px) {
       .system-monitor {
         gap: var(--space-sm);
-        padding: var(--space-xs) var(--space-sm);
+        padding: var(--space-2xs) var(--space-sm);
         flex-wrap: wrap;
         justify-content: center;
       }
@@ -389,8 +389,8 @@ function addSystemMonitorStyles() {
 
     @media (max-width: 768px) {
       .system-monitor {
-        gap: var(--space-xs);
-        padding: var(--space-xs);
+        gap: var(--space-2xs);
+        padding: var(--space-2xs);
         flex-wrap: wrap;
         font-size: 0.75rem;
       }

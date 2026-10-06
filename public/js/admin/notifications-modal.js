@@ -3,7 +3,6 @@
  * @module admin/notifications-modal
  */
 
-import { showModal } from './modal.js';
 import { adminFetch } from './auth.js';
 
 let socket = null;
@@ -52,10 +51,15 @@ function upsertNotificationInState(notification) {
   currentNotifications = sortNotifications(currentNotifications);
 }
 
-function isNotificationsModalOpen() {
-  const overlay = document.getElementById('modalOverlay');
-  const list = document.getElementById(NOTIFICATIONS_MODAL_LIST_ID);
-  return Boolean(overlay && overlay.style.display === 'flex' && list);
+/**
+ * Список уведомлений сейчас отрисован в DOM — либо в разделе, либо в
+ * модальном окне. Раньше проверялось конкретно наличие overlay, из-за чего
+ * при переносе уведомлений в обычный раздел перерисовка по сокету просто
+ * перестала бы происходить. Проверяем сам контейнер — он общий для обоих
+ * случаев, а раздел при уходе удаляется из DOM вместе с этим элементом.
+ */
+function isNotificationsMounted() {
+  return Boolean(document.getElementById(NOTIFICATIONS_MODAL_LIST_ID));
 }
 
 function setElementHtml(target, html) {
@@ -78,20 +82,6 @@ function buildNotificationsListHtml() {
   }
 
   return currentNotifications.map(renderNotification).join('');
-}
-
-function buildNotificationsModalContent() {
-  const notificationsHtml = buildNotificationsListHtml();
-  const footerDisplay = currentNotifications.length > 0 ? 'flex' : 'none';
-
-  return `
-    <div id="${NOTIFICATIONS_MODAL_LIST_ID}" style="display:flex; flex-direction:column; gap:var(--space-md); max-height:70vh; overflow-y:auto;">
-      ${notificationsHtml}
-    </div>
-    <div id="${NOTIFICATIONS_MODAL_FOOTER_ID}" style="margin-top:var(--space-md); padding-top:var(--space-md); border-top:1px solid var(--border); display:${footerDisplay}; gap:var(--space-sm); justify-content:flex-end;">
-      <button id="notificationsClearAll" class="secondary" style="min-width:auto;">Очистить все</button>
-    </div>
-  `;
 }
 
 function renderNotificationsModalContent() {
@@ -148,7 +138,7 @@ function attachRealtimeSocketListeners() {
       upsertNotificationInState(notification);
     }
 
-    if (isNotificationsModalOpen()) {
+    if (isNotificationsMounted()) {
       renderNotificationsModalContent();
     }
   };
@@ -156,7 +146,7 @@ function attachRealtimeSocketListeners() {
   socketAcknowledgedHandler = ({ id } = {}) => {
     if (!id) return;
     removeNotificationFromState(id);
-    if (isNotificationsModalOpen()) {
+    if (isNotificationsMounted()) {
       renderNotificationsModalContent();
     }
   };
@@ -164,7 +154,7 @@ function attachRealtimeSocketListeners() {
   socketRemovedHandler = ({ id } = {}) => {
     if (!id) return;
     removeNotificationFromState(id);
-    if (isNotificationsModalOpen()) {
+    if (isNotificationsMounted()) {
       renderNotificationsModalContent();
     }
   };
@@ -210,27 +200,45 @@ async function reportModalError(title, error, details = {}) {
 }
 
 /**
- * Показывает модальное окно с уведомлениями
- * @param {Socket} socketIO - Socket.IO instance (опционально, берется из window.socket если не передан)
+ * Отрисовывает уведомления в переданный контейнер — обычный раздел админки,
+ * а не модальное окно. Отдельный экспорт нужен, потому что раздел создаётся
+ * и уничтожается при навигации: после ухода контейнера отсоединён от DOM,
+ * и перерисовывать в него уже нельзя.
+ *
+ * @param {HTMLElement} container
+ * @param {Socket|null} socketIO
  */
-export async function showNotificationsModal(socketIO = null) {
+export function mountNotificationsSection(container, socketIO = null) {
+  if (!container) return;
+
   if (socketIO) {
     socket = socketIO;
   } else if (window.socket) {
     socket = window.socket;
   }
 
-  attachRealtimeSocketListeners();
-  
-  // Загружаем уведомления
-  await loadNotifications();
+  const listHtml = buildNotificationsListHtml();
+  const footerDisplay = currentNotifications.length > 0 ? 'flex' : 'none';
 
-  showModal('🔔 Уведомления', buildNotificationsModalContent());
-  
-  // Обработчики
-  setTimeout(() => {
+  container.innerHTML = `
+    <div id="${NOTIFICATIONS_MODAL_LIST_ID}" style="display:flex; flex-direction:column; gap:var(--space-sm); overflow-y:auto; min-height:0; flex:1;">
+      ${listHtml}
+    </div>
+    <div id="${NOTIFICATIONS_MODAL_FOOTER_ID}" style="margin-top:var(--space-sm); padding-top:var(--space-sm); border-top:1px solid var(--border); display:${footerDisplay}; gap:var(--space-sm); justify-content:flex-end;">
+      <button id="notificationsClearAll" class="secondary" style="min-width:auto;">Очистить все</button>
+    </div>
+  `;
+
+  attachRealtimeSocketListeners();
+  setupNotificationHandlers();
+
+  loadNotifications().then(() => {
+    // Пока грузили, пользователь мог уйти в другой раздел — тогда контейнер
+    // уже вне DOM и перерисовывать нечего.
+    if (!container.isConnected) return;
+    renderNotificationsModalContent();
     setupNotificationHandlers();
-  }, 100);
+  });
 }
 
 /**
@@ -300,7 +308,7 @@ function renderNotification(notification) {
   
   return `
     <div class="notification-item" data-notification-id="${notification.id}" style="
-      padding:var(--space-md);
+      padding:var(--space-sm);
       border:1px solid var(--border);
       border-left:4px solid ${severityColor};
       border-radius:8px;
@@ -540,7 +548,13 @@ async function executeNotificationAction(notificationId, actionId, buttonEl) {
       throw new Error(payload?.error || `HTTP ${response.status}`);
     }
 
-    await showNotificationsModal(socket);
+    // После действия перерисовываем текущий контейнер, а не открываем
+    // модальное окно: от модальных окон в проекте отказались.
+    await loadNotifications();
+    if (isNotificationsMounted()) {
+      renderNotificationsModalContent();
+      setupNotificationHandlers();
+    }
   } catch (error) {
     console.error('[Notifications Modal] Error executing notification action:', error);
     await reportModalError('Ошибка выполнения действия уведомления', error, {
@@ -665,22 +679,9 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-// Добавляем стили для анимации
-if (!document.getElementById('notifications-modal-styles')) {
-  const style = document.createElement('style');
-  style.id = 'notifications-modal-styles';
-  style.textContent = `
-    @keyframes fadeOut {
-      from {
-        opacity: 1;
-        transform: scale(1);
-      }
-      to {
-        opacity: 0;
-        transform: scale(0.95);
-      }
-    }
-  `;
-  document.head.appendChild(style);
-}
+// Модалка уведомлений не использует keyframes: анимация появления
+// задаётся классом .modal (см. public/css/app.css).
+// Раньше здесь инъектировался @keyframes fadeOut, к которому не обращался
+// ни один элемент, — он мешал правилу prefers-reduced-motion, будучи
+// вставлен в <head> после внешних таблиц.
 

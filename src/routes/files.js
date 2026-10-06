@@ -5380,8 +5380,12 @@ export function createFilesRouter(deps) {
     
     const filesData = [];
     
-    for (let i = 0; i < files.length; i++) {
-      const safeName = files[i];
+for (let i = 0; i < files.length; i++) {
+        // let, а не const: ниже по ветке «исходник сконвертирован в папку»
+        // safeName переприсваивается на имя папки. С const это падало с
+        // "Assignment to constant variable.", ошибка глоталась catch-ом, и
+        // метаданные папки не применялись.
+        let safeName = files[i];
       
       // КРИТИЧНО: Для папок проверяем статус и по исходному имени файла (PDF/PPTX)
       // Это нужно, так как статус сохраняется с исходным именем файла (например, "file.pdf"),

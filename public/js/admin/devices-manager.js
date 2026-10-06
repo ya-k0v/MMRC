@@ -224,7 +224,7 @@ function renderEmptyState(tvList) {
   tvList.innerHTML = '';
   const emptyItem = document.createElement('li');
   emptyItem.className = 'item';
-  emptyItem.style.cssText = 'text-align:center; padding:var(--space-xl)';
+  emptyItem.style.cssText = 'text-align:center; padding:var(--space-lg)';
   const emptyDiv = document.createElement('div');
   emptyDiv.style.width = '100%';
   const emptyTitle = document.createElement('div');

@@ -4,7 +4,6 @@
  */
 
 import { adminFetch } from './auth.js';
-import { showNotificationsModal } from './notifications-modal.js';
 
 let unreadCount = 0;
 let socket = null;
@@ -16,18 +15,17 @@ let updateInterval = null;
  */
 export function initNotifications(socketIO) {
   socket = socketIO;
-  
-  // Пункт в сайдбаре и обработчик открытия модального окна
+
+  // Пункт в сайдбаре и переход в раздел уведомлений
   mountBadgeIntoSidebar();
-  document.addEventListener('mmrc:notifications-open', openNotificationsModal);
   document.addEventListener('mmrc:sidebar-rendered', mountBadgeIntoSidebar);
-  
+
   // Подписываемся на уведомления через Socket.IO
   subscribeToNotifications();
-  
+
   // Загружаем начальное количество
   loadUnreadCount();
-  
+
   // Обновляем каждые 30 секунд (fallback)
   updateInterval = setInterval(loadUnreadCount, 30000);
 }
@@ -71,11 +69,17 @@ function mountBadgeIntoSidebar() {
 }
 
 /**
- * Открывает модальное окно уведомлений
+ * Переходит в раздел «Уведомления».
+ *
+ * Раньше здесь открывалось модальное окно. От модальных окон отказались,
+ * поэтому уведомления стали обычным пунктом навигации — как «Устройства»,
+ * «Пользователи» или «Логи». Раздел принимает переход через событие,
+ * чтобы не тянуть сюда ссылку на экземпляр сайдбара.
  */
-function openNotificationsModal() {
-  if (!socket) return;
-  showNotificationsModal(socket);
+function openNotificationsSection() {
+  document.dispatchEvent(new CustomEvent('mmrc:navigate', {
+    detail: { section: 'notifications' }
+  }));
 }
 
 /**
@@ -174,6 +178,11 @@ function updateBadge() {
  * Показывает всплывающее уведомление
  * @param {Object} notification - Уведомление
  */
+
+// Должно совпадать с .notification-toast--out в public/css/app.css.
+// Используется только как страховка; основной путь — animationend.
+const TOAST_EXIT_MS = 200;
+
 function showToastNotification(notification) {
   // Создаем элемент уведомления
   const toast = document.createElement('div');
@@ -181,23 +190,10 @@ function showToastNotification(notification) {
   toast.setAttribute('data-notification-id', notification.id);
   
   const severityColor = getSeverityColor(notification.severity);
-  
-  toast.style.cssText = `
-    position: fixed;
-    top: 80px;
-    right: 20px;
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-left: 4px solid ${severityColor};
-    padding: 16px;
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    z-index: 10000;
-    max-width: 400px;
-    min-width: 300px;
-    animation: slideInRight 0.3s ease-out;
-    cursor: pointer;
-  `;
+
+  // Статичные стили — в .notification-toast (public/css/app.css).
+  // Инлайн остаётся только динамический цвет серьёзности.
+  toast.style.borderLeftColor = severityColor;
   
   const timeAgo = formatTimeAgo(new Date(notification.timestamp));
   
@@ -241,24 +237,27 @@ function showToastNotification(notification) {
   container.appendChild(closeButton);
   toast.appendChild(container);
   
-  // Клик на уведомление открывает модальное окно
+  // Клик по уведомлению открывает раздел уведомлений
   toast.onclick = (e) => {
     if (!e.target.closest('button')) {
-      showNotificationsModal(socket);
+      openNotificationsSection();
       toast.remove();
     }
   };
   
   document.body.appendChild(toast);
-  
-  // Автоматически скрываем через 8 секунд
+
+  // Автоматически скрываем через 8 секунд.
+  // Убираем по animationend, а не по зашитой константе: так таймер не
+  // расходится с длительностью в CSS. Страховка на случай, если анимация
+  // отключена и animationend не придёт.
   setTimeout(() => {
-    toast.style.animation = 'slideOutRight 0.3s ease-in';
-    setTimeout(() => {
-      if (toast.parentNode) {
-        toast.remove();
-      }
-    }, 300);
+    toast.classList.add('notification-toast--out');
+    const fallback = setTimeout(() => toast.remove(), TOAST_EXIT_MS + 100);
+    toast.addEventListener('animationend', () => {
+      clearTimeout(fallback);
+      toast.remove();
+    }, { once: true });
   }, 8000);
 }
 
@@ -319,44 +318,10 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-// Добавляем стили для анимации
-if (!document.getElementById('notifications-styles')) {
-  const style = document.createElement('style');
-  style.id = 'notifications-styles';
-  style.textContent = `
-    @keyframes slideInRight {
-      from {
-        transform: translateX(100%);
-        opacity: 0;
-      }
-      to {
-        transform: translateX(0);
-        opacity: 1;
-      }
-    }
-    
-    @keyframes slideOutRight {
-      from {
-        transform: translateX(0);
-        opacity: 1;
-      }
-      to {
-        transform: translateX(100%);
-        opacity: 0;
-      }
-    }
-    
-    @keyframes pulse {
-      0%, 100% {
-        opacity: 1;
-      }
-      50% {
-        opacity: 0.7;
-      }
-    }
-  `;
-  document.head.appendChild(style);
-}
+// Стили тостов (@keyframes slideInRight/slideOutRight и .notification-toast)
+// живут в public/css/app.css, а не здесь: правило prefers-reduced-motion
+// должно иметь возможность их перекрыть, а инъекция в <head> всегда идёт
+// после внешних таблиц и выиграла бы у них по порядку.
 
 export { showToastNotification };
 

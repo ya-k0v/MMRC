@@ -51,6 +51,7 @@ import { createConversionRouter } from './src/routes/conversion.js';
 import { createSystemInfoRouter } from './src/routes/system-info.js';
 import { createAnalyticsRouter } from './src/routes/analytics.js';
 import { createFoldersRouter } from './src/routes/folders.js';
+import { wantsHtmlPage, errorPagePath } from './src/utils/error-pages.js';
 import { createAuthRouter } from './src/routes/auth.js';
 import { createDeduplicationRouter } from './src/routes/deduplication.js';
 import { createHeroRouter, initHeroDb } from './src/hero/index.js';
@@ -759,6 +760,29 @@ async function hydrateDevicesFromDatabase() {
     logger.info('[Server] Auto-cleanup disabled (set AUTO_CLEANUP_MISSING_FILES=true to enable)');
   }
 }
+
+// ========================================
+// ТЕРМИНАЛЬНЫЙ ОБРАБОТЧИК: 404 / 403 / 503
+// ========================================
+// Раньше public/403.html, public/404.html и maintenance.html были просто
+// файлами: на них никто не ссылался, а неизвестный маршрут отваливался в
+// стандартный ответ Express «Cannot GET /...». Красивые страницы не
+// показывались никогда.
+//
+// Ключевое условие — отдавать HTML ТОЛЬКО навигации браузера. Для /api/*,
+// картинок и прочих XHR нужен JSON/текст, иначе клиент попытается распарсить
+// HTML как JSON, а <img> получит вместо файла страницу с номером ошибки.
+const ERROR_PAGES_STATUS = 404;
+app.use((req, res) => {
+  if (!wantsHtmlPage(req)) {
+    return res.status(ERROR_PAGES_STATUS).json({ error: 'Маршрут не найден' });
+  }
+  res.status(ERROR_PAGES_STATUS).sendFile(errorPagePath(PUBLIC, ERROR_PAGES_STATUS), (err) => {
+    if (err && !res.headersSent) {
+      res.status(ERROR_PAGES_STATUS).json({ error: 'Маршрут не найден' });
+    }
+  });
+});
 
 // ========================================
 // EXPRESS ERROR HANDLER

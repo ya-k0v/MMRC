@@ -6,6 +6,7 @@
 
 import { escapeHtml } from '../shared/utils.js';
 import { logout } from './auth.js';
+import { initThemeToggle } from '../theme.js';
 
 const SIDEBAR_WIDTH_EXPANDED = 240;
 const SIDEBAR_WIDTH_COLLAPSED = 60;
@@ -89,9 +90,12 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
           <span class="sidebar-logo-icon">${icons.devices}</span>
           <span class="sidebar-logo-text">MMRC</span>
         </div>
-        <button class="sidebar-toggle" title="${state.collapsed ? 'Развернуть' : 'Свернуть'}">
-          ${state.collapsed ? icons.chevronRight : icons.chevronLeft}
-        </button>
+        <div class="sidebar-header-actions">
+          <button class="sidebar-icon-btn" id="themeBtn" type="button" title="Переключить тему" aria-label="Переключить тему"></button>
+          <button class="sidebar-toggle" title="${state.collapsed ? 'Развернуть' : 'Свернуть'}">
+            ${state.collapsed ? icons.chevronRight : icons.chevronLeft}
+          </button>
+        </div>
       </div>
       <nav class="sidebar-nav">
         ${filteredItems.map(item => {
@@ -100,8 +104,8 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
           }
           const isActive = state.activeSection === item.id;
           const target = item.external ? `href="${item.external}" target="_blank"` : `href="#" data-section="${item.id}"`;
-          // Уведомления открывают модальное окно, а не раздел, поэтому
-          // пункт никогда не бывает активным, но счётчик в нём обязателен.
+          // Счётчик непрочитанных рисуется в пункте уведомлений, но сам
+          // пункт — обычный раздел навигации, как остальные.
           const badge = item.id === 'notifications'
             ? '<span class="sidebar-item-badge" id="notificationsBadge"></span>'
             : '';
@@ -128,6 +132,13 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
     // Bind events
     bindEvents();
 
+    // render() пересобирает innerHTML, поэтому кнопку темы нужно
+    // переинициализировать каждый раз: initThemeToggle проставляет иконку
+    // и обработчик, а на новом элементе их снова нет. Раньше кнопка жила в
+    // скрытой шапке, поэтому инициализировалась один раз и в сайдбаре её
+    // просто не было.
+    initThemeToggle(document.getElementById('themeBtn'), 'vc_theme_admin');
+
     // render() пересобирает innerHTML, поэтому счётчик непрочитанных
     // на новом элементе нужно проставить заново — иначе после загрузки
     // модулей он показывал бы пустым до следующего события.
@@ -150,15 +161,6 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
         e.preventDefault();
         const section = item.dataset.section;
         if (!section) return;
-
-        if (section === 'notifications') {
-          // Модальное окно, а не навигация: активный раздел не меняем.
-          document.dispatchEvent(new CustomEvent('mmrc:notifications-open'));
-          if (window.innerWidth < 768) {
-            closeMobile();
-          }
-          return;
-        }
 
         setActiveSection(section);
       };
@@ -247,6 +249,17 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
   // Initialize
   async function init() {
     document.body.appendChild(sidebar);
+
+    // Навигация извне: например, клик по всплывающему уведомлению открывает
+    // раздел «Уведомления». Раньше такие переходы шли через отдельные
+    // события под каждое модальное окно.
+    document.addEventListener('mmrc:navigate', (e) => {
+      const target = e?.detail?.section;
+      if (!target) return;
+      if (!sidebar.querySelector(`.sidebar-item[data-section="${target}"]`)) return;
+      setActiveSection(target);
+    });
+
     render();
     updateLayout();
     await loadModules();

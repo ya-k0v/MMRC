@@ -123,7 +123,7 @@ body.hero-page {
   background: rgba(255,255,255,0.05);
   backdrop-filter: blur(10px);
   color: var(--text);
-  transition: all 0.2s;
+  transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s;
   box-shadow: 0 4px 12px rgba(0,0,0,0.1);
   box-sizing: border-box;
 }
@@ -159,7 +159,7 @@ body.hero-page {
   padding: 16px 20px;
   cursor: pointer;
   border-bottom: 1px solid rgba(255,255,255,0.05);
-  transition: all 0.2s;
+  transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s;
   color: var(--text);
   background: transparent;
 }
@@ -587,7 +587,7 @@ body.hero-page {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: var(--space-sm);
-  padding: var(--space-md);
+  padding: var(--space-sm);
   background: var(--panel);
   width: 100%;
   max-width: 100%;
@@ -646,7 +646,7 @@ body.hero-page {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s;
   z-index: 10000;
 }
 
@@ -668,7 +668,7 @@ body.hero-page {
   cursor: pointer;
   font-weight: 600;
   font-size: 1.5rem;
-  transition: all 0.2s;
+  transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s;
   z-index: 10000;
 }
 
@@ -896,20 +896,20 @@ body.hero-page {
   flex: 1;
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
-  gap: var(--space-lg);
-  padding: var(--space-lg);
+  gap: var(--space-md);
+  padding: var(--space-md);
   box-sizing: border-box;
 }
 
 .hero-admin-list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
+  gap: var(--space-sm);
   min-height: 0;
   background: rgba(10,10,10,0.65);
   border-radius: var(--radius-lg);
   border: 1px solid rgba(255,255,255,0.05);
-  padding: var(--space-md);
+  padding: var(--space-sm);
 }
 
 .hero-admin-list__header {
@@ -928,7 +928,7 @@ body.hero-page {
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: color, background-color, border-color, box-shadow, opacity, transform 0.15s;
   line-height: 1.6;
 }
 
@@ -954,7 +954,7 @@ body.hero-page {
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: color, background-color, border-color, box-shadow, opacity, transform 0.15s;
   line-height: 1.5;
   white-space: nowrap;
 }
@@ -1030,14 +1030,14 @@ body.hero-page {
 .hero-admin-detail {
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
+  gap: var(--space-sm);
   min-height: 0;
   height: 100%; /* Добавляем высоту для правильного отображения */
   background: rgba(10,10,10,0.65);
   border-radius: var(--radius-lg);
   border: 1px solid rgba(255,255,255,0.05);
   position: relative;
-  padding: var(--space-md);
+  padding: var(--space-sm);
   overflow: hidden; /* Предотвращаем выход контента за границы */
 }
 
@@ -1046,7 +1046,7 @@ body.hero-page {
   min-height: 0;
   display: none; /* Скрыт по умолчанию, показывается при выборе героя */
   flex-direction: column;
-  gap: var(--space-md);
+  gap: var(--space-sm);
   position: relative;
   z-index: 2;
   width: 100%;
@@ -1071,7 +1071,7 @@ body.hero-page {
   color: var(--muted);
   text-align: center;
   z-index: 1;
-  padding: var(--space-md);
+  padding: var(--space-sm);
   box-sizing: border-box;
   background: rgba(10,10,10,0.65);
   border-radius: var(--radius-lg);
@@ -1333,7 +1333,7 @@ body.hero-page {
   font-size: 1rem;
   font-weight: 600;
   line-height: 1;
-  transition: all 0.2s;
+  transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s;
   z-index: 10;
   box-shadow: 0 2px 8px rgba(0,0,0,0.4);
   padding: 0;

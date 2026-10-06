@@ -55,7 +55,7 @@ body:has(#filePreview) #fileList,
 }
 
 .speaker-layout .tvTile-content {
-  gap: var(--space-xs) !important; /* 4px - как на админ панели */
+  gap: var(--space-2xs) !important; /* 4px - как на админ панели */
 }
 
 .speaker-layout .tvTile-header {

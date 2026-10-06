@@ -76,7 +76,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   const deviceNameEl = document.createElement('div');
   deviceNameEl.className = 'title';
   deviceNameEl.id = 'deviceName';
-  deviceNameEl.style.cssText = `flex:1; ${isAdmin ? 'cursor:pointer;' : ''} padding:var(--space-sm) var(--space-md); border-radius:var(--radius-sm); transition:all 0.2s; display:flex; align-items:center; min-height:36px; font-size:var(--font-size-base); margin:0`;
+  deviceNameEl.style.cssText = `flex:1; ${isAdmin ? 'cursor:pointer;' : ''} padding:var(--space-sm) var(--space-sm); border-radius:var(--radius-sm); transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s; display:flex; align-items:center; min-height:36px; font-size:var(--font-size-base); margin:0`;
   deviceNameEl.contentEditable = 'false';
   deviceNameEl.textContent = name; // Используем textContent для безопасности
   
@@ -86,7 +86,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
     const renameSaveBtn = document.createElement('button');
     renameSaveBtn.className = 'primary meta-lg';
     renameSaveBtn.id = 'renameSaveBtn';
-    renameSaveBtn.style.cssText = 'display:none; min-width:36px; width:36px; height:36px; padding:0; border-radius:var(--radius-sm); flex-shrink:0; align-items:center; justify-content:center; font-size:var(--font-size-lg); line-height:1; transition:all 0.2s; box-shadow:var(--shadow-sm)';
+    renameSaveBtn.style.cssText = 'display:none; min-width:36px; width:36px; height:36px; padding:0; border-radius:var(--radius-sm); flex-shrink:0; align-items:center; justify-content:center; font-size:var(--font-size-lg); line-height:1; transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s; box-shadow:var(--shadow-sm)';
     renameSaveBtn.title = 'Сохранить';
     const saveSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     saveSvg.setAttribute('width', '18');
@@ -106,7 +106,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
     
     const delBtn = document.createElement('button');
     delBtn.className = 'danger meta-lg delBtn';
-    delBtn.style.cssText = 'min-width:36px; width:36px; height:36px; padding:0; border-radius:var(--radius-sm); flex-shrink:0; align-items:center; justify-content:center; font-size:var(--font-size-lg); line-height:1; transition:all 0.2s; box-shadow:var(--shadow-sm)';
+    delBtn.style.cssText = 'min-width:36px; width:36px; height:36px; padding:0; border-radius:var(--radius-sm); flex-shrink:0; align-items:center; justify-content:center; font-size:var(--font-size-lg); line-height:1; transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s; box-shadow:var(--shadow-sm)';
     delBtn.title = 'Удалить устройство';
     const delSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     delSvg.setAttribute('width', '18');
@@ -132,7 +132,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
       import('./notifications.js').then(({ showToastNotification }) => {
         const launchAppBtn = document.createElement('button');
         launchAppBtn.className = 'meta-lg';
-        launchAppBtn.style.cssText = 'margin-left:auto; min-width:36px; width:36px; height:36px; padding:0; border-radius:var(--radius-sm); flex-shrink:0; align-items:center; justify-content:center; font-size:var(--font-size-lg); line-height:1; transition:all 0.2s; box-shadow:var(--shadow-sm); background:#4caf50; color:#fff;';
+        launchAppBtn.style.cssText = 'margin-left:auto; min-width:36px; width:36px; height:36px; padding:0; border-radius:var(--radius-sm); flex-shrink:0; align-items:center; justify-content:center; font-size:var(--font-size-lg); line-height:1; transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s; box-shadow:var(--shadow-sm); background:#4caf50; color:#fff;';
         launchAppBtn.title = 'Запустить Android-приложение';
         const playSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         playSvg.setAttribute('width', '18');
@@ -253,7 +253,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   // Превью контейнер
   const previewContainer = document.createElement('div');
   previewContainer.className = 'preview-container';
-  previewContainer.style.cssText = 'margin-top:var(--space-md); padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);';
+  previewContainer.style.cssText = 'margin-top:var(--space-sm); padding:var(--space-sm); display:flex; flex-direction:column; gap:var(--space-sm);';
   
   const previewCompact = document.createElement('div');
   previewCompact.className = 'preview panel preview-compact';
@@ -288,12 +288,12 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   // Управление воспроизведением
   const deviceControlsRow = document.createElement('div');
   deviceControlsRow.className = 'device-controls-row';
-  deviceControlsRow.style.cssText = 'margin-top:var(--space-md); display:grid; grid-template-columns:1fr; gap:var(--space-md); align-items:stretch;';
+  deviceControlsRow.style.cssText = 'margin-top:var(--space-sm); display:grid; grid-template-columns:1fr; gap:var(--space-sm); align-items:stretch;';
   
   const volumePanel = document.createElement('div');
   volumePanel.className = 'card';
   volumePanel.id = 'adminVolumePanel';
-  volumePanel.style.cssText = 'padding:var(--space-md); display:flex; flex-direction:column; gap:var(--space-sm);';
+  volumePanel.style.cssText = 'padding:var(--space-sm); display:flex; flex-direction:column; gap:var(--space-sm);';
   
   const volumeHeader = document.createElement('div');
   volumeHeader.style.cssText = 'display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm);';
@@ -354,7 +354,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   // Upload box
   const uploadBox = document.createElement('div');
   uploadBox.className = 'uploadBox card';
-  uploadBox.style.cssText = 'margin-top:var(--space-md)';
+  uploadBox.style.cssText = 'margin-top:var(--space-sm)';
   
   const uploadHeader = document.createElement('div');
   uploadHeader.className = 'header';
@@ -459,7 +459,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   
   const dropZone = document.createElement('div');
   dropZone.className = 'dropZone';
-  dropZone.style.cssText = 'margin-top:var(--space-sm); min-height:60px; padding:var(--space-md); font-size:var(--font-size-sm);';
+  dropZone.style.cssText = 'margin-top:var(--space-sm); min-height:60px; padding:var(--space-sm); font-size:var(--font-size-sm);';
   const fileIconText = getFileIcon(12);
   const folderIconText = getFolderIcon(12);
   dropZone.innerHTML = `Перетащите файлы/папки сюда или нажмите "${fileIconText} Файлы" / "${folderIconText} Папка"`;
@@ -665,7 +665,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
         nameEl.contentEditable = 'true';
         nameEl.style.background = 'var(--bg-input)';
         nameEl.style.border = 'var(--border)';
-        nameEl.style.padding = 'var(--space-sm) var(--space-md)';
+        nameEl.style.padding = 'var(--space-sm) var(--space-sm)';
         nameEl.focus();
         // Выделяем весь текст
         const range = document.createRange();
@@ -729,7 +729,7 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
       nameEl.textContent = originalName;
       nameEl.style.background = 'transparent';
       nameEl.style.border = 'none';
-      nameEl.style.padding = 'var(--space-sm) var(--space-md)';
+      nameEl.style.padding = 'var(--space-sm) var(--space-sm)';
       saveBtn.style.display = 'none';
     };
 

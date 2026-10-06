@@ -514,24 +514,58 @@ export async function getAllDevices() {
   }
 }
 
-export function saveDevice(deviceId, data) {
-  return circuitBreakers.database.execute(() => {
-    return withRetrySync(async () => {
-      await driver.run(
-        `INSERT INTO devices (device_id, name, folder, device_type, platform, ip_address, adb_port, capabilities, last_seen, current_state)
+/**
+ * Собирает UPSERT для устройства.
+ *
+ * adb_port затирать нельзя, если вызывающий его не передавал. Раньше здесь
+ * стояло безусловное `adb_port = excluded.adb_port` в DO UPDATE вместе с
+ * дефолтом `data.adbPort || '5555'`, поэтому обычная регистрация или
+ * heartbeat устройства (в payload которого adbPort нет) возвращал в базе
+ * порт, заданный при установке APK, к дефолтному 5555.
+ *
+ * Вынесено отдельной функцией, чтобы правило можно было проверить без БД.
+ *
+ * @param {string} deviceId
+ * @param {Object} data
+ * @returns {{ sql: string, params: any[] }}
+ */
+export function buildDeviceUpsert(deviceId, data) {
+  const hasAdbPort = data.adbPort !== undefined && data.adbPort !== null && data.adbPort !== '';
+  const conflictSet = [
+    'name = excluded.name',
+    'folder = excluded.folder',
+    'device_type = excluded.device_type',
+    'platform = excluded.platform',
+    'ip_address = excluded.ip_address'
+  ];
+  if (hasAdbPort) {
+    conflictSet.push('adb_port = excluded.adb_port');
+  }
+  conflictSet.push('capabilities = excluded.capabilities');
+  conflictSet.push('last_seen = excluded.last_seen');
+  conflictSet.push('current_state = excluded.current_state');
+  conflictSet.push('updated_at = CURRENT_TIMESTAMP');
+
+  const sql = `INSERT INTO devices (device_id, name, folder, device_type, platform, ip_address, adb_port, capabilities, last_seen, current_state)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(device_id) DO UPDATE SET
-           name = excluded.name, folder = excluded.folder,
-           device_type = excluded.device_type, platform = excluded.platform,
-           ip_address = excluded.ip_address, adb_port = excluded.adb_port, capabilities = excluded.capabilities,
-           last_seen = excluded.last_seen, current_state = excluded.current_state,
-           updated_at = CURRENT_TIMESTAMP`,
-        [deviceId, data.name, data.folder, data.deviceType || 'browser',
-         data.platform || null, data.ipAddress || null,
-         data.adbPort || '5555',
-         data.capabilities ? JSON.stringify(data.capabilities) : null,
-         data.lastSeen || null, data.current ? JSON.stringify(data.current) : null]
-      );
+           ${conflictSet.join(', ')}`;
+
+  const params = [deviceId, data.name, data.folder, data.deviceType || 'browser',
+    data.platform || null, data.ipAddress || null,
+    hasAdbPort ? data.adbPort : '5555',
+    data.capabilities ? JSON.stringify(data.capabilities) : null,
+    data.lastSeen || null, data.current ? JSON.stringify(data.current) : null];
+
+  return { sql, params };
+}
+
+export function saveDevice(deviceId, data) {
+  const { sql, params } = buildDeviceUpsert(deviceId, data);
+
+  return circuitBreakers.database.execute(() => {
+    return withRetrySync(async () => {
+      await driver.run(sql, params);
     }, { maxRetries: 3, delay: 500, shouldRetry: isRetryableDatabaseError });
   }).catch((e) => {
     logger.error('[DB] Error saving device:', e);

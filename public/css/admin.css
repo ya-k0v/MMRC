@@ -13,7 +13,7 @@ body.admin-page .sidebar {
   display: flex;
   flex-direction: column;
   z-index: 100;
-  transition: width 0.3s ease, transform 0.3s ease;
+  transition: width var(--duration-slow) var(--ease-standard), transform var(--duration-slow) var(--ease-standard);
   overflow: hidden;
 }
 
@@ -21,67 +21,114 @@ body.admin-page .sidebar.collapsed {
   width: 60px;
 }
 
+/* ==========================================================================
+   Свёрнутый сайдбар.
+
+   Раньше здесь стояли display:none для логотипа, смена display/justify-content
+   у nav и footer — ни то, ни другое не анимируется, поэтому подписи и иконки
+   прыгали мгновенно. Теперь состояние выражено только через width, opacity,
+   padding, gap и margin: все они анимируются, и сворачивание выглядит
+   плавно. Геометрия подобрана так, чтобы иконки вставали по центру рельса
+   в 60px: (60 − ширина элемента) / 2.
+   ========================================================================== */
+
 body.admin-page .sidebar.collapsed .sidebar-header {
-  justify-content: center;
-  padding: var(--space-md) 0;
+  padding: var(--space-sm) 0;
+}
+
+/* Логотип целиком скрывается: иконка монитора повторяет иконку первого
+   пункта меню, и в свёрнутом виде два одинаковых значка шли столбом.
+   Вместе с логотипом из шапки уходит и смысловая метка — остаётся
+   только шеврон, который к этому моменту отъехал в центр. */
+body.admin-page .sidebar.collapsed .sidebar-header-actions {
+  margin-right: 18px;
+}
+
+body.admin-page .sidebar.collapsed .sidebar-logo-icon {
+  opacity: 0;
+  width: 0;
+  max-width: 0;
 }
 
 body.admin-page .sidebar.collapsed .sidebar-logo {
-  display: none;
+  /* Логотип остаётся на месте, плавно гаснут оба его ребёнка,
+     поэтому шапка не «прыгает» на пустом месте. */
+  gap: 0;
 }
 
-body.admin-page .sidebar.collapsed .sidebar-toggle {
-  margin: 0 auto;
+body.admin-page .sidebar.collapsed .sidebar-logo-text {
+  opacity: 0;
+  width: 0;
+  max-width: 0;
+}
+
+body.admin-page .sidebar.collapsed .sidebar-icon-btn {
+  /* Переключатель темы в рельсе не нужен — прячем плавно. */
+  opacity: 0;
+  width: 0;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
 }
 
 body.admin-page .sidebar.collapsed .sidebar-nav {
   padding: var(--space-sm) 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
 }
 
 body.admin-page .sidebar.collapsed .sidebar-item {
-  padding: var(--space-sm) 0;
-  justify-content: center;
-  width: 48px;
+  /* 20px иконка по центру рельса: (60 − 20) / 2 = 20 */
+  padding: var(--space-sm) 20px;
+  gap: 0;
 }
 
 body.admin-page .sidebar.collapsed .sidebar-item-label {
   opacity: 0;
   width: 0;
-  position: absolute;
+  max-width: 0;
+  margin: 0;
 }
 
 body.admin-page .sidebar.collapsed .sidebar-divider {
+  /* 32px по центру: (60 − 32) / 2 = 14 */
   width: 32px;
-  margin: var(--space-sm) auto;
+  margin: var(--space-sm) 0 var(--space-sm) 14px;
 }
 
 body.admin-page .sidebar.collapsed .sidebar-footer {
   padding: var(--space-sm) 0;
-  display: flex;
-  justify-content: center;
 }
 
 body.admin-page .sidebar.collapsed .sidebar-user {
-  justify-content: center;
-  padding: var(--space-sm);
+  /* Аватар 32px по центру: (60 − 32) / 2 = 14 */
+  padding: var(--space-sm) 14px;
+  gap: 0;
 }
 
 body.admin-page .sidebar.collapsed .sidebar-user-name {
   opacity: 0;
   width: 0;
-  position: absolute;
+  max-width: 0;
+}
+
+body.admin-page .sidebar.collapsed .sidebar-logout-btn {
+  /* Раньше display:none — кнопка исчезала мгновенно. */
+  opacity: 0;
+  width: 0;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
 }
 
 body.admin-page .sidebar-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-md);
+  padding: var(--space-sm);
   border-bottom: var(--border);
   min-height: 56px;
+  transition: padding var(--duration-slow) var(--ease-standard);
 }
 
 body.admin-page .sidebar-logo {
@@ -89,6 +136,7 @@ body.admin-page .sidebar-logo {
   align-items: center;
   gap: var(--space-sm);
   overflow: hidden;
+  transition: gap var(--duration-slow) var(--ease-standard);
 }
 
 body.admin-page .sidebar-logo-icon {
@@ -98,6 +146,8 @@ body.admin-page .sidebar-logo-icon {
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
+  transition: opacity var(--duration-slow) var(--ease-standard), width var(--duration-slow) var(--ease-standard), max-width var(--duration-slow) var(--ease-standard);
 }
 
 body.admin-page .sidebar-logo-text {
@@ -105,7 +155,7 @@ body.admin-page .sidebar-logo-text {
   font-size: var(--font-size-base);
   white-space: nowrap;
   overflow: hidden;
-  transition: opacity 0.2s;
+  transition: opacity var(--duration-slow) var(--ease-standard), width var(--duration-slow) var(--ease-standard), max-width var(--duration-slow) var(--ease-standard);
 }
 
 body.admin-page .sidebar-toggle {
@@ -120,7 +170,7 @@ body.admin-page .sidebar-toggle {
   color: var(--text);
   cursor: pointer;
   border-radius: var(--radius-sm);
-  transition: background 0.2s;
+  transition: background-color 0.2s, padding var(--duration-slow) var(--ease-standard), gap var(--duration-slow) var(--ease-standard);
   overflow: visible;
 }
 
@@ -134,26 +184,73 @@ body.admin-page .sidebar-toggle:hover {
   background: var(--bg-2);
 }
 
+/* Правая группа шапки: кнопка темы + сворачивание */
+body.admin-page .sidebar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3xs);
+  flex-shrink: 0;
+  /* Центрируем шеврон через margin-right, а не justify-content:
+     justify-content не анимируется и центрировал бы кнопку рывком. */
+  transition: margin-right var(--duration-slow) var(--ease-standard);
+}
+
+body.admin-page .sidebar-icon-btn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background-color 0.2s, color 0.2s, opacity var(--duration-slow) var(--ease-standard), width var(--duration-slow) var(--ease-standard), min-width var(--duration-slow) var(--ease-standard), padding var(--duration-slow) var(--ease-standard), margin var(--duration-slow) var(--ease-standard);
+  /* hidden, а не visible: при сворачивании иконка должна обрезаться
+     по мере анимации width, а не схлопнуться в первом кадре. */
+  overflow: hidden;
+}
+
+body.admin-page .sidebar-icon-btn svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+body.admin-page .sidebar-icon-btn:hover {
+  background: var(--bg-2);
+}
+
+/* Фокус с клавиатуры: у кнопки нет обводки по умолчанию,
+   поэтому её нужно вернуть явно. */
+body.admin-page .sidebar-icon-btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
 body.admin-page .sidebar-nav {
   flex: 1;
   overflow-y: auto;
   padding: var(--space-sm);
+  transition: padding var(--duration-slow) var(--ease-standard);
 }
 
 body.admin-page .sidebar-divider {
   height: 1px;
   background: var(--border);
   margin: var(--space-sm) 0;
+  transition: width var(--duration-slow) var(--ease-standard), margin var(--duration-slow) var(--ease-standard);
 }
 
 body.admin-page .sidebar-item {
   display: flex;
   align-items: center;
-  gap: var(--space-md);
-  padding: var(--space-sm) var(--space-md);
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-sm);
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: background 0.2s;
+  transition: padding var(--duration-slow) var(--ease-standard), gap var(--duration-slow) var(--ease-standard);
   text-decoration: none;
   color: var(--text);
   min-height: 40px;
@@ -181,7 +278,7 @@ body.admin-page .sidebar-item-label {
   overflow: hidden;
   white-space: nowrap;
   font-size: var(--font-size-base);
-  transition: opacity 0.2s;
+  transition: opacity var(--duration-slow) var(--ease-standard), width var(--duration-slow) var(--ease-standard), max-width var(--duration-slow) var(--ease-standard);
 }
 
 /* Счётчик непрочитанных уведомлений в пункте сайдбара */
@@ -228,6 +325,7 @@ body.admin-page .sidebar-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  transition: padding var(--duration-slow) var(--ease-standard);
 }
 
 body.admin-page .sidebar-user {
@@ -237,28 +335,32 @@ body.admin-page .sidebar-user {
   padding: var(--space-sm);
   overflow: hidden;
   min-width: 0;
+  transition: padding var(--duration-slow) var(--ease-standard), gap var(--duration-slow) var(--ease-standard);
 }
 
-body.admin-page .sidebar.collapsed .sidebar-user-name,
-body.admin-page .sidebar.collapsed .sidebar-logout-btn {
-  display: none;
-}
-
-body.admin-page .sidebar.collapsed .sidebar-user {
-  justify-content: center;
-  padding: var(--space-xs);
-}
+/* Свёрнутое состояние .sidebar-user-name и .sidebar-logout-btn описано
+   в блоке выше, через opacity/width — display:none здесь их перебивал,
+   из-за чего элементы исчезали мгновенно. */
 
 body.admin-page .sidebar-logout {
   background: none;
   border: none;
   color: var(--text-secondary);
   cursor: pointer;
-  padding: var(--space-xs);
+  padding: var(--space-2xs);
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
+  /* overflow: hidden в базовом правиле, а не в .collapsed: иначе он
+     включается мгновенно и иконка обрезается в первом кадре анимации
+     вместо плавного затухания. */
+  overflow: hidden;
+  transition: opacity var(--duration-slow) var(--ease-standard),
+              width var(--duration-slow) var(--ease-standard),
+              min-width var(--duration-slow) var(--ease-standard),
+              padding var(--duration-slow) var(--ease-standard),
+              margin var(--duration-slow) var(--ease-standard);
 }
 
 body.admin-page .sidebar-logout:hover {
@@ -285,13 +387,16 @@ body.admin-page .sidebar-user-name {
   white-space: nowrap;
   font-size: var(--font-size-sm);
   color: var(--muted);
-  transition: opacity 0.2s;
+  transition: opacity var(--duration-slow) var(--ease-standard), width var(--duration-slow) var(--ease-standard), max-width var(--duration-slow) var(--ease-standard);
 }
 
 /* Main content with sidebar */
 body.admin-page.has-sidebar .admin-main {
+  /* margin-left = ширине сайдбара, поэтому сам зазор сделан внутренним
+     отступом: раньше панель примыкала к границе сайдбара вплотную. */
   margin-left: 240px;
-  transition: margin-left 0.3s ease;
+  padding: var(--space-md);
+  transition: margin-left var(--duration-slow) var(--ease-standard);
 }
 
 body.admin-page.has-sidebar.sidebar-collapsed .admin-main {
@@ -367,7 +472,7 @@ body.admin-page .sidebar-menu-btn {
 .admin-section-content {
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
+  gap: var(--space-sm);
 }
 
 @keyframes fadeIn {
@@ -379,7 +484,7 @@ body.admin-page .sidebar-menu-btn {
 .admin-section .field {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: var(--space-2xs);
 }
 
 .admin-section .field-label {
@@ -389,7 +494,7 @@ body.admin-page .sidebar-menu-btn {
 }
 
 .admin-section .input {
-  padding: var(--space-sm) var(--space-md);
+  padding: var(--space-sm) var(--space-sm);
   border: var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-secondary);

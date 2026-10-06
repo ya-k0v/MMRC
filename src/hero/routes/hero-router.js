@@ -485,7 +485,7 @@ export function createHeroRouter({ requireHeroAdmin }) {
       const media = Array.isArray(req.body.media) ? req.body.media : [];
       for (const item of media) {
         if (!item.type) {
-          throw newError('Media items must have type');
+          throw new Error('Media items must have type');
         }
         if (!['photo', 'video'].includes(item.type)) {
           throw new Error('Media type must be "photo" or "video"');

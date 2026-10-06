@@ -200,6 +200,18 @@
       50% { transform: scale(1.25); opacity: 1; }
     }
 
+    /* Страница самодостаточна и не подключает app.css, поэтому правило
+       дублируется здесь. Схлопываем до 0.01ms, а не до 0, чтобы не
+       ломать логику, завязанную на animationend. */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
+
     @media (max-width: 780px) {
       .wrap { padding: 16px; }
       .card { padding: 24px; border-radius: 24px; }

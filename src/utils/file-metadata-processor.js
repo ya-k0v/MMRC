@@ -14,6 +14,8 @@ import { getConvertedCache } from '../config/settings-manager.js';
 import { getFolderImagesCount } from '../converters/folder-converter.js';
 import { getDevicesPath } from '../config/settings-manager.js';
 import { IMAGE_EXTENSIONS } from '../config/file-types.js';
+import { getCurrentStorage } from '../storage/current.js';
+import { isLocalStorage, toStorageKey } from '../storage/sync.js';
 
 const STATIC_EXTENSIONS = new Set(['.pdf', '.pptx', '.zip']);
 
@@ -139,8 +141,12 @@ export async function registerUploadedFilesImmediately(deviceId, files, devicesP
  * @param {string} folder - Папка устройства
  */
 export async function processUploadedFile(deviceId, safeName, originalName, filePath, folder, uploadedBy = null) {
-  const optionsStorage = getCurrentStorage();
   try {
+    // Хранилище читаем внутри try: строка стояла снаружи, и любой throw
+    // здесь (в том числе отсутствие импорта) вылетал из функции целиком,
+    // из-за чего один файл ронял обработку метаданных целиком, а не
+    // только свою ветку.
+    const optionsStorage = getCurrentStorage();
     // Проверяем существование файла
     if (!fs.existsSync(filePath)) {
       logFile('warn', 'File not found for metadata processing', { deviceId, safeName, filePath });

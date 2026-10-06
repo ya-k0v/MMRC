@@ -66,6 +66,29 @@ export async function getPdfPageSize(pdfPath, pageIndex = 0, storage = null) {
   return { width, height, aspectRatio: width / height };
 }
 
+/**
+ * Соответствие страниц и файлов, созданных ghostscript для одного батча.
+ *
+ * ВАЖНО: в `-sOutputFile=<prefix>%d.png` нумерация относительная — при
+ * `-dFirstPage=26 -dLastPage=45` страницы сохраняются как `<prefix>1.png` …
+ * `<prefix>20.png`, а не 26..45. Проверено на Ghostscript 10.05.1:
+ * диапазон 30–31 даёт файлы 1.png и 2.png. Поэтому номер файла считается
+ * от начала диапазона, иначе страницы второго и последующих батчей
+ * (BATCH_SIZE = 25) не находились бы на диске.
+ *
+ * @param {string} prefix - префикс выходного файла gs
+ * @param {number} start - первая страница батча, начиная с 1
+ * @param {number} end - последняя страница батча
+ * @returns {Map<number, string>} номер страницы -> путь к PNG
+ */
+export function mapBatchOutputFiles(prefix, start, end) {
+  const files = new Map();
+  for (let page = start; page <= end; page++) {
+    files.set(page, `${prefix}${page - start + 1}.png`);
+  }
+  return files;
+}
+
 export async function convertPdfToImages(pdfPath, outputDir, onProgress = null, storage = null) {
   const dataRoot = getDataRoot();
   const safeOutputDir = validatePath(path.resolve(outputDir), dataRoot);
@@ -92,7 +115,7 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null, 
     throw new Error(`Source PDF not found: ${pdfPath}`);
   }
 
-  const pageSize = await getPdfPageSize(safePdfPath, 0, storage);
+  const pageSize = await getPdfPageSize(safePdfPath, 0);
   const { aspectRatio } = pageSize;
 
   const MAX_WIDTH = 1920;
@@ -121,7 +144,12 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null, 
     logger.info(`[Converter] Portrait ${(1/aspectRatio).toFixed(2)}:1, using ${targetWidth}x${targetHeight}`);
   }
 
-  const pageCount = await getPdfPageCount(safePdfPath, storage);
+  // Счётчик страниц берём из того же локального файла, который рендерит gs.
+// Раньше здесь передавался storage, и при storage != null число страниц
+// читалось из бакета, а рендер шёл с диска. Для расхождения копий (например,
+// локальный файл — предыдущая версия) gs получал диапазон страниц, которых
+// в нём нет, и молча не создавал файлы.
+const pageCount = await getPdfPageCount(safePdfPath);
   logger.info(`[Converter] Starting PDF conversion: ${pageCount} pages, target: ${targetWidth}x${targetHeight}`);
 
   const density = 150;
@@ -191,11 +219,30 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null, 
         `-sOutputFile=${batchPrefix}%d.png`,
         safePdfPath
       ]);
-      for (let p = start; p <= end; p++) {
-        batchOwnedPages.set(p, `${batchPrefix}${p}.png`);
+      // Нумерация файлов у gs с "%d" относительная, см. mapBatchOutputFiles:
+      // при -dFirstPage=26 страницы сохраняются как <prefix>1.png ... ,
+      // а не 26..45. Раньше файлы искались по абсолютному номеру, поэтому
+      // каждый батч после первого ничего не находил, и sharp падал с
+      // "Input file is missing" на всех страницах начиная с 26-й
+      // (BATCH_SIZE = 25, то есть любой PDF длиннее 25 страниц терял хвост).
+      for (const [page, file] of mapBatchOutputFiles(batchPrefix, start, end)) {
+        batchOwnedPages.set(page, file);
       }
     } catch (batchErr) {
       logger.warn(`[Converter] Batch ${start}-${end} failed, falling back to per-page rendering`, { error: batchErr.message });
+    }
+
+    // gs при диапазоне, выходящем за пределы документа, завершается с кодом 0,
+    // не создав ни одного файла, поэтому наличие результата проверяем явно:
+    // раньше код доверял коду возврата, и sharp падал с "Input file is missing"
+    // стеком на каждую страницу такого батча.
+    let batchFiles = 0;
+    for (const [p, file] of batchOwnedPages) {
+      if (fs.existsSync(file)) batchFiles++;
+      else batchOwnedPages.delete(p);
+    }
+    if (batchOwnedPages.size === 0 && batchFiles === 0) {
+      logger.warn(`[Converter] Batch ${start}-${end} produced no files, falling back to per-page rendering`, { pageCount });
     }
 
     for (let p = start; p <= end; p++) {
@@ -204,6 +251,10 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null, 
         if (!pageFile) {
           pageFile = path.join(os.tmpdir(), `mmrc-pdf-${crypto.randomUUID()}-p${p}.png`);
           await renderGsPage(p, pageFile);
+          if (!fs.existsSync(pageFile)) {
+            logger.warn(`[Converter] Page ${p}: ghostscript created no file`, { page, pageCount, start, end });
+            continue;
+          }
         }
         await finalizePage(p, pageFile);
       } catch (error) {

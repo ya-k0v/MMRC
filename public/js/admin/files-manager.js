@@ -19,8 +19,93 @@ import {
   getFileExtension,
   getContentTypeInfo
 } from '../shared/content-type-helper.js';
+  
+  /**
+   * Честная подпись статуса во время обработки.
+   *
+   * Раньше здесь стояло `progress ?? 100`, из-за чего файл сначала показывал
+   * «Обработка... 100%» — то есть UI утверждал, что всё готово, когда
+   * конвертация даже не началась. Теперь неизвестный прогресс даёт
+   * неопределённое состояние без процентов, а известный ограничен 99%:
+   * 100% на этапе обработки означала бы то же самое — ложь.
+   *
+   * @param {number|null|undefined} progress
+   * @returns {{ text: string, percent: number|null }}
+   */
+  export function describeProcessing(progress) {
+    if (typeof progress !== 'number' || !Number.isFinite(progress)) {
+      return { text: 'Обработка...', percent: null };
+    }
+    const percent = Math.max(0, Math.min(99, Math.round(progress)));
+    return { text: `Обработка... ${percent}%`, percent };
+  }
+  
+  /**
+   * Загрузка миниатюр с ограничением параллелизма и повторами.
+   *
+   * Страницы весят 1-3 МБ, и сетка превью поднимала до 20 таких запросов
+   * одновременно. Часть отваливалась по 503/таймауту, а img.onerror сразу
+   * рисовал «Ошибка» — без единой попытки повтора, хотя файл на диске был.
+   * Поэтому: не больше THUMB_MAX_CONCURRENT одновременно, до трёх повторов
+   * с нарастающей паузой, и «Ошибка» только после исчерпания попыток.
+   */
+  const THUMB_MAX_CONCURRENT = 4;
+  const THUMB_RETRY_DELAYS = [400, 1200, 3000];
 
-async function reportFilesManagerNotification(payload = {}) {
+  let thumbActive = 0;
+  const thumbQueue = [];
+
+  function pumpThumbQueue() {
+    while (thumbActive < THUMB_MAX_CONCURRENT && thumbQueue.length > 0) {
+      const task = thumbQueue.shift();
+      thumbActive += 1;
+      task(() => {
+        thumbActive -= 1;
+        pumpThumbQueue();
+      });
+    }
+  }
+
+  function scheduleThumb(task) {
+    thumbQueue.push(task);
+    pumpThumbQueue();
+  }
+
+  /**
+   * @param {HTMLImageElement} img
+   * @param {string} url
+   * @param {(() => void)|null} onFail вызывается после всех неудачных попыток
+   */
+  function loadThumb(img, url, onFail) {
+    let attempt = 0;
+    const run = (release) => {
+      img.onload = () => {
+        img.onload = null;
+        img.onerror = null;
+        release();
+      };
+      img.onerror = () => {
+        if (attempt < THUMB_RETRY_DELAYS.length) {
+          const delay = THUMB_RETRY_DELAYS[attempt];
+          attempt += 1;
+          setTimeout(() => {
+            // src обязателен сбрасывать: повтор того же URL иначе не перезапрашивается
+            img.src = '';
+            run(release);
+          }, delay);
+          return;
+        }
+        img.onload = null;
+        img.onerror = null;
+        release();
+        if (onFail) onFail();
+      };
+      img.src = url;
+    };
+    scheduleThumb((release) => run(release));
+  }
+  
+  async function reportFilesManagerNotification(payload = {}) {
   try {
     await adminFetch('/api/notifications/report', {
       method: 'POST',
@@ -455,7 +540,7 @@ export async function showStreamModal({ deviceId, mode = 'add', safeName = null,
   const title = isEdit ? 'Изменить стрим' : 'Добавить стрим';
   
   const content = `
-    <div style="display:flex; flex-direction:column; gap:var(--space-md);">
+    <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
       <div>
         <label style="display:block; margin-bottom:4px; font-weight:500;">Название стрима</label>
         <input id="streamModalName" class="input" value="${escapeHtml(originalName || '')}" placeholder="Название стрима" />
@@ -638,7 +723,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       safeName: item.safeName || item.name || '',
       originalName: item.originalName || item.safeName || item.name || 'unknown',
       status: item.status || 'ready',
-      progress: typeof item.progress === 'number' ? item.progress : 100,
+      progress: typeof item.progress === 'number' ? item.progress : null,
       canPlay: item.canPlay !== false,
       error: item.error || null,
       resolution: item.resolution || null,
@@ -667,7 +752,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
     panelEl.innerHTML = '';
     const emptyDiv = document.createElement('div');
     emptyDiv.className = 'meta';
-    emptyDiv.style.cssText = 'text-align:center; padding:var(--space-xl)';
+    emptyDiv.style.cssText = 'text-align:center; padding:var(--space-lg)';
     emptyDiv.textContent = 'Нет файлов. Загрузите файлы через панель слева.';
     panelEl.appendChild(emptyDiv);
     // Очистить пейджер файлов если есть (теперь находится в filesPane, а не в panelEl)
@@ -815,7 +900,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       const isProcessing = fileStatus === 'processing' || fileStatus === 'checking';
       const isNightScheduled = fileStatus === 'scheduled_night';
       const hasError = fileStatus === 'error';
-      const fileProgress = typeof progress === 'number' ? progress : 100;
+      const fileProgress = describeProcessing(progress);
 
       let resolutionLabel = '';
       if (isVideo && resolution) {
@@ -835,7 +920,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         if (isProcessing) {
           statusColor = 'var(--warning)';
           statusIcon = getClockIcon(14, statusColor);
-          statusText = `Обработка... ${fileProgress}%`;
+          statusText = fileProgress.text;
         } else if (isNightScheduled) {
           statusColor = 'var(--text-secondary)';
           statusIcon = getClockIcon(14, statusColor);
@@ -864,6 +949,9 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       li.setAttribute('data-file-name', encodeURIComponent(safeName));
       li.setAttribute('data-content-type', contentType || '');
       li.setAttribute('data-stream-protocol', streamProtocol || '');
+      if (isProcessing && typeof fileProgress.percent === 'number') {
+        li.setAttribute('data-progress', String(fileProgress.percent));
+      }
       let bgColor = isPlaceholder ? 'rgba(59, 130, 246, 0.1)' : 'var(--panel-2)';
       let borderLeft = isPlaceholder ? 'border-left: 3px solid rgba(59, 130, 246, 0.6);' : '';
       let opacity = isProcessing ? 'opacity:0.7;' : '';
@@ -871,7 +959,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       li.style.cssText = `border:var(--border); background:${bgColor}; ${borderLeft} ${opacity} ${cursor}`;
 
       const header = document.createElement('div'); header.className = 'file-item-header';
-      const headerLeft = document.createElement('div'); headerLeft.style.cssText = 'flex:1; display:flex; align-items:stretch; gap:var(--space-xs); min-width:0;';
+      const headerLeft = document.createElement('div'); headerLeft.style.cssText = 'flex:1; display:flex; align-items:stretch; gap:var(--space-2xs); min-width:0;';
       if (isPlaceholder) {
         const placeholderSpan = document.createElement('span');
         placeholderSpan.style.cssText = 'background:rgba(59, 130, 246, 0.8); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:600; align-self:center; flex-shrink:0;';
@@ -882,7 +970,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       nameSpan.className = 'file-item-name fileName-editable';
       nameSpan.setAttribute('data-safe', encodeURIComponent(safeName));
       nameSpan.setAttribute('data-original-full', encodeURIComponent(originalName));
-      nameSpan.style.cssText = 'cursor:pointer; padding:var(--space-xs) var(--space-sm); border-radius:var(--radius-sm); transition:all 0.2s; flex:1; min-width:0;';
+      nameSpan.style.cssText = 'cursor:pointer; padding:var(--space-2xs) var(--space-sm); border-radius:var(--radius-sm); transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s; flex:1; min-width:0;';
       nameSpan.contentEditable = 'false';
       nameSpan.textContent = displayName;
       const saveBtn = document.createElement('button'); saveBtn.className = 'primary fileRenameSaveBtn'; saveBtn.style.cssText = 'display:none; min-width:28px; width:28px; height:28px; padding:0; border-radius:var(--radius-sm); flex-shrink:0'; saveBtn.title = 'Сохранить';
@@ -1003,7 +1091,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         const isProcessing = fileStatus === 'processing' || fileStatus === 'checking';
         const isNightScheduled = fileStatus === 'scheduled_night';
         const hasError = fileStatus === 'error';
-        const fileProgress = typeof progress === 'number' ? progress : 100;
+        const fileProgress = describeProcessing(progress);
         
         // Определяем разрешение для видео
         let resolutionLabel = '';
@@ -1033,7 +1121,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           if (isProcessing) {
             statusColor = 'var(--warning)';
             statusIcon = getClockIcon(14, statusColor);
-            statusText = `Обработка... ${fileProgress}%`;
+            statusText = fileProgress.text;
           } else if (isNightScheduled) {
             statusColor = 'var(--text-secondary)';
             statusIcon = getClockIcon(14, statusColor);
@@ -1069,6 +1157,12 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         li.setAttribute('data-file-name', encodeURIComponent(safeName));
         li.setAttribute('data-content-type', contentType || '');
         li.setAttribute('data-stream-protocol', streamProtocol || '');
+        // Прогресс дублируем в data-атрибуте: после перерисовки панели полоса
+        // восстанавливается из него, поэтому подпись статуса и полоса
+        // показывают одно и то же число, а не два независимых значения.
+        if (isProcessing && typeof fileProgress.percent === 'number') {
+          li.setAttribute('data-progress', String(fileProgress.percent));
+        }
         
         let bgColor = isPlaceholder ? 'rgba(59, 130, 246, 0.1)' : 'var(--panel-2)';
         let borderLeft = isPlaceholder ? 'border-left: 3px solid rgba(59, 130, 246, 0.6);' : '';
@@ -1080,7 +1174,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         header.className = 'file-item-header';
         
         const headerLeft = document.createElement('div');
-        headerLeft.style.cssText = 'flex:1; display:flex; align-items:stretch; gap:var(--space-xs); min-width:0;';
+        headerLeft.style.cssText = 'flex:1; display:flex; align-items:stretch; gap:var(--space-2xs); min-width:0;';
         
         if (isPlaceholder) {
           const placeholderSpan = document.createElement('span');
@@ -1093,7 +1187,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         nameSpan.className = 'file-item-name fileName-editable';
         nameSpan.setAttribute('data-safe', encodeURIComponent(safeName));
         nameSpan.setAttribute('data-original-full', encodeURIComponent(originalName));
-        nameSpan.style.cssText = 'cursor:pointer; padding:var(--space-xs) var(--space-sm); border-radius:var(--radius-sm); transition:all 0.2s; flex:1; min-width:0;';
+        nameSpan.style.cssText = 'cursor:pointer; padding:var(--space-2xs) var(--space-sm); border-radius:var(--radius-sm); transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s; flex:1; min-width:0;';
         nameSpan.contentEditable = 'false';
         nameSpan.textContent = displayName; // Используем textContent для безопасности
         
@@ -1477,7 +1571,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         if (images.length > 0) {
           // Используем DOM методы вместо innerHTML для безопасности
           const outerDiv = document.createElement('div');
-          outerDiv.style.cssText = 'width:100%; height:100%; overflow-y:auto; padding:var(--space-md); background:var(--panel)';
+          outerDiv.style.cssText = 'width:100%; height:100%; overflow-y:auto; padding:var(--space-sm); background:var(--panel)';
           
           const gridDiv = document.createElement('div');
           gridDiv.style.cssText = 'display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:var(--space-sm)';
@@ -1508,19 +1602,21 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
             });
             
             const img = document.createElement('img');
-            img.src = url; // URL безопасен, так как создается на сервере
             img.alt = String(idx + 1);
             img.loading = 'lazy';
+            img.decoding = 'async';
             img.style.cssText = 'width:100%; height:100%; object-fit:contain; display:block';
-            img.onerror = function() {
-              // Используем DOM методы для обработки ошибки
-              const parent = this.parentElement;
+            const showThumbError = function() {
+              // Сюда попадаем только после всех попыток повтора
+              const parent = img.parentElement;
+              if (!parent) return;
               parent.innerHTML = '';
               const errorDiv = document.createElement('div');
               errorDiv.style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);font-size:10px';
               errorDiv.textContent = 'Ошибка';
               parent.appendChild(errorDiv);
             };
+            loadThumb(img, url, showThumbError);
             
             const indexDiv = document.createElement('div');
             indexDiv.style.cssText = 'position:absolute; bottom:2px; right:4px; background:rgba(0,0,0,0.7); color:var(--text); padding:2px 4px; border-radius:3px; font-size:10px';

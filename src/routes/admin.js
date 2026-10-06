@@ -432,10 +432,24 @@ export function createAdminRouter(deps = {}) {
       });
 
       // Сохраняем ADB порт и IP для удалённых операций
+      const adbPort = port || '5555';
       try {
         const { getDatabase } = await import('../database/database.js');
         const db = getDatabase();
-        await db.run('UPDATE devices SET adb_port = ?, ip_address = ? WHERE device_id = ?', [port || '5555', ip, deviceId]);
+        await db.run('UPDATE devices SET adb_port = ?, ip_address = ? WHERE device_id = ?', [adbPort, ip, deviceId]);
+
+        // Перечитываем: UPDATE мог не попасть ни в одну строку, и порт
+        // молча остался 5555. Раньше это нигде не проверялось.
+        const saved = await db.get('SELECT adb_port FROM devices WHERE device_id = ?', [deviceId]);
+        if (!saved || String(saved.adb_port) !== String(adbPort)) {
+          logger.warn('[APK] adb_port не сохранился', {
+            deviceId,
+            requested: adbPort,
+            stored: saved ? saved.adb_port : null
+          });
+        } else {
+          logger.info('[APK] adb_port сохранён', { deviceId, adbPort, ip });
+        }
       } catch (e) {
         logger.warn('[APK] Failed to save adb_port', { error: e.message });
       }
@@ -1074,7 +1088,21 @@ export function createAdminRouter(deps = {}) {
         docker: process.env.MMRC_DOCKER === '1' ? { status: 'ok' } : { status: 'disabled' }
       };
 
-      res.json({ settings, network, docker, services, sessions });
+      // Тип хранилища. Раньше карточка «Хранилище» в админке показывала только
+      // локальный contentRoot, хотя при STORAGE_BACKEND=s3 этот путь ни о чём
+      // не говорит — пользователь не видел, какой формат реально используется.
+      // Секреты (ключи) не отдаём, только то, что нужно для диагностики.
+      const storageBackendRaw = (process.env.STORAGE_BACKEND || 'local').toLowerCase();
+      const storage = {
+        backend: storageBackendRaw === 'minio' ? 's3' : storageBackendRaw,
+        isRemote: storageBackendRaw === 's3' || storageBackendRaw === 'minio',
+        bucket: process.env.S3_BUCKET || null,
+        endpoint: process.env.S3_ENDPOINT || null,
+        region: process.env.S3_REGION || null,
+        forcePathStyle: process.env.S3_FORCE_PATH_STYLE !== 'false'
+      };
+
+      res.json({ settings, network, docker, services, sessions, storage });
     } catch (error) {
       logger.error('[Admin] Failed to get extended settings:', error);
       res.status(500).json({ error: 'Не удалось загрузить расширенные настройки' });
