@@ -469,15 +469,20 @@ body.admin-page .sidebar-menu-btn {
   animation: fadeIn 0.2s ease-out;
 }
 
-/* Настройки: карточки идут сеткой в два ряда. В одну колонку они
-   растягивались во всю ширину панели и теряли место на широких экранах.
-   auto-fit + min(100%, 380px) сам схлопывается в одну колонку на планшетах
-   и телефонах. */
+/* Настройки: ровно два ряда карточек. В одну колонку они растягивались
+   во всю ширину панели и теряли место; auto-fit тут не годится — он на
+   широких экранах сам разложил бы карточки в четыре колонки. */
 .admin-section-content {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-sm);
   align-content: start;
+}
+
+@media (min-width: 1280px) {
+  .admin-section-content {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 /* Карточки в ряду выравниваются по высоте, но ряды не растягиваются

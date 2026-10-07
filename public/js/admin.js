@@ -296,55 +296,57 @@ function createSettingsSection() {
     body.innerHTML = `
       <div class="admin-section-content">
 
-        <!-- Система + Uptime + Перезапуск (компактная строка) -->
+        <!-- Система: версия/uptime/перезапуск + монитор + используемое ПО -->
         <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div style="padding:var(--space-sm) var(--space-sm); display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; font-size:0.8rem;">
-            <span style="font-weight:600;" id="stSysVersion">v${escapeHtml(version)}</span>
-            <span id="stUpdateBranch" class="meta" style="color:var(--muted);"></span>
-            <span style="color:var(--muted);">·</span>
-            <span>${escapeHtml(isSqlite ? 'SQLite' : 'PostgreSQL')}</span>
-            <span style="color:var(--muted);">·</span>
-            <span>Uptime: <strong id="stSysUptime">—</strong></span>
-            ${docker && docker.enabled ? `<span style="color:var(--muted);">·</span><span>Docker: <strong>${escapeHtml(docker.mainImage || '')}:${escapeHtml(docker.mainTag || '')}</strong></span>` : ''}
-            <button id="stRestart" class="secondary meta" style="margin-left:auto; background:var(--danger); color:#fff; border-color:var(--danger); min-width:auto; padding:4px 12px; font-size:0.75rem;">Перезапустить</button>
+          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-sm); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="2" x2="9" y2="4"/><line x1="15" y1="2" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="15" y1="20" x2="15" y2="22"/><line x1="20" y1="9" x2="22" y2="9"/><line x1="20" y1="14" x2="22" y2="14"/><line x1="2" y1="9" x2="4" y2="9"/><line x1="2" y1="14" x2="4" y2="14"/></svg>
+            Система
           </div>
-        </div>
+          <div style="padding:var(--space-sm); display:flex; flex-direction:column; gap:var(--space-sm);">
+            <div style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; font-size:0.8rem;">
+              <span style="font-weight:600;" id="stSysVersion">v${escapeHtml(version)}</span>
+              <span id="stUpdateBranch" class="meta" style="color:var(--muted);"></span>
+              <span style="color:var(--muted);">·</span>
+              <span>${escapeHtml(isSqlite ? 'SQLite' : 'PostgreSQL')}</span>
+              <span style="color:var(--muted);">·</span>
+              <span>Uptime: <strong id="stSysUptime">—</strong></span>
+              ${docker && docker.enabled ? `<span style="color:var(--muted);">·</span><span>Docker: <strong>${escapeHtml(docker.mainImage || '')}:${escapeHtml(docker.mainTag || '')}</strong></span>` : ''}
+              <button id="stRestart" class="secondary meta" style="margin-left:auto; background:var(--danger); color:#fff; border-color:var(--danger); min-width:auto; padding:4px 12px; font-size:0.75rem;">Перезапустить</button>
+            </div>
 
-        <!-- Системный монитор -->
-        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div id="stSysMonitorBody" style="padding:var(--space-sm);">
-            <div class="meta" style="font-size:0.8rem; color:var(--muted);">Загрузка...</div>
-          </div>
-        </div>
+            <div id="stSysMonitorBody">
+              <div class="meta" style="font-size:0.8rem; color:var(--muted);">Загрузка...</div>
+            </div>
 
-        <!-- Используемое ПО (компактно: статус + версия) -->
-        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div style="padding:var(--space-sm) var(--space-sm); display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; font-size:0.8rem;">
-            ${[
-              { label: 'FFmpeg', s: services.ffmpeg },
-              { label: 'FFprobe', s: services.ffprobe },
-              { label: 'Node', s: services.node },
-              { label: 'Docker', s: services.docker },
-              { label: 'Git', s: services.git },
-              { label: 'OpenSSL', s: services.openssl }
-            ].map(c => {
-              const ok = c.s?.status === 'ok';
-              const disabled = c.s?.status === 'disabled';
-              const dot = disabled ? 'var(--muted)' : (ok ? 'var(--success)' : 'var(--danger)');
-              // Версию показываем урезанной: ffmpeg отдаёт «ffmpeg version 6.1.1»,
-              // node — «v22.0.0», openssl — длинную строку со сборкой.
-              const raw = c.s?.version ? String(c.s.version) : '';
-              const short = raw
-                .replace(/^(ffmpeg|ffprobe)\s+version\s+/i, '')
-                .replace(/^v/i, '')
-                .split(/\s+/)[0]
-                .slice(0, 24);
-              const title = raw ? ` title="${escapeHtml(raw)}"` : '';
-              return `<span style="display:inline-flex; align-items:center; gap:5px;"${title}>
-                <span style="width:6px; height:6px; border-radius:50%; background:${dot}; flex:none;"></span>
-                ${escapeHtml(c.label)}${short ? `<span style="color:var(--muted);">${escapeHtml(short)}</span>` : ''}
-              </span>`;
-            }).join('<span style="color:var(--muted);">·</span>')}
+            <hr style="border:none; border-top:1px solid var(--border); margin:2px 0;" />
+
+            <div style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; font-size:0.8rem;">
+              ${[
+                { label: 'FFmpeg', s: services.ffmpeg },
+                { label: 'FFprobe', s: services.ffprobe },
+                { label: 'Node', s: services.node },
+                { label: 'Docker', s: services.docker },
+                { label: 'Git', s: services.git },
+                { label: 'OpenSSL', s: services.openssl }
+              ].map(c => {
+                const ok = c.s?.status === 'ok';
+                const disabled = c.s?.status === 'disabled';
+                const dot = disabled ? 'var(--muted)' : (ok ? 'var(--success)' : 'var(--danger)');
+                // Версию показываем урезанной: ffmpeg отдаёт «ffmpeg version 6.1.1»,
+                // node — «v22.0.0», openssl — длинную строку со сборкой.
+                const raw = c.s?.version ? String(c.s.version) : '';
+                const short = raw
+                  .replace(/^(ffmpeg|ffprobe)\s+version\s+/i, '')
+                  .replace(/^v/i, '')
+                  .split(/\s+/)[0]
+                  .slice(0, 24);
+                const title = raw ? ` title="${escapeHtml(raw)}"` : '';
+                return `<span style="display:inline-flex; align-items:center; gap:5px;"${title}>
+                  <span style="width:6px; height:6px; border-radius:50%; background:${dot}; flex:none;"></span>
+                  ${escapeHtml(c.label)}${short ? `<span style="color:var(--muted);">${escapeHtml(short)}</span>` : ''}
+                </span>`;
+              }).join('<span style="color:var(--muted);">·</span>')}
+            </div>
           </div>
         </div>
 
