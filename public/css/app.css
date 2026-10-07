@@ -1,3 +1,8 @@
+html,
+body {
+  touch-action: manipulation;
+}
+
 /* ===== Design Tokens ===== */
 /* 
   Для увеличения высоты элементов (устройств и файлов):

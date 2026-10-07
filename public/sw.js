@@ -1,7 +1,7 @@
 // Service Worker для MMRC - Production Ready
-// Версия 17 - принудительное обновление статики после правок прогресс-баров
+// Версия 21 - принудительное обновление статики после правки touch-action
 
-const VERSION = 'v20';
+const VERSION = 'v21';
 const CACHE_NAME = `mmrc-static-${VERSION}`;
 const CONTENT_CACHE_NAME = `mmrc-content-${VERSION}`;
 
