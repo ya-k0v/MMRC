@@ -308,6 +308,66 @@ export function cleanupScratchDir(maxAgeMs = 6 * 60 * 60 * 1000) {
   }
   return { removed };
 }
+
+/**
+ * Скопировать папку с источника на цель — в хранилище и/или на диске.
+ *
+ * После перехода на S3-primary папки на диске закономерно нет: содержимое
+ * живёт префиксом ключей в бакете, и fs.promises.cp падал с ENOENT
+ * («lstat /app/data/content/<src>/<folder>»), из-за чего перенос папки
+ * между устройствами возвращал 500. Здесь объекты копируются по одному
+ * через storage.copy(), локальная копия — отдельно.
+ *
+ * @param {string} sourcePath  абсолютный путь к исходной папке
+ * @param {string} targetPath  абсолютный путь к папке-получателю
+ * @param {object|null} storage  экземпляр StorageProvider
+ * @returns {Promise<{copiedInStorage: number}>}
+ */
+export async function copyFolderEverywhere(sourcePath, targetPath, storage) {
+  const sourceOnDisk = fs.existsSync(sourcePath);
+  let copiedInStorage = 0;
+
+  if (storage && !isLocalStorage(storage)) {
+    const sourcePrefix = `${toStorageKey(sourcePath).replace(/\\/g, '/')}/`;
+    const keys = ((await storage.list(sourcePrefix)) || [])
+      .filter(key => key.startsWith(sourcePrefix) && !key.endsWith('/'));
+
+    if (keys.length === 0 && !sourceOnDisk) {
+      throw new Error(`Исходная папка не найдена в хранилище: ${sourcePrefix}`);
+    }
+
+    const targetPrefix = `${toStorageKey(targetPath).replace(/\\/g, '/')}/`;
+    for (const key of keys) {
+      await storage.copy(key, targetPrefix + key.slice(sourcePrefix.length));
+      copiedInStorage += 1;
+    }
+  }
+
+  if (sourceOnDisk) {
+    await fs.promises.cp(sourcePath, targetPath, { recursive: true });
+    try {
+      await fs.promises.chmod(targetPath, 0o755);
+    } catch (error) {
+      logger.debug('[copy-folder] Не удалось выставить права на копию', { targetPath, error: error.message });
+    }
+
+    // Копия существует только на диске — докладываем её в бакет,
+    // иначе на устройстве-получателе содержимого в S3 не будет
+    if (storage && !isLocalStorage(storage)) {
+      const commit = await commitFolderToStorage(targetPath, storage, { removeLocal: false });
+      if (!commit.synced && commit.reason !== 'local-storage') {
+        logger.warn('[copy-folder] Не удалось залить копию папки в хранилище', {
+          targetPath, reason: commit.reason, failed: commit.failed?.length || 0
+        });
+      }
+    }
+  } else if (copiedInStorage === 0) {
+    throw new Error(`Исходная папка не найдена: ${sourcePath}`);
+  }
+
+  return { copiedInStorage };
+}
+
 /**
  * Рекурсивно закоммитить содержимое папки в хранилище.
  *

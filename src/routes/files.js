@@ -23,7 +23,7 @@ import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import { createModuleLogger, logFile, logSecurity } from '../utils/logger.js';
 const logger = createModuleLogger('file');
 import { setCurrentStorage, getCurrentStorage } from '../storage/current.js';
-import { commitFolderToStorage, isLocalStorage, toStorageKey } from '../storage/sync.js';
+import { commitFolderToStorage, copyFolderEverywhere, isLocalStorage, toStorageKey } from '../storage/sync.js';
 import { LocalStorage } from '../storage/local.js';
 import { validatePath } from '../utils/path-validator.js';
 import { fetchPublicUrl, assertPublicHttpUrl } from '../utils/ssrf.js';
@@ -659,13 +659,14 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
   const devicesPath = getDevicesPath();
   const sourceFolder = path.join(devicesPath, devices[sourceId]?.folder || sourceId);
   const targetFolder = path.join(devicesPath, devices[targetId]?.folder || targetId);
-  
+  const storage = getCurrentStorage();
+
   const sourcePath = path.join(sourceFolder, folderName);
   let targetSafeName = folderName;
   let targetPath = path.join(targetFolder, targetSafeName);
-  
-  // Если папка уже есть, генерируем уникальное имя (как для файлов)
-  if (fs.existsSync(targetPath)) {
+
+  // Если папка уже есть (на диске или в хранилище), генерируем уникальное имя (как для файлов)
+  if (await isFolderPresent(targetPath)) {
     const suffix = '_' + crypto.randomBytes(3).toString('hex');
     targetSafeName = `${folderName}${suffix}`;
     targetPath = path.join(targetFolder, targetSafeName);
@@ -676,16 +677,13 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
       unique: targetSafeName
     });
   }
-  
+
   try {
     // Асинхронное копирование папки
     logFile('info', '📁 Copying folder (async)', { sourceId, targetId, folderName });
-    
-    await fs.promises.cp(sourcePath, targetPath, { recursive: true });
-    
-    // Устанавливаем права
-    await fs.promises.chmod(targetPath, 0o755);
-    
+
+    await copyFolderEverywhere(sourcePath, targetPath, storage);
+
     // Копируем маппинг (используем оригинальное имя, если было)
     const originalName = fileNamesMap[sourceId]?.[folderName] || folderName;
     if (originalName) {
@@ -693,11 +691,15 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
       fileNamesMap[targetId][targetSafeName] = originalName;
       saveFileNamesMap(fileNamesMap);
     }
-    
+
     // Сохраняем метаданные в БД для скопированной папки
     try {
-      const stat = fs.statSync(targetPath);
-              const pagesCount = await getFolderImagesCount(targetId, targetSafeName, storage);
+      // Папка может существовать только как префикс ключей в бакете,
+      // поэтому statSync по несуществующему локальному пути здесь падал
+      const fileMtime = fs.existsSync(targetPath)
+        ? fs.statSync(targetPath).mtimeMs
+        : Date.now();
+      const pagesCount = await getFolderImagesCount(targetId, targetSafeName, storage);
       await saveFileMetadata({
         deviceId: targetId,
         safeName: targetSafeName,
@@ -709,7 +711,7 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
         mimeType: null,
         videoParams: {},
         audioParams: {},
-        fileMtime: stat.mtimeMs,
+        fileMtime,
         contentType: 'folder',
         streamUrl: null,
         streamProtocol: 'auto',
@@ -719,10 +721,10 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
     } catch (err) {
       logger.warn('[copy-folder] Failed to save metadata for copied folder', { error: err.message, targetId, targetSafeName });
     }
-    
-    // Если move - удаляем из источника
+
+    // Если move - удаляем из источника (и из бакета, и с диска)
     if (move) {
-      await fs.promises.rm(sourcePath, { recursive: true, force: true });
+      await removeFolderEverywhere(sourcePath);
       if (fileNamesMap[sourceId]?.[folderName]) {
         delete fileNamesMap[sourceId][folderName];
         saveFileNamesMap(fileNamesMap);
