@@ -318,33 +318,67 @@ export function cleanupScratchDir(maxAgeMs = 6 * 60 * 60 * 1000) {
  * между устройствами возвращал 500. Здесь объекты копируются по одному
  * через storage.copy(), локальная копия — отдельно.
  *
+ * Обе фазы идут поштучно, чтобы вызывающий код могла показывать прогресс:
+ * при сотнях файлов перенос занимает минуты, а раньше пользователь не видел
+ * ничего до самого конца.
+ *
  * @param {string} sourcePath  абсолютный путь к исходной папке
  * @param {string} targetPath  абсолютный путь к папке-получателю
  * @param {object|null} storage  экземпляр StorageProvider
- * @returns {Promise<{copiedInStorage: number}>}
+ * @param {object} [options]
+ * @param {(p: {phase: 'prepare'|'storage'|'disk', done: number, total: number, file: string}) => void} [options.onProgress]
+ * @returns {Promise<{copiedInStorage: number, copiedOnDisk: number}>}
  */
-export async function copyFolderEverywhere(sourcePath, targetPath, storage) {
+export async function copyFolderEverywhere(sourcePath, targetPath, storage, options = {}) {
+  const { onProgress = null } = options;
+  const emit = (payload) => {
+    if (typeof onProgress === 'function') {
+      try {
+        onProgress(payload);
+      } catch (error) {
+        logger.debug('[copy-folder] Ошибка колбэка прогресса', { error: error.message });
+      }
+    }
+  };
+
   const sourceOnDisk = fs.existsSync(sourcePath);
+  let storageKeys = [];
   let copiedInStorage = 0;
 
   if (storage && !isLocalStorage(storage)) {
     const sourcePrefix = `${toStorageKey(sourcePath).replace(/\\/g, '/')}/`;
-    const keys = ((await storage.list(sourcePrefix)) || [])
+    storageKeys = ((await storage.list(sourcePrefix)) || [])
       .filter(key => key.startsWith(sourcePrefix) && !key.endsWith('/'));
 
-    if (keys.length === 0 && !sourceOnDisk) {
+    if (storageKeys.length === 0 && !sourceOnDisk) {
       throw new Error(`Исходная папка не найдена в хранилище: ${sourcePrefix}`);
-    }
-
-    const targetPrefix = `${toStorageKey(targetPath).replace(/\\/g, '/')}/`;
-    for (const key of keys) {
-      await storage.copy(key, targetPrefix + key.slice(sourcePrefix.length));
-      copiedInStorage += 1;
     }
   }
 
+  const diskFiles = sourceOnDisk ? await countFiles(sourcePath) : [];
+  const total = storageKeys.length + diskFiles.length;
+  emit({ phase: 'prepare', done: 0, total, file: path.basename(sourcePath) });
+
+  let done = 0;
+
+  if (storageKeys.length > 0) {
+    const sourcePrefix = `${toStorageKey(sourcePath).replace(/\\/g, '/')}/`;
+    const targetPrefix = `${toStorageKey(targetPath).replace(/\\/g, '/')}/`;
+    for (const key of storageKeys) {
+      await storage.copy(key, targetPrefix + key.slice(sourcePrefix.length));
+      copiedInStorage += 1;
+      done += 1;
+      emit({ phase: 'storage', done, total, file: key.slice(sourcePrefix.length) });
+    }
+  }
+
+  let copiedOnDisk = 0;
   if (sourceOnDisk) {
-    await fs.promises.cp(sourcePath, targetPath, { recursive: true });
+    await copyTree(sourcePath, targetPath, (file) => {
+      copiedOnDisk += 1;
+      done += 1;
+      emit({ phase: 'disk', done, total, file });
+    });
     try {
       await fs.promises.chmod(targetPath, 0o755);
     } catch (error) {
@@ -365,8 +399,50 @@ export async function copyFolderEverywhere(sourcePath, targetPath, storage) {
     throw new Error(`Исходная папка не найдена: ${sourcePath}`);
   }
 
-  return { copiedInStorage };
+  if (total > 0 && done < total) {
+    emit({ phase: 'disk', done: total, total, file: '' });
+  }
+
+  return { copiedInStorage, copiedOnDisk };
 }
+
+/** Относительные пути всех файлов в папке (для подсчёта объёма работы). */
+async function countFiles(dir) {
+  const found = [];
+  const walk = async (current) => {
+    const entries = await fs.promises.readdir(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        await walk(full);
+      } else if (entry.isFile()) {
+        found.push(path.relative(dir, full));
+      }
+    }
+  };
+  await walk(dir);
+  return found;
+}
+
+/**
+ * Рекурсивная копия файла за файлом вместо fs.cp одной операцией:
+ * на сотнях файлов иначе прогресса не видно вообще.
+ */
+async function copyTree(sourceDir, targetDir, onFile) {
+  await fs.promises.mkdir(targetDir, { recursive: true });
+  const entries = await fs.promises.readdir(sourceDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const from = path.join(sourceDir, entry.name);
+    const to = path.join(targetDir, entry.name);
+    if (entry.isDirectory()) {
+      await copyTree(from, to, onFile);
+    } else if (entry.isFile()) {
+      await fs.promises.copyFile(from, to);
+      onFile(entry.name);
+    }
+  }
+}
+
 
 /**
  * Рекурсивно закоммитить содержимое папки в хранилище.

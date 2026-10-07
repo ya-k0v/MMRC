@@ -84,7 +84,7 @@ describe('copyFolderEverywhere', () => {
 
     const result = await copyFolderEverywhere(sourcePath, targetPath, storage);
 
-    expect(result).toEqual({ copiedInStorage: 2 });
+    expect(result).toEqual({ copiedInStorage: 2, copiedOnDisk: 0 });
     expect(storage.objects.get(`${target}1.png`)).toBe('one');
     expect(storage.objects.get(`${target}sub/2.jpg`)).toBe('two');
     expect(storage.objects.has(`${storageKey(targetPath)}Old/9.png`)).toBe(false);
@@ -104,7 +104,7 @@ describe('copyFolderEverywhere', () => {
 
     const result = await copyFolderEverywhere(sourcePath, targetPath, storage);
 
-    expect(result).toEqual({ copiedInStorage: 0 });
+    expect(result).toEqual({ copiedInStorage: 0, copiedOnDisk: 2 });
     expect(readFileSync(path.join(targetPath, 'a.png'), 'utf8')).toBe('A');
     expect(readdirSync(path.join(targetPath, 'nested')).sort()).toEqual(['b.png']);
 
@@ -120,8 +120,27 @@ describe('copyFolderEverywhere', () => {
 
     const result = await copyFolderEverywhere(sourcePath, targetPath, null);
 
-    expect(result).toEqual({ copiedInStorage: 0 });
+    expect(result).toEqual({ copiedInStorage: 0, copiedOnDisk: 1 });
     expect(readFileSync(path.join(targetPath, '1.png'), 'utf8')).toBe('1');
+  });
+
+  test('onProgress получает непрерывный счётчик по всем фазам', async () => {
+    const sourcePath = path.join(DATA_ROOT, 'content', 'devI', 'pages');
+    const targetPath = path.join(DATA_ROOT, 'content', 'devJ', 'pages');
+    writeTree(sourcePath, { '1.png': '1', 'nested/2.png': '2', 'nested/deep/3.png': '3' });
+
+    const events = [];
+    await copyFolderEverywhere(sourcePath, targetPath, null, { onProgress: p => events.push(p) });
+
+    expect(events[0]).toMatchObject({ phase: 'prepare', done: 0, total: 3 });
+    const last = events[events.length - 1];
+    expect(last.done).toBe(3);
+    expect(last.total).toBe(3);
+
+    // Счётчик обязан расти монотонно — иначе полоса в UI будет дёргаться назад
+    const dones = events.map(event => event.done);
+    expect([...dones].sort((a, b) => a - b)).toEqual(dones);
+    expect(dones.filter(done => done === 3).length).toBeGreaterThan(0);
   });
 
   test('источника нет ни на диске, ни в хранилище — ошибка', async () => {

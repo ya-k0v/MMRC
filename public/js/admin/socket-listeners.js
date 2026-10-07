@@ -19,6 +19,9 @@ export function setupSocketListeners(socket, callbacks) {
     onFileReady,
     onFileError,
     onPreviewRefresh,
+    onCopyProgress,
+    onCopyDone,
+    onCopyError,
     onPlayerOnline,
     onPlayerOffline,
     onPlayersSnapshot,
@@ -63,6 +66,22 @@ export function setupSocketListeners(socket, callbacks) {
   socket.on('preview/refresh', debounceAsync(async () => {
     if (onPreviewRefresh) await onPreviewRefresh();
   }, 150));
+
+  // copy/progress - Прогресс копирования/переноса папки между устройствами.
+  // Без debounce: полоса должна идти плавно, а не пачками по 150мс.
+  socket.on('copy/progress', (payload) => {
+    if (onCopyProgress) onCopyProgress(payload);
+  });
+
+  // copy/done - Операция завершена успешно
+  socket.on('copy/done', (payload) => {
+    if (onCopyDone) onCopyDone(payload);
+  });
+
+  // copy/error - Операция завершилась ошибкой
+  socket.on('copy/error', (payload) => {
+    if (onCopyError) onCopyError(payload);
+  });
   
   // player/online - Устройство онлайн
   socket.on('player/online', ({ device_id }) => {

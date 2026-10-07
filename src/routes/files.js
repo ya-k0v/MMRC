@@ -514,8 +514,11 @@ async function isFolderPresent(folderPath) {
 
 /**
  * Удалить папку из хранилища и с диска.
- * Диск удаляем только если в хранилище папки уже нет — иначе получится
- * «успешное» удаление, потерявшее данные.
+ *
+ * Сначала хранилище: если листинг префикса упал (MinIO недоступен), исключение
+ * уходит наружу и локальная копия остаётся нетронутой — так «перенос» не может
+ * пройти успешно ценой потери данных. Сама локальная копия при S3 — кэш, и
+ * удаляется всегда, когда до этого дошли.
  */
 async function removeFolderEverywhere(folderPath) {
   const storage = getCurrentStorage();
@@ -534,15 +537,17 @@ async function removeFolderEverywhere(folderPath) {
       }
       removedInStorage = true;
     }
-  } else if (fs.existsSync(folderPath)) {
-    fs.rmSync(folderPath, { recursive: true, force: true });
-    return true;
   }
 
-  // Локальную копию убираем только когда содержимое уже удалено из бакета
-  if (removedInStorage && fs.existsSync(folderPath)) {
+  // Локальную копию убираем в любом случае: при S3 она — просто кэш.
+  // Раньше здесь стояло `else if (fs.existsSync)`, из-за чего папка, которой
+  // нет в бакете, при переносе не удалялась с диска и продолжала
+  // отображаться на устройстве-источнике.
+  let removedOnDisk = false;
+  if (fs.existsSync(folderPath)) {
     try {
       fs.rmSync(folderPath, { recursive: true, force: true });
+      removedOnDisk = true;
     } catch (error) {
       logger.warn('[files] Не удалось удалить локальную папку', {
         folderPath, error: error.message
@@ -550,7 +555,7 @@ async function removeFolderEverywhere(folderPath) {
     }
   }
 
-  return removedInStorage || !fs.existsSync(folderPath);
+  return removedInStorage || removedOnDisk;
 }
 
 /**
@@ -654,7 +659,7 @@ async function commitUploadedFile(localPath, storage, options = {}) {
  * Копировать папку физически (асинхронно через streams)
  * Для PPTX/PDF/изображений которые должны оставаться в /content/{device}/
  */
-async function copyFolderPhysically(sourceId, targetId, folderName, move, devices, fileNamesMap, saveFileNamesMap, io, res, uploadedBy = null) {
+async function copyFolderPhysically(sourceId, targetId, folderName, move, devices, fileNamesMap, saveFileNamesMap, io, res, uploadedBy = null, opId = null) {
   // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
   const devicesPath = getDevicesPath();
   const sourceFolder = path.join(devicesPath, devices[sourceId]?.folder || sourceId);
@@ -678,11 +683,34 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
     });
   }
 
+  const action = move ? 'move' : 'copy';
+  const baseEvent = {
+    opId,
+    from: sourceId,
+    to: targetId,
+    fromName: devices[sourceId]?.name || sourceId,
+    toName: devices[targetId]?.name || targetId,
+    folder: folderName,
+    targetFolder: targetSafeName,
+    action
+  };
+
+  // Перенос большой папки идёт минуты (объекты копируются по одному),
+  // поэтому шлём прогресс: без него пользователь видит лишь «тишину».
+  let lastProgressAt = 0;
+  const onProgress = ({ phase, done, total, file }) => {
+    const now = Date.now();
+    const isFinal = total > 0 && done >= total;
+    if (!isFinal && done > 0 && now - lastProgressAt < 150) return;
+    lastProgressAt = now;
+    io.emit('copy/progress', { ...baseEvent, phase, done, total, file });
+  };
+
   try {
     // Асинхронное копирование папки
-    logFile('info', '📁 Copying folder (async)', { sourceId, targetId, folderName });
+    logFile('info', '📁 Copying folder (async)', { sourceId, targetId, folderName, opId });
 
-    await copyFolderEverywhere(sourcePath, targetPath, storage);
+    await copyFolderEverywhere(sourcePath, targetPath, storage, { onProgress });
 
     // Копируем маппинг (используем оригинальное имя, если было)
     const originalName = fileNamesMap[sourceId]?.[folderName] || folderName;
@@ -736,11 +764,13 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
     if (move) updateDeviceFilesFromDB(sourceId, devices, fileNamesMap);
     
     io.emit('devices/updated');
+    io.emit('copy/done', baseEvent);
     
     logFile('info', `✅ Folder ${move ? 'moved' : 'copied'} successfully`, {
       sourceDevice: sourceId,
       targetDevice: targetId,
-      folderName: targetSafeName
+      folderName: targetSafeName,
+      opId
     });
     
     res.json({ 
@@ -749,12 +779,14 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
       file: targetSafeName, 
       from: sourceId, 
       to: targetId,
-      type: 'folder'
+      type: 'folder',
+      opId
     });
     
   } catch (e) {
-    logger.error('[copy-folder] Error', { error: e.message, sourceId, targetId, folderName });
-    return res.status(500).json({ error: 'Ошибка копирования папки', detail: e.message });
+    logger.error('[copy-folder] Error', { error: e.message, sourceId, targetId, folderName, opId });
+    io.emit('copy/error', { ...baseEvent, error: e.message });
+    return res.status(500).json({ error: 'Ошибка копирования папки', detail: e.message, opId });
   }
 }
 
@@ -4219,6 +4251,13 @@ export function createFilesRouter(deps) {
   router.post('/:targetId/copy-file', requireManager, async (req, res) => {
     const targetId = sanitizeDeviceId(req.params.targetId);
     const { sourceDeviceId, fileName, move } = req.body;
+    // opId генерирует клиент, чтобы сопоставить события copy/* со своим
+    // запросом. Проверяем формат: значение уходит в сокет и в DOM. Если его
+    // нет (устаревший клиент), генерируем свой — тогда прогресс всё равно
+    // увидят остальные вкладки админки.
+    const opId = typeof req.body.opId === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(req.body.opId)
+      ? req.body.opId
+      : `srv-${crypto.randomUUID()}`;
     const sourceId = sanitizeDeviceId(sourceDeviceId);
     
     if (!targetId || !sourceId) {
@@ -4245,7 +4284,7 @@ export function createFilesRouter(deps) {
       // папка проваливала проверку и уходила в ветку «мгновенного копирования»,
       // где «копия» на устройстве B оказывалась ссылкой на контент устройства A.
       if (await isFolderPresent(sourcePath)) {
-        return await copyFolderPhysically(sourceId, targetId, fileName, move, devices, fileNamesMap, saveFileNamesMap, io, res, req.user?.userId || null);
+        return await copyFolderPhysically(sourceId, targetId, fileName, move, devices, fileNamesMap, saveFileNamesMap, io, res, req.user?.userId || null, opId);
     } 
       
       // 1. Получаем метаданные файла из источника (обычный файл)

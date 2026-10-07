@@ -2571,6 +2571,66 @@ button.meta-lg.android-pastel {
   animation: slideOutRight var(--duration-fast) var(--ease-exit) forwards;
 }
 
+/* Прогресс копирования/переноса папки между устройствами.
+   Внизу справа — вверху стоят тосты уведомлений, им не надо мешать. */
+.copy-progress-stack {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 340px;
+  max-width: calc(100vw - 40px);
+}
+
+.copy-progress-toast {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--brand);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  padding: 14px 16px;
+  animation: slideInRight var(--duration-slow) var(--ease-entrance);
+}
+
+.copy-progress-toast__title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 2px;
+  color: var(--text);
+}
+
+.copy-progress-toast__route {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-bottom: 10px;
+  word-break: break-word;
+}
+
+.copy-progress-toast__bar {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.copy-progress-toast__bar > span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--brand);
+  border-radius: 3px;
+  transition: width 0.2s linear;
+}
+
+.copy-progress-toast__meta {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /* ==========================================================================
    Доступность: движение
    Пользователь просит систему уменьшить анимацию — уважаем это глобально.
@@ -2590,7 +2650,8 @@ button.meta-lg.android-pastel {
 
   /* Элементы, которые появляются/уезжают по position или transform,
      при схлопнутой анимации не должны оставлять сдвинутый след. */
-  .notification-toast {
+  .notification-toast,
+  .copy-progress-toast {
     transform: none;
   }
 }

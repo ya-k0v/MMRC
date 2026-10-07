@@ -1,4 +1,5 @@
 // devices-manager.js - список устройств админ-панели: пагинация, рендер и точечные обновления
+import { createCopyOpId, showCopyProgress, finishCopyProgress } from './copy-progress.js';
 
 /**
  * Состояние пагинации принадлежит модулю.
@@ -173,6 +174,10 @@ function bindTileEvents(li, ctx) {
     li.style.background = '';
     li.style.transform = '';
 
+    // opId сшивает HTTP-ответ с событиями copy/* из сокета: итоговый тост
+    // и карточка прогресса должны закрыться ровно один раз.
+    const opId = createCopyOpId();
+
     try {
       const data = JSON.parse(e.dataTransfer.getData('text/plain'));
       const { sourceDeviceId, fileName } = data;
@@ -190,14 +195,28 @@ function bindTileEvents(li, ctx) {
       const currentDeviceId = ctx.getCurrentDeviceId();
       const sourceDevice = devicesCache.find(dev => dev.device_id === sourceDeviceId);
       const targetDevice = devicesCache.find(dev => dev.device_id === targetDeviceId);
+      const safeFileName = decodeURIComponent(fileName);
+
+      // Карточка появляется сразу, не дожидаясь первого события сокета:
+      // копирование большой папки идёт минуты, и молчание выглядит как зависание.
+      showCopyProgress({
+        opId,
+        from: sourceDeviceId,
+        to: targetDeviceId,
+        fromName: sourceDevice?.name || sourceDeviceId,
+        toName: targetDevice?.name || targetDeviceId,
+        folder: safeFileName,
+        action: move ? 'move' : 'copy'
+      });
 
       const response = await ctx.adminFetch(`/api/devices/${encodeURIComponent(targetDeviceId)}/copy-file`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sourceDeviceId,
-          fileName: decodeURIComponent(fileName),
-          move
+          fileName: safeFileName,
+          move,
+          opId
         })
       });
 
@@ -206,6 +225,17 @@ function bindTileEvents(li, ctx) {
       if (result.ok) {
         // Список устройств обновится через событие devices/updated,
         // renderTVList() точечно обновит счётчики файлов, не сбрасывая страницу.
+        finishCopyProgress({
+          opId,
+          ok: true,
+          from: sourceDeviceId,
+          to: targetDeviceId,
+          fromName: sourceDevice?.name || sourceDeviceId,
+          toName: targetDevice?.name || targetDeviceId,
+          folder: result.file || safeFileName,
+          action: move ? 'move' : 'copy'
+        });
+
         await new Promise(resolve => setTimeout(resolve, 100));
 
         if (currentDeviceId === sourceDeviceId || currentDeviceId === targetDeviceId) {
@@ -213,9 +243,15 @@ function bindTileEvents(li, ctx) {
         }
       } else {
         console.error(`[DragDrop] ❌ Ошибка: ${result.error || 'Unknown error'}`);
+        finishCopyProgress({
+          opId,
+          ok: false,
+          error: result.error || result.detail || 'Не удалось выполнить операцию'
+        });
       }
     } catch (error) {
       console.error('[DragDrop] ❌ Ошибка:', error);
+      finishCopyProgress({ opId, ok: false, error: error.message || 'Ошибка соединения' });
     }
   });
 }

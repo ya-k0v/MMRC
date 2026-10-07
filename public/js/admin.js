@@ -3,6 +3,7 @@ import { sortDevices, debounce, getPageSize, loadNodeNames } from './utils.js';
 import { DEVICE_ICONS, DEVICE_TYPE_NAMES } from './shared/constants.js';
 import { ensureAuth, adminFetch, setXhrAuth, logout } from './admin/auth.js';
 import { setupSocketListeners } from './admin/socket-listeners.js';
+import { showCopyProgress, updateCopyProgress, finishCopyProgress } from './admin/copy-progress.js';
 import { loadDevices as loadDevicesModule, renderTVList as renderTVListModule, syncDeviceStatuses, updateDeviceTile, focusDeviceInList as focusDeviceInListModule } from './admin/devices-manager.js';
 import { createDevice, renameDevice, deleteDevice } from './admin/device-crud.js';
 import { loadFilesWithStatus, refreshFilesPanel as refreshFilesPanelModule } from './admin/files-manager.js';
@@ -124,6 +125,9 @@ onFileReady: (device_id, file) => {
     if (!currentDeviceId) return;
     refreshDevicePreview(devicesCache.find(x => x.device_id === currentDeviceId));
   },
+  onCopyProgress: (payload) => showCopyProgress(payload),
+  onCopyDone: (payload) => finishCopyProgress({ ...payload, ok: true }),
+  onCopyError: (payload) => finishCopyProgress({ ...payload, ok: false, error: payload.error }),
   onPlayerOnline: (device_id) => {
     readyDevices.add(device_id);
     syncDeviceListStatuses();
