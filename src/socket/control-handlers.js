@@ -177,7 +177,9 @@ function scheduleNextFolderSlide(loopState, devices, io) {
     // Показываем следующую страницу
     const folderFile = deviceState.current?.playlistFile || deviceState.current?.file || loopState.file;
     io.to(`device:${loopState.deviceId}`).emit('player/folderPage', nextPage);
-    io.emit('preview/refresh', { device_id: loopState.deviceId });
+    // preview/refresh здесь не шлём: плеер ответит player/progress с новой страницей,
+    // и device-handlers отправит preview/refresh — дублирующая широковещательная
+    // рассылка на каждом тике вызывала лишний refetch и перерисовку списка плиток.
 
     loopState.hasAdvanced = true;
 

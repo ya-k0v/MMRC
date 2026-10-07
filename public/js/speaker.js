@@ -88,6 +88,10 @@ const volumeMuteBtn = document.getElementById('volumeMuteBtn');
 const FOLDER_INTERVAL_OPTIONS = [5, 10, 15, 20];
 const DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS = 10;
 let previewLoadToken = 0;
+// Ключ статического превью, которое уже грузится: requestPreviewSync не дебаунсится
+// и на один preview/refresh может стрельнуть несколько одинаковых showStaticPreview —
+// каждый из них мигает заглушкой «Загрузка превью…» и перезапрашивает картинки.
+let staticPreviewInFlightKey = null;
 let fileListMode = 'device'; // device | all
 let currentFileSourceDevice = null;
 const ALL_FILES_LIMIT = 500;
@@ -1641,7 +1645,24 @@ function renderThumbnailGrid(deviceId, safeName, contentType, imageUrls) {
 
 async function showStaticPreview(deviceId, safeName, contentType, { initiatedByUser = false } = {}) {
   if (!deviceId || !safeName || !isStaticContent(contentType)) return;
-  
+
+  const previewKey = `${deviceId}|${safeName}|${contentType}`;
+  if (!initiatedByUser) {
+    // Уже грузится — не запускаем второй параллельный запрос и второй сброс в «Загрузка…»
+    const alreadyLoading = staticPreviewInFlightKey === previewKey;
+    // Уже показано — только обновляем подсветку, перестройка сетки не нужна
+    const alreadyShown = currentPreviewContext.deviceId === deviceId
+      && currentPreviewContext.file === safeName
+      && !!filePreview.querySelector('.thumbnail-preview');
+    if (alreadyLoading || alreadyShown) {
+      const shownState = playerStateByDevice.get(deviceId);
+      if (shownState && shownState.file === safeName && shownState.page) {
+        highlightCurrentThumbnail(shownState.page, { deviceId, file: safeName });
+      }
+      return;
+    }
+  }
+
   // КРИТИЧНО: Останавливаем отслеживание превью стрима если было активно
   if (currentPreviewContext.deviceId && currentPreviewContext.file) {
     const fileData = allFiles.find(f => f.safeName === currentPreviewContext.file);
@@ -1657,30 +1678,37 @@ async function showStaticPreview(deviceId, safeName, contentType, { initiatedByU
   }
 
   const loadToken = ++previewLoadToken;
+  staticPreviewInFlightKey = previewKey;
   filePreview.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary)">Загрузка превью…</div>`;
 
-  const images = await fetchStaticPreviewImages(deviceId, safeName, contentType);
-  if (loadToken !== previewLoadToken) return;
+  try {
+    const images = await fetchStaticPreviewImages(deviceId, safeName, contentType);
+    if (loadToken !== previewLoadToken) return;
 
-  renderThumbnailGrid(deviceId, safeName, contentType, images);
-  currentPreviewContext = { deviceId, file: safeName, page: null };
+    renderThumbnailGrid(deviceId, safeName, contentType, images);
+    currentPreviewContext = { deviceId, file: safeName, page: null };
 
-  const state = playerStateByDevice.get(deviceId);
-  if (state && state.file === safeName && state.page) {
-    highlightCurrentThumbnail(state.page, currentPreviewContext);
+    const state = playerStateByDevice.get(deviceId);
+    if (state && state.file === safeName && state.page) {
+      highlightCurrentThumbnail(state.page, currentPreviewContext);
+    }
+    
+    // Проверяем состояние плейлиста на сервере при открытии папки
+    if (contentType === 'folder') {
+      // Обновляем состояние кнопки плейлиста
+      updateFolderPlaylistButtonState();
+    }
+    
+    // КРИТИЧНО: Обновляем видимость кнопок после рендера миниатюр
+    // Используем небольшой timeout, чтобы DOM успел обновиться
+    setTimeout(() => {
+      updatePreviewControlButtons();
+    }, 50);
+  } finally {
+    if (staticPreviewInFlightKey === previewKey) {
+      staticPreviewInFlightKey = null;
+    }
   }
-  
-  // Проверяем состояние плейлиста на сервере при открытии папки
-  if (contentType === 'folder') {
-    // Обновляем состояние кнопки плейлиста
-    updateFolderPlaylistButtonState();
-  }
-  
-  // КРИТИЧНО: Обновляем видимость кнопок после рендера миниатюр
-  // Используем небольшой timeout, чтобы DOM успел обновиться
-  setTimeout(() => {
-    updatePreviewControlButtons();
-  }, 50);
 }
 
 async function syncPreviewWithPlayerState() {
@@ -1699,7 +1727,11 @@ async function syncPreviewWithPlayerState() {
     }
     // Если состояние обновилось и это та же папка - синхронизируем страницу
     const currentPreviewFile = filePreview.querySelector('.thumbnail-preview')?.getAttribute('data-file');
-    if (state.file === currentPreviewFile && isStaticContent(state.type)) {
+    // Нормализуем имена файлов (убираем .zip если есть) — иначе сетка «не та» и
+    // перестраивается на каждом preview/refresh, хотя показана ровно эта папка
+    if (state.file && currentPreviewFile
+        && state.file.replace(/\.zip$/i, '') === currentPreviewFile.replace(/\.zip$/i, '')
+        && isStaticContent(state.type)) {
       // КРИТИЧНО: Активируем thumbnail только если есть данные от плеера (state.page)
       if (state.page) {
         highlightCurrentThumbnail(state.page, { deviceId: previewDeviceId, file: state.file });
@@ -1746,12 +1778,17 @@ async function syncPreviewWithPlayerState() {
   }
 
   // Если пользователь явно выбрал другой файл для превью, не переключать автоматически
-  if (currentFile && currentFile !== state.file) {
+  if (currentFile && state.file
+      && currentFile.replace(/\.zip$/i, '') !== state.file.replace(/\.zip$/i, '')) {
     return;
   }
 
   const currentPreviewFile = filePreview.querySelector('.thumbnail-preview')?.getAttribute('data-file');
-  if (currentPreviewFile !== state.file) {
+  // Нормализуем .zip: сетка папки может быть открыта по «чистому» имени, а state.file —
+  // приходить с суффиксом (или наоборот) — без этого превью перестраивается каждый раз
+  const isSamePreviewFile = !!currentPreviewFile && !!state.file
+    && currentPreviewFile.replace(/\.zip$/i, '') === state.file.replace(/\.zip$/i, '');
+  if (!isSamePreviewFile) {
     await showStaticPreview(previewDeviceId, state.file, state.type);
     // КРИТИЧНО: После открытия превью заново получаем актуальный state из playerStateByDevice
     // так как он мог обновиться пока открывалось превью (например, пришел player/progress)
@@ -2098,7 +2135,7 @@ async function loadDevices() {
 }
 
 /* Рендер списка ТВ (информативный, с подсветкой выбранного) */
-function renderTvTile(device) {
+function renderTvTile(device, { suppressPlayback = false } = {}) {
   const name = device.name || nodeNames[device.device_id] || device.device_id;
   const filesCount = device.files?.length ?? 0;
   const isActive = device.device_id === currentDevice;
@@ -2107,7 +2144,10 @@ function renderTvTile(device) {
   const volumeState = getVolumeState(device.device_id);
   const volumeInfo = resolveVolumeIndicator(volumeState, isReady);
   const volumeIcon = getVolumeIconSvg({ ...volumeInfo, size: 18 });
-  const playbackInfo = buildPreviewPlaybackInfo(device);
+  // suppressPlayback: рендерим «каркас» плитки без блока воспроизведения, чтобы
+  // renderTVList видел, изменилась ли только строка прогресса (её можно обновить
+  // на месте через refreshTvTilePlaybackInfo) или структура списка целиком
+  const playbackInfo = suppressPlayback ? null : buildPreviewPlaybackInfo(device);
   const playbackBlock = `
       <div class="tvTile-previewInfo${playbackInfo ? '' : ' is-empty'}">
         ${playbackInfo ? getPlaybackInfoInnerHtml(playbackInfo) : ''}
@@ -2146,6 +2186,11 @@ function renderTvTile(device) {
 }
 
 
+// Кэш последнего отрендеренного списка плиток: preview/refresh шлётся на каждый
+// тик слайдшоу, и innerHTML-перерисовка всех плиток даёт видимое мигание.
+let lastTvListHtml = null;
+let lastTvListStructureHtml = null;
+
 function renderTVList() {
   // Сортируем устройства перед отображением (на случай если список обновился)
   const sortedDevices = sortDevices(devices);
@@ -2157,7 +2202,21 @@ function renderTVList() {
   const pageItems = sortedDevices.slice(start, end);
 
   // Рендерим устройства (стили задаются в CSS)
-  tvList.innerHTML = pageItems.map(renderTvTile).join('');
+  const tvListHtml = pageItems.map(d => renderTvTile(d)).join('');
+  if (tvListHtml === lastTvListHtml) return;
+
+  const structureHtml = pageItems.map(d => renderTvTile(d, { suppressPlayback: true })).join('');
+  if (structureHtml === lastTvListStructureHtml && tvList.children.length === pageItems.length) {
+    // Изменился только блок воспроизведения (страница слайда, прогресс, текущий файл) —
+    // обновляем его на месте, не пересобирая DOM плиток и не перепривязывая обработчики
+    lastTvListHtml = tvListHtml;
+    pageItems.forEach(d => refreshTvTilePlaybackInfo(d.device_id));
+    return;
+  }
+
+  lastTvListHtml = tvListHtml;
+  lastTvListStructureHtml = structureHtml;
+  tvList.innerHTML = tvListHtml;
 
   tvList.querySelectorAll('.tvTile').forEach(item => {
     const deviceId = item.dataset.id;

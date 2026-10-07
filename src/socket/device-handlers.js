@@ -469,6 +469,27 @@ export function setupDeviceHandlers(socket, deps) {
       const page = typeof payload?.page === 'number' ? payload.page : (type !== 'video' ? currentTime : undefined);
       
       if (device) {
+        // КРИТИЧНО: control/playlistStart выставляет playlistActive ДО того, как плеер
+        // ответит на player/play. JS-плеер при старте шлёт player/progress type:'idle'
+        // (emitProgressStop), который ниже ПОЛНОСТЬЮ заменяет device.current и сбрасывает
+        // playlistActive/playlistFile — серверный цикл слайдшоу на первом же тике
+        // считает, что плейлист выключен, и останавливается (устройство не листает).
+        const playlistFlags = device.current && device.current.playlistActive
+          ? {
+              playlistActive: device.current.playlistActive,
+              playlistFile: device.current.playlistFile,
+              playlistInterval: device.current.playlistInterval,
+              originalFolderName: device.current.originalFolderName
+            }
+          : null;
+        const restorePlaylistFlags = () => {
+          if (!playlistFlags || !device.current) return;
+          device.current.playlistActive = playlistFlags.playlistActive;
+          device.current.playlistFile = playlistFlags.playlistFile;
+          device.current.playlistInterval = playlistFlags.playlistInterval;
+          device.current.originalFolderName = playlistFlags.originalFolderName;
+        };
+
         // Всегда сохраняем currentTime для видео/аудио на каждом тике прогресса
         if (device.current && (type === 'video' || type === 'audio')) {
           device.current.currentTime = currentTime;
@@ -538,8 +559,9 @@ export function setupDeviceHandlers(socket, deps) {
             stateChanged = true;
           }
         }
+        restorePlaylistFlags();
       }
-      
+
       // Отправляем всем слушателям (speaker UI) агрегированный прогресс
       const streamUrl = device?.current?.streamUrl || payload?.stream_url || null;
       io.emit('player/progress', {
