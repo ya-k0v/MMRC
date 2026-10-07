@@ -753,6 +753,19 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
     // Если move - удаляем из источника (и из бакета, и с диска)
     if (move) {
       await removeFolderEverywhere(sourcePath);
+      // Метаданные источника убираем тоже: запись, оставшаяся на удалённую
+      // папку, превращается в файл-призрак — его не видно в списке (он
+      // отфильтровывается как несуществующий), но он спамит warn'ом при каждом
+      // опросе files-with-status, и из UI его уже не удалить.
+      try {
+        await deleteFileMetadata(sourceId, folderName);
+      } catch (err) {
+        logger.warn('[copy-folder] Не удалось удалить метаданные источника после переноса', {
+          error: err.message,
+          sourceId,
+          folderName
+        });
+      }
       if (fileNamesMap[sourceId]?.[folderName]) {
         delete fileNamesMap[sourceId][folderName];
         saveFileNamesMap(fileNamesMap);
@@ -5180,6 +5193,19 @@ export function createFilesRouter(deps) {
           logger.error(`[DELETE file] Ошибка удаления папки ${name}`, { error: e.message, stack: e.stack, deviceId: id, fileName: name });
           return res.status(500).json({ error: 'Не удалось удалить папку с изображениями' });
         }
+      } else if (existingMetadata && !fs.existsSync(imageFolderPath)) {
+        // Папки на диске и в хранилище уже нет, а запись в БД осталась (её
+        // оставил, например, перенос папки — он удалял содержимое источника,
+        // но не метаданные). Такой файл-призрак отфильтровывается из списка,
+        // поэтому из UI его не удалить: без этой ветки запрос отвечает 200,
+        // запись остаётся и спамит предупреждением при каждом опросе.
+        await deleteFileMetadata(id, name);
+        deletedFileName = name;
+        isFolder = true;
+        logFile('warn', '🧹 Удалена устаревшая запись о несуществующей папке', {
+          deviceId: id,
+          fileName: name
+        });
       }
     } else {
       // НОВОЕ: Обычный файл - умное удаление с подсчетом ссылок
