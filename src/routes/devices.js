@@ -549,6 +549,10 @@ export function createDevicesRouter(deps) {
       await learnMac;
 
       if (!state.ok) {
+        logger.warn('[Power] Не удалось получить состояние питания', {
+          deviceId: target.deviceId,
+          error: state.error
+        });
         return { deviceId: target.deviceId, ok: false, awake: null, screenOn: null, error: state.error };
       }
       return { deviceId: target.deviceId, ok: true, awake: state.awake, screenOn: state.screenOn };

@@ -34,14 +34,30 @@ export function isAndroidDevice(device) {
     || platform.includes('android');
 }
 
+const DAEMON_STARTUP_ERROR = /daemon not running|cannot connect to daemon|failed to start daemon/i;
+
 /**
  * Одна adb-команда с таймаутом: без него зависший adb виснет навсегда.
+ *
+ * При холодном старте два одновременных вызова adb сорятся за порт 5037, и
+ * проигравший падает с «daemon not running; starting now» — тогда повторяем
+ * один раз, пока победитель поднимет демон.
  *
  * @param {string[]} args
  * @param {number} [timeoutMs]
  * @returns {Promise<string>} stdout
  */
-export function runAdb(args, timeoutMs = DEFAULT_TIMEOUT_MS) {
+export async function runAdb(args, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  try {
+    return await execAdb(args, timeoutMs);
+  } catch (error) {
+    if (!DAEMON_STARTUP_ERROR.test(String(error?.message || ''))) throw error;
+    await new Promise(resolve => setTimeout(resolve, 500));
+    return execAdb(args, timeoutMs);
+  }
+}
+
+function execAdb(args, timeoutMs) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error(`adb timeout: ${args.join(' ')}`));
@@ -58,7 +74,36 @@ export function runAdb(args, timeoutMs = DEFAULT_TIMEOUT_MS) {
 }
 
 /**
+ * Очереди команд по устройствам.
+ *
+ * `connect → shell → disconnect` на одном target нельзя выполнять параллельно:
+ * disconnect одной команды рвёт сессию другой, и та падает с «device not
+ * found». Именно так «нет ответа» и появлялось: `/power-state` опрашивал
+ * состояние питания и MAC одновременно, более быстрая команда успевала
+ * отключиться, пока `dumpsys power` ещё шёл.
+ */
+const targetQueues = new Map();
+
+function enqueueAdbCommand(target, task) {
+  const previous = targetQueues.get(target) || Promise.resolve();
+  const current = previous.then(task);
+  // Цепочка хранится как промис, который никогда не отклоняется, — упавшая
+  // команда не должна ронять очередь для следующих.
+  const settled = current.then(() => {}, () => {});
+  targetQueues.set(target, settled);
+
+  settled.then(() => {
+    if (targetQueues.get(target) === settled) targetQueues.delete(target);
+  });
+
+  return current;
+}
+
+/**
  * Выполнить shell-команду на устройстве: connect → shell → disconnect.
+ *
+ * Команды для одного устройства выполняются строго по очереди (см.
+ * `targetQueues`), для разных устройств — параллельно.
  *
  * @param {string} ip
  * @param {string|number} port
@@ -66,9 +111,13 @@ export function runAdb(args, timeoutMs = DEFAULT_TIMEOUT_MS) {
  * @param {number} [timeoutMs]
  * @returns {Promise<{ok: boolean, output?: string, error?: string}>}
  */
-export async function adbShell(ip, port, command, timeoutMs = DEFAULT_TIMEOUT_MS) {
+export function adbShell(ip, port, command, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const target = `${ip}:${port}`;
 
+  return enqueueAdbCommand(target, () => adbShellNow(target, command, timeoutMs));
+}
+
+async function adbShellNow(target, command, timeoutMs) {
   try {
     await runAdb(['connect', target], timeoutMs);
   } catch (error) {
