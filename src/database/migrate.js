@@ -196,6 +196,17 @@ const MIGRATIONS = [
       // Legacy tokens are plaintext JWTs (not 64-char hex hashes); keep only hash rows
       await driver.exec("DELETE FROM refresh_tokens WHERE length(token) != 64");
     }
+  },
+  {
+    id: '2026-10-07-devices-mac-address',
+    description: 'Add mac_address column to devices for Wake-on-LAN power control',
+    async up(driver) {
+      if (!(await driver.tableExists('devices'))) return;
+      const cols = await driver.columns('devices');
+      if (!cols.some(c => c.name === 'mac_address')) {
+        await driver.exec('ALTER TABLE devices ADD COLUMN mac_address TEXT');
+      }
+    }
   }
 ];
 

@@ -16,6 +16,16 @@ export function sanitizeDeviceId(id) {
 }
 
 /**
+ * Запрещённые ключи объекта: защита от прототипного отравления через
+ * произвольные id в JSON-пейлоадах.
+ */
+const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+
+export function isReservedObjectKey(value) {
+  return RESERVED_OBJECT_KEYS.has(String(value || ''));
+}
+
+/**
  * Проверка является ли файл системным/временным (не показывать пользователям)
  * @param {string} fileName - Имя файла
  * @returns {boolean} true если файл системный

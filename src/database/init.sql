@@ -157,6 +157,7 @@ CREATE TABLE IF NOT EXISTS devices (
   device_type TEXT DEFAULT 'browser',
   platform TEXT,
   ip_address TEXT,
+  mac_address TEXT, -- для Wake-on-LAN, узнаётся по ADB когда устройство бодрствует
   capabilities TEXT, -- JSON строка
   last_seen DATETIME,
   current_state TEXT, -- JSON строка с current: {type, file, state}

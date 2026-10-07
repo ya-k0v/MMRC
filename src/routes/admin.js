@@ -11,6 +11,7 @@ import { validateUploadSize } from '../middleware/multer-config.js';
 import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('api');
 import { installAndSetupApk } from '../utils/apk-installer.js';
+import { isAndroidDevice as isAndroidDeviceCandidate } from '../utils/adb.js';
 import { getSettings, updateContentRootPath, getDevicesPath, getLogsDir } from '../config/settings-manager.js';
 import { validatePath } from '../utils/path-validator.js';
 import {
@@ -307,17 +308,6 @@ function parseRequestedDeviceIds(rawValue) {
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
-}
-
-function isAndroidDeviceCandidate(device) {
-  const deviceType = String(device?.deviceType || device?.device_type || '').toLowerCase();
-  const platform = String(device?.platform || '').toLowerCase();
-
-  return (
-    deviceType.includes('android') ||
-    deviceType.includes('native_mediaplayer') ||
-    platform.includes('android')
-  );
 }
 
 async function listDevicesViaApi({ incomingAuthHeader }) {

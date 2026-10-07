@@ -7,8 +7,8 @@ import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getDevicesPath, getDataRoot } from '../config/settings-manager.js';
-import { sanitizeDeviceId } from '../utils/sanitize.js';
-import { deleteDevice as deleteDeviceFromDB, deleteDeviceFileNames, getDatabase } from '../database/database.js';
+import { sanitizeDeviceId, isReservedObjectKey } from '../utils/sanitize.js';
+import { deleteDevice as deleteDeviceFromDB, deleteDeviceFileNames, getDatabase, updateDeviceMacAddress } from '../database/database.js';
 import { createLimiter, deleteLimiter } from '../middleware/rate-limit.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import { createModuleLogger, logDevice } from '../utils/logger.js';
@@ -17,16 +17,12 @@ import { deleteDeviceFilesMetadata, getDeviceFilesMetadata } from '../database/f
 import { removeStreamJob } from '../streams/stream-manager.js';
 import { requireAuth } from '../middleware/auth.js';
 import { getUserDevices, hasDeviceAccess } from '../middleware/device-access.js';
-import { launchAndroidApp } from '../utils/adb-launcher.js';
+import { launchAndroidApp, getPowerState, getDeviceMac } from '../utils/adb.js';
+import { POWER_ACTIONS, planPowerTargets, runPowerAction } from '../utils/power-control.js';
 import { ANDROID_PACKAGE_NAME, ANDROID_MAIN_ACTIVITY, DEFAULT_ADB_PORT } from '../config/android.js';
 import { validatePath } from '../utils/path-validator.js';
 
 const router = express.Router();
-const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
-
-function isReservedObjectKey(value) {
-  return RESERVED_OBJECT_KEYS.has(String(value || ''));
-}
 
 function getTrimmedDeviceId(rawId) {
   if (typeof rawId !== 'string') {
@@ -440,7 +436,127 @@ export function createDevicesRouter(deps) {
       return res.status(500).json({ ok: false, error: e.message });
     }
   });
-  
+
+  /**
+   * Список id из запроса: null означает «все Android-устройства».
+   * Пустой массив приравниваем к null, чтобы не получить пустую операцию.
+   */
+  function readRequestedDeviceIds(rawIds) {
+    if (rawIds === undefined || rawIds === null) {
+      return { ok: true, ids: null };
+    }
+    if (!Array.isArray(rawIds)) {
+      return { ok: false, error: 'Поле deviceIds должно быть массивом' };
+    }
+    if (rawIds.some(id => typeof id !== 'string' || id.length > 64)) {
+      return { ok: false, error: 'Некорректный список устройств' };
+    }
+    return { ok: true, ids: rawIds.length > 0 ? rawIds : null };
+  }
+
+  // POST /api/devices/power — усыпить или разбудить Android-приставки.
+  //
+  // Устройства стоят в стене, их нельзя обесточить, поэтому здесь только сон
+  // и пробуждение (см. utils/adb). Одна кнопка на весь зал: если часть
+  // приставок не отвечает по ADB, остальные всё равно уходят в сон, а тост
+  // покажет, кто именно не сработал.
+  router.post('/power', requireAdmin, async (req, res) => {
+    const action = String(req.body?.action || '').trim();
+    if (!POWER_ACTIONS.includes(action)) {
+      return res.status(400).json({ ok: false, error: 'Укажите action: sleep или wake' });
+    }
+
+    const requested = readRequestedDeviceIds(req.body?.deviceIds);
+    if (!requested.ok) {
+      return res.status(400).json({ ok: false, error: requested.error });
+    }
+
+    const plan = planPowerTargets(devices, requested.ids);
+    for (const target of plan.targets) {
+      target.port = await resolveDeviceAdbPort(target.deviceId, devices[target.deviceId]);
+    }
+
+    let outcome;
+    try {
+      outcome = await runPowerAction(plan.targets, action, {
+        relaunch: req.body?.relaunch !== false,
+        storeMac: (deviceId, mac) => updateDeviceMacAddress(deviceId, mac)
+      });
+    } catch (e) {
+      logger.error('[Power] Ошибка команды питания:', e);
+      return res.status(500).json({ ok: false, error: e.message });
+    }
+
+    const results = [...outcome.results, ...plan.rejected];
+
+    // Другие вкладки узнают о смене состояния сразу, без опроса.
+    for (const result of outcome.results) {
+      if (result.ok) {
+        io.emit('devices/power', { deviceId: result.deviceId, awake: action === 'wake' });
+      }
+    }
+
+    res.json({
+      ok: true,
+      action,
+      results,
+      summary: {
+        total: results.length,
+        succeeded: outcome.succeeded,
+        failed: results.length - outcome.succeeded
+      }
+    });
+  });
+
+  // POST /api/devices/power-state — состояние питания для бейджа «спит».
+  //
+  // Опрос по ADB стоит дорого (connect на каждое устройство), поэтому клиент
+  // вызывает его точечно, а не на каждый рендер списка.
+  router.post('/power-state', requireAuth, async (req, res) => {
+    const requested = readRequestedDeviceIds(req.body?.deviceIds);
+    if (!requested.ok) {
+      return res.status(400).json({ ok: false, error: requested.error });
+    }
+
+    const plan = planPowerTargets(devices, requested.ids);
+
+    // Спикер видит только назначенные ему устройства, как и в GET /.
+    if (req.user.role !== 'admin') {
+      const allowed = new Set(await getUserDevices(req.user.userId));
+      plan.targets = plan.targets.filter(target => allowed.has(target.deviceId));
+      plan.rejected = plan.rejected.filter(item => allowed.has(item.deviceId));
+    }
+
+    for (const target of plan.targets) {
+      target.port = await resolveDeviceAdbPort(target.deviceId, devices[target.deviceId]);
+    }
+
+    const states = await Promise.all(plan.targets.map(async (target) => {
+      // MAC узнаём заодно: он нужен для Wake-on-LAN, когда устройство уже
+      // уснёт и ADB-будильник больше не сработает.
+      const learnMac = target.mac
+        ? Promise.resolve(null)
+        : getDeviceMac(target.ip, target.port, 8000)
+            .then(async (result) => {
+              if (result.ok && result.mac) {
+                await updateDeviceMacAddress(target.deviceId, result.mac);
+              }
+              return result;
+            })
+            .catch(() => null);
+
+      const state = await getPowerState(target.ip, target.port, 8000);
+      await learnMac;
+
+      if (!state.ok) {
+        return { deviceId: target.deviceId, ok: false, awake: null, screenOn: null, error: state.error };
+      }
+      return { deviceId: target.deviceId, ok: true, awake: state.awake, screenOn: state.screenOn };
+    }));
+
+    res.json({ ok: true, states });
+  });
+
   return router;
 }
 

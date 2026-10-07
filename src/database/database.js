@@ -446,7 +446,7 @@ export async function getAllDevices() {
   try {
     return await withRetrySync(async () => {
       const rows = await driver.query(
-        `SELECT device_id, name, folder, device_type, platform, ip_address, adb_port, capabilities,
+        `SELECT device_id, name, folder, device_type, platform, ip_address, mac_address, adb_port, capabilities,
                 last_seen, current_state, created_at, updated_at
          FROM devices ORDER BY device_id`
       );
@@ -463,6 +463,7 @@ export async function getAllDevices() {
             // Реальное значение, а не дефолт: выдуманный '5555' в памяти
             // при следующем saveDevice затёр бы порт, заданный при установке APK.
             adbPort: row.adb_port || null,
+            macAddress: row.mac_address || null,
             capabilities: row.capabilities ? JSON.parse(row.capabilities) : null,
             lastSeen: row.last_seen,
             current: row.current_state ? JSON.parse(row.current_state) : { type: 'idle', file: null, state: 'idle' },
@@ -474,6 +475,7 @@ export async function getAllDevices() {
             name: row.name || row.device_id, folder: row.folder || row.device_id,
             deviceType: row.device_type || 'browser', platform: row.platform || null,
             ipAddress: row.ip_address || null, capabilities: null,
+            macAddress: row.mac_address || null,
             lastSeen: row.last_seen,
             current: { type: 'idle', file: null, state: 'idle' },
             files: [], fileNames: []
@@ -577,6 +579,29 @@ export function saveDevice(deviceId, data) {
 
 export async function deleteDevice(deviceId) {
   await driver.run('DELETE FROM devices WHERE device_id = ?', [deviceId]);
+}
+
+/**
+ * Запомнить MAC-адрес устройства для Wake-on-LAN.
+ *
+ * Пишем только реально известный MAC: пустое значение не должно затирать
+ * уже выученный адрес, если устройство сейчас недоступно.
+ *
+ * @param {string} deviceId
+ * @param {string|null} mac
+ * @returns {Promise<boolean>} true, если адрес записан
+ */
+export async function updateDeviceMacAddress(deviceId, mac) {
+  const normalized = typeof mac === 'string' ? mac.trim() : '';
+  if (!deviceId || !normalized) return false;
+
+  await circuitBreakers.database.execute(() => {
+    return withRetrySync(async () => {
+      await driver.run('UPDATE devices SET mac_address = ? WHERE device_id = ?', [normalized, deviceId]);
+    }, { maxRetries: 3, delay: 500, shouldRetry: isRetryableDatabaseError });
+  });
+
+  return true;
 }
 
 // ========================================

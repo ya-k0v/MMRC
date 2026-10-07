@@ -14,6 +14,7 @@ export function setupSocketListeners(socket, callbacks) {
   const {
     onDevicesUpdated,
     onDeviceUpdated,
+    onPowerState,
     onFileProcessing,
     onFileProgress,
     onFileReady,
@@ -39,6 +40,11 @@ export function setupSocketListeners(socket, callbacks) {
   // device/updated - Обновление конкретного устройства (IP, platform и т.д.)
   socket.on('device/updated', ({ device_id, device }) => {
     if (onDeviceUpdated) onDeviceUpdated(device_id, device);
+  });
+  
+  // devices/power - Сменилось состояние питания (спит/активен)
+  socket.on('devices/power', (payload) => {
+    if (onPowerState) onPowerState(payload);
   });
   
   // file/processing - Файл начал обработку

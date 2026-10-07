@@ -4,6 +4,7 @@ import { DEVICE_ICONS, DEVICE_TYPE_NAMES } from './shared/constants.js';
 import { ensureAuth, adminFetch, setXhrAuth, logout } from './admin/auth.js';
 import { setupSocketListeners } from './admin/socket-listeners.js';
 import { showCopyProgress, updateCopyProgress, finishCopyProgress } from './admin/copy-progress.js';
+import { renderPowerControlsHtml, initPowerControls, applyPowerState } from './admin/device-power.js';
 import { loadDevices as loadDevicesModule, renderTVList as renderTVListModule, syncDeviceStatuses, updateDeviceTile, focusDeviceInList as focusDeviceInListModule } from './admin/devices-manager.js';
 import { createDevice, renameDevice, deleteDevice } from './admin/device-crud.js';
 import { loadFilesWithStatus, refreshFilesPanel as refreshFilesPanelModule } from './admin/files-manager.js';
@@ -94,6 +95,9 @@ setupSocketListeners(socket, {
       clearFilesPane('Нет устройств', 'Список файлов появится после подключения устройства.');
     }
     renderTVList();
+  },
+  onPowerState: (payload) => {
+    applyPowerState(payload);
   },
   onFileProcessing: (device_id, file) => {
     if (currentDeviceId === device_id) {
@@ -427,6 +431,9 @@ function createSettingsSection() {
           </div>
         </div>
 
+        <!-- Управление устройствами (сон/пробуждение Android-приставок) -->
+        ${renderPowerControlsHtml(devicesCache)}
+
         <!-- База данных (только SQLite) -->
         ${isSqlite ? `
         <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
@@ -686,6 +693,9 @@ function createSettingsSection() {
         }
       } catch {}
     })();
+
+    // Управление питанием Android-приставок
+    initPowerControls({ devices: devicesCache, adminFetch });
 
     // System monitor (CPU, RAM, Disk bars)
     const monitorBody = document.getElementById('stSysMonitorBody');
