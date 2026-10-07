@@ -469,10 +469,26 @@ body.admin-page .sidebar-menu-btn {
   animation: fadeIn 0.2s ease-out;
 }
 
+/* Настройки: карточки идут сеткой в два ряда. В одну колонку они
+   растягивались во всю ширину панели и теряли место на широких экранах.
+   auto-fit + min(100%, 380px) сам схлопывается в одну колонку на планшетах
+   и телефонах. */
 .admin-section-content {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
   gap: var(--space-sm);
+  align-content: start;
+}
+
+/* Карточки в ряду выравниваются по высоте, но ряды не растягиваются
+   до низа панели — иначе внизу пустуют огромные пустые блоки. */
+.admin-section-content > .st-card {
+  min-width: 0;
+}
+
+/* Карточке, которой нужна вся ширина (списки, таблицы), добавить статус --wide */
+.st-card--wide {
+  grid-column: 1 / -1;
 }
 
 @keyframes fadeIn {
