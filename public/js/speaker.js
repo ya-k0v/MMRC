@@ -2141,6 +2141,13 @@ function renderTvTile(device, { suppressPlayback = false } = {}) {
   const isActive = device.device_id === currentDevice;
   const isSelected = selectedDeviceIds.has(device.device_id);
   const isReady = readyDevices.has(device.device_id);
+  // Хранимое состояние питания: «спит» перебивает готов/не готов —
+  // спящее устройство может не отваливаться от сокета, и без этого
+  // плитка осталась бы зелёной при отключённом экране.
+  const isSleeping = device.powerState === 'sleep';
+  const statusClass = isSleeping ? 'sleeping' : (isReady ? 'online' : 'offline');
+  const statusTitle = isSleeping ? 'Спит' : (isReady ? 'Готов' : 'Не готов');
+  const statusLabel = isSleeping ? 'sleep' : (isReady ? 'online' : 'offline');
   const volumeState = getVolumeState(device.device_id);
   const volumeInfo = resolveVolumeIndicator(volumeState, isReady);
   const volumeIcon = getVolumeIconSvg({ ...volumeInfo, size: 18 });
@@ -2174,9 +2181,9 @@ function renderTvTile(device, { suppressPlayback = false } = {}) {
       <div class="tvTile-content">
         <div class="tvTile-header">
           <div class="title tvTile-name">${name}</div>
-          <span class="tvTile-status ${isReady ? 'online' : 'offline'}" 
-                title="${isReady ? 'Готов' : 'Не готов'}" 
-                aria-label="${isReady ? 'online' : 'offline'}"></span>
+          <span class="tvTile-status ${statusClass}" 
+                title="${statusTitle}" 
+                aria-label="${statusLabel}"></span>
         </div>
         ${metaRow}
         ${volumeRow}
@@ -4958,6 +4965,17 @@ socket.on('players/onlineSnapshot', (list) => {
   }
   renderTVList();
   updateVolumeUI();
+});
+
+// «спит/активен»: хранимое на сервере состояние питания. Приходит отдельным
+// событием от POST /power и опроса /power-state; devices/updated после команды
+// питания не срабатывает, поэтому без этого обработчика плитка спикера
+// показывала бы старое состояние до перезагрузки страницы.
+socket.on('devices/power', ({ deviceId, awake }) => {
+  const device = devices.find(d => d.device_id === deviceId);
+  if (!device) return;
+  device.powerState = awake == null ? null : (awake ? 'awake' : 'sleep');
+  renderTVList();
 });
 
 // Синхронизация состояния плейлиста между панелями
