@@ -436,12 +436,6 @@ export function getMobileIcon(size = 16, color = 'currentColor') {
 }
 
 /**
- * Получить SVG иконку настроек
- * @param {number} size - Размер иконки (по умолчанию 20)
- * @param {string} color - Цвет (по умолчанию currentColor)
- * @returns {string} SVG код
- */
-/**
  * Получить SVG иконку поиска (🔍)
  */
 export function getSearchIcon(size = 16, color = 'currentColor') {
@@ -455,6 +449,88 @@ export function getSettingsIcon(size = 20, color = 'currentColor') {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
   <circle cx="12" cy="12" r="3"/>
   <path d="M19.4 12.94a7.8 7.8 0 0 0 0-1.88l2-1.55a.5.5 0 0 0 .12-.64l-1.9-3.3a.5.5 0 0 0-.6-.22l-2.35.95a7.9 7.9 0 0 0-1.62-.94l-.35-2.5A.5.5 0 0 0 14.2 2h-4.4a.5.5 0 0 0-.5.42l-.35 2.5a7.8 7.8 0 0 0-1.62.94L5 5.35a.5.5 0 0 0-.6.22l-1.9 3.3a.5.5 0 0 0 .12.64l2 1.55c-.08.62-.08 1.26 0 1.88l-2 1.55a.5.5 0 0 0-.12.64l1.9 3.3a.5.5 0 0 0 .6.22l2.35-.95c.5.39 1.05.71 1.62.94l.35 2.5a.5.5 0 0 0 .5.42h4.4a.5.5 0 0 0 .5-.42l.35-2.5c.57-.23 1.12-.55 1.62-.94l2.35.95a.5.5 0 0 0 .6-.22l1.9-3.3a.5.5 0 0 0-.12-.64l-2-1.55z"/>
+  </svg>`;
+}
+
+/**
+ * Получить SVG иконку процессора (Система)
+ * @param {number} size - Размер иконки (по умолчанию 16)
+ * @param {string} color - Цвет (по умолчанию currentColor)
+ * @returns {string} SVG код
+ */
+export function getCpuIcon(size = 16, color = 'currentColor') {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+    <rect x="4" y="4" width="16" height="16" rx="2"/>
+    <rect x="9" y="9" width="6" height="6"/>
+    <line x1="9" y1="2" x2="9" y2="4"/>
+    <line x1="15" y1="2" x2="15" y2="4"/>
+    <line x1="9" y1="20" x2="9" y2="22"/>
+    <line x1="15" y1="20" x2="15" y2="22"/>
+    <line x1="20" y1="9" x2="22" y2="9"/>
+    <line x1="20" y1="14" x2="22" y2="14"/>
+    <line x1="2" y1="9" x2="4" y2="9"/>
+    <line x1="2" y1="14" x2="4" y2="14"/>
+  </svg>`;
+}
+
+/**
+ * Получить SVG иконку хранилища (ящик)
+ * @param {number} size - Размер иконки (по умолчанию 16)
+ * @param {string} color - Цвет (по умолчанию currentColor)
+ * @returns {string} SVG код
+ */
+export function getStorageIcon(size = 16, color = 'currentColor') {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+    <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+    <line x1="12" y1="22.08" x2="12" y2="12"/>
+  </svg>`;
+}
+
+/**
+ * Получить SVG иконку слайдеров (Модули)
+ * @param {number} size - Размер иконки (по умолчанию 16)
+ * @param {string} color - Цвет (по умолчанию currentColor)
+ * @returns {string} SVG код
+ */
+export function getSlidersIcon(size = 16, color = 'currentColor') {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+    <line x1="4" y1="21" x2="4" y2="14"/>
+    <line x1="4" y1="10" x2="4" y2="3"/>
+    <line x1="12" y1="21" x2="12" y2="12"/>
+    <line x1="12" y1="8" x2="12" y2="3"/>
+    <line x1="20" y1="21" x2="20" y2="16"/>
+    <line x1="20" y1="12" x2="20" y2="3"/>
+    <line x1="1" y1="14" x2="7" y2="14"/>
+    <line x1="9" y1="8" x2="15" y2="8"/>
+    <line x1="17" y1="16" x2="23" y2="16"/>
+  </svg>`;
+}
+
+/**
+ * Получить SVG иконку хранения данных (База данных)
+ * @param {number} size - Размер иконки (по умолчанию 16)
+ * @param {string} color - Цвет (по умолчанию currentColor)
+ * @returns {string} SVG код
+ */
+export function getDatabaseIcon(size = 16, color = 'currentColor') {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+    <ellipse cx="12" cy="5" rx="9" ry="3"/>
+    <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+    <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+  </svg>`;
+}
+
+/**
+ * Получить SVG иконку питания (вкл/выкл)
+ * @param {number} size - Размер иконки (по умолчанию 16)
+ * @param {string} color - Цвет (по умолчанию currentColor)
+ * @returns {string} SVG код
+ */
+export function getPowerIcon(size = 16, color = 'currentColor') {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+    <path d="M18.36 6.64a9 9 0 1 1-12.73 0"/>
+    <line x1="12" y1="2" x2="12" y2="12"/>
   </svg>`;
 }
 

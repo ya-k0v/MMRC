@@ -514,6 +514,299 @@ body.admin-page .sidebar-menu-btn {
   flex-direction: column;
 }
 
+/* ===== Настройки: общие карточки ===== */
+.st-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.st-card-h {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  font-weight: var(--font-weight-semibold);
+  font-size: 0.9rem;
+}
+
+.st-card-h svg {
+  flex: none;
+  color: var(--muted);
+}
+
+.st-card-b {
+  padding: var(--space-sm) var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+/* Бейдж типа хранилища (S3 / локальное) в шапке карточки */
+.st-badge {
+  margin-left: auto;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: var(--font-weight-semibold);
+}
+
+.st-badge--remote {
+  background: rgba(96, 165, 250, 0.14);
+  color: #93c5fd;
+  border: 1px solid rgba(96, 165, 250, 0.28);
+}
+
+.st-badge--local {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+/* Строка параметров (версия/uptime, сводка диска) */
+.st-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+}
+
+.st-meta strong {
+  font-weight: var(--font-weight-semibold);
+}
+
+.st-sep {
+  color: var(--muted);
+}
+
+/* Разделитель внутри карточки настроек */
+.st-hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2px 0;
+}
+
+/* Ряд «Обслуживание» в карточке базы данных */
+.st-details-summary {
+  cursor: pointer;
+}
+
+.st-maintenance {
+  margin-top: var(--space-sm);
+}
+
+/* Сводка занятости диска */
+.st-disk {
+  font-size: 0.75rem;
+}
+
+/* Пара «название — значение» в карточке хранилища */
+.st-kv {
+  display: flex;
+  gap: var(--space-sm);
+  font-size: 0.8rem;
+  min-width: 0;
+}
+
+.st-kv + .st-kv {
+  margin-top: var(--space-2xs);
+}
+
+.st-kv-label {
+  flex: none;
+  min-width: 110px;
+  color: var(--muted);
+}
+
+.st-kv-code {
+  font-family: monospace;
+  word-break: break-all;
+}
+
+/* Строка контейнеров Docker со статусными точками */
+.st-chip-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+}
+
+.st-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.st-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.st-dot--success { background: var(--success); }
+.st-dot--warning { background: var(--warning); }
+.st-dot--danger { background: var(--danger); }
+
+/* Прогресс-бары (занятость диска) */
+.st-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.16);
+  overflow: hidden;
+}
+
+.st-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width var(--transition-base);
+}
+
+.st-bar-fill--success { background: var(--success); }
+.st-bar-fill--warning { background: var(--warning); }
+.st-bar-fill--danger { background: var(--danger); }
+
+/* Заголовок прогресс-бара: занято / свободно */
+.st-bar-head {
+  justify-content: space-between;
+  color: var(--muted);
+  margin-bottom: var(--space-2xs);
+}
+
+/* Сетка модулей */
+.st-mod-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-sm);
+}
+
+.st-mod-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+  min-width: 0;
+}
+
+.st-mod-item:hover {
+  background: var(--panel-hover);
+  border-color: var(--border-hover);
+}
+
+.st-mod-item input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  margin-top: 2px;
+  accent-color: var(--brand);
+}
+
+.st-mod-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.st-mod-name {
+  font-weight: var(--font-weight-medium);
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.st-mod-state {
+  font-size: 0.65rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-weight: var(--font-weight-medium);
+}
+
+.st-mod-state.is-on {
+  background: rgba(34, 197, 94, 0.14);
+  color: var(--success);
+}
+
+.st-mod-state.is-off {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--muted);
+}
+
+.st-mod-desc {
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+/* Ряд действий (кнопки/инпуты APK, ЛД каталог) */
+.st-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.st-ml-auto {
+  margin-left: auto;
+}
+
+/* Компактные поля инсталлятора APK */
+.st-input-xs { width: 70px; }
+.st-input-sm { width: 120px; }
+.st-input-md { width: 130px; }
+
+/* Строка статуса */
+.st-status {
+  min-height: 1.2em;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.st-status-row {
+  min-height: 1.2em;
+}
+
+/* Кнопка «Перезапустить» — компактная опасная */
+button.st-btn-danger {
+  margin-left: auto;
+  background: var(--danger);
+  color: #fff;
+  border-color: var(--danger);
+  min-width: auto;
+  padding: 4px 12px;
+  font-size: 0.75rem;
+  min-height: auto;
+  height: auto;
+}
+
+button.st-btn-danger:hover:not(:disabled) {
+  background: var(--danger-2);
+  border-color: var(--danger-2);
+}
+
+/* Параметры LDAP в отдельной карточке */
+.st-ldap {
+  padding: var(--space-sm) var(--space-md);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.st-ldap code {
+  font-family: monospace;
+}
+
 /* Тело карточки питания тянется до её низа, список занимает остаток. */
 .st-power-body {
   flex: 1;
@@ -531,6 +824,63 @@ body.admin-page .sidebar-menu-btn {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* Ряд устройства: имя + IP + бейдж состояния + действия */
+.st-power-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  flex-wrap: wrap;
+}
+
+.st-power-name {
+  font-weight: var(--font-weight-medium);
+  font-size: 0.85rem;
+  flex: 1 1 140px;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.st-power-ip {
+  font-size: 0.75rem;
+  flex: 0 1 auto;
+}
+
+.st-power-badge {
+  font-size: 0.7rem;
+  padding: 1px 8px;
+  border-radius: 999px;
+  flex: none;
+}
+
+.st-power-badge.is-unknown { background: rgba(148, 163, 184, 0.12); color: var(--muted); }
+.st-power-badge.is-error { background: rgba(239, 68, 68, 0.14); color: var(--danger); }
+.st-power-badge.is-active { background: rgba(34, 197, 94, 0.14); color: var(--success); }
+.st-power-badge.is-sleep { background: rgba(245, 158, 11, 0.16); color: var(--warning); }
+
+button.st-power-btn {
+  font-size: 0.75rem;
+  padding: 3px 12px;
+  min-width: auto;
+  min-height: auto;
+  height: auto;
+}
+
+.st-power-empty {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+/* Кнопки пагинации питания */
+button.st-pager-btn {
+  min-width: auto;
+  padding: 2px 12px;
+  min-height: auto;
+  height: auto;
 }
 
 .st-power-pager {

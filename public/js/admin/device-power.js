@@ -12,6 +12,7 @@
  */
 
 import { escapeHtml } from '../shared/utils.js';
+import { getPowerIcon } from '../shared/svg-icons.js';
 
 const POWER_ENDPOINT = '/api/devices/power';
 const STATE_ENDPOINT = '/api/devices/power-state';
@@ -39,10 +40,10 @@ export function isPowerControllable(device) {
 }
 
 function badgeView(state) {
-  if (!state) return { text: '—', background: 'rgba(148,163,184,0.12)', color: 'var(--muted)' };
-  if (!state.ok) return { text: 'нет ответа', background: 'rgba(239,68,68,0.14)', color: '#ef4444' };
-  if (state.awake) return { text: 'активен', background: 'rgba(34,197,94,0.14)', color: 'var(--success)' };
-  return { text: 'спит', background: 'rgba(245,158,11,0.16)', color: '#f59e0b' };
+  if (!state) return { text: '—', cls: 'is-unknown' };
+  if (!state.ok) return { text: 'нет ответа', cls: 'is-error' };
+  if (state.awake) return { text: 'активен', cls: 'is-active' };
+  return { text: 'спит', cls: 'is-sleep' };
 }
 
 function rowHtml(device) {
@@ -52,13 +53,13 @@ function rowHtml(device) {
   const badge = badgeView(null);
 
   return `
-    <div data-power-row="${escapeHtml(id)}" style="display:flex; align-items:center; gap:var(--space-sm); padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius-sm); flex-wrap:wrap;">
-      <span style="font-weight:500; font-size:0.85rem; flex:1 1 140px; min-width:0; word-break:break-word;">${escapeHtml(name)}</span>
-      <span class="meta" style="font-size:0.75rem; color:var(--muted); flex:0 1 auto;">${escapeHtml(ip || 'IP не задан')}</span>
-      <span data-power-badge="${escapeHtml(id)}" class="meta" style="font-size:0.7rem; padding:1px 8px; border-radius:999px; background:${badge.background}; color:${badge.color}; flex:none;">${badge.text}</span>
-      <button type="button" class="secondary meta" data-power-action="sleep" data-power-id="${escapeHtml(id)}" style="font-size:0.75rem; padding:3px 10px; min-width:auto;">Усыпить</button>
-      <button type="button" class="secondary meta" data-power-action="wake" data-power-id="${escapeHtml(id)}" title="Разбудить и запустить плеер" style="font-size:0.75rem; padding:3px 10px; min-width:auto;">Разбудить</button>
-      <button type="button" class="secondary meta" data-power-action="launch" data-power-id="${escapeHtml(id)}" title="Завершить процесс плеера и открыть заново" style="font-size:0.75rem; padding:3px 10px; min-width:auto;">Запустить плеер</button>
+    <div data-power-row="${escapeHtml(id)}" class="st-power-row">
+      <span class="st-power-name">${escapeHtml(name)}</span>
+      <span class="meta st-power-ip">${escapeHtml(ip || 'IP не задан')}</span>
+      <span data-power-badge="${escapeHtml(id)}" class="meta st-power-badge ${badge.cls}">${badge.text}</span>
+      <button type="button" class="secondary meta st-power-btn" data-power-action="sleep" data-power-id="${escapeHtml(id)}">Усыпить</button>
+      <button type="button" class="secondary meta st-power-btn" data-power-action="wake" data-power-id="${escapeHtml(id)}" title="Разбудить и запустить плеер">Разбудить</button>
+      <button type="button" class="secondary meta st-power-btn" data-power-action="launch" data-power-id="${escapeHtml(id)}" title="Завершить процесс плеера и открыть заново">Запустить плеер</button>
     </div>`;
 }
 
@@ -69,24 +70,24 @@ export function renderPowerControlsHtml(devices) {
   deviceNames = new Map((devices || []).map(device => [device.device_id, device.name || device.device_id]));
 
   return `
-    <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-      <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-sm); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
-        Управление устройствами
+    <div class="st-card">
+      <div class="st-card-h">
+        ${getPowerIcon(16)}
+        <span>Управление устройствами</span>
       </div>
       <div class="st-power-body">
-        <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center;">
+        <div class="st-actions">
           <button type="button" id="stPowerSleepAll" class="secondary">Усыпить все</button>
           <button type="button" id="stPowerWakeAll" class="primary">Разбудить все</button>
           <button type="button" id="stPowerWakeLaunch" class="secondary">Разбудить и запустить плеер</button>
           <button type="button" id="stPowerLaunchAll" class="primary">Запустить плеер везде</button>
-          <span id="stPowerStatus" class="meta" style="font-size:0.8rem; min-height:1.2em;"></span>
+          <span id="stPowerStatus" class="st-status"></span>
         </div>
-        <div id="stPowerList" class="st-power-list">${powerTargets.length ? powerTargets.map(rowHtml).join('') : '<div class="meta" style="font-size:0.8rem; color:var(--muted);">Нет Android-устройств</div>'}</div>
+        <div id="stPowerList" class="st-power-list">${powerTargets.length ? powerTargets.map(rowHtml).join('') : '<div class="st-power-empty">Нет Android-устройств</div>'}</div>
         <div id="stPowerPager" class="st-power-pager" hidden>
-          <button type="button" id="stPowerPrev" class="secondary meta" style="min-width:auto; padding:2px 8px;" title="Предыдущая страница">‹</button>
+          <button type="button" id="stPowerPrev" class="secondary meta st-pager-btn" title="Предыдущая страница">‹</button>
           <span id="stPowerPagerInfo"></span>
-          <button type="button" id="stPowerNext" class="secondary meta" style="min-width:auto; padding:2px 8px;" title="Следующая страница">›</button>
+          <button type="button" id="stPowerNext" class="secondary meta st-pager-btn" title="Следующая страница">›</button>
         </div>
       </div>
     </div>`;
@@ -106,7 +107,7 @@ function fitPowerList() {
   if (!list || !pager) return;
 
   if (!powerTargets.length) {
-    list.innerHTML = '<div class="meta" style="font-size:0.8rem; color:var(--muted);">Нет Android-устройств</div>';
+    list.innerHTML = '<div class="st-power-empty">Нет Android-устройств</div>';
     pager.hidden = true;
     return;
   }
@@ -168,8 +169,7 @@ function updateBadges() {
   document.querySelectorAll('[data-power-badge]').forEach((el) => {
     const badge = badgeView(powerStates.get(el.getAttribute('data-power-badge')));
     el.textContent = badge.text;
-    el.style.background = badge.background;
-    el.style.color = badge.color;
+    el.className = `meta st-power-badge ${badge.cls}`;
   });
 }
 

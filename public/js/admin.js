@@ -15,7 +15,7 @@ import { renderDeviceCard as renderDeviceCardModule, deviceCardSignature, buildD
 import { setupUploadUI as setupUploadUIModule } from './admin/upload-ui.js';
 import { showDevicesModal, showUsersModal, showSettingsModal } from './admin/modal.js';
 import { initSystemMonitor, stopSystemMonitor } from './admin/system-monitor.js';
-import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon, getCloseIcon, getCheckIcon, getUnlockIcon, getLockIcon, getDeviceIcon, getKeyIcon, getTrashIcon, getPauseIcon, getPlayIcon, getCopyIcon, getDownloadIcon, getBellIcon } from './shared/svg-icons.js';
+import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon, getCloseIcon, getCheckIcon, getUnlockIcon, getLockIcon, getDeviceIcon, getKeyIcon, getTrashIcon, getPauseIcon, getPlayIcon, getCopyIcon, getDownloadIcon, getBellIcon, getStorageIcon, getCpuIcon, getSlidersIcon, getDatabaseIcon, getMobileIcon } from './shared/svg-icons.js';
 import { escapeHtml } from './shared/utils.js';
 import { initNotifications } from './admin/notifications.js';
 import { mountNotificationsSection } from './admin/notifications-modal.js';
@@ -313,63 +313,73 @@ function createSettingsSection() {
       <div class="settings-columns"><div class="settings-col settings-col--left">
 
         <!-- Система: версия/uptime/перезапуск + монитор + состояния контейнеров -->
-        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-sm); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="2" x2="9" y2="4"/><line x1="15" y1="2" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="15" y1="20" x2="15" y2="22"/><line x1="20" y1="9" x2="22" y2="9"/><line x1="20" y1="14" x2="22" y2="14"/><line x1="2" y1="9" x2="4" y2="9"/><line x1="2" y1="14" x2="4" y2="14"/></svg>
-            Система
+        <div class="st-card">
+          <div class="st-card-h">
+            ${getCpuIcon(16)}
+            <span>Система</span>
           </div>
-          <div style="padding:var(--space-sm); display:flex; flex-direction:column; gap:var(--space-sm);">
-            <div style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; font-size:0.8rem;">
-              <span style="font-weight:600;" id="stSysVersion">v${escapeHtml(version)}</span>
-              <span id="stUpdateBranch" class="meta" style="color:var(--muted);"></span>
-              <span style="color:var(--muted);">·</span>
+          <div class="st-card-b">
+            <div class="st-meta">
+              <strong id="stSysVersion">v${escapeHtml(version)}</strong>
+              <span id="stUpdateBranch" class="meta"></span>
+              <span class="st-sep">·</span>
               <span>${escapeHtml(isSqlite ? 'SQLite' : 'PostgreSQL')}</span>
-              <span style="color:var(--muted);">·</span>
+              <span class="st-sep">·</span>
               <span>Uptime: <strong id="stSysUptime">—</strong></span>
-              ${docker && docker.enabled ? `<span style="color:var(--muted);">·</span><span>Docker: <strong>${escapeHtml(docker.mainImage || '')}:${escapeHtml(docker.mainTag || '')}</strong></span>` : ''}
-              <button id="stRestart" class="secondary meta" style="margin-left:auto; background:var(--danger); color:#fff; border-color:var(--danger); min-width:auto; padding:4px 12px; font-size:0.75rem;">Перезапустить</button>
+              ${docker && docker.enabled ? `<span class="st-sep">·</span><span>Docker: <strong>${escapeHtml(docker.mainImage || '')}:${escapeHtml(docker.mainTag || '')}</strong></span>` : ''}
+              <button id="stRestart" class="secondary meta st-btn-danger">Перезапустить</button>
             </div>
 
             <div id="stSysMonitorBody">
-              <div class="meta" style="font-size:0.8rem; color:var(--muted);">Загрузка...</div>
+              <div class="meta">Загрузка...</div>
             </div>
 
-            <hr style="border:none; border-top:1px solid var(--border); margin:2px 0;" />
+            <hr class="st-hr" />
 
             ${containers && containers.length ? `
-            <div style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; font-size:0.8rem;">
+            <div class="st-chip-row">
               ${containers.filter(c => shortContainerName(c.names) !== 'minio-setup').map(c => {
                 const running = String(c.state || '').toLowerCase() === 'running';
                 // Одноразовые контейнеры (инициализация/миграции) не должны
                 // гореть красным «ошибкой»: exited (0) — штатное завершение.
                 const exitCode = /Exited \((\d+)\)/.exec(String(c.status || ''));
                 const exitedClean = !running && exitCode && Number(exitCode[1]) === 0;
-                const dot = running ? 'var(--success)' : exitedClean ? 'var(--warning)' : 'var(--danger)';
-                return `<span style="display:inline-flex; align-items:center; gap:5px;" title="${escapeHtml(c.image || '')}${c.status ? ` · ${escapeHtml(c.status)}` : ''}">
-                  <span style="width:6px; height:6px; border-radius:50%; background:${dot}; flex:none;"></span>
+                const dot = running ? 'st-dot--success' : exitedClean ? 'st-dot--warning' : 'st-dot--danger';
+                return `<span class="st-chip" title="${escapeHtml(c.image || '')}${c.status ? ` · ${escapeHtml(c.status)}` : ''}">
+                  <span class="st-dot ${dot}"></span>
                   ${escapeHtml(shortContainerName(c.names))}
                 </span>`;
-              }).join('<span style="color:var(--muted);">·</span>')}
+              }).join('<span class="st-sep">·</span>')}
             </div>` : ''}
           </div>
         </div>
 
         <!-- Хранилище контента -->
-        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-sm); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
-            Хранилище
-            <span class="meta" id="stStorageBadge" style="margin-left:auto; padding:2px 10px; border-radius:999px; font-size:0.75rem; font-weight:600; ${storageInfo.isRemote ? 'background:rgba(96,165,250,0.14); color:#93c5fd; border:1px solid rgba(96,165,250,0.28);' : 'background:rgba(148,163,184,0.12); color:var(--muted); border:1px solid var(--border);'}">${storageInfo.isRemote ? 'S3' : 'Локальное'}</span>
+        <div class="st-card">
+          <div class="st-card-h">
+            ${getStorageIcon(16)}
+            <span>Хранилище</span>
+            <span class="st-badge ${storageInfo.isRemote ? 'st-badge--remote' : 'st-badge--local'}" id="stStorageBadge">${storageInfo.isRemote ? 'S3' : 'Локальное'}</span>
           </div>
-          <div style="padding:var(--space-sm); display:flex; flex-direction:column; gap:var(--space-sm);">
+          <div class="st-card-b">
             ${storageInfo.isRemote ? `
-              <div style="display:flex; flex-direction:column; gap:var(--space-2xs); font-size:0.8rem;">
-                <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:110px; color:var(--muted);">Endpoint</span><code style="font-family:monospace; word-break:break-all;">${escapeHtml(storageInfo.endpoint || 'не задан')}</code></div>
-                <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:110px; color:var(--muted);">Bucket</span><code style="font-family:monospace; word-break:break-all;">${escapeHtml(storageInfo.bucket || 'не задан')}</code></div>
-                <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:110px; color:var(--muted);">Регион</span><code style="font-family:monospace; word-break:break-all;">${escapeHtml(storageInfo.region || 'по умолчанию')}</code></div>
+              <div class="st-kv">
+                <span class="st-kv-label">Endpoint</span>
+                <code class="st-kv-code">${escapeHtml(storageInfo.endpoint || 'не задан')}</code>
+              </div>
+              <div class="st-kv">
+                <span class="st-kv-label">Bucket</span>
+                <code class="st-kv-code">${escapeHtml(storageInfo.bucket || 'не задан')}</code>
+              </div>
+              <div class="st-kv">
+                <span class="st-kv-label">Регион</span>
+                <code class="st-kv-code">${escapeHtml(storageInfo.region || 'по умолчанию')}</code>
               </div>
             ` : `
-              <div style="display:flex; gap:var(--space-sm); font-size:0.8rem;"><span class="meta" style="min-width:110px; color:var(--muted);">Путь</span><code style="font-family:monospace; word-break:break-all;">${escapeHtml(contentRoot)}</code></div>
+              <div class="st-kv">
+                <span class="st-kv-label">Путь</span>
+                <code class="st-kv-code">${escapeHtml(contentRoot)}</code>
+              </div>
             `}
             ${storageInfo.usage ? (() => {
               const u = storageInfo.usage;
@@ -377,19 +387,19 @@ function createSettingsSection() {
               // (реальные данные системы). dataMB — объём только наших файлов.
               const occupiedMB = u.usedMB || 0;
               const pct = u.totalMB ? Math.min(100, Math.round((occupiedMB / u.totalMB) * 100)) : 0;
-              const barColor = pct >= 90 ? 'var(--danger)' : pct >= 75 ? 'var(--warning)' : 'var(--success)';
+              const barClass = pct >= 90 ? 'st-bar-fill--danger' : pct >= 75 ? 'st-bar-fill--warning' : 'st-bar-fill--success';
               const fmt = mb => mb >= 1024 ? `${(mb / 1024).toFixed(1)} ГБ` : `${mb} МБ`;
               const dataLine = u.dataMB != null
-                ? `<div style="color:var(--muted); margin-top:2px;">Данные MMRC: <strong style="color:var(--text);">${fmt(u.dataMB)}</strong></div>`
+                ? `<div class="meta">Данные MMRC: <strong>${fmt(u.dataMB)}</strong></div>`
                 : '';
               return `
-              <div title="${escapeHtml(u.path || '')}" style="font-size:0.75rem;">
-                <div style="display:flex; justify-content:space-between; gap:var(--space-sm); color:var(--muted); margin-bottom:4px;">
-                  <span>Занято на диске: <strong style="color:var(--text);">${fmt(occupiedMB)}</strong></span>
+              <div title="${escapeHtml(u.path || '')}" class="st-disk">
+                <div class="st-bar-head">
+                  <span>Занято на диске: <strong>${fmt(occupiedMB)}</strong></span>
                   <span>свободно ${fmt(u.availableMB)} из ${fmt(u.totalMB)} · ${pct}%</span>
                 </div>
-                <div style="height:6px; border-radius:999px; background:rgba(148,163,184,0.16); overflow:hidden;">
-                  <div style="height:100%; width:${pct}%; background:${barColor}; border-radius:999px;"></div>
+                <div class="st-bar">
+                  <div class="st-bar-fill ${barClass}" style="width:${pct}%;"></div>
                 </div>
                 ${dataLine}
               </div>`;
@@ -398,75 +408,75 @@ function createSettingsSection() {
         </div>
 
         <!-- Модули -->
-        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-sm); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
-            Модули
+        <div class="st-card">
+          <div class="st-card-h">
+            ${getSlidersIcon(16)}
+            <span>Модули</span>
           </div>
-          <div style="padding:var(--space-sm); display:flex; flex-direction:column; gap:var(--space-sm);">
-            <div id="stModList" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:var(--space-sm);">
-              ${modules.length === 0 ? '<div class="meta" style="color:var(--muted);">Нет доступных модулей</div>' :
+          <div class="st-card-b">
+            <div id="stModList" class="st-mod-grid">
+              ${modules.length === 0 ? '<div class="meta">Нет доступных модулей</div>' :
                 modules.map(m => `
-                  <label class="st-mod-item" style="display:flex; align-items:flex-start; gap:8px; padding:10px; border:1px solid var(--border); border-radius:var(--radius-sm); cursor:pointer; transition:background 0.15s, border-color 0.15s; min-width:0;">
-                    <input type="checkbox" data-module-id="${escapeHtml(m.id)}" ${m.enabled ? 'checked' : ''} style="width:18px; height:18px; flex:none; margin-top:2px;" />
-                    <div style="min-width:0; flex:1;">
-                      <div style="font-weight:500; font-size:0.85rem; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                  <label class="st-mod-item">
+                    <input type="checkbox" data-module-id="${escapeHtml(m.id)}" ${m.enabled ? 'checked' : ''} />
+                    <div class="st-mod-body">
+                      <div class="st-mod-name">
                         ${escapeHtml(m.name)}
-                        <span class="meta" data-mod-state style="font-size:0.65rem; padding:1px 6px; border-radius:999px; background:${m.enabled ? 'rgba(34,197,94,0.14)' : 'rgba(148,163,184,0.12)'}; color:${m.enabled ? 'var(--success)' : 'var(--muted)'};">${m.enabled ? 'вкл' : 'выкл'}</span>
+                        <span class="st-mod-state ${m.enabled ? 'is-on' : 'is-off'}" data-mod-state>${m.enabled ? 'вкл' : 'выкл'}</span>
                       </div>
-                      ${m.description ? `<div class="meta" style="font-size:0.75rem; line-height:1.4;">${escapeHtml(m.description)}</div>` : ''}
+                      ${m.description ? `<div class="st-mod-desc">${escapeHtml(m.description)}</div>` : ''}
                     </div>
                   </label>
                 `).join('')}
             </div>
-            <div id="stModStatus" class="meta" style="min-height:1.2em; font-size:0.8rem;"></div>
+            <div id="stModStatus" class="st-status"></div>
           </div>
         </div>
 
         <!-- APK -->
-        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-sm); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
-            APK устройств
+        <div class="st-card">
+          <div class="st-card-h">
+            ${getMobileIcon(16)}
+            <span>APK устройств</span>
           </div>
-          <div style="padding:var(--space-sm); display:flex; flex-direction:column; gap:var(--space-sm);">
-            <div id="stApkVersion" class="meta" style="font-size:0.8rem; color:var(--muted); display:flex; align-items:center; gap:var(--space-sm);">Загрузка...</div>
-            <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center;">
-              <input id="stApkIp" class="input" placeholder="IP" style="width:120px;" />
-              <input id="stApkPort" class="input" placeholder="Порт" value="5555" style="width:70px;" />
-              <input id="stApkId" class="input" placeholder="ID устройства" style="width:130px;" />
-              <input id="stApkName" class="input" placeholder="Имя" style="width:120px;" />
+          <div class="st-card-b">
+            <div id="stApkVersion" class="meta st-actions">Загрузка...</div>
+            <div class="st-actions">
+              <input id="stApkIp" class="input st-input-sm" placeholder="IP" />
+              <input id="stApkPort" class="input st-input-xs" placeholder="Порт" value="5555" />
+              <input id="stApkId" class="input st-input-md" placeholder="ID устройства" />
+              <input id="stApkName" class="input st-input-sm" placeholder="Имя" />
               <button id="stApkInstall" class="primary">Установить</button>
-              <button id="stApkBatch" class="secondary" style="margin-left:auto;">Обновить все</button>
+              <button id="stApkBatch" class="secondary st-ml-auto">Обновить все</button>
             </div>
-            <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center; min-height:1.2em;">
-              <span id="stApkStatus" class="meta" style="font-size:0.8rem;"></span>
-              <span id="stApkBatchStatus" class="meta" style="font-size:0.8rem; margin-left:auto;"></span>
+            <div class="st-actions">
+              <span id="stApkStatus" class="st-status"></span>
+              <span id="stApkBatchStatus" class="st-status st-ml-auto"></span>
             </div>
           </div>
         </div>
 
         <!-- База данных (только SQLite) -->
         ${isSqlite ? `
-        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-sm); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
-            База данных
+        <div class="st-card">
+          <div class="st-card-h">
+            ${getDatabaseIcon(16)}
+            <span>База данных</span>
           </div>
-          <div style="padding:var(--space-sm); display:flex; flex-direction:column; gap:var(--space-sm);">
-            <div style="display:flex; gap:var(--space-sm); align-items:center; flex-wrap:wrap;">
+          <div class="st-card-b">
+            <div class="st-actions">
               <button id="stDbExport" class="primary">Экспорт</button>
               <button id="stDbImport" class="secondary">Импорт</button>
               <input type="file" id="stDbImportInput" accept=".db" style="display:none;" />
             </div>
             <details>
-              <summary class="meta" style="cursor:pointer; color:var(--muted); font-size:0.8rem;">Обслуживание</summary>
-              <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; margin-top:var(--space-sm); align-items:center;">
+              <summary class="meta st-details-summary">Обслуживание</summary>
+              <div class="st-actions st-maintenance">
                 <button id="stDbCheckFiles" class="secondary meta">Проверить файлы</button>
                 <button id="stDbWalCheckpoint" class="secondary meta">WAL Checkpoint</button>
                 <button id="stDbCleanupMissing" class="secondary meta">Очистить отсутствующие</button>
                 <button id="stDbCleanupOrphaned" class="secondary meta">Очистить осиротевшие</button>
-                <div id="stDbMaintStatus" class="meta" style="font-size:0.8rem;"></div>
+                <div id="stDbMaintStatus" class="st-status"></div>
               </div>
             </details>
           </div>
@@ -474,12 +484,12 @@ function createSettingsSection() {
 
         <!-- LDAP (только если настроен) -->
         ${ldap && ldap.enabled ? `
-        <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
-          <div style="padding:var(--space-sm) var(--space-sm); display:flex; align-items:center; gap:var(--space-sm); font-size:0.8rem;">
-            <span style="width:6px; height:6px; border-radius:50%; background:var(--success);"></span>
-            LDAP: <code style="font-family:monospace;">${escapeHtml(ldap.url || '—')}</code>
-            <span style="color:var(--muted);">·</span>
-            Base DN: <code style="font-family:monospace;">${escapeHtml(ldap.baseDN || '—')}</code>
+        <div class="st-card">
+          <div class="st-ldap">
+            <span class="st-dot st-dot--success"></span>
+            <span>LDAP: <code>${escapeHtml(ldap.url || '—')}</code></span>
+            <span class="st-sep">·</span>
+            <span>Base DN: <code>${escapeHtml(ldap.baseDN || '—')}</code></span>
           </div>
         </div>` : ''}
 
@@ -514,8 +524,8 @@ function createSettingsSection() {
           if (badge) {
             const on = cb.checked;
             badge.textContent = on ? 'вкл' : 'выкл';
-            badge.style.background = on ? 'rgba(34,197,94,0.14)' : 'rgba(148,163,184,0.12)';
-            badge.style.color = on ? 'var(--success)' : 'var(--muted)';
+            badge.classList.toggle('is-on', on);
+            badge.classList.toggle('is-off', !on);
           }
           if (modStatus) { modStatus.innerHTML = result.message || (r.ok ? getCheckIcon(14, 'var(--success)') + ' Сохранено' : 'Ошибка'); modStatus.style.color = r.ok ? 'var(--success)' : 'var(--danger)'; }
         } catch { if (modStatus) { modStatus.textContent = 'Ошибка соединения'; modStatus.style.color = 'var(--danger)'; } }
