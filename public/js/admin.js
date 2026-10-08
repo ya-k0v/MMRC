@@ -98,6 +98,19 @@ setupSocketListeners(socket, {
   },
   onPowerState: (payload) => {
     applyPowerState(payload);
+    // Точечно обновляем плитку и кэш: devices/updated после команды питания
+    // не приходит, иначе «спит» на плитке появился бы только после перезагрузки.
+    if (payload?.deviceId) {
+      const dataIdx = devicesCache.findIndex(d => d.device_id === payload.deviceId);
+      if (dataIdx !== -1) {
+        const awake = payload.awake;
+        devicesCache[dataIdx] = {
+          ...devicesCache[dataIdx],
+          powerState: awake == null ? null : (awake ? 'awake' : 'sleep')
+        };
+        updateDeviceTile(payload.deviceId, devicesCache[dataIdx], deviceListCtx);
+      }
+    }
   },
   onFileProcessing: (device_id, file) => {
     if (currentDeviceId === device_id) {

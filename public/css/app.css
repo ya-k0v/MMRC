@@ -688,6 +688,10 @@ body.light .tvTile.active {
   background: var(--danger);
 }
 
+.tvTile-status.sleeping {
+  background: var(--warning);
+}
+
 .tvTile-meta {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2354,6 +2358,12 @@ body.admin-page .device-meta-chip.is-danger {
   border-color: rgba(239, 68, 68, 0.45);
   background: rgba(239, 68, 68, 0.12);
   color: var(--danger);
+}
+
+body.admin-page .device-meta-chip.is-warning {
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--warning);
 }
 
 body.admin-page a.device-meta-chip.is-link {

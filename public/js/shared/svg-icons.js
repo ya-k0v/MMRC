@@ -354,6 +354,15 @@ export function getPlayIcon(size = 16, color = 'currentColor') {
 }
 
 /**
+ * Получить SVG иконку «спит» (🌙)
+ */
+export function getMoonIcon(size = 16, color = 'currentColor') {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+  </svg>`;
+}
+
+/**
  * Получить SVG иконку копирования (📋)
  */
 export function getCopyIcon(size = 16, color = 'currentColor') {

@@ -1,7 +1,7 @@
 // device-card.js - ПОЛНЫЙ код renderDeviceCard из admin.js
 import { DEVICE_ICONS, DEVICE_TYPE_NAMES } from '../shared/constants.js';
 import { escapeHtml } from '../shared/utils.js';
-import { getCheckIcon, getCrossIcon, getFileIcon, getFolderIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon } from '../shared/svg-icons.js';
+import { getCheckIcon, getCrossIcon, getFileIcon, getFolderIcon, getMoonIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon } from '../shared/svg-icons.js';
 import { adminFetch } from './auth.js';
 import { clearDetail, clearFilesPane } from './ui-helpers.js';
 import { setupUploadUI } from './upload-ui.js';
@@ -42,7 +42,8 @@ export function deviceCardSignature(d, readyDevices, nodeNames = {}) {
     d.ipAddress || '',
     d.appVersion || '',
     d.files?.length ?? 0,
-    readyDevices && readyDevices.has(d.device_id) ? '1' : '0'
+    readyDevices && readyDevices.has(d.device_id) ? '1' : '0',
+    d.powerState === 'sleep' ? 'sleep' : ''
   ].join('\u0001');
 }
 
@@ -231,15 +232,23 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   metaDiv.appendChild(createMetaChip({ text: `ID: ${d.device_id}`, tone: 'is-id' }));
   metaDiv.appendChild(createMetaChip({ text: `Файлов: ${d.files?.length || 0}` }));
 
-  const isReadyDevice = readyDevices.has(d.device_id);
-  const readyIcon = isReadyDevice
-    ? getCheckIcon(14, 'var(--success)')
-    : getCrossIcon(14, 'var(--danger)');
-  metaDiv.appendChild(createMetaChip({
-    text: isReadyDevice ? 'Готов' : 'Не готов',
-    tone: isReadyDevice ? 'is-success' : 'is-danger',
-    iconSvg: readyIcon
-  }));
+  if (d.powerState === 'sleep') {
+    metaDiv.appendChild(createMetaChip({
+      text: 'Спит',
+      tone: 'is-warning',
+      iconSvg: getMoonIcon(14, 'var(--warning)')
+    }));
+  } else {
+    const isReadyDevice = readyDevices.has(d.device_id);
+    const readyIcon = isReadyDevice
+      ? getCheckIcon(14, 'var(--success)')
+      : getCrossIcon(14, 'var(--danger)');
+    metaDiv.appendChild(createMetaChip({
+      text: isReadyDevice ? 'Готов' : 'Не готов',
+      tone: isReadyDevice ? 'is-success' : 'is-danger',
+      iconSvg: readyIcon
+    }));
+  }
 
   const playerLink = document.createElement('a');
   playerLink.href = '#';

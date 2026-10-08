@@ -58,6 +58,8 @@ function readTileState(d, readyDevices, currentDeviceId, nodeNames) {
     filesCount,
     isActive,
     isReady,
+    // Хранимое на сервере состояние питания: «спит» перебивает «готов/не готов».
+    powerState: d.powerState === 'sleep' ? 'sleep' : null,
     metaText: `ID: ${d.device_id}${d.ipAddress ? ` • IP: ${d.ipAddress}` : ''}`,
     filesText: `Файлов: ${filesCount}`
   };
@@ -69,9 +71,18 @@ function contentSignature(tileState) {
   return `${tileState.name}\u0001${tileState.metaText}\u0001${tileState.filesText}`;
 }
 
-function applyStatus(li, isReady) {
+function applyStatus(li, isReady, powerState) {
   const statusSpan = li.querySelector('.tvTile-status');
   if (!statusSpan) return;
+  if (powerState === 'sleep') {
+    const nextClass = 'tvTile-status sleeping';
+    const nextLabel = 'sleep';
+    const nextTitle = 'Спит';
+    if (statusSpan.className !== nextClass) statusSpan.className = nextClass;
+    if (statusSpan.getAttribute('aria-label') !== nextLabel) statusSpan.setAttribute('aria-label', nextLabel);
+    if (statusSpan.title !== nextTitle) statusSpan.title = nextTitle;
+    return;
+  }
   const nextClass = isReady ? 'tvTile-status online' : 'tvTile-status offline';
   const nextLabel = isReady ? 'online' : 'offline';
   const nextTitle = isReady ? 'Готов' : 'Не готов';
@@ -81,7 +92,7 @@ function applyStatus(li, isReady) {
 }
 
 function applyTile(li, tileState) {
-  applyStatus(li, tileState.isReady);
+  applyStatus(li, tileState.isReady, tileState.powerState);
   li.classList.toggle('active', tileState.isActive);
   const signature = contentSignature(tileState);
   if (li.dataset.sig === signature) return;
@@ -114,9 +125,9 @@ function createTile(d, tileState) {
   nameDiv.textContent = tileState.name;
 
   const statusSpan = document.createElement('span');
-  statusSpan.className = `tvTile-status ${tileState.isReady ? 'online' : 'offline'}`;
-  statusSpan.title = tileState.isReady ? 'Готов' : 'Не готов';
-  statusSpan.setAttribute('aria-label', tileState.isReady ? 'online' : 'offline');
+  statusSpan.className = `tvTile-status ${tileState.powerState === 'sleep' ? 'sleeping' : (tileState.isReady ? 'online' : 'offline')}`;
+  statusSpan.title = tileState.powerState === 'sleep' ? 'Спит' : (tileState.isReady ? 'Готов' : 'Не готов');
+  statusSpan.setAttribute('aria-label', tileState.powerState === 'sleep' ? 'sleep' : (tileState.isReady ? 'online' : 'offline'));
 
   header.appendChild(nameDiv);
   header.appendChild(statusSpan);
@@ -134,7 +145,7 @@ function createTile(d, tileState) {
   content.appendChild(filesDiv);
   li.appendChild(content);
 
-  applyStatus(li, tileState.isReady);
+  applyStatus(li, tileState.isReady, tileState.powerState);
   li.classList.toggle('active', tileState.isActive);
   return li;
 }
@@ -419,9 +430,11 @@ export function syncDeviceStatuses(context) {
   if (!tvList) return;
   const readyDevices = ctx.getReadyDevices() || new Set();
   const currentDeviceId = ctx.getCurrentDeviceId();
+  const devices = ctx.getDevicesCache() || [];
   tvList.querySelectorAll('.tvTile').forEach((li) => {
     const deviceId = li.dataset.id || '';
-    applyStatus(li, readyDevices.has(deviceId));
+    const device = devices.find((d) => d.device_id === deviceId);
+    applyStatus(li, readyDevices.has(deviceId), device?.powerState || null);
     li.classList.toggle('active', deviceId === currentDeviceId);
   });
 }
