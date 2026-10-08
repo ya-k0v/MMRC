@@ -25,6 +25,7 @@ import { getCurrentStorage } from '../storage/current.js';
 import { runMigrations } from '../database/migrate.js';
 import { loadDevicesFromDB, loadFileNamesFromDB, saveDevicesToDB } from '../storage/devices-storage-sqlite.js';
 import { updateDeviceFilesFromDB } from './files.js';
+import { resolveDeviceAdbPort } from './devices.js';
 import { repairImportedFilePaths } from '../database/files-metadata.js';
 import bcrypt from 'bcrypt';
 import {
@@ -542,8 +543,11 @@ export function createAdminRouter(deps = {}) {
         }
 
         try {
-      const deviceAdbPort = target.adbPort || '5555';
-      await installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl, port: deviceAdbPort });
+          // Порт берём из БД (как и всё остальное управление), с откатом
+          // на память/дефолт. target.adbPort пришёл из памяти и может быть
+          // устаревшим — раньше массовое обновление шло на него же.
+          const deviceAdbPort = await resolveDeviceAdbPort(deviceId);
+          await installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl, port: deviceAdbPort });
           updated += 1;
           results.push({ deviceId, deviceName, ip, ok: true });
         } catch (error) {

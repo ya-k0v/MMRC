@@ -70,16 +70,13 @@ function resolveDeviceEntry(rawId, devicesMap) {
 /**
  * ADB-порт устройства для удалённых операций.
  *
- * Порт задаётся при установке APK и живёт в БД (devices.adb_port), но в
- * памяти его может не быть: устройство могло зарегистрироваться до того, как
- * порт записали, либо строка создавалась с дефолтом. Поэтому память — только
- * кэш, а при её промахе смотрим в базу, и лишь потом берём дефолт.
+ * Порт задаётся при установке APK и живёт в БД (devices.adb_port). Источник
+ * истины — база, а не память: память загружается один раз при старте, и если
+ * порт в БД поменяли после (или строка создалась с дефолтом до записи порта),
+ * закешированное в памяти значение устаревает. Поэтому сначала спрашиваем БД
+ * и освежаем кэш, в память откатываемся, только если строки в БД нет.
  */
-async function resolveDeviceAdbPort(deviceId, device) {
-  if (device && device.adbPort) {
-    return String(device.adbPort);
-  }
-
+export async function resolveDeviceAdbPort(deviceId, device) {
   try {
     const row = await getDatabase().get(
       'SELECT adb_port FROM devices WHERE device_id = ?',
@@ -92,6 +89,10 @@ async function resolveDeviceAdbPort(deviceId, device) {
     }
   } catch (e) {
     logger.warn('[ADB] Не удалось прочитать adb_port из БД', { deviceId, error: e.message });
+  }
+
+  if (device && device.adbPort) {
+    return String(device.adbPort);
   }
 
   return String(DEFAULT_ADB_PORT);
