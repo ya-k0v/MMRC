@@ -12,12 +12,15 @@ set -o pipefail
 # Configuration
 # ========================
 MMRC_VERSION_INFO=$(curl -fsSL "https://raw.githubusercontent.com/ya-k0v/MMRC/v340/version.json" 2>/dev/null || echo '{"version":"3.4.0","branch":"v340","dockerTag":"v340","dockerImages":{"server":"pingwin1900/mmrc","converter":"pingwin1900/mmrc-converter","ffmpeg":"pingwin1900/mmrc-ffmpeg","streamer":"pingwin1900/mmrc-streamer"}}')
-MMRC_VERSION=$(echo "$MMRC_VERSION_INFO" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
-MMRC_BRANCH=$(echo "$MMRC_VERSION_INFO" | grep -o '"branch":"[^"]*"' | cut -d'"' -f4)
+# version.json приходит pretty-printed ("version": "3.4.0" с пробелом после
+# двоеточия) — грепаем с " *", терпимо к обоим форматам. При любом сбое парсинга
+# (set -e + pipefail) откатываемся на дефолт, а не молча завершаем установку.
+MMRC_VERSION=$(printf '%s' "$MMRC_VERSION_INFO" | grep -o '"version": *"[^"]*"' | head -n1 | cut -d'"' -f4) || MMRC_VERSION="3.4.0"
+MMRC_BRANCH=$(printf '%s' "$MMRC_VERSION_INFO" | grep -o '"branch": *"[^"]*"' | head -n1 | cut -d'"' -f4) || MMRC_BRANCH="v340"
 : "${MMRC_BRANCH:=v340}"
-MMRC_DOCKER_TAG=$(echo "$MMRC_VERSION_INFO" | grep -o '"dockerTag":"[^"]*"' | cut -d'"' -f4)
+MMRC_DOCKER_TAG=$(printf '%s' "$MMRC_VERSION_INFO" | grep -o '"dockerTag": *"[^"]*"' | head -n1 | cut -d'"' -f4) || MMRC_DOCKER_TAG="v340"
 : "${MMRC_DOCKER_TAG:=v340}"
-MMRC_STREAMER_IMAGE="$(echo "$MMRC_VERSION_INFO" | grep -o '"streamer":"[^"]*"' | cut -d'"' -f4 || echo "pingwin1900/mmrc-streamer")"
+MMRC_STREAMER_IMAGE=$(printf '%s' "$MMRC_VERSION_INFO" | grep -o '"streamer": *"[^"]*"' | head -n1 | cut -d'"' -f4) || MMRC_STREAMER_IMAGE="pingwin1900/mmrc-streamer"
 MMRC_REPO="https://github.com/ya-k0v/MMRC"
 MMRC_RAW="https://raw.githubusercontent.com/ya-k0v/MMRC/${MMRC_BRANCH}"
 INSTALL_DIR="/opt/mmrc"
