@@ -344,6 +344,16 @@ install_mmrc() {
     # Generate .env
     info "Generating configuration..."
     JWT_SECRET=$(openssl rand -hex 64)
+    REDIS_PASSWORD_GEN=$(openssl rand -hex 32)
+    # Автоподбор CPU-лимита для mmrc: ядра хоста минус запас 2 (минимум 1),
+    # чтобы ffmpeg при конвертации не «заморозил» остальные контейнеры и сам хост.
+    if [ -z "${MMRC_CPU_LIMIT:-}" ]; then
+      MMRC_CPU_LIMIT=1
+      if command -v nproc >/dev/null 2>&1; then
+        DETECTED_CORES=$(nproc)
+        [ -n "$DETECTED_CORES" ] && [ "$DETECTED_CORES" -gt 3 ] 2>/dev/null && MMRC_CPU_LIMIT=$((DETECTED_CORES - 2))
+      fi
+    fi
     cat > "$ENV_FILE" << ENVEOF
 # MMRC Configuration
 # Generated on $(date)
@@ -380,6 +390,10 @@ NIGHT_OPT_START_HOUR=1
 NIGHT_OPT_END_HOUR=5
 
 # Resource Limits
+# MMRC_CPU_LIMIT — максимально число ядер, которое может занять контейнер mmrc
+# при обработке видео (ffmpeg). Подбирается автоматически: ядра хоста минус 2
+# (минимум 1). Для переопределения укажите MMRC_CPU_LIMIT перед запуском скрипта.
+MMRC_CPU_LIMIT=$MMRC_CPU_LIMIT
 JOB_RESERVE_CPU_PERCENT=30
 JOB_RESERVE_MEMORY_MB=2048
 
@@ -401,7 +415,8 @@ STREAMER_IMAGE=$MMRC_STREAMER_IMAGE
 MMRC_STREAMER_ENABLED=false
 
 # Redis
-REDIS_URL=redis://mmrc-redis:6379
+REDIS_PASSWORD=$REDIS_PASSWORD_GEN
+REDIS_URL=redis://:${REDIS_PASSWORD_GEN}@mmrc-redis:6379
 
 # Storage Backend: local | s3
 STORAGE_BACKEND=$STORAGE_BACKEND
@@ -610,8 +625,8 @@ ENVEOF3
     box_line ""
     box_line "  From network:                        http://${SERVER_IP}:${NGINX_HTTP_PORT}/"
     box_line ""
-    box_line "  Default login:                       admin / admin123"
-    box_line "  CHANGE PASSWORD after first login!"
+    box_line "  Admin:                               created on first page open"
+    box_line "                                       (email + password ask on visit)"
     box_line ""
     box_line "  Config:                              $INSTALL_DIR/.env"
     box_line "  Data:                                $DATA_DIR"
