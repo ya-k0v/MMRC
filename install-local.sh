@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -e
+# pipefail обязателен: без него при обрыве сети / падении пайпа скрипт
+# молча «успешно» доходит до конца с пустыми данными.
+set -o pipefail
 
 # MMRC Local Installer
 # Usage: sudo bash install-local.sh
@@ -58,6 +61,73 @@ info() { colorized_echo blue "  $1"; }
 success() { colorized_echo green "✔ $1"; }
 warn() { colorized_echo yellow "⚠ $1"; }
 error() { colorized_echo red "✖ $1"; }
+
+# ========================
+# TTY-чтение и сохранение конфигурации
+# ========================
+
+read_from_tty() {
+    local prompt="$1"
+    local reply=""
+    if [ -r /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
+        read -r -p "$prompt" reply < /dev/tty || reply=""
+        echo ""
+    else
+        error "Interactive input required (no TTY available)."
+        printf '  Set the corresponding environment variables (DB_TYPE, STORAGE_BACKEND, NGINX_HTTP_PORT, NGINX_HTTPS_PORT, CONTENT_DIR) and re-run.\n' >&2
+        return 1
+    fi
+    printf '%s' "${reply:-}"
+}
+
+read_secret_from_tty() {
+    local prompt="$1"
+    local reply=""
+    if [ -r /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
+        read -r -s -p "$prompt" reply < /dev/tty || reply=""
+        echo ""
+    else
+        error "Interactive input required (no TTY available)."
+        return 1
+    fi
+    printf '%s' "${reply:-}"
+}
+
+ask_yes_no() {
+    local prompt="$1"
+    local reply="n"
+    if [ -r /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
+        read -r -p "$prompt" reply < /dev/tty || reply="n"
+        echo ""
+    fi
+    printf '%s' "$reply"
+}
+
+read_existing_env() {
+    local key="$1"
+    local default="${2:-}"
+    local value
+    value=$(grep -E "^[[:space:]]*${key}=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- \
+        | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/") || true
+    [ -n "$value" ] && printf '%s' "$value" || printf '%s' "$default"
+}
+
+replace_or_append_env() {
+    local key="$1"
+    local value="$2"
+    if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
+        awk -v k="$key" -v v="$value" '
+            BEGIN { done = 0 }
+            {
+                if (!done && $0 ~ "^" k "=") { print k "=" v; done = 1; next }
+                print
+            }
+            END { if (!done) print k "=" v }
+        ' "$ENV_FILE" > "${ENV_FILE}.mmrc-tmp" && mv "${ENV_FILE}.mmrc-tmp" "$ENV_FILE"
+    else
+        echo "${key}=${value}" >> "$ENV_FILE"
+    fi
+}
 
 retry() {
     local attempts=$1
@@ -138,8 +208,7 @@ select_database() {
         colorized_echo yellow "Select database type:"
         echo "  [1] SQLite (built-in, no setup required)"
         echo "  [2] PostgreSQL (via Docker, separate container)"
-        read -p "  Choose [1-2]: " db_choice < /dev/tty
-        echo ""
+        db_choice=$(read_from_tty "  Choose [1-2]: ") || exit 1
         case "$db_choice" in
             2) DB_TYPE="postgres" ;;
             *) DB_TYPE="sqlite" ;;
@@ -161,8 +230,7 @@ select_database() {
             echo "  Select PostgreSQL setup method:"
             echo "    [1] Create new Docker container (recommended)"
             echo "    [2] Use existing PostgreSQL database"
-            read -p "  Choose [1-2]: " pg_choice < /dev/tty
-            echo ""
+            pg_choice=$(read_from_tty "  Choose [1-2]: ") || exit 1
             case "$pg_choice" in
                 2) POSTGRES_SOURCE="existing" ;;
                 *) POSTGRES_SOURCE="docker" ;;
@@ -171,17 +239,16 @@ select_database() {
 
         if [ "$POSTGRES_SOURCE" = "existing" ]; then
             echo "  Using existing PostgreSQL database..."
-            read -p "  PostgreSQL host [$DB_POSTGRES_HOST]: " pg_host_input < /dev/tty
+            pg_host_input=$(read_from_tty "  PostgreSQL host [$DB_POSTGRES_HOST]: ") || exit 1
             DB_POSTGRES_HOST="${pg_host_input:-$DB_POSTGRES_HOST}"
-            read -p "  PostgreSQL port [$DB_POSTGRES_PORT]: " pg_port_input < /dev/tty
+            pg_port_input=$(read_from_tty "  PostgreSQL port [$DB_POSTGRES_PORT]: ") || exit 1
             DB_POSTGRES_PORT="${pg_port_input:-$DB_POSTGRES_PORT}"
-            read -p "  PostgreSQL database name [$DB_POSTGRES_DB]: " pg_db_input < /dev/tty
+            pg_db_input=$(read_from_tty "  PostgreSQL database name [$DB_POSTGRES_DB]: ") || exit 1
             DB_POSTGRES_DB="${pg_db_input:-$DB_POSTGRES_DB}"
-            read -p "  PostgreSQL user [$DB_POSTGRES_USER]: " pg_user_input < /dev/tty
+            pg_user_input=$(read_from_tty "  PostgreSQL user [$DB_POSTGRES_USER]: ") || exit 1
             DB_POSTGRES_USER="${pg_user_input:-$DB_POSTGRES_USER}"
             while [ -z "$DB_POSTGRES_PASSWORD" ]; do
-                read -s -p "  PostgreSQL password (required): " pg_pass_input < /dev/tty
-                echo ""
+                pg_pass_input=$(read_secret_from_tty "  PostgreSQL password (required): ") || exit 1
                 DB_POSTGRES_PASSWORD="${pg_pass_input:-}"
                 if [ -z "$DB_POSTGRES_PASSWORD" ]; then
                     echo "  Password cannot be empty!"
@@ -206,12 +273,14 @@ select_storage() {
     fi
 
     if [ "$STORAGE_BACKEND" = "local" ]; then
-        echo ""
-        colorized_echo yellow "Select storage backend:"
-        echo "  [1] Local filesystem (built-in, no setup required)"
-        echo "  [2] S3/MinIO (via Docker, separate container)"
-        read -p "  Choose [1-2]: " s3_choice < /dev/tty
-        echo ""
+        if [ -r /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
+            echo ""
+            colorized_echo yellow "Select storage backend:"
+            echo "  [1] Local filesystem (built-in, no setup required)"
+            echo "  [2] S3/MinIO (via Docker, separate container)"
+            read -r -p "  Choose [1-2]: " s3_choice < /dev/tty || s3_choice=""
+            echo ""
+        fi
         case "$s3_choice" in
             2) STORAGE_BACKEND="s3" ;;
             *) STORAGE_BACKEND="local" ;;
@@ -245,6 +314,22 @@ select_port() {
     NGINX_HTTP_PORT="${NGINX_HTTP_PORT:-80}"
     NGINX_HTTPS_PORT="${NGINX_HTTPS_PORT:-443}"
 
+    if [ -n "${PORTS_FROM_ENV:-}" ]; then
+        if ! check_port_available "$NGINX_HTTP_PORT"; then
+            error "Port $NGINX_HTTP_PORT (NGINX_HTTP_PORT) is already in use:"
+            show_port_usage "$NGINX_HTTP_PORT"
+            exit 1
+        fi
+        if ! check_port_available "$NGINX_HTTPS_PORT"; then
+            error "Port $NGINX_HTTPS_PORT (NGINX_HTTPS_PORT) is already in use:"
+            show_port_usage "$NGINX_HTTPS_PORT"
+            exit 1
+        fi
+        success "Using HTTP port: $NGINX_HTTP_PORT"
+        success "Using HTTPS port: $NGINX_HTTPS_PORT"
+        return
+    fi
+
     # Check HTTP port
     if ! check_port_available "$NGINX_HTTP_PORT"; then
         warn "Port $NGINX_HTTP_PORT is already in use!"
@@ -255,7 +340,7 @@ select_port() {
     fi
 
     while true; do
-        read -p "  HTTP port [$NGINX_HTTP_PORT]: " port_input < /dev/tty
+        port_input=$(read_from_tty "  HTTP port [$NGINX_HTTP_PORT]: ") || exit 1
         NGINX_HTTP_PORT="${port_input:-$NGINX_HTTP_PORT}"
 
         if check_port_available "$NGINX_HTTP_PORT"; then
@@ -276,7 +361,7 @@ select_port() {
     fi
 
     while true; do
-        read -p "  HTTPS port [$NGINX_HTTPS_PORT]: " port_input < /dev/tty
+        port_input=$(read_from_tty "  HTTPS port [$NGINX_HTTPS_PORT]: ") || exit 1
         NGINX_HTTPS_PORT="${port_input:-$NGINX_HTTPS_PORT}"
 
         if check_port_available "$NGINX_HTTPS_PORT"; then
@@ -313,11 +398,30 @@ install_mmrc() {
 ══════════════════════════════════════════
 "
 
-    select_database
-    select_storage
+    # ===== Переустановка: сохраняем существующую конфигурацию =====
+    REINSTALL=0
+    if [ -f "$ENV_FILE" ]; then
+        REINSTALL=1
+        local backup_ts
+        backup_ts=$(date +%Y%m%d-%H%M%S)
+        cp -a "$ENV_FILE" "${ENV_FILE}.bak.${backup_ts}"
+        success "Existing configuration found — backup: ${ENV_FILE}.bak.${backup_ts}"
+    fi
 
-    # Select HTTP port
-    select_port
+    PORTS_FROM_ENV=""
+    if [ -n "${NGINX_HTTP_PORT:-}" ] || [ -n "${NGINX_HTTPS_PORT:-}" ]; then
+        PORTS_FROM_ENV="1"
+    fi
+
+    if [ "$REINSTALL" = "1" ]; then
+        info "Reinstall: preserving existing $ENV_FILE"
+    else
+        select_database
+        select_storage
+
+        # Select HTTP port
+        select_port
+    fi
 
     mkdir -p "$INSTALL_DIR" "$DATA_DIR"
     success "Directories created"
@@ -343,8 +447,7 @@ install_mmrc() {
 
     # Generate .env
     info "Generating configuration..."
-    JWT_SECRET=$(openssl rand -hex 64)
-    REDIS_PASSWORD_GEN=$(openssl rand -hex 32)
+
     # Автоподбор CPU-лимита для mmrc: ядра хоста минус запас 2 (минимум 1),
     # чтобы ffmpeg при конвертации не «заморозил» остальные контейнеры и сам хост.
     if [ -z "${MMRC_CPU_LIMIT:-}" ]; then
@@ -354,7 +457,67 @@ install_mmrc() {
         [ -n "$DETECTED_CORES" ] && [ "$DETECTED_CORES" -gt 3 ] 2>/dev/null && MMRC_CPU_LIMIT=$((DETECTED_CORES - 2))
       fi
     fi
-    cat > "$ENV_FILE" << ENVEOF
+    MMRC_MEMORY_LIMIT="${MMRC_MEMORY_LIMIT:-4G}"
+    MMRC_PIDS_LIMIT="${MMRC_PIDS_LIMIT:-512}"
+
+    if [ "$REINSTALL" = "1" ]; then
+        # ===== Переустановка: .env не трогаем целиком, только обновляем ключи =====
+        DB_TYPE="$(read_existing_env "DB_TYPE" "")"
+        STORAGE_BACKEND="$(read_existing_env "STORAGE_BACKEND" "local")"
+        DB_POSTGRES_HOST="$(read_existing_env "DB_HOST" "mmrc-postgres")"
+        DB_POSTGRES_PORT="$(read_existing_env "DB_PORT" "5432")"
+        DB_POSTGRES_DB="$(read_existing_env "DB_NAME" "mmrc")"
+        DB_POSTGRES_USER="$(read_existing_env "DB_USER" "mmrc")"
+        DB_POSTGRES_PASSWORD="$(read_existing_env "DB_PASSWORD" "")"
+        S3_ACCESS_KEY="$(read_existing_env "S3_ACCESS_KEY" "minioadmin")"
+        S3_SECRET_KEY="$(read_existing_env "S3_SECRET_KEY" "minioadmin")"
+        MMRC_STREAMER_ENABLED="$(read_existing_env "MMRC_STREAMER_ENABLED" "false")"
+        content_dir="$(read_existing_env "CONTENT_DIR" "$INSTALL_DIR/data")"
+        MMRC_CPU_LIMIT="$(read_existing_env "MMRC_CPU_LIMIT" "$MMRC_CPU_LIMIT")"
+        MMRC_MEMORY_LIMIT="$(read_existing_env "MMRC_MEMORY_LIMIT" "$MMRC_MEMORY_LIMIT")"
+        MMRC_PIDS_LIMIT="$(read_existing_env "MMRC_PIDS_LIMIT" "$MMRC_PIDS_LIMIT")"
+
+        JWT_SECRET="$(read_existing_env "JWT_SECRET" "")"
+        REDIS_PASSWORD_GEN="$(read_existing_env "REDIS_PASSWORD" "")"
+        if [ -z "$JWT_SECRET" ]; then
+            JWT_SECRET=$(openssl rand -hex 64)
+        fi
+        if [ -z "$REDIS_PASSWORD_GEN" ]; then
+            REDIS_PASSWORD_GEN=$(openssl rand -hex 32)
+        fi
+        if [ "$DB_TYPE" = "postgres" ]; then
+            POSTGRES_SOURCE="$(read_existing_env "POSTGRES_SOURCE" "")"
+            if [ -z "$POSTGRES_SOURCE" ]; then
+                if [ "$DB_POSTGRES_HOST" = "mmrc-postgres" ]; then
+                    POSTGRES_SOURCE="docker"
+                else
+                    POSTGRES_SOURCE="existing"
+                fi
+            fi
+            replace_or_append_env "POSTGRES_SOURCE" "$POSTGRES_SOURCE"
+        fi
+
+        NGINX_HTTP_PORT="$(read_existing_env "NGINX_HTTP_PORT" "80")"
+        NGINX_HTTPS_PORT="$(read_existing_env "NGINX_HTTPS_PORT" "443")"
+        replace_or_append_env "NGINX_HTTP_PORT" "$NGINX_HTTP_PORT"
+        replace_or_append_env "NGINX_HTTPS_PORT" "$NGINX_HTTPS_PORT"
+        replace_or_append_env "DB_TYPE" "$DB_TYPE"
+        replace_or_append_env "STORAGE_BACKEND" "$STORAGE_BACKEND"
+        replace_or_append_env "JWT_SECRET" "$JWT_SECRET"
+        replace_or_append_env "REDIS_PASSWORD" "$REDIS_PASSWORD_GEN"
+        replace_or_append_env "REDIS_URL" "redis://:${REDIS_PASSWORD_GEN}@mmrc-redis:6379"
+        replace_or_append_env "MMRC_CPU_LIMIT" "$MMRC_CPU_LIMIT"
+        replace_or_append_env "MMRC_MEMORY_LIMIT" "$MMRC_MEMORY_LIMIT"
+        replace_or_append_env "MMRC_PIDS_LIMIT" "$MMRC_PIDS_LIMIT"
+        replace_or_append_env "MMRC_STREAMER_ENABLED" "$MMRC_STREAMER_ENABLED"
+        replace_or_append_env "CONTENT_DIR" "$content_dir"
+        replace_or_append_env "HOST_DATA_DIR" "$content_dir"
+        success "Configuration preserved (backup in $ENV_FILE.bak.*)"
+    else
+        # ===== Новая установка: генерируем .env с нуля =====
+        JWT_SECRET=$(openssl rand -hex 64)
+        REDIS_PASSWORD_GEN=$(openssl rand -hex 32)
+        cat > "$ENV_FILE" << ENVEOF
 # MMRC Configuration
 # Generated on $(date)
 
@@ -373,15 +536,15 @@ NGINX_HTTPS_PORT=$NGINX_HTTPS_PORT
 # Database type: sqlite | postgres
 DB_TYPE=$DB_TYPE
 ENVEOF
-    echo "JWT_SECRET=$JWT_SECRET" >> "$ENV_FILE"
+        echo "JWT_SECRET=$JWT_SECRET" >> "$ENV_FILE"
 
-    cat >> "$ENV_FILE" << ENVEOF2
+        cat >> "$ENV_FILE" << ENVEOF2
 # Database connection (SQLite ignores host/port/user/password)
 DB_HOST=mmrc-postgres
 DB_PORT=5432
 DB_NAME=mmrc
 DB_USER=mmrc
-DB_PASSWORD=mmrc
+DB_PASSWORD=${DB_POSTGRES_PASSWORD:-mmrc}
 
 WAL_CHECKPOINT_INTERVAL_MS=300000
 
@@ -394,8 +557,8 @@ NIGHT_OPT_END_HOUR=5
 # при обработке видео (ffmpeg). Подбирается автоматически: ядра хоста минус 2
 # (минимум 1). Для переопределения укажите MMRC_CPU_LIMIT перед запуском скрипта.
 MMRC_CPU_LIMIT=$MMRC_CPU_LIMIT
-MMRC_MEMORY_LIMIT=4G
-MMRC_PIDS_LIMIT=512
+MMRC_MEMORY_LIMIT=$MMRC_MEMORY_LIMIT
+MMRC_PIDS_LIMIT=$MMRC_PIDS_LIMIT
 JOB_RESERVE_CPU_PERCENT=30
 JOB_RESERVE_MEMORY_MB=2048
 
@@ -450,8 +613,8 @@ MMRC_ADB_PORT=5555
 MMRC_APK_UPLOAD_DIR=/tmp/mmrc-apk-upload
 ENVEOF2
 
-    if [ "$DB_TYPE" = "postgres" ]; then
-        cat >> "$ENV_FILE" << ENVEOF3
+        if [ "$DB_TYPE" = "postgres" ]; then
+            cat >> "$ENV_FILE" << ENVEOF3
 
 # PostgreSQL connection (overrides above)
 DB_HOST=$DB_POSTGRES_HOST
@@ -459,25 +622,31 @@ DB_PORT=$DB_POSTGRES_PORT
 DB_NAME=$DB_POSTGRES_DB
 DB_USER=$DB_POSTGRES_USER
 DB_PASSWORD=$DB_POSTGRES_PASSWORD
+POSTGRES_SOURCE=$POSTGRES_SOURCE
 ENVEOF3
+        fi
+        success "Configuration generated"
     fi
-    success "Configuration generated"
 
     # Ask for content directory
-    echo ""
-    colorized_echo yellow "Where do you want to store media content?"
-    echo ""
-    echo "  Default: project directory ($INSTALL_DIR/data)"
-    echo "  External disk: /mnt/mmrc-content"
-    echo "  Custom path: /your/path"
-    echo ""
-    content_dir=""
-    while [ -z "$content_dir" ]; do
-        read -p "  Enter path [default: project dir]: " content_dir < /dev/tty
-        if [ -z "$content_dir" ]; then
-            content_dir="$INSTALL_DIR/data"
-        fi
-    done
+    content_dir="${CONTENT_DIR:-}"
+    if [ -z "$content_dir" ]; then
+        echo ""
+        colorized_echo yellow "Where do you want to store media content?"
+        echo ""
+        echo "  Default: project directory ($INSTALL_DIR/data)"
+        echo "  External disk: /mnt/mmrc-content"
+        echo "  Custom path: /your/path"
+        echo ""
+        while [ -z "$content_dir" ]; do
+            content_dir=$(read_from_tty "  Enter path [default: project dir]: ") || exit 1
+            if [ -z "$content_dir" ]; then
+                content_dir="$INSTALL_DIR/data"
+            fi
+        done
+    else
+        success "Content directory: $content_dir"
+    fi
 
     sed -i "s|^CONTENT_DIR=.*|CONTENT_DIR=${content_dir}|" "$ENV_FILE"
     sed -i "s|^HOST_DATA_DIR=.*|HOST_DATA_DIR=${content_dir}|" "$ENV_FILE"
@@ -486,24 +655,33 @@ ENVEOF3
         mkdir -p "$content_dir/minio"
     fi
     chown -R 1001:1001 "$content_dir" 2>/dev/null || true
-    success "Content directory: $content_dir"
 
     # Init HA vars
     COMPOSE_HA=""
     HA_SCALE=""
 
     # Ask about HA
-    if [ "$DB_TYPE" = "postgres" ] && [ "$STORAGE_BACKEND" = "s3" ]; then
+    if [ "$REINSTALL" = "1" ]; then
+        if [ -f "$INSTALL_DIR/docker-compose.ha.yml" ] && [ "$DB_TYPE" = "postgres" ]; then
+            COMPOSE_HA="-f docker-compose.yml -f docker-compose.ha.yml"
+            HA_REPLICAS=$(docker ps --filter "name=mmrc-replica" --format "{{.Names}}" 2>/dev/null | wc -l)
+            if ! [[ "$HA_REPLICAS" =~ ^[0-9]+$ ]] || [ "$HA_REPLICAS" -lt 1 ]; then
+                HA_REPLICAS=1
+            fi
+            HA_SCALE="--scale mmrc-replica=$HA_REPLICAS"
+            success "HA restored with $HA_REPLICAS replica(s)"
+        fi
+    elif [ "$DB_TYPE" = "postgres" ] && [ "$STORAGE_BACKEND" = "s3" ]; then
         echo ""
         colorized_echo yellow "Enable High-Availability (multiple server replicas)?"
         echo "  Runs 2+ server instances behind an nginx load balancer."
         echo "  Requires PostgreSQL + S3 (already selected)."
-        read -p "  Enable HA? [y/N]: " ha_choice < /dev/tty
+        ha_choice=$(ask_yes_no "  Enable HA? [y/N]: ")
         if [[ "$ha_choice" =~ ^[Yy]$ ]]; then
             HA_ENABLED=true
             HA_REPLICAS=""
             while [ -z "$HA_REPLICAS" ] || [ "$HA_REPLICAS" -lt 1 ] 2>/dev/null; do
-                read -p "  Number of replicas [2]: " ha_replicas_input < /dev/tty
+                ha_replicas_input=$(read_from_tty "  Number of replicas [2]: ") || exit 1
                 ha_replicas_input="${ha_replicas_input:-2}"
                 if [ "$ha_replicas_input" -ge 1 ] 2>/dev/null; then
                     HA_REPLICAS=$ha_replicas_input
@@ -533,17 +711,23 @@ ENVEOF3
     fi
 
     # Ask about Streamer
-    echo ""
-    colorized_echo yellow "Enable Streamer (remote FFmpeg for HLS streaming)?"
-    echo "  This runs FFmpeg in a separate container for better isolation."
-    echo "  Default: disabled"
-    read -p "  Enable Streamer? [y/N]: " streamer_choice < /dev/tty
-    if [[ "$streamer_choice" =~ ^[Yy]$ ]]; then
-        STREAMER_ENABLED=true
-        sed -i "s|^MMRC_STREAMER_ENABLED=.*|MMRC_STREAMER_ENABLED=true|" "$ENV_FILE"
-        success "Streamer enabled"
+    STREAMER_ENABLED=false
+    if [ "$REINSTALL" = "1" ]; then
+        [ "$MMRC_STREAMER_ENABLED" = "true" ] && STREAMER_ENABLED=true
+        if [ "$STREAMER_ENABLED" = "true" ]; then
+            success "Streamer kept enabled"
+        fi
     else
-        STREAMER_ENABLED=false
+        echo ""
+        colorized_echo yellow "Enable Streamer (remote FFmpeg for HLS streaming)?"
+        echo "  This runs FFmpeg in a separate container for better isolation."
+        echo "  Default: disabled"
+        streamer_choice=$(ask_yes_no "  Enable Streamer? [y/N]: ")
+        if [[ "$streamer_choice" =~ ^[Yy]$ ]]; then
+            STREAMER_ENABLED=true
+            sed -i "s|^MMRC_STREAMER_ENABLED=.*|MMRC_STREAMER_ENABLED=true|" "$ENV_FILE"
+            success "Streamer enabled"
+        fi
     fi
 
     # Validate compose config

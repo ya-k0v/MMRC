@@ -295,7 +295,8 @@ cmd_reinstall() {
     check_root
     require_installed
 
-    colorized_echo yellow "⚠️  This will reinstall MMRC. Configuration will be preserved."
+    colorized_echo yellow "⚠️  This will reinstall MMRC."
+    colorized_echo yellow "    Existing configuration ($APP_DIR/.env) will be PRESERVED and backed up (.env.bak.*)."
     confirm_reply=$(confirm "  Continue? [y/N]: ")
     if [[ ! "$confirm_reply" =~ ^[Yy]$ ]]; then
         info "Aborted"
