@@ -12,9 +12,35 @@ import { sendWakeOnLan, readArpMac, normalizeMac } from './wol.js';
 import { ANDROID_PACKAGE_NAME, ANDROID_MAIN_ACTIVITY } from '../config/android.js';
 import { isReservedObjectKey } from './sanitize.js';
 
-export const POWER_ACTIONS = ['sleep', 'wake'];
+export const POWER_ACTIONS = ['sleep', 'wake', 'launch'];
 
 export { isAndroidDevice };
+
+/**
+ * Последний известный режим питания: deviceId → awake (boolean).
+ *
+ * Живёт в памяти как «последнее известное»: опрос по ADB дорогой, поэтому
+ * статусы «спит/активен» раскрашиваются из этого кэша во всех панелях
+ * (спикер, админка), а не опрашивают каждое устройство на каждый рендер.
+ */
+const powerStates = new Map();
+
+/** Сохранить известное состояние питания устройства (null стирает запись). */
+export function setStoredPowerState(deviceId, awake) {
+  const key = String(deviceId || '');
+  if (!key || isReservedObjectKey(key)) return;
+  if (awake === null || awake === undefined) {
+    powerStates.delete(key);
+  } else {
+    powerStates.set(key, Boolean(awake));
+  }
+}
+
+/** Известное состояние питания: true — активен, false — спит, null — неизвестно. */
+export function getStoredPowerAwake(deviceId) {
+  const value = powerStates.get(String(deviceId || ''));
+  return value === undefined ? null : value;
+}
 
 /**
  * Собрать цели для команды.
@@ -98,8 +124,12 @@ const WOL_WAIT_MS = 2500;
  * повторяем ADB-команду. И только после успешного пробуждения (если
  * `relaunch`) поднимаем плеер, чтобы экран не остался с чужим приложением.
  *
+ * Акция `launch` — перезапуск плеера без сна/пробуждения: провайдер убивает
+ * старый процесс приложения и запускает новый (см. adb.launchAndroidApp).
+ * Режим питания при этом не меняется, поэтому в результате нет поля `awake`.
+ *
  * @param {Array<{deviceId: string, ip: string, port?: string|null, mac?: string|null}>} targets
- * @param {'sleep'|'wake'} action
+ * @param {'sleep'|'wake'|'launch'} action
  * @param {{commands?: Object, relaunch?: boolean, adbTimeoutMs?: number, wolWaitMs?: number, storeMac?: (deviceId: string, mac: string) => Promise<any>}} [options]
  * @returns {Promise<{results: Array<{deviceId: string, ok: boolean, awake?: boolean, error?: string}>, succeeded: number, failed: number}>}
  */
@@ -131,6 +161,16 @@ async function runForTarget(target, action, options) {
       return { deviceId, ok: false, error: 'IP адрес устройства не задан' };
     }
     const port = target.port || null;
+
+    if (action === 'launch') {
+      // Перезапуск плеера: старый процесс гасится и поднимается новый.
+      // Спящее/бодрствующее состояние не трогаем.
+      const launch = await commands.launchApp(ip, port);
+      if (!launch.ok) {
+        return { deviceId, ok: false, error: launch.error || 'ADB не отвечает' };
+      }
+      return { deviceId, ok: true };
+    }
 
     if (action === 'sleep') {
       const result = await commands.sleepDevice(ip, port, adbTimeoutMs);

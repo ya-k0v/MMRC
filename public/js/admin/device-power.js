@@ -58,6 +58,7 @@ function rowHtml(device) {
       <span data-power-badge="${escapeHtml(id)}" class="meta" style="font-size:0.7rem; padding:1px 8px; border-radius:999px; background:${badge.background}; color:${badge.color}; flex:none;">${badge.text}</span>
       <button type="button" class="secondary meta" data-power-action="sleep" data-power-id="${escapeHtml(id)}" style="font-size:0.75rem; padding:3px 10px; min-width:auto;">Усыпить</button>
       <button type="button" class="secondary meta" data-power-action="wake" data-power-id="${escapeHtml(id)}" title="Разбудить и запустить плеер" style="font-size:0.75rem; padding:3px 10px; min-width:auto;">Разбудить</button>
+      <button type="button" class="secondary meta" data-power-action="launch" data-power-id="${escapeHtml(id)}" title="Завершить процесс плеера и открыть заново" style="font-size:0.75rem; padding:3px 10px; min-width:auto;">Запустить плеер</button>
     </div>`;
 }
 
@@ -75,14 +76,17 @@ export function renderPowerControlsHtml(devices) {
       </div>
       <div class="st-power-body">
         <div class="meta" style="font-size:0.8rem; color:var(--muted); line-height:1.4;">
-          Приставки стоят в стене и не обесточиваются: здесь только сон и пробуждение по ADB.
+          Приставки стоят в стене и не обесточиваются: здесь только сон, пробуждение и перезапуск плеера по ADB.
           Сон гасит экран и ставит плеер на паузу, сеть остаётся — устройство остаётся управляемым.
-          Если в сне связь по ADB пропала, сервер дополнительно шлём Wake-on-LAN.
+          Если в сне связь по ADB пропала, сервер дополнительно шлёт Wake-on-LAN.
+          Запуск плеера всегда сначала убивает старый процесс и только потом открывает новый,
+          чтобы на одном экране не оказалось двух экземпляров.
         </div>
         <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center;">
           <button type="button" id="stPowerSleepAll" class="secondary">Усыпить все</button>
           <button type="button" id="stPowerWakeAll" class="primary">Разбудить все</button>
           <button type="button" id="stPowerWakeLaunch" class="secondary">Разбудить и запустить плеер</button>
+          <button type="button" id="stPowerLaunchAll" class="primary">Запустить плеер везде</button>
           <span id="stPowerStatus" class="meta" style="font-size:0.8rem; min-height:1.2em;"></span>
         </div>
         <div id="stPowerList" class="st-power-list">${powerTargets.length ? powerTargets.map(rowHtml).join('') : '<div class="meta" style="font-size:0.8rem; color:var(--muted);">Нет Android-устройств</div>'}</div>
@@ -177,7 +181,7 @@ function updateBadges() {
 }
 
 function setBusy(busy) {
-  const buttons = document.querySelectorAll('#stPowerList [data-power-action], #stPowerSleepAll, #stPowerWakeAll, #stPowerWakeLaunch, #stPowerPrev, #stPowerNext');
+  const buttons = document.querySelectorAll('#stPowerList [data-power-action], #stPowerSleepAll, #stPowerWakeAll, #stPowerWakeLaunch, #stPowerLaunchAll, #stPowerPrev, #stPowerNext');
   buttons.forEach((button) => { button.disabled = busy; });
 }
 
@@ -227,7 +231,9 @@ async function refreshStates(adminFetch, deviceIds) {
 }
 
 function summarize(action, results, summary) {
-  const verb = action === 'sleep' ? 'Усыплено' : 'Пробуждено';
+  const verb = action === 'sleep' ? 'Усыплено'
+    : action === 'launch' ? 'Плеер запущен'
+    : 'Пробуждено';
   const failed = results.filter(result => !result.ok);
 
   if (!summary.total) {
@@ -265,7 +271,11 @@ async function runPower(adminFetch, action, options = {}) {
 
     for (const result of data.results || []) {
       if (result.ok) {
-        powerStates.set(result.deviceId, { ok: true, awake: result.awake !== undefined ? result.awake : action === 'wake' });
+        // Перезапуск плеера (launch) режим питания не меняет — спит/активен
+        // оставляем как было, бейдж не трогаем.
+        if (action !== 'launch') {
+          powerStates.set(result.deviceId, { ok: true, awake: result.awake !== undefined ? result.awake : action === 'wake' });
+        }
       } else {
         powerStates.set(result.deviceId, { ok: false, awake: null });
       }
@@ -303,6 +313,9 @@ export function initPowerControls({ devices, adminFetch }) {
   });
   document.getElementById('stPowerWakeLaunch')?.addEventListener('click', () => {
     runPower(adminFetch, 'wake', { relaunch: true });
+  });
+  document.getElementById('stPowerLaunchAll')?.addEventListener('click', () => {
+    runPower(adminFetch, 'launch');
   });
 
   // Строки перерисовываются при пагинации, поэтому вешаемся на список,

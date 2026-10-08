@@ -140,6 +140,12 @@ async function adbShellNow(target, command, timeoutMs) {
 
 /**
  * Запуск Android-приложения на устройстве по IP через adb
+ *
+ * Перед запуском старый процесс приложения обязательно гасится: `am start` по
+ * живому плееру с высокой вероятностью укладывает второй экземпляр окном поверх
+ * основного. force-stop и start выполняются одной shell-командой (`&&`), чтобы
+ * не плодить лишние ADB-сессии.
+ *
  * @param {string} ip - IP адрес устройства
  * @param {string} [packageName] - package name приложения (по умолчанию из конфига)
  * @param {string} [activity] - activity для запуска (по умолчанию из конфига)
@@ -148,7 +154,8 @@ async function adbShellNow(target, command, timeoutMs) {
  * @returns {Promise<{ok: boolean, output?: string, error?: string}>}
  */
 export function launchAndroidApp(ip, packageName = ANDROID_PACKAGE_NAME, activity = ANDROID_MAIN_ACTIVITY, port = DEFAULT_ADB_PORT, timeoutMs = DEFAULT_TIMEOUT_MS) {
-  return adbShell(ip, port, ['am', 'start', '-n', `${packageName}/${activity}`], timeoutMs);
+  const command = `am force-stop ${packageName} && am start -n ${packageName}/${activity}`;
+  return adbShell(ip, port, ['sh', '-c', command], timeoutMs);
 }
 
 /**

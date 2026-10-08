@@ -243,6 +243,55 @@ describe('runPowerAction: пробуждение', () => {
   });
 });
 
+describe('runPowerAction: перезапуск плеера', () => {
+  test('launch убивает старый процесс и поднимает новый через launchApp', async () => {
+    const commands = fakeCommands();
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'tv1', ip: '192.168.1.10', port: '5555', mac: null }],
+      'launch',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(outcome.results[0]).toEqual({ deviceId: 'tv1', ok: true });
+    expect(commands.launchApp).toHaveBeenCalledWith('192.168.1.10', '5555');
+    expect(commands.wakeDevice).not.toHaveBeenCalled();
+    expect(commands.sleepDevice).not.toHaveBeenCalled();
+  });
+
+  test('launch не трогает режим питания и не запоминает MAC', async () => {
+    const commands = fakeCommands();
+    const storeMac = jest.fn(async () => {});
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'tv1', ip: '192.168.1.10', port: '5555', mac: null }],
+      'launch',
+      { commands, storeMac }
+    );
+
+    expect(commands.getDeviceMac).not.toHaveBeenCalled();
+    expect(storeMac).not.toHaveBeenCalled();
+    expect(outcome.results[0].awake).toBeUndefined();
+  });
+
+  test('ADB не ответил — результат в failed с текстом ошибки', async () => {
+    const commands = fakeCommands({
+      launchApp: jest.fn(async () => ({ ok: false, error: 'adb shell error: timeout' }))
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'tv1', ip: '192.168.1.10', port: '5555', mac: null }],
+      'launch',
+      { commands }
+    );
+
+    expect(outcome.failed).toBe(1);
+    expect(outcome.results[0].error).toBe('adb shell error: timeout');
+    expect(outcome.results[0].awake).toBeUndefined();
+  });
+});
+
 describe('parsePowerState', () => {
   test('современный dumpsys power: бодрствует и экран включён', () => {
     const state = parsePowerState('mWakefulness=Awake\nDisplay Power: state=ON');

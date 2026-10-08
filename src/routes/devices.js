@@ -18,7 +18,7 @@ import { removeStreamJob } from '../streams/stream-manager.js';
 import { requireAuth } from '../middleware/auth.js';
 import { getUserDevices, hasDeviceAccess } from '../middleware/device-access.js';
 import { launchAndroidApp, getPowerState, getDeviceMac } from '../utils/adb.js';
-import { POWER_ACTIONS, planPowerTargets, runPowerAction } from '../utils/power-control.js';
+import { POWER_ACTIONS, planPowerTargets, runPowerAction, getStoredPowerAwake, setStoredPowerState } from '../utils/power-control.js';
 import { ANDROID_PACKAGE_NAME, ANDROID_MAIN_ACTIVITY, DEFAULT_ADB_PORT } from '../config/android.js';
 import { validatePath } from '../utils/path-validator.js';
 
@@ -134,6 +134,7 @@ export function createDevicesRouter(deps) {
     const includeFileMeta = req.query.includeFileMeta === '1';
 
     let devicesList = Object.entries(devices).map(([id, d]) => {
+      const powerAwake = getStoredPowerAwake(id);
       const item = {
         device_id: id,
         name: d.name,
@@ -145,7 +146,10 @@ export function createDevicesRouter(deps) {
         appVersion: d.appVersion || null,
         lastSeen: d.lastSeen || null,
         ipAddress: d.ipAddress || null,
-        adbPort: d.adbPort || '5555'
+        adbPort: d.adbPort || '5555',
+        // Последний известный режим питания: «спит» показывается на плитках
+        // вместо «не готов»/«готов», хранится на сервере, ADB не опрашивается.
+        powerState: powerAwake === null ? null : (powerAwake ? 'awake' : 'sleep')
       };
 
       if (includeFileMeta) {
@@ -454,12 +458,14 @@ export function createDevicesRouter(deps) {
     return { ok: true, ids: rawIds.length > 0 ? rawIds : null };
   }
 
-  // POST /api/devices/power — усыпить или разбудить Android-приставки.
+  // POST /api/devices/power — усыпить, разбудить или перезапустить плеер.
   //
-  // Устройства стоят в стене, их нельзя обесточить, поэтому здесь только сон
-  // и пробуждение (см. utils/adb). Одна кнопка на весь зал: если часть
-  // приставок не отвечает по ADB, остальные всё равно уходят в сон, а тост
-  // покажет, кто именно не сработал.
+  // Устройства стоят в стене, их нельзя обесточить, поэтому здесь только сон,
+  // пробуждение и перезапуск плеера (см. utils/adb и utils/power-control).
+  // «Запустить плеер» на живом плеере дублировал окно, поэтому сначала старый
+  // процесс убивается (am force-stop) и только потом поднимается новый.
+  // Одна кнопка на весь зал: если часть приставок не отвечает по ADB,
+  // остальные всё равно выполняют команду, а тост покажет, кто не сработал.
   router.post('/power', requireAdmin, async (req, res) => {
     const action = String(req.body?.action || '').trim();
     if (!POWER_ACTIONS.includes(action)) {
@@ -489,9 +495,14 @@ export function createDevicesRouter(deps) {
 
     const results = [...outcome.results, ...plan.rejected];
 
-    // Другие вкладки узнают о смене состояния сразу, без опроса.
+    // Другие вкладки узнают о смене состояния сразу, без опроса. Заодно
+    // пишем его в хранилище, чтобы «спит/активен» был виден и тем, кто
+    // откроет панель позже. Перезапуск плеера (launch) режим питания не
+    // меняет — хранимое состояние и рассылку не трогаем.
     for (const result of outcome.results) {
-      if (result.ok) {
+      if (!result.ok) continue;
+      if (action === 'sleep' || action === 'wake') {
+        setStoredPowerState(result.deviceId, action === 'wake');
         io.emit('devices/power', { deviceId: result.deviceId, awake: action === 'wake' });
       }
     }
@@ -557,6 +568,18 @@ export function createDevicesRouter(deps) {
       }
       return { deviceId: target.deviceId, ok: true, awake: state.awake, screenOn: state.screenOn };
     }));
+
+    // Опрос обновляет хранимое состояние и рассылает его остальным панелям,
+    // только если оно реально изменилось — команды «спит/активен» от других
+    // вкладок доходят через devices/power и без этого.
+    for (const state of states) {
+      if (!state.ok) continue;
+      const prev = getStoredPowerAwake(state.deviceId);
+      setStoredPowerState(state.deviceId, state.awake);
+      if (prev !== state.awake) {
+        io.emit('devices/power', { deviceId: state.deviceId, awake: state.awake });
+      }
+    }
 
     res.json({ ok: true, states });
   });

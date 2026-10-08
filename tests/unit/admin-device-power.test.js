@@ -66,6 +66,9 @@ describe('карточка «Управление устройствами»', (
     expect(document.querySelector('[data-power-row="browser"]')).toBeNull();
     expect(html).toContain('Усыпить все');
     expect(html).toContain('Разбудить и запустить плеер');
+    expect(html).toContain('Запустить плеер везде');
+    expect(html).toContain('Запустить плеер');
+    expect(document.querySelector('[data-power-action="launch"][data-power-id="tv1"]')).not.toBeNull();
   });
 
   test('isPowerControllable принимает тип, платформу и нативный плеер', () => {
@@ -235,5 +238,65 @@ describe('команды питания', () => {
     expect(mockShowToastNotification).toHaveBeenCalledWith(
       expect.objectContaining({ severity: 'warning' })
     );
+  });
+
+  test('«Запустить плеер везде» шлёт launch на все устройства', async () => {
+    document.body.innerHTML = renderPowerControlsHtml(DEVICES);
+    const adminFetch = jsonFetch({
+      ok: true,
+      results: [{ deviceId: 'tv1', ok: true }],
+      summary: { total: 1, succeeded: 1, failed: 0 }
+    });
+    initPowerControls({ devices: DEVICES, adminFetch });
+    await flush();
+
+    document.getElementById('stPowerLaunchAll').click();
+    await flush();
+
+    const call = findCall(adminFetch, '/api/devices/power');
+    expect(call).toBeDefined();
+    expect(bodyOf(call)).toEqual({ action: 'launch' });
+    expect(mockShowToastNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Плеер запущен 1 из 1' })
+    );
+  });
+
+  test('кнопка на строке «Запустить плеер» перезапускает конкретное устройство', async () => {
+    document.body.innerHTML = renderPowerControlsHtml(DEVICES);
+    const adminFetch = jsonFetch({
+      ok: true,
+      results: [{ deviceId: 'tv1', ok: true }],
+      summary: { total: 1, succeeded: 1, failed: 0 }
+    });
+    initPowerControls({ devices: DEVICES, adminFetch });
+    await flush();
+
+    document.querySelector('[data-power-action="launch"][data-power-id="tv1"]').click();
+    await flush();
+
+    const call = findCall(adminFetch, '/api/devices/power');
+    expect(call).toBeDefined();
+    expect(bodyOf(call)).toEqual({ action: 'launch', deviceIds: ['tv1'], relaunch: false });
+  });
+
+  test('перезапуск плеера не меняет бейдж спит/активен', async () => {
+    document.body.innerHTML = renderPowerControlsHtml(DEVICES);
+    applyPowerState({ deviceId: 'tv1', awake: false });
+    const adminFetch = jsonFetch({
+      ok: true,
+      results: [
+        { deviceId: 'tv1', ok: true },
+        { deviceId: 'tv2', ok: false }
+      ],
+      summary: { total: 2, succeeded: 1, failed: 1 }
+    });
+    initPowerControls({ devices: DEVICES, adminFetch });
+    await flush();
+
+    document.getElementById('stPowerLaunchAll').click();
+    await flush();
+
+    expect(badge('tv1').textContent).toBe('спит');
+    expect(badge('tv2').textContent).toBe('нет ответа');
   });
 });
