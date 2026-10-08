@@ -67,7 +67,7 @@ import { setupExpressMiddleware, setupStaticFiles } from './src/middleware/expre
 import { setupSocketHandlers } from './src/socket/index.js';
 import { setupNotificationsHandler } from './src/socket/notifications-handler.js';
 import { restoreAllPlaylistLoops } from './src/socket/control-handlers.js';
-import { notifyCriticalError } from './src/utils/notifications.js';
+import { notifyCriticalError, notificationsManager } from './src/utils/notifications.js';
 import { initSystemMonitor, stopSystemMonitor } from './src/utils/system-monitor.js';
 import logger, { httpLoggerMiddleware } from './src/utils/logger.js';
 import { cleanupResolutionCache, getResolutionCacheSize } from './src/video/resolution-cache.js';
@@ -649,6 +649,13 @@ setupSocketHandlers(io, {
 
 // Настраиваем Socket.IO обработчики для уведомлений
 setupNotificationsHandler(io);
+
+// Инициализируем хранилище уведомлений: Redis (REDIS_URL) или память.
+// Восстанавливает уведомления между рестартами; падение Redis не фатально —
+// менеджер продолжит работать в памяти.
+notificationsManager.init().catch((error) => {
+  logger.warn('[Notifications] Инициализация хранилища уведомлений отложено', { error: error.message });
+});
 
 // Запускаем системный мониторинг (проверка диска, БД, процессов и т.д.)
 initSystemMonitor(streamManager, devices);

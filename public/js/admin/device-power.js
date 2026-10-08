@@ -183,18 +183,26 @@ function setStatus(text) {
   if (el) el.textContent = text || '';
 }
 
-async function showToast({ message, ok }) {
+/**
+ * Итог bulk-команды уходит в раздел «Уведомления» (а оттуда — тостом и в
+ * бейдж по сокету). Прямой локальный тост не показываем: уведомление живёт
+ * на сервере, переживает рестарт и видно всем админам.
+ */
+async function reportPowerResult(adminFetch, { ok, message }) {
   try {
-    const { showToastNotification } = await import('./notifications.js');
-    showToastNotification({
-      id: `power-${Date.now()}`,
-      title: ok ? 'Управление питанием' : 'Не все устройства отреагировали',
-      message,
-      severity: ok ? 'info' : 'warning',
-      timestamp: Date.now()
+    await adminFetch('/api/notifications/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'device_power',
+        severity: ok ? 'info' : 'warning',
+        title: ok ? 'Управление питанием' : 'Не все устройства отреагировали',
+        message,
+        source: 'admin-ui'
+      })
     });
   } catch (_) {
-    // тост — приятное дополнение, без него не должно падать всё остальное
+    // уведомление — приятное дополнение, без него не должно падать всё остальное
   }
 }
 
@@ -258,7 +266,7 @@ async function runPower(adminFetch, action, options = {}) {
     if (!response.ok) {
       const message = data.error || 'Ошибка выполнения команды';
       setStatus(message);
-      await showToast({ message, ok: false });
+      await reportPowerResult(adminFetch, { message, ok: false });
       return;
     }
 
@@ -277,10 +285,10 @@ async function runPower(adminFetch, action, options = {}) {
 
     const summary = summarize(action, data.results || [], data.summary || { total: 0, succeeded: 0 });
     setStatus(summary.message);
-    await showToast(summary);
+    await reportPowerResult(adminFetch, summary);
   } catch (error) {
     setStatus(error.message);
-    await showToast({ message: error.message, ok: false });
+    await reportPowerResult(adminFetch, { message: error.message, ok: false });
   } finally {
     setBusy(false);
   }

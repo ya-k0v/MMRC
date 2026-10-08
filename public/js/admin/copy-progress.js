@@ -4,7 +4,8 @@
  * Копирование большой папки выполняется внутри одного HTTP-запроса и занимает
  * минуты: без карточки прогресса пользователь просто не видит, что происходит,
  * и перенос выглядит зависшим. Сервер шлёт события copy/progress|done|error,
- * здесь они превращаются в плавающую карточку со полосой и итоговым тостом.
+ * здесь они превращаются в плавающую карточку со полосой; итог уходит в
+ * раздел «Уведомления».
  *
  * @module admin/copy-progress
  */
@@ -143,12 +144,15 @@ export function finishCopyProgress(payload) {
     message = payload.error || 'Не удалось выполнить операцию';
   }
 
+  // Итог уходит в раздел «Уведомления»: тост вернётся по сокету, запись
+  // переживёт рестарт и будет видна всем админам, а не только инициатору.
   import('./notifications.js')
-    .then(({ showToastNotification }) => showToastNotification({
+    .then(({ reportNotification }) => reportNotification({
+      type: ok ? 'folder_transfer' : 'folder_transfer_error',
+      severity: ok ? 'info' : 'critical',
       title,
       message: message.trim(),
-      severity: ok ? 'info' : 'critical',
-      timestamp: Date.now()
+      source: 'admin-ui'
     }))
     .catch(() => {});
 

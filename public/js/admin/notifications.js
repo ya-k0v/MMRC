@@ -185,6 +185,32 @@ function updateBadge() {
 // Используется только как страховка; основной путь — animationend.
 const TOAST_EXIT_MS = 200;
 
+/**
+ * Сообщить уведомление на сервер: оно появится в разделе «Уведомления»,
+ * посчитается в бейдже и вернётся к админам тостом по сокету.
+ *
+ * Единственный источник клиентских событий (питание, запуск приложения,
+ * перенос папки), которые должны переживать рестарт и быть видны всем.
+ *
+ * @param {{type?: string, severity?: string, title?: string, message?: string, source?: string, actions?: Array}} payload
+ * @returns {Promise<boolean>} Успешно ли обработано
+ */
+export async function reportNotification(payload) {
+  try {
+    const response = await adminFetch('/api/notifications/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) return false;
+    const data = await response.json();
+    return Boolean(data?.ok);
+  } catch (error) {
+    console.error('[Notifications] report failed:', error);
+    return false;
+  }
+}
+
 function showToastNotification(notification) {
   // Создаем элемент уведомления
   const toast = document.createElement('div');

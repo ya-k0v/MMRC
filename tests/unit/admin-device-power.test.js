@@ -2,16 +2,10 @@
  * @jest-environment jsdom
  *
  * Карточка «Управление устройствами» в настройках админа: кнопки сна и
- * пробуждения, бейдж состояния и итоговый тост по результатам bulk-команды.
+ * пробуждения, бейдж состояния и итоговое уведомление по результатам
+ * bulk-команды (уходит в раздел «Уведомления» через /api/notifications/report).
  */
 import { jest } from '@jest/globals';
-
-const mockShowToastNotification = jest.fn();
-
-jest.unstable_mockModule('../../public/js/admin/notifications.js', () => ({
-  initNotifications: jest.fn(),
-  showToastNotification: (...args) => mockShowToastNotification(...args)
-}));
 
 const {
   isPowerControllable,
@@ -47,6 +41,12 @@ function bodyOf(call) {
 
 function findCall(mock, url) {
   return mock.mock.calls.find(call => call[0] === url);
+}
+
+/** Сообщённое серверу итоговое уведомление команды питания. */
+function reportedNotification(adminFetch) {
+  const call = findCall(adminFetch, '/api/notifications/report');
+  return call ? { ...bodyOf(call), type: bodyOf(call).type } : null;
 }
 
 beforeEach(() => {
@@ -178,9 +178,12 @@ describe('команды питания', () => {
     expect(call).toBeDefined();
     expect(bodyOf(call)).toEqual({ action: 'sleep', relaunch: false });
     expect(badge('tv1').textContent).toBe('спит');
-    expect(mockShowToastNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'Усыплено 1 из 1' })
-    );
+    // Итог ушёл в раздел «Уведомления» как info со сводкой
+    expect(reportedNotification(adminFetch)).toMatchObject({
+      type: 'device_power',
+      severity: 'info',
+      message: 'Усыплено 1 из 1'
+    });
   });
 
   test('кнопка на строке будит конкретное устройство и поднимает плеер', async () => {
@@ -197,8 +200,13 @@ describe('команды питания', () => {
     await flush();
 
     const call = findCall(adminFetch, '/api/devices/power');
+    expect(call).toBeDefined();
     expect(bodyOf(call)).toEqual({ action: 'wake', deviceIds: ['tv2'], relaunch: true });
     expect(badge('tv2').textContent).toBe('активен');
+    expect(reportedNotification(adminFetch)).toMatchObject({
+      severity: 'info',
+      message: 'Пробуждено 1 из 1'
+    });
   });
 
   test('частичный успех: в тосте перечислены устройства, которые не отреагировали', async () => {
@@ -217,10 +225,11 @@ describe('команды питания', () => {
     document.getElementById('stPowerSleepAll').click();
     await flush();
 
-    expect(mockShowToastNotification).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'Усыплено 1 из 2 · не сработало: Кухня',
-      severity: 'warning'
-    }));
+    expect(reportedNotification(adminFetch)).toMatchObject({
+      type: 'device_power',
+      severity: 'warning',
+      message: 'Усыплено 1 из 2 · не сработало: Кухня'
+    });
     expect(badge('tv1').textContent).toBe('спит');
     expect(badge('tv2').textContent).toBe('нет ответа');
   });
@@ -235,9 +244,10 @@ describe('команды питания', () => {
     await flush();
 
     expect(document.getElementById('stPowerStatus').textContent).toBe('Укажите action');
-    expect(mockShowToastNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ severity: 'warning' })
-    );
+    expect(reportedNotification(adminFetch)).toMatchObject({
+      severity: 'warning',
+      title: 'Не все устройства отреагировали'
+    });
   });
 
   test('«Запустить плеер везде» шлёт launch на все устройства', async () => {
@@ -256,9 +266,10 @@ describe('команды питания', () => {
     const call = findCall(adminFetch, '/api/devices/power');
     expect(call).toBeDefined();
     expect(bodyOf(call)).toEqual({ action: 'launch' });
-    expect(mockShowToastNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'Плеер запущен 1 из 1' })
-    );
+    expect(reportedNotification(adminFetch)).toMatchObject({
+      severity: 'info',
+      message: 'Плеер запущен 1 из 1'
+    });
   });
 
   test('кнопка на строке «Запустить плеер» перезапускает конкретное устройство', async () => {

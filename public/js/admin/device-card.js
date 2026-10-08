@@ -130,7 +130,6 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
 
     // Кнопка запуска Android-приложения (справа)
     if (d.platform && d.platform.toLowerCase().includes('android')) {
-      import('./notifications.js').then(({ showToastNotification }) => {
         const launchAppBtn = document.createElement('button');
         launchAppBtn.className = 'meta-lg';
         launchAppBtn.style.cssText = 'margin-left:auto; min-width:36px; width:36px; height:36px; padding:0; border-radius:var(--radius-sm); flex-shrink:0; align-items:center; justify-content:center; font-size:var(--font-size-lg); line-height:1; transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s; box-shadow:var(--shadow-sm); background:#4caf50; color:#fff;';
@@ -149,6 +148,23 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
         playPolygon.setAttribute('points', '6,4 20,12 6,20');
         playSvg.appendChild(playPolygon);
         launchAppBtn.appendChild(playSvg);
+
+        // Итог уходит в раздел «Уведомления»: тост придёт по сокету, запись
+        // переживёт рестарт и будет видна другим админам.
+        const reportLaunch = (severity, title, message) => {
+          adminFetch('/api/notifications/report', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              type: 'device_launch_app',
+              severity,
+              title,
+              message,
+              source: 'admin-ui'
+            })
+          }).catch(() => {});
+        };
+
         launchAppBtn.onclick = async () => {
           launchAppBtn.disabled = true;
           launchAppBtn.title = 'Запуск...';
@@ -156,33 +172,17 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
             const resp = await adminFetch(`/api/devices/${encodeURIComponent(d.device_id)}/launch-app`, { method: 'POST' });
             const result = await resp.json();
             if (result.ok) {
-              showToastNotification({
-                title: 'Android-приложение',
-                message: 'Команда на запуск приложения отправлена!',
-                severity: 'info',
-                timestamp: Date.now()
-              });
+              reportLaunch('info', 'Android-приложение', 'Команда на запуск приложения отправлена!');
             } else {
-              showToastNotification({
-                title: 'Ошибка запуска',
-                message: result.error || 'Неизвестная ошибка',
-                severity: 'warning',
-                timestamp: Date.now()
-              });
+              reportLaunch('warning', 'Ошибка запуска', result.error || 'Неизвестная ошибка');
             }
           } catch (e) {
-            showToastNotification({
-              title: 'Ошибка соединения',
-              message: 'Не удалось отправить команду на сервер',
-              severity: 'critical',
-              timestamp: Date.now()
-            });
+            reportLaunch('critical', 'Ошибка соединения', 'Не удалось отправить команду на сервер');
           }
           launchAppBtn.disabled = false;
           launchAppBtn.title = 'Запустить Android-приложение';
         };
         headerInner.appendChild(launchAppBtn);
-      });
     }
   }
   

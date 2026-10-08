@@ -4,14 +4,90 @@
  */
 
 import { createModuleLogger } from './logger.js';
+import { buildNotificationStore } from './notification-store.js';
 const logger = createModuleLogger('system');
 
-class NotificationsManager {
+export class NotificationsManager {
   constructor() {
     this.notifications = new Map(); // Map<id, notification>
     this.notificationKeys = new Map(); // Map<key, id> для обновляемых уведомлений (job status)
     this.maxNotifications = 100;
     this.listeners = new Set();
+    this.store = null;
+  }
+
+  /**
+   * Инициализировать хранилище и восстановить уведомления при старте.
+   *
+   * Redis хранит уведомления между рестартами; без Redis (или при его
+   * недоступности) всё остаётся в памяти — как было раньше. Восстановленные
+   * уведомления не рассылаются слушателям: старое не должно всплывать админу
+   * заново через сокет.
+   *
+   * @param {object} [storeOverride] - Хранилище для тестов (иначе собирается автоматически)
+   */
+  async init(storeOverride = null) {
+    if (this.store) return;
+    this.store = storeOverride || await buildNotificationStore({ logger });
+
+    const stored = await this.store.list();
+    if (stored?.length) {
+      for (const notification of stored) {
+        if (!notification?.id) continue;
+        this.notifications.set(notification.id, notification);
+        if (notification.key) {
+          this.notificationKeys.set(String(notification.key).trim(), notification.id);
+        }
+      }
+      this.capIfNeeded();
+      logger.info('[Notifications] Восстановлено уведомлений из хранилища', {
+        count: stored.length,
+        store: this.store.kind
+      });
+    } else if (this.store.kind === 'redis') {
+      logger.info('[Notifications] Хранилище Redis пустое', { store: this.store.kind });
+    }
+  }
+
+  /** Какое хранилище активно: 'redis' или 'memory'. */
+  getStorageMode() {
+    return this.store?.kind || 'memory';
+  }
+
+  /** Записать уведомление в хранилище в фоне — менеджер остаётся синхронным. */
+  _persist(notification) {
+    if (!this.store) return;
+    this.store.persistNotification(notification).catch((error) => {
+      logger.warn('[Notifications] Не удалось сохранить уведомление в Redis', {
+        id: notification.id,
+        error: error.message
+      });
+    });
+  }
+
+  /** Удалить уведомление из хранилища в фоне. */
+  _forget(id) {
+    if (!this.store) return;
+    this.store.removeById(id).catch((error) => {
+      logger.warn('[Notifications] Не удалось удалить уведомление из Redis', {
+        id,
+        error: error.message
+      });
+    });
+  }
+
+  /** Вытеснить самые старые уведомления сверх лимита. */
+  capIfNeeded() {
+    if (this.notifications.size <= this.maxNotifications) return;
+    const sorted = Array.from(this.notifications.values())
+      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    const oldest = sorted[0];
+    if (!oldest) return;
+    this.notifications.delete(oldest.id);
+    if (oldest.key) {
+      this.notificationKeys.delete(oldest.key);
+    }
+    this._forget(oldest.id);
   }
 
   /**
@@ -71,19 +147,10 @@ class NotificationsManager {
     if (key) {
       this.notificationKeys.set(key, id);
     }
-    
+
+    this._persist(notification);
     // Ограничиваем количество уведомлений
-    if (this.notifications.size > this.maxNotifications) {
-      const sorted = Array.from(this.notifications.values())
-        .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-      const oldest = sorted[0];
-      if (oldest) {
-        this.notifications.delete(oldest.id);
-        if (oldest.key) {
-          this.notificationKeys.delete(oldest.key);
-        }
-      }
-    }
+    this.capIfNeeded();
 
     logger.warn('[Notifications] New notification added', {
       id,
@@ -178,6 +245,7 @@ class NotificationsManager {
       this.notificationKeys.set(next.key, id);
     }
 
+    this._persist(next);
     this.notifyListeners(next, action);
     return next;
   }
@@ -243,6 +311,7 @@ class NotificationsManager {
     const notification = this.notifications.get(id);
     if (notification) {
       notification.acknowledged = true;
+      this._persist(notification);
       this.notifyListeners(notification, 'acknowledged');
       return true;
     }
@@ -259,7 +328,11 @@ class NotificationsManager {
     if (existing?.key) {
       this.notificationKeys.delete(existing.key);
     }
-    return this.notifications.delete(id);
+    const removed = this.notifications.delete(id);
+    if (removed) {
+      this._forget(id);
+    }
+    return removed;
   }
 
   /**
@@ -279,7 +352,11 @@ class NotificationsManager {
     }
 
     this.notificationKeys.delete(normalizedKey);
-    return this.notifications.delete(notificationId);
+    const removed = this.notifications.delete(notificationId);
+    if (removed) {
+      this._forget(notificationId);
+    }
+    return removed;
   }
 
   /**

@@ -3,11 +3,11 @@
  */
 import { jest } from '@jest/globals';
 
-const mockShowToastNotification = jest.fn();
+const mockReportNotification = jest.fn(async () => true);
 
 jest.unstable_mockModule('../../public/js/admin/notifications.js', () => ({
   initNotifications: jest.fn(),
-  showToastNotification: (...args) => mockShowToastNotification(...args)
+  reportNotification: (...args) => mockReportNotification(...args)
 }));
 
 const {
@@ -62,7 +62,7 @@ describe('карточка прогресса переноса', () => {
       .toBe('50 из 200 · загрузка в хранилище');
   });
 
-  test('два завершения (сокет + HTTP-ответ) дают один тост', async () => {
+  test('два завершения (сокет + HTTP-ответ) дают одно уведомление', async () => {
     const opId = createCopyOpId();
     showCopyProgress({ ...BASE, opId });
     updateCopyProgress({ ...BASE, opId, phase: 'disk', done: 10, total: 10 });
@@ -73,8 +73,9 @@ describe('карточка прогресса переноса', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
 
     expect(card(opId)).toBeNull();
-    expect(mockShowToastNotification).toHaveBeenCalledTimes(1);
-    expect(mockShowToastNotification.mock.calls[0][0]).toMatchObject({
+    expect(mockReportNotification).toHaveBeenCalledTimes(1);
+    expect(mockReportNotification.mock.calls[0][0]).toMatchObject({
+      type: 'folder_transfer',
       title: 'Перенос папки',
       severity: 'info'
     });
@@ -88,8 +89,9 @@ describe('карточка прогресса переноса', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
 
     expect(card(opId)).toBeNull();
-    expect(mockShowToastNotification).toHaveBeenCalledTimes(1);
-    expect(mockShowToastNotification.mock.calls[0][0]).toMatchObject({
+    expect(mockReportNotification).toHaveBeenCalledTimes(1);
+    expect(mockReportNotification.mock.calls[0][0]).toMatchObject({
+      type: 'folder_transfer_error',
       title: 'Ошибка переноса',
       message: 'Хранилище недоступно',
       severity: 'critical'
