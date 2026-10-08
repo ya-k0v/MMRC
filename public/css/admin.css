@@ -862,12 +862,25 @@ button.st-btn-danger:hover:not(:disabled) {
 .st-power-badge.is-active { background: rgba(34, 197, 94, 0.14); color: var(--success); }
 .st-power-badge.is-sleep { background: rgba(245, 158, 11, 0.16); color: var(--warning); }
 
+/* Действия над устройством (сон/пробуждение/плеер) — иконки */
+.st-power-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
 button.st-power-btn {
   font-size: 0.75rem;
-  padding: 3px 12px;
+  padding: 3px 6px;
   min-width: auto;
   min-height: auto;
   height: auto;
+  line-height: 1;
+}
+
+.st-power-btn svg {
+  display: block;
 }
 
 .st-power-empty {

@@ -12,7 +12,7 @@
  */
 
 import { escapeHtml } from '../shared/utils.js';
-import { getPowerIcon } from '../shared/svg-icons.js';
+import { getPowerIcon, getSunIcon, getMoonIcon, getPlayIcon } from '../shared/svg-icons.js';
 
 const POWER_ENDPOINT = '/api/devices/power';
 const STATE_ENDPOINT = '/api/devices/power-state';
@@ -57,9 +57,11 @@ function rowHtml(device) {
       <span class="st-power-name">${escapeHtml(name)}</span>
       <span class="meta st-power-ip">${escapeHtml(ip || 'IP не задан')}</span>
       <span data-power-badge="${escapeHtml(id)}" class="meta st-power-badge ${badge.cls}">${badge.text}</span>
-      <button type="button" class="secondary meta st-power-btn" data-power-action="sleep" data-power-id="${escapeHtml(id)}">Усыпить</button>
-      <button type="button" class="secondary meta st-power-btn" data-power-action="wake" data-power-id="${escapeHtml(id)}" title="Разбудить и запустить плеер">Разбудить</button>
-      <button type="button" class="secondary meta st-power-btn" data-power-action="launch" data-power-id="${escapeHtml(id)}" title="Завершить процесс плеера и открыть заново">Запустить плеер</button>
+      <span class="st-power-actions">
+        <button type="button" class="secondary meta st-power-btn" data-power-action="sleep" data-power-id="${escapeHtml(id)}" title="Усыпить устройство" aria-label="Усыпить ${escapeHtml(name)}">${getMoonIcon(14)}</button>
+        <button type="button" class="secondary meta st-power-btn" data-power-action="wake" data-power-id="${escapeHtml(id)}" title="Разбудить и запустить плеер" aria-label="Разбудить ${escapeHtml(name)}">${getSunIcon(14)}</button>
+        <button type="button" class="secondary meta st-power-btn" data-power-action="launch" data-power-id="${escapeHtml(id)}" title="Завершить процесс плеера и открыть заново" aria-label="Запустить плеер на ${escapeHtml(name)}">${getPlayIcon(14)}</button>
+      </span>
     </div>`;
 }
 
