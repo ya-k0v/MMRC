@@ -343,10 +343,11 @@ export async function copyFolderEverywhere(sourcePath, targetPath, storage, opti
 
   const sourceOnDisk = fs.existsSync(sourcePath);
   let storageKeys = [];
+  let sourcePrefix = null;
   let copiedInStorage = 0;
 
   if (storage && !isLocalStorage(storage)) {
-    const sourcePrefix = `${toStorageKey(sourcePath).replace(/\\/g, '/')}/`;
+    sourcePrefix = `${toStorageKey(sourcePath).replace(/\\/g, '/')}/`;
     storageKeys = ((await storage.list(sourcePrefix)) || [])
       .filter(key => key.startsWith(sourcePrefix) && !key.endsWith('/'));
 
@@ -356,13 +357,40 @@ export async function copyFolderEverywhere(sourcePath, targetPath, storage, opti
   }
 
   const diskFiles = sourceOnDisk ? await countFiles(sourcePath) : [];
-  const total = storageKeys.length + diskFiles.length;
+
+  // Папка зеркалится: объекты в бакете и файлы на диске — один и тот же
+  // набор. Это одна работа, а не две — иначе прогресс показывал бы «90 из 90»
+  // при 45 файлах папки. В зеркальном случае каждый файл копируется в оба
+  // места за один проход, и счётчик соответствует числу файлов.
+  const mirrored = storageKeys.length > 0
+    && sourceOnDisk
+    && storageKeys.length === diskFiles.length
+    && sameRelSets(storageKeys.map(key => key.slice(sourcePrefix.length)), diskFiles);
+
+  const total = mirrored ? storageKeys.length : storageKeys.length + diskFiles.length;
   emit({ phase: 'prepare', done: 0, total, file: path.basename(sourcePath) });
 
   let done = 0;
+  let copiedOnDisk = 0;
 
-  if (storageKeys.length > 0) {
-    const sourcePrefix = `${toStorageKey(sourcePath).replace(/\\/g, '/')}/`;
+  if (mirrored) {
+    const targetPrefix = `${toStorageKey(targetPath).replace(/\\/g, '/')}/`;
+    await fs.promises.mkdir(targetPath, { recursive: true });
+    for (const key of storageKeys) {
+      const rel = key.slice(sourcePrefix.length);
+      await storage.copy(key, targetPrefix + rel);
+      await copyOneFile(sourcePath, targetPath, rel);
+      copiedInStorage += 1;
+      copiedOnDisk += 1;
+      done += 1;
+      emit({ phase: 'disk', done, total, file: rel });
+    }
+    try {
+      await fs.promises.chmod(targetPath, 0o755);
+    } catch (error) {
+      logger.debug('[copy-folder] Не удалось выставить права на копию', { targetPath, error: error.message });
+    }
+  } else if (storageKeys.length > 0) {
     const targetPrefix = `${toStorageKey(targetPath).replace(/\\/g, '/')}/`;
     for (const key of storageKeys) {
       await storage.copy(key, targetPrefix + key.slice(sourcePrefix.length));
@@ -372,8 +400,7 @@ export async function copyFolderEverywhere(sourcePath, targetPath, storage, opti
     }
   }
 
-  let copiedOnDisk = 0;
-  if (sourceOnDisk) {
+  if (!mirrored && sourceOnDisk) {
     await copyTree(sourcePath, targetPath, (file) => {
       copiedOnDisk += 1;
       done += 1;
@@ -404,6 +431,29 @@ export async function copyFolderEverywhere(sourcePath, targetPath, storage, opti
   }
 
   return { copiedInStorage, copiedOnDisk };
+}
+
+/** Одинаковый ли набор файлов у объектов бакета и локальных файлов папки. */
+function sameRelSets(a, b) {
+  const norm = value => String(value).replace(/\\/g, '/');
+  const aSet = [...new Set(a.map(norm))].sort();
+  const bSet = [...new Set(b.map(norm))].sort();
+  if (aSet.length !== bSet.length) return false;
+  for (let i = 0; i < aSet.length; i++) {
+    if (aSet[i] !== bSet[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * Скопировать один файл папки на диск, создав вложенные папки при
+ * необходимости. Используется в зеркальном проходе, где объект уже
+ * скопирован в бакет, а локальная копия делается здесь же.
+ */
+async function copyOneFile(sourceDir, targetDir, rel) {
+  const to = path.join(targetDir, rel);
+  await fs.promises.mkdir(path.dirname(to), { recursive: true });
+  await fs.promises.copyFile(path.join(sourceDir, rel), to);
 }
 
 /** Относительные пути всех файлов в папке (для подсчёта объёма работы). */

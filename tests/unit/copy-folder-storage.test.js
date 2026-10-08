@@ -124,6 +124,37 @@ describe('copyFolderEverywhere', () => {
     expect(readFileSync(path.join(targetPath, '1.png'), 'utf8')).toBe('1');
   });
 
+  test('папка зеркалится (бакет и диск с тем же набором): файл копируется в оба места за один проход и считается один раз', async () => {
+    const sourcePath = path.join(DATA_ROOT, 'content', 'devK', 'deck');
+    const targetPath = path.join(DATA_ROOT, 'content', 'devL', 'deckCopy');
+    const source = `${storageKey(sourcePath)}/`;
+    writeTree(sourcePath, { 'a.png': 'A', 'nested/b.png': 'B' });
+    const storage = createFakeStorage({
+      [`${source}a.png`]: 'A',
+      [`${source}nested/b.png`]: 'B'
+    });
+
+    const events = [];
+    const result = await copyFolderEverywhere(sourcePath, targetPath, storage, {
+      onProgress: p => events.push(p)
+    });
+
+    expect(result).toEqual({ copiedInStorage: 2, copiedOnDisk: 2 });
+
+    // Счётчик — число файлов папки, а не сумма хранилищной и дисковой фаз:
+    // иначе при 45 файлах было бы «90 из 90».
+    const last = events[events.length - 1];
+    expect(last.done).toBe(2);
+    expect(last.total).toBe(2);
+
+    // Копия приехала и на диск, и в бакет.
+    expect(readFileSync(path.join(targetPath, 'a.png'), 'utf8')).toBe('A');
+    expect(readFileSync(path.join(targetPath, 'nested', 'b.png'), 'utf8')).toBe('B');
+    const target = `${storageKey(targetPath)}/`;
+    expect(storage.objects.get(`${target}a.png`)).toBe('A');
+    expect(storage.objects.get(`${target}nested/b.png`)).toBe('B');
+  });
+
   test('onProgress получает непрерывный счётчик по всем фазам', async () => {
     const sourcePath = path.join(DATA_ROOT, 'content', 'devI', 'pages');
     const targetPath = path.join(DATA_ROOT, 'content', 'devJ', 'pages');
