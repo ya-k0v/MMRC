@@ -343,23 +343,9 @@ GROUP BY device_id;
 -- DEFAULT DATA
 -- ========================================
 
--- Дефолтный admin пользователь
--- Username: admin
--- Password: admin123 (ОБЯЗАТЕЛЬНО СМЕНИТЕ ПОСЛЕ УСТАНОВКИ!)
--- Hash сгенерирован через: bcrypt.hash('admin123', 10)
-INSERT OR IGNORE INTO users (id, username, full_name, password_hash, role, is_active) 
-VALUES (
-  1,
-  'admin',
-  'Администратор',
-  '$2b$10$jgHKNtHUKUhkftKlOfDqOulY9LFBVi/AirOu0YSKfzDlvFD60QI/W',
-  'admin',
-  1
-);
-
--- ВАЖНО: После первого входа смените пароль через API:
--- POST /api/auth/change-password
--- { "oldPassword": "admin123", "newPassword": "your_strong_password" }
+-- Дефолтный admin НЕ создаётся: первый админ создаётся через
+-- /api/auth/setup-first-admin при первом открытии страницы админки,
+-- когда в БД ещё нет ни одного пользователя.
 
 -- ========================================
 -- SYSTEM SETTINGS
