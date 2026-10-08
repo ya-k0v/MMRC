@@ -8,6 +8,7 @@ import sharp from 'sharp';
 import { PDFDocument } from 'pdf-lib';
 import { getDataRoot, getDevicesPath } from '../config/settings-manager.js';
 import { DOCKER_TAG, DOCKER_IMAGES } from '../config/constants.js';
+import { getDockerResourceArgs } from '../utils/docker-limits.js';
 import { execWithGuard } from '../utils/exec-with-guard.js';
 import { setFileStatus } from '../video/file-status.js';
 import { createModuleLogger } from '../utils/logger.js';
@@ -349,6 +350,7 @@ async function convertPptxToPdfViaDocker(pptxPath, outputDir) {
 
   await execWithGuard('converter', 'docker', [
     'run', '--rm',
+    ...getDockerResourceArgs(),
     '-v', `${hostDataDir}:/data:rw`,
     `${converterImage}:${imageTag}`,
     '--convert-to', 'pdf',

@@ -394,6 +394,8 @@ NIGHT_OPT_END_HOUR=5
 # при обработке видео (ffmpeg). Подбирается автоматически: ядра хоста минус 2
 # (минимум 1). Для переопределения укажите MMRC_CPU_LIMIT перед запуском скрипта.
 MMRC_CPU_LIMIT=$MMRC_CPU_LIMIT
+MMRC_MEMORY_LIMIT=4G
+MMRC_PIDS_LIMIT=512
 JOB_RESERVE_CPU_PERCENT=30
 JOB_RESERVE_MEMORY_MB=2048
 

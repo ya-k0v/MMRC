@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { DOCKER_TAG, DOCKER_IMAGES } from '../config/constants.js';
 import { execWithGuard } from './exec-with-guard.js';
+import { getDockerResourceArgs } from './docker-limits.js';
 import { createModuleLogger } from './logger.js';
 const logger = createModuleLogger('video');
 
@@ -48,6 +49,7 @@ function buildDockerArgs(binary, args) {
   const translated = translateArgs(args);
   return [
     'run', '--rm',
+    ...getDockerResourceArgs(),
     '-v', `${cfg.hostDataDir}:${cfg.containerPath}:rw`,
     `${cfg.image}:${cfg.tag}`,
     binary,
