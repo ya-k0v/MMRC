@@ -43,7 +43,8 @@ import {
   findFileFolder, getPageSlideCount, autoConvertFile 
 } from './src/converters/document-converter.js';
 import { initStreamManager } from './src/streams/stream-manager.js';
-import { createDevicesRouter } from './src/routes/devices.js';
+import { createDevicesRouter, resolveDeviceAdbPort } from './src/routes/devices.js';
+import { startPowerWatchdog } from './src/utils/power-watch.js';
 import { createPlaceholderRouter } from './src/routes/placeholder.js';
 import { createFilesRouter, updateDeviceFilesFromDB } from './src/routes/files.js';
 import { createVideoInfoRouter } from './src/routes/video-info.js';
@@ -651,6 +652,31 @@ setupNotificationsHandler(io);
 
 // Запускаем системный мониторинг (проверка диска, БД, процессов и т.д.)
 initSystemMonitor(streamManager, devices);
+
+// Фоновое зеркалирование «спит/активен»: раз в цикл опрашивает приставки по
+// ADB и рассылает изменения, чтобы статусы не застревали, когда устройство
+// уснуло или проснулось само (таймаут экрана, пульт, Wake-on-LAN мимо панели).
+// Карту устройств передаём функцией: при переподключении к БД кэш устройств
+// заменяется, и воркер должен читать свежий объект, а не старую ссылку.
+if (process.env.POWER_WATCH_ENABLED !== '0') {
+  startPowerWatchdog({
+    devices: () => devices,
+    io,
+    resolvePort: (deviceId) => resolveDeviceAdbPort(deviceId, devices[deviceId]),
+    intervalMs: Math.max(
+      5000,
+      Number.parseInt(process.env.POWER_WATCH_INTERVAL_MS || '30000', 10) || 30000
+    )
+  });
+  logger.info('[PowerWatch] Фоновый опрос состояния питания включён', {
+    intervalMs: Math.max(
+      5000,
+      Number.parseInt(process.env.POWER_WATCH_INTERVAL_MS || '30000', 10) || 30000
+    )
+  });
+} else {
+  logger.info('[PowerWatch] Фоновый опрос состояния питания отключён (POWER_WATCH_ENABLED=0)');
+}
 
 async function hydrateDevicesFromDatabase() {
   try {

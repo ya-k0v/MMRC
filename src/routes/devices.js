@@ -17,8 +17,9 @@ import { deleteDeviceFilesMetadata, getDeviceFilesMetadata } from '../database/f
 import { removeStreamJob } from '../streams/stream-manager.js';
 import { requireAuth } from '../middleware/auth.js';
 import { getUserDevices, hasDeviceAccess } from '../middleware/device-access.js';
-import { launchAndroidApp, getPowerState, getDeviceMac } from '../utils/adb.js';
+import { launchAndroidApp, getDeviceMac } from '../utils/adb.js';
 import { POWER_ACTIONS, planPowerTargets, runPowerAction, getStoredPowerAwake, setStoredPowerState } from '../utils/power-control.js';
+import { pollPowerStates } from '../utils/power-watch.js';
 import { ANDROID_PACKAGE_NAME, ANDROID_MAIN_ACTIVITY, DEFAULT_ADB_PORT } from '../config/android.js';
 import { validatePath } from '../utils/path-validator.js';
 
@@ -498,14 +499,16 @@ export function createDevicesRouter(deps) {
 
     // Другие вкладки узнают о смене состояния сразу, без опроса. Заодно
     // пишем его в хранилище, чтобы «спит/активен» был виден и тем, кто
-    // откроет панель позже. Перезапуск плеера (launch) режим питания не
-    // меняет — хранимое состояние и рассылку не трогаем.
+    // откроет панель позже.
+    //
+    // Выбираем по полю awake, а не по ok: для wake с неудачным перезапуском
+    // плеера устройство уже бодрствует (ok:false, awake:true) — состояние
+    // должно стать «активен», иначе плитка зависнет в «спит» до перезагрузки.
+    // Поле awake есть только у действий сна/пробуждения: у launch его нет вовсе.
     for (const result of outcome.results) {
-      if (!result.ok) continue;
-      if (action === 'sleep' || action === 'wake') {
-        setStoredPowerState(result.deviceId, action === 'wake');
-        io.emit('devices/power', { deviceId: result.deviceId, awake: action === 'wake' });
-      }
+      if (result.awake === undefined) continue;
+      setStoredPowerState(result.deviceId, result.awake);
+      io.emit('devices/power', { deviceId: result.deviceId, awake: result.awake });
     }
 
     res.json({
@@ -543,44 +546,29 @@ export function createDevicesRouter(deps) {
       target.port = await resolveDeviceAdbPort(target.deviceId, devices[target.deviceId]);
     }
 
-    const states = await Promise.all(plan.targets.map(async (target) => {
-      // MAC узнаём заодно: он нужен для Wake-on-LAN, когда устройство уже
-      // уснёт и ADB-будильник больше не сработает.
-      const learnMac = target.mac
-        ? Promise.resolve(null)
-        : getDeviceMac(target.ip, target.port, 8000)
-            .then(async (result) => {
-              if (result.ok && result.mac) {
-                await updateDeviceMacAddress(target.deviceId, result.mac);
-              }
-              return result;
-            })
-            .catch(() => null);
-
-      const state = await getPowerState(target.ip, target.port, 8000);
-      await learnMac;
-
-      if (!state.ok) {
-        logger.warn('[Power] Не удалось получить состояние питания', {
-          deviceId: target.deviceId,
-          error: state.error
-        });
-        return { deviceId: target.deviceId, ok: false, awake: null, screenOn: null, error: state.error };
+    // MAC узнаём заодно: он нужен для Wake-on-LAN, когда устройство уже
+    // уснёт и ADB-будильник больше не сработает.
+    await Promise.all(plan.targets.map(async (target) => {
+      if (target.mac) return;
+      try {
+        const discovered = await getDeviceMac(target.ip, target.port, 8000);
+        if (discovered.ok && discovered.mac) {
+          target.mac = discovered.mac;
+          await updateDeviceMacAddress(target.deviceId, discovered.mac);
+        }
+      } catch (_) {
+        // MAC — приятный бонус, без него обойдёмся
       }
-      return { deviceId: target.deviceId, ok: true, awake: state.awake, screenOn: state.screenOn };
     }));
 
     // Опрос обновляет хранимое состояние и рассылает его остальным панелям,
     // только если оно реально изменилось — команды «спит/активен» от других
     // вкладок доходят через devices/power и без этого.
-    for (const state of states) {
-      if (!state.ok) continue;
-      const prev = getStoredPowerAwake(state.deviceId);
-      setStoredPowerState(state.deviceId, state.awake);
-      if (prev !== state.awake) {
-        io.emit('devices/power', { deviceId: state.deviceId, awake: state.awake });
-      }
-    }
+    const states = await pollPowerStates(plan.targets, {
+      io,
+      concurrency: 3,
+      adbTimeoutMs: 8000
+    });
 
     res.json({ ok: true, states });
   });

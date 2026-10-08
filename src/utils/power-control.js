@@ -46,6 +46,33 @@ export function getStoredPowerAwake(deviceId) {
 }
 
 /**
+ * После команды питания фоновый опрос не должен перетирать только что
+ * записанное состояние результатом опроса, стартовавшего ДО команды (тот мог
+ * прочитать ещё старое состояние экрана). На это время устройство попадает
+ * в «тихую зону»: команды питания отмечают её, а pollPowerStates пропускает
+ * такие устройства через isPowerCommandRecent.
+ */
+const POWER_COMMAND_QUIET_MS = 10_000;
+
+/** Момент последней команды питания по устройству: deviceId → timestamp. */
+const powerCommandTimestamps = new Map();
+
+/** Отметить, что по устройству только что выполнялась команда питания. */
+export function notePowerCommand(deviceId) {
+  const key = String(deviceId || '');
+  if (!key || isReservedObjectKey(key)) return;
+  powerCommandTimestamps.set(key, Date.now());
+}
+
+/** Выполнялась ли по устройству команда питания в последние `windowMs`. */
+export function isPowerCommandRecent(deviceId, windowMs = POWER_COMMAND_QUIET_MS) {
+  const key = String(deviceId || '');
+  if (!key) return false;
+  const timestamp = powerCommandTimestamps.get(key);
+  return timestamp !== undefined && Date.now() - timestamp < windowMs;
+}
+
+/**
  * Собрать цели для команды.
  *
  * Без списка id берём все Android-устройства с известным IP (кнопка «усыпить
@@ -152,6 +179,7 @@ export async function runPowerAction(targets, action, options = {}) {
   ));
 
   for (const result of results) {
+    notePowerCommand(result.deviceId);
     if (result.ok) {
       powerLog.info(`Команда питания выполнена: ${action}`, {
         deviceId: result.deviceId,
