@@ -4,6 +4,8 @@
  */
 
 import { adminFetch } from './auth.js';
+import { getCloseIcon } from '../shared/svg-icons.js';
+import { getSeverityInfo } from '../shared/severity.js';
 
 let unreadCount = 0;
 let socket = null;
@@ -186,57 +188,58 @@ const TOAST_EXIT_MS = 200;
 function showToastNotification(notification) {
   // Создаем элемент уведомления
   const toast = document.createElement('div');
-  toast.className = 'notification-toast';
+  toast.className = `notification-toast is-${getSeverityInfo(notification.severity).key}`;
   toast.setAttribute('data-notification-id', notification.id);
-  
-  const severityColor = getSeverityColor(notification.severity);
 
-  // Статичные стили — в .notification-toast (public/css/app.css).
-  // Инлайн остаётся только динамический цвет серьёзности.
-  toast.style.borderLeftColor = severityColor;
-  
   const timeAgo = formatTimeAgo(new Date(notification.timestamp));
-  
+  const severity = getSeverityInfo(notification.severity);
+
   // Используем DOM методы вместо innerHTML для безопасности
   const container = document.createElement('div');
-  container.style.cssText = 'display: flex; align-items: start; gap: 12px;';
-  
+  container.className = 'notification-toast__container';
+
+  const icon = document.createElement('span');
+  icon.className = 'notification-toast__icon';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.innerHTML = severity.icon;
+
   const contentDiv = document.createElement('div');
-  contentDiv.style.cssText = 'flex: 1; min-width: 0;';
-  
+  contentDiv.className = 'notification-toast__content';
+
   const titleDiv = document.createElement('div');
-  titleDiv.style.cssText = 'font-weight: bold; margin-bottom: 4px; color: var(--text);';
+  titleDiv.className = 'notification-toast__title';
   titleDiv.textContent = notification.title || '';
-  
+
   const messageDiv = document.createElement('div');
-  messageDiv.style.cssText = 'color: var(--text-secondary); font-size: 14px; margin-bottom: 8px;';
+  messageDiv.className = 'notification-toast__message';
   messageDiv.textContent = notification.message || '';
-  
-  const timeDiv = document.createElement('div');
-  timeDiv.style.cssText = 'font-size: 12px; color: var(--muted);';
+
+  const metaDiv = document.createElement('div');
+  metaDiv.className = 'notification-toast__meta';
+  const severityLabel = document.createElement('span');
+  severityLabel.className = 'notification-toast__severity';
+  severityLabel.textContent = severity.label;
+  const timeDiv = document.createElement('span');
+  timeDiv.className = 'notification-toast__time';
   timeDiv.textContent = timeAgo;
-  
+  metaDiv.appendChild(severityLabel);
+  metaDiv.appendChild(timeDiv);
+
   contentDiv.appendChild(titleDiv);
   contentDiv.appendChild(messageDiv);
-  contentDiv.appendChild(timeDiv);
-  
+  contentDiv.appendChild(metaDiv);
+
   const closeButton = document.createElement('button');
-  closeButton.style.cssText = `
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    padding: 4px;
-    color: var(--muted);
-    font-size: 18px;
-    line-height: 1;
-  `;
-  closeButton.textContent = '×';
+  closeButton.className = 'notification-toast__close';
+  closeButton.setAttribute('aria-label', 'Закрыть');
+  closeButton.innerHTML = getCloseIcon(16);
   closeButton.onclick = () => toast.remove();
-  
+
+  container.appendChild(icon);
   container.appendChild(contentDiv);
   container.appendChild(closeButton);
   toast.appendChild(container);
-  
+
   // Клик по уведомлению открывает раздел уведомлений
   toast.onclick = (e) => {
     if (!e.target.closest('button')) {
@@ -259,20 +262,6 @@ function showToastNotification(notification) {
       toast.remove();
     }, { once: true });
   }, 8000);
-}
-
-/**
- * Получает цвет для уровня важности
- * @param {string} severity - Уровень важности
- * @returns {string} Цвет
- */
-function getSeverityColor(severity) {
-  switch (severity) {
-    case 'critical': return '#ef4444';
-    case 'warning': return '#f59e0b';
-    case 'info': return '#3b82f6';
-    default: return '#6b7280';
-  }
 }
 
 /**

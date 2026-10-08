@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  *
  * Жизненный цикл тоста после рефакторинга:
- *  - тост появляется и получает динамический цвет серьёзности
+ *  - тост появляется и получает модификатор серьёзности (.is-*) для цвета из CSS
  *  - уходит по animationend, а не по зашитой константе
  *  - при prefers-reduced-motion схлопывание не мешает удалению
  */
@@ -30,13 +30,20 @@ const fire = (over = {}) => showToastNotification({
   id: 'n1', title: 'Заголовок', message: 'Сообщение', timestamp: Date.now(), severity: 'info', ...over
 });
 
-test('тост получает цвет серьёзности, статичные стили живут в CSS', () => {
+test('тост получает модификатор серьёзности, статичные стили живут в CSS', () => {
   fire({ id: 'n1', severity: 'critical' });
   expect(toast()).not.toBeNull();
-  expect(toast().style.borderLeftColor).toBe('rgb(239, 68, 68)'); // critical #ef4444
+  expect(toast().classList.contains('is-critical')).toBe(true);
+  // Цвет больше не инлайн: полоса серьёзности задаётся классом .is-* в app.css
+  expect(toast().style.borderLeftColor).toBe('');
   expect(toast().getAttribute('data-notification-id')).toBe('n1');
   // position переехал в .notification-toast (app.css), инлайн должен быть пуст
   expect(toast().style.position).toBe('');
+  // Структура: иконка, заголовок, сообщение и подпись серьёзности
+  expect(toast().querySelector('.notification-toast__icon svg')).not.toBeNull();
+  expect(toast().querySelector('.notification-toast__title').textContent).toBe('Заголовок');
+  expect(toast().querySelector('.notification-toast__message').textContent).toBe('Сообщение');
+  expect(toast().querySelector('.notification-toast__severity').textContent).toBe('Критично');
 });
 
 test('автоудаление происходит по animationend, а не по зашитому числу', () => {

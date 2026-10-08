@@ -4,6 +4,8 @@
  */
 
 import { adminFetch } from './auth.js';
+import { getCheckIcon, getCloseIcon, getBellOffIcon } from '../shared/svg-icons.js';
+import { getSeverityInfo } from '../shared/severity.js';
 
 let socket = null;
 let currentNotifications = [];
@@ -78,7 +80,15 @@ function setElementHtml(target, html) {
 
 function buildNotificationsListHtml() {
   if (!currentNotifications.length) {
-    return '<div style="text-align:center; padding:40px; color:var(--text-secondary);">Нет активных уведомлений</div>';
+    return `
+      <div class="notification-list__empty">
+        <span class="notification-list__empty-icon">${getBellOffIcon(40)}</span>
+        <div>
+          <div class="notification-list__empty-title">Все уведомления прочитаны</div>
+          <div class="notification-list__empty-text">Новые события появятся здесь</div>
+        </div>
+      </div>
+    `;
   }
 
   return currentNotifications.map(renderNotification).join('');
@@ -167,16 +177,6 @@ function attachRealtimeSocketListeners() {
   socketListenersBound = true;
 }
 
-function getActionButtonStyle(variant = 'secondary') {
-  if (variant === 'danger') {
-    return 'background:#b91c1c; border:1px solid #991b1b; color:#fff;';
-  }
-  if (variant === 'primary') {
-    return 'background:var(--accent, #2563eb); border:1px solid var(--accent, #2563eb); color:#fff;';
-  }
-  return 'background:var(--bg-secondary); border:1px solid var(--border); color:var(--text);';
-}
-
 async function reportModalError(title, error, details = {}) {
   const message = error?.message || String(error || 'Неизвестная ошибка');
   try {
@@ -221,11 +221,11 @@ export function mountNotificationsSection(container, socketIO = null) {
   const footerDisplay = currentNotifications.length > 0 ? 'flex' : 'none';
 
   container.innerHTML = `
-    <div id="${NOTIFICATIONS_MODAL_LIST_ID}" style="display:flex; flex-direction:column; gap:var(--space-sm); overflow-y:auto; min-height:0; flex:1;">
+    <div id="${NOTIFICATIONS_MODAL_LIST_ID}" class="notification-list">
       ${listHtml}
     </div>
-    <div id="${NOTIFICATIONS_MODAL_FOOTER_ID}" style="margin-top:var(--space-sm); padding-top:var(--space-sm); border-top:1px solid var(--border); display:${footerDisplay}; gap:var(--space-sm); justify-content:flex-end;">
-      <button id="notificationsClearAll" class="secondary" style="min-width:auto;">Очистить все</button>
+    <div id="${NOTIFICATIONS_MODAL_FOOTER_ID}" class="notification-footer" style="display:${footerDisplay};">
+      <button id="notificationsClearAll" class="secondary meta">${getCheckIcon(14)} Очистить все</button>
     </div>
   `;
 
@@ -264,8 +264,7 @@ async function loadNotifications() {
  * @returns {string} HTML
  */
 function renderNotification(notification) {
-  const severityColor = getSeverityColor(notification.severity);
-  const severityIcon = getSeverityIcon(notification.severity);
+  const severity = getSeverityInfo(notification.severity);
   const timeAgo = formatTimeAgo(new Date(notification.timestamp));
   const actions = Array.isArray(notification.actions) ? notification.actions : [];
   const title = String(notification.title || 'Уведомление');
@@ -273,20 +272,12 @@ function renderNotification(notification) {
 
   const actionsHtml = actions.length > 0
     ? `
-      <span style="display:inline-flex; flex-wrap:wrap; gap:4px; flex:none;">
+      <span class="notification-item__actions">
         ${actions.map((action) => `
           <button
-            class="notification-action-btn"
+            class="notification-action-btn secondary meta${action.variant === 'danger' ? ' danger' : ''}"
             data-notification-id="${notification.id}"
             data-action-id="${escapeHtml(action.id)}"
-            style="
-              min-width:auto;
-              padding:4px 10px;
-              font-size:0.75rem;
-              border-radius:6px;
-              white-space:nowrap;
-              ${getActionButtonStyle(action.variant)}
-            "
             title="${escapeHtml(action.label)}"
           >
             ${escapeHtml(action.label)}
@@ -297,52 +288,37 @@ function renderNotification(notification) {
     : '';
 
   return `
-    <div class="notification-item" data-notification-id="${notification.id}" title="${escapeHtml(message ? `${title}: ${message}` : title)}" style="
-      padding:8px 12px;
-      border:1px solid var(--border);
-      border-left:4px solid ${severityColor};
-      border-radius:8px;
-      background:var(--card-bg);
-      display:flex;
-      align-items:center;
-      gap:var(--space-sm);
-    ">
-      <span style="font-size:16px; flex:none; line-height:1;">${severityIcon}</span>
-      <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text);">
-        <strong>${escapeHtml(title)}</strong>${message ? `<span style="color:var(--text-secondary);">: ${escapeHtml(message)}</span>` : ''}
-      </span>
-      ${actionsHtml}
-      <span style="font-size:0.7rem; color:var(--muted); flex:none; white-space:nowrap;">${timeAgo}</span>
-      <span style="display:inline-flex; gap:4px; flex:none;">
-        <button
-          class="notification-ack-btn"
-          data-notification-id="${notification.id}"
-          style="
-            min-width:auto;
-            padding:4px 8px;
-            font-size:0.75rem;
-            background:var(--bg-secondary);
-            border:1px solid var(--border);
-          "
-          title="Отметить как прочитанное"
-        >
-          ✓
-        </button>
-        <button
-          class="notification-remove-btn"
-          data-notification-id="${notification.id}"
-          style="
-            min-width:auto;
-            padding:4px 8px;
-            font-size:0.75rem;
-            background:var(--bg-secondary);
-            border:1px solid var(--border);
-          "
-          title="Удалить"
-        >
-          ×
-        </button>
-      </span>
+    <div class="notification-item is-${severity.key}" data-notification-id="${notification.id}" title="${escapeHtml(message ? `${title}: ${message}` : title)}">
+      <span class="notification-item__icon" aria-hidden="true">${severity.icon}</span>
+      <div class="notification-item__body">
+        <div class="notification-item__head">
+          <span class="notification-item__title">${escapeHtml(title)}</span>
+          <span class="notification-item__severity">${escapeHtml(severity.label)}</span>
+          <span class="notification-item__time">${timeAgo}</span>
+        </div>
+        ${message ? `<p class="notification-item__message">${escapeHtml(message)}</p>` : ''}
+        <div class="notification-item__tools">
+          ${actionsHtml}
+          <span class="notification-item__tools-actions">
+            <button
+              class="notification-btn-icon notification-btn-icon--ack notification-ack-btn"
+              data-notification-id="${notification.id}"
+              title="Отметить как прочитанное"
+              aria-label="Отметить как прочитанное"
+            >
+              ${getCheckIcon(16)}
+            </button>
+            <button
+              class="notification-btn-icon notification-btn-icon--remove notification-remove-btn"
+              data-notification-id="${notification.id}"
+              title="Удалить"
+              aria-label="Удалить"
+            >
+              ${getCloseIcon(16)}
+            </button>
+          </span>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -547,34 +523,6 @@ async function clearAllNotifications() {
   } catch (error) {
     console.error('[Notifications Modal] Error clearing all notifications:', error);
     await reportModalError('Ошибка очистки уведомлений', error);
-  }
-}
-
-/**
- * Получает цвет для уровня важности
- * @param {string} severity - Уровень важности
- * @returns {string} Цвет
- */
-function getSeverityColor(severity) {
-  switch (severity) {
-    case 'critical': return '#ef4444';
-    case 'warning': return '#f59e0b';
-    case 'info': return '#3b82f6';
-    default: return '#6b7280';
-  }
-}
-
-/**
- * Получает иконку для уровня важности
- * @param {string} severity - Уровень важности
- * @returns {string} Иконка
- */
-function getSeverityIcon(severity) {
-  switch (severity) {
-    case 'critical': return '🚨';
-    case 'warning': return '⚠️';
-    case 'info': return 'ℹ️';
-    default: return '📢';
   }
 }
 

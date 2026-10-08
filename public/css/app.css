@@ -2571,7 +2571,6 @@ button.meta-lg.android-pastel {
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-left: 4px solid var(--brand);
-  padding: 16px;
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-md);
   z-index: 10000;
@@ -2581,9 +2580,293 @@ button.meta-lg.android-pastel {
   cursor: pointer;
 }
 
+/* Полоса серьёзности слева. */
+.notification-toast.is-critical { border-left-color: var(--danger); }
+.notification-toast.is-warning { border-left-color: var(--warning); }
+.notification-toast.is-info { border-left-color: var(--brand); }
+.notification-toast.is-default { border-left-color: var(--muted); }
+
+.notification-toast__container {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-sm) var(--space-sm) var(--space-md);
+}
+
+.notification-toast__icon {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--brand);
+}
+.notification-toast.is-critical .notification-toast__icon { color: var(--danger); }
+.notification-toast.is-warning .notification-toast__icon { color: var(--warning); }
+.notification-toast.is-info .notification-toast__icon { color: var(--brand); }
+.notification-toast.is-default .notification-toast__icon { color: var(--muted); }
+
+.notification-toast__content {
+  flex: 1;
+  min-width: 0;
+}
+
+.notification-toast__title {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  color: var(--text);
+  margin-bottom: 2px;
+  padding-right: 8px;
+}
+
+.notification-toast__message {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+  margin-bottom: var(--space-xs);
+  overflow-wrap: break-word;
+}
+
+.notification-toast__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-size-xs);
+}
+
+.notification-toast__severity { color: var(--brand); }
+.notification-toast.is-critical .notification-toast__severity { color: var(--danger); }
+.notification-toast.is-warning .notification-toast__severity { color: var(--warning); }
+.notification-toast.is-info .notification-toast__severity { color: var(--brand); }
+.notification-toast.is-default .notification-toast__severity { color: var(--muted); }
+
+.notification-toast__time {
+  color: var(--muted);
+}
+
+.notification-toast__close {
+  flex: none;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  margin: -2px -2px 0 0;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--duration-fast) var(--ease-standard),
+              background var(--duration-fast) var(--ease-standard);
+}
+.notification-toast__close:hover {
+  color: var(--text);
+  background: var(--panel-hover);
+}
+
 /* Выход короче входа — закрытие не должно «залипать». */
 .notification-toast--out {
   animation: slideOutRight var(--duration-fast) var(--ease-exit) forwards;
+}
+
+/* ==========================================================================
+   Уведомления: раздел админки
+   ========================================================================== */
+
+.notification-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+  padding: var(--space-sm) 0;
+}
+
+.notification-list__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 48px 0;
+  text-align: center;
+}
+
+.notification-list__empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--bg-secondary);
+  color: var(--muted);
+}
+
+.notification-list__empty-title {
+  color: var(--text);
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+}
+
+.notification-list__empty-text {
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+  margin-top: 2px;
+}
+
+.notification-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-sm) var(--space-sm) var(--space-md);
+  border: var(--border);
+  border-left: 3px solid var(--muted);
+  border-radius: var(--radius-sm);
+  background: var(--card-bg);
+  transition: background var(--duration-fast) var(--ease-standard),
+              border-color var(--duration-fast) var(--ease-standard);
+}
+.notification-item:hover {
+  background: var(--panel-hover);
+}
+
+.notification-item.is-critical { border-left-color: var(--danger); }
+.notification-item.is-warning { border-left-color: var(--warning); }
+.notification-item.is-info { border-left-color: var(--brand); }
+.notification-item.is-default { border-left-color: var(--muted); }
+
+.notification-item__icon {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--muted);
+}
+.notification-item.is-critical .notification-item__icon { color: var(--danger); }
+.notification-item.is-warning .notification-item__icon { color: var(--warning); }
+.notification-item.is-info .notification-item__icon { color: var(--brand); }
+.notification-item.is-default .notification-item__icon { color: var(--muted); }
+
+.notification-item__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.notification-item__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+.notification-item__title {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  color: var(--text);
+}
+
+.notification-item__severity {
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--muted);
+  background: var(--bg-secondary);
+  border: var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.notification-item.is-critical .notification-item__severity { color: var(--danger); }
+.notification-item.is-warning .notification-item__severity { color: var(--warning); }
+.notification-item.is-info .notification-item__severity { color: var(--brand); }
+.notification-item.is-default .notification-item__severity { color: var(--muted); }
+
+.notification-item__time {
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.notification-item__message {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+  overflow-wrap: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.notification-item__tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.notification-item__actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: none;
+}
+
+.notification-action-btn {
+  min-width: auto;
+  padding: 3px 10px;
+  font-size: var(--font-size-xs);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.notification-item__tools-actions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 4px;
+  flex: none;
+}
+
+.notification-btn-icon {
+  min-width: auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-standard),
+              background var(--duration-fast) var(--ease-standard);
+}
+.notification-btn-icon:hover {
+  color: var(--text);
+  background: var(--panel-hover);
+}
+.notification-btn-icon--ack:hover { color: var(--success); }
+.notification-btn-icon--remove:hover { color: var(--danger); }
+
+.notification-footer {
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: var(--border);
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: flex-end;
 }
 
 /* Прогресс копирования/переноса папки между устройствами.

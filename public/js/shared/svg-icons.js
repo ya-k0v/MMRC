@@ -185,10 +185,38 @@ export function getFolderIcon(size = 16, color = 'currentColor') {
  * @returns {string} SVG код
  */
 export function getWarningIcon(size = 20, color = 'currentColor') {
+   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+     <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+     <line x1="12" y1="9" x2="12" y2="13"></line>
+     <line x1="12" y1="17" x2="12.01" y2="17"></line>
+   </svg>`;
+ }
+
+/**
+ * Получить SVG иконку информации (круг с буквой i)
+ * @param {number} size - Размер иконки (по умолчанию 16)
+ * @param {string} color - Цвет (по умолчанию currentColor)
+ * @returns {string} SVG код
+ */
+export function getInfoIcon(size = 16, color = 'currentColor') {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
-    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
-    <line x1="12" y1="9" x2="12" y2="13"></line>
-    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+    <circle cx="12" cy="12" r="10"></circle>
+    <path d="M12 16v-4"></path>
+    <path d="M12 8h.01"></path>
+  </svg>`;
+}
+
+/**
+ * Получить SVG иконку критической ошибки (восьмиугольник с восклицанием)
+ * @param {number} size - Размер иконки (по умолчанию 16)
+ * @param {string} color - Цвет (по умолчанию currentColor)
+ * @returns {string} SVG код
+ */
+export function getCriticalIcon(size = 16, color = 'currentColor') {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+    <path d="M12 16v-4"></path>
+    <path d="M12 8h.01"></path>
+    <path d="m15.312 2 6.688 6.688v6.624L15.312 22H8.688L2 15.312V8.688L8.688 2z"></path>
   </svg>`;
 }
 
@@ -379,6 +407,21 @@ export function getBellIcon(size = 16, color = 'currentColor') {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
     <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
     <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+  </svg>`;
+}
+
+/**
+ * Получить SVG иконку отключённых уведомлений (перечёркнутый колокольчик)
+ * @param {number} size - Размер иконки (по умолчанию 20)
+ * @param {string} color - Цвет (по умолчанию currentColor)
+ * @returns {string} SVG код
+ */
+export function getBellOffIcon(size = 20, color = 'currentColor') {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+    <path d="M8.7 3A6 6 0 0 1 18 8c0 3.2-.98 5.53-2.03 7.09"></path>
+    <path d="M17 17H3s3-2 3-9"></path>
+    <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path>
+    <line x1="3" y1="3" x2="21" y2="21"></line>
   </svg>`;
 }
 
