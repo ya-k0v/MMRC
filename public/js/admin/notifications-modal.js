@@ -299,6 +299,13 @@ function renderNotification(notification) {
         ${message ? `<p class="notification-item__message">${escapeHtml(message)}</p>` : ''}
         <div class="notification-item__tools">
           ${actionsHtml}
+          <button
+            class="notification-action-btn secondary meta notification-ok-btn"
+            data-notification-id="${notification.id}"
+            title="ОК — закрыть это уведомление"
+          >
+            ОК
+          </button>
           <span class="notification-item__tools-actions">
             <button
               class="notification-btn-icon notification-btn-icon--ack notification-ack-btn"
@@ -329,6 +336,15 @@ function renderNotification(notification) {
 function setupNotificationHandlers() {
   // Кнопки "Отметить как прочитанное"
   document.querySelectorAll('.notification-ack-btn').forEach(btn => {
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-notification-id');
+      await acknowledgeNotification(id);
+    };
+  });
+
+  // Кнопка «ОК» — закрывает конкретное уведомление (то же, что «прочитано»)
+  document.querySelectorAll('.notification-ok-btn').forEach(btn => {
     btn.onclick = async (e) => {
       e.stopPropagation();
       const id = btn.getAttribute('data-notification-id');
