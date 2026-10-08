@@ -273,7 +273,6 @@ function createSettingsSection() {
     const result = await r.json();
     const data = result.settings;
     const contentRoot = data?.runtime?.contentRoot || data?.contentRoot || '';
-    const defaultRoot = data?.defaults?.contentRoot || '';
     const version = data?.version || 'N/A';
     const dbType = data?.dbType || '';
     const isSqlite = dbType === 'sqlite';
@@ -352,28 +351,23 @@ function createSettingsSection() {
             `}
             ${storageInfo.usage ? (() => {
               const u = storageInfo.usage;
-              const pct = u.totalMB ? Math.min(100, Math.round((u.usedMB / u.totalMB) * 100)) : 0;
+              // «Занято» = фактический объём контента в хранилище (dataMB),
+              // если провайдер смог его посчитать; иначе — занятость раздела.
+              const occupiedMB = u.dataMB != null ? u.dataMB : u.usedMB;
+              const pct = u.totalMB ? Math.min(100, Math.round((occupiedMB / u.totalMB) * 100)) : 0;
               const barColor = pct >= 90 ? 'var(--danger)' : pct >= 75 ? 'var(--warning)' : 'var(--success)';
               const fmt = mb => mb >= 1024 ? `${(mb / 1024).toFixed(1)} ГБ` : `${mb} МБ`;
               return `
               <div title="${escapeHtml(u.path || '')}" style="font-size:0.75rem;">
                 <div style="display:flex; justify-content:space-between; gap:var(--space-sm); color:var(--muted); margin-bottom:4px;">
-                  <span>Занято ${fmt(u.usedMB)} из ${fmt(u.totalMB)}</span>
-                  <span>${pct}% · свободно ${fmt(u.availableMB)}</span>
+                  <span>${u.dataMB != null ? `Занято данными: ${fmt(u.dataMB)}` : `Занято: ${fmt(u.usedMB)}`}</span>
+                  <span>свободно ${fmt(u.availableMB)} из ${fmt(u.totalMB)} · ${pct}%</span>
                 </div>
                 <div style="height:6px; border-radius:999px; background:rgba(148,163,184,0.16); overflow:hidden;">
                   <div style="height:100%; width:${pct}%; background:${barColor}; border-radius:999px;"></div>
                 </div>
               </div>`;
             })() : ''}
-            <details style="font-size:0.8rem;">
-              <summary class="meta" style="cursor:pointer; color:var(--muted);">Изменить путь хранения</summary>
-              <div style="display:flex; gap:var(--space-sm); align-items:center; margin-top:var(--space-2xs);">
-                <input id="stCrInput" class="input" value="${escapeHtml(contentRoot)}" placeholder="${storageInfo.isRemote ? 'Префикс внутри бакета' : 'Путь к хранилищу'}" style="flex:1;" />
-                <button id="stCrSave" class="primary">Сохранить</button>
-              </div>
-              <div id="stCrStatus" class="meta" style="min-height:1.2em; margin-top:var(--space-2xs); font-size:0.75rem;"></div>
-            </details>
           </div>
         </div>
 
@@ -470,22 +464,6 @@ function createSettingsSection() {
     `;
 
     // --- Bind events ---
-
-    // Content Root Save
-    const crSave = document.getElementById('stCrSave');
-    if (crSave) {
-      crSave.onclick = async () => {
-        const val = document.getElementById('stCrInput').value.trim();
-        const s = document.getElementById('stCrStatus');
-        try {
-          const r = await adminFetch('/api/admin/settings/content-root', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: val })
-          });
-          if (r.ok) { s.innerHTML = getCheckIcon(14, 'var(--success)') + ' Сохранено'; s.style.color = 'var(--success)'; }
-          else { const e = await r.json().catch(() => ({})); s.textContent = e.error || 'Ошибка'; s.style.color = 'var(--danger)'; }
-        } catch { s.textContent = 'Ошибка соединения'; s.style.color = 'var(--danger)'; }
-      };
-    }
 
     // Restart
     document.getElementById('stRestart').onclick = async () => {

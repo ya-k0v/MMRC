@@ -210,6 +210,34 @@ export class S3Storage extends StorageProvider {
     return objects;
   }
 
+  /**
+   * Сумма размеров объектов по префиксу. ListObjectsV2 уже отдаёт Size,
+   * поэтому дополнительных HEAD-запросов не делаем.
+   */
+  async du(prefix = '') {
+    let total = 0;
+    let continuationToken;
+    try {
+      do {
+        const cmd = new S3.ListObjectsV2Command({
+          Bucket: this.#bucket,
+          Prefix: this._key(prefix),
+          ContinuationToken: continuationToken
+        });
+        const response = await this.#client.send(cmd);
+
+        for (const obj of response.Contents || []) {
+          total += obj.Size || 0;
+        }
+
+        continuationToken = response.NextContinuationToken;
+      } while (continuationToken);
+      return total;
+    } catch {
+      return null;
+    }
+  }
+
   async copy(src, dest) {
     const cmd = new S3.CopyObjectCommand({
       Bucket: this.#bucket,

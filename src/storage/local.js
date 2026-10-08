@@ -93,6 +93,31 @@ export class LocalStorage extends StorageProvider {
     };
   }
 
+  async du(prefix = '') {
+    const start = this._resolve(prefix);
+    try {
+      const stat = await fsp.stat(start);
+      if (stat.isFile()) return stat.size;
+      let total = 0;
+      async function walk(dir) {
+        const entries = await fsp.readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            await walk(full);
+          } else if (entry.isFile()) {
+            const s = await fsp.stat(full);
+            total += s.size;
+          }
+        }
+      }
+      await walk(start);
+      return total;
+    } catch {
+      return null;
+    }
+  }
+
   createReadStream(key, range) {
     const opts = {};
     if (range) {

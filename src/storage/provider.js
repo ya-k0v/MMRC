@@ -35,6 +35,15 @@ export class StorageProvider {
     throw new Error('not implemented');
   }
 
+  /**
+   * Суммарный объём данных по префиксу (рекурсивно для локальных путей,
+   * по всем объектам — для S3). Возвращает количество байт или null,
+   * если содержимое недоступно для подсчёта.
+   */
+  async du(prefix = '') {
+    throw new Error('not implemented');
+  }
+
   createReadStream(key, range) {
     throw new Error('not implemented');
   }

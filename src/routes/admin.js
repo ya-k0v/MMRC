@@ -21,6 +21,7 @@ import {
   startWalCheckpointInterval,
   stopWalCheckpointInterval
 } from '../database/database.js';
+import { getCurrentStorage } from '../storage/current.js';
 import { runMigrations } from '../database/migrate.js';
 import { loadDevicesFromDB, loadFileNamesFromDB, saveDevicesToDB } from '../storage/devices-storage-sqlite.js';
 import { updateDeviceFilesFromDB } from './files.js';
@@ -1099,7 +1100,11 @@ export function createAdminRouter(deps = {}) {
       };
 
       // Занятость диска под data-корнем. statfs есть в Node ≥18.15; для
-      // несуществующего пути бросает — тогда блок с объёмом просто не показываем.
+      // несуществующего пути бросает — тогда сведения об объёме не отдаём.
+      // Раздел показывает файловую систему, где физически лежит контент
+      // (MinIO при STORAGE_BACKEND=s3 живёт там же, в data-корне).
+      // Реальную занятость контента считает провайдер хранилища (du):
+      // для локального — рекурсивно по дереву, для S3 — по Size из листинга.
       try {
         const fsp = await import('node:fs');
         const root = settings?.contentRoot;
@@ -1115,6 +1120,19 @@ export function createAdminRouter(deps = {}) {
           };
         }
       } catch { /* путь недоступен — сведения об объёме не отдаём */ }
+
+      // Фактический объём контента в хранилище (не занятость раздела целиком,
+      // а именно то, что занимают наши файлы/объекты).
+      try {
+        const provider = getCurrentStorage();
+        if (provider && typeof provider.du === 'function' && storage.usage) {
+          const bytes = await provider.du('');
+          if (typeof bytes === 'number' && Number.isFinite(bytes)) {
+            storage.usage.dataBytes = bytes;
+            storage.usage.dataMB = Math.round(bytes / 1048576);
+          }
+        }
+      } catch { /* подсчёт объёма данных недоступен — не критично */ }
 
       // Состояние контейлеров стека: docker CLI входит в образ (INCLUDE_DOCKER_CLI)
       // и сокет демона примонтирован. Если docker недоступен — отдаём null,
