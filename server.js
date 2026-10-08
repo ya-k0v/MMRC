@@ -164,8 +164,11 @@ if (!isPostgres) {
     intervalMinutes: WAL_CHECKPOINT_INTERVAL_MS / 60000,
     thresholdMB: process.env.WAL_CHECKPOINT_THRESHOLD_MB || '100'
   });
-  if (process.env.REDIS_URL || process.env.MMRC_HA_MODE) {
-    logger.error('[Server] 🚫 SQLite + Redis/HA is NOT SUPPORTED.');
+  // Блокируем именно HA/многопроцессный режим (реплики mmrc-replica ставят
+  // MMRC_HA_MODE=true). Одиночный процесс на SQLite + Redis безопасен: Bull и
+  // Socket.IO-адаптер работают на одном пишущем процессе, WAL не страдает.
+  if (process.env.MMRC_HA_MODE) {
+    logger.error('[Server] 🚫 SQLite + HA (multiple processes) is NOT SUPPORTED.');
     logger.error('[Server]    SQLite is unsafe with multiple processes — data corruption will occur.');
     logger.error('[Server]    Set DB_TYPE=postgres in .env and use PostgreSQL for HA deployments.');
     logger.error('[Server]    Server will exit. Fix .env and restart.');
