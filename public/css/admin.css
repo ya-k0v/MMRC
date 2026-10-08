@@ -232,12 +232,22 @@ body.admin-page .sidebar-icon-btn:focus-visible {
 body.admin-page .sidebar-nav {
   flex: 1;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   padding: var(--space-sm);
   transition: padding var(--duration-slow) var(--ease-standard);
 }
 
+/* Резиновый отступ перед модулями (Картотека, Спикер): прижимает их
+   к низу сайдбара, а основной список остаётся под шапкой. */
+body.admin-page .sidebar-spacer {
+  flex: 1 1 auto;
+  min-height: var(--space-sm);
+}
+
 body.admin-page .sidebar-divider {
   height: 1px;
+  flex: none;
   background: var(--border);
   margin: var(--space-sm) 0;
   transition: width var(--duration-slow) var(--ease-standard), margin var(--duration-slow) var(--ease-standard);
@@ -469,31 +479,101 @@ body.admin-page .sidebar-menu-btn {
   animation: fadeIn 0.2s ease-out;
 }
 
-/* Настройки: ровно два ряда карточек. В одну колонку они растягивались
-   во всю ширину панели и теряли место; auto-fit тут не годится — он на
-   широких экранах сам разложил бы карточки в четыре колонки. */
-.admin-section-content {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+/* Настройки: слева колонка карточек (Система → Хранилище → Модули → APK),
+   справа «Управление устройствами» на всю высоту секции. Колонки делят
+   высоту тела секции и скроллятся независимо; список устройств внутри
+   правой колонки пагинируется, если не влезает. */
+.settings-columns {
+  display: flex;
+  flex-direction: column;
   gap: var(--space-sm);
-  align-content: start;
+  flex: 1;
+  min-height: 0;
 }
 
-@media (min-width: 1280px) {
-  .admin-section-content {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-/* Карточки в ряду выравниваются по высоте, но ряды не растягиваются
-   до низа панели — иначе внизу пустуют огромные пустые блоки. */
-.admin-section-content > .st-card {
+.settings-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
   min-width: 0;
 }
 
-/* Карточке, которой нужна вся ширина (списки, таблицы), добавить статус --wide */
-.st-card--wide {
-  grid-column: 1 / -1;
+.settings-col--left {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.settings-col--right {
+  min-height: 0;
+}
+
+.settings-col--right > .st-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Тело карточки питания тянется до её низа, список занимает остаток. */
+.st-power-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+}
+
+.st-power-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.st-power-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.st-power-pager[hidden] {
+  display: none;
+}
+
+@media (min-width: 1280px) {
+  .settings-columns {
+    flex-direction: row;
+  }
+
+  .settings-col {
+    flex: 1 1 0;
+  }
+}
+
+@media (max-width: 1279.98px) {
+  /* В стопке колонки живут обычным потоком: секция скроллится целиком,
+     а список устройств ограничен по высоте, чтобы работала пагинация. */
+  .settings-columns {
+    flex: none;
+  }
+
+  .settings-col--left {
+    overflow-y: visible;
+  }
+
+  .settings-col--right > .st-card {
+    flex: none;
+  }
+
+  .st-power-list {
+    max-height: 60vh;
+  }
 }
 
 @keyframes fadeIn {

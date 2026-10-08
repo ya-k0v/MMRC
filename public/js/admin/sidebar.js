@@ -84,6 +84,36 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
       return true;
     });
 
+    const navItems = [];
+    let spacerPlaced = false;
+    filteredItems.forEach((item) => {
+      // Модульные разделы (Картотека, Спикер и подобные) прижаты к низу
+      // сайдбара: перед ними вставляется резиновый отступ, и пустое место
+      // остаётся между ними и основными пунктами, а не под списком.
+      if (!spacerPlaced && (item.external || item.moduleRequired)) {
+        navItems.push('<div class="sidebar-spacer"></div>');
+        spacerPlaced = true;
+      }
+      if (item.type === 'divider') {
+        navItems.push('<div class="sidebar-divider"></div>');
+        return;
+      }
+      const isActive = state.activeSection === item.id;
+      const target = item.external ? `href="${item.external}" target="_blank"` : `href="#" data-section="${item.id}"`;
+      // Счётчик непрочитанных рисуется в пункте уведомлений, но сам
+      // пункт — обычный раздел навигации, как остальные.
+      const badge = item.id === 'notifications'
+        ? '<span class="sidebar-item-badge" id="notificationsBadge"></span>'
+        : '';
+      navItems.push(`
+        <a class="sidebar-item${isActive ? ' active' : ''}" ${target} title="${item.label}">
+          <span class="sidebar-item-icon">${item.icon}</span>
+          <span class="sidebar-item-label">${item.label}</span>
+          ${badge}
+        </a>
+      `);
+    });
+
     sidebar.innerHTML = `
       <div class="sidebar-header">
         <div class="sidebar-logo">
@@ -98,25 +128,7 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
         </div>
       </div>
       <nav class="sidebar-nav">
-        ${filteredItems.map(item => {
-          if (item.type === 'divider') {
-            return '<div class="sidebar-divider"></div>';
-          }
-          const isActive = state.activeSection === item.id;
-          const target = item.external ? `href="${item.external}" target="_blank"` : `href="#" data-section="${item.id}"`;
-          // Счётчик непрочитанных рисуется в пункте уведомлений, но сам
-          // пункт — обычный раздел навигации, как остальные.
-          const badge = item.id === 'notifications'
-            ? '<span class="sidebar-item-badge" id="notificationsBadge"></span>'
-            : '';
-          return `
-            <a class="sidebar-item${isActive ? ' active' : ''}" ${target} title="${item.label}">
-              <span class="sidebar-item-icon">${item.icon}</span>
-              <span class="sidebar-item-label">${item.label}</span>
-              ${badge}
-            </a>
-          `;
-        }).join('')}
+        ${navItems.join('')}
       </nav>
       <div class="sidebar-footer">
         <div class="sidebar-user">

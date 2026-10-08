@@ -4,7 +4,7 @@ import { DEVICE_ICONS, DEVICE_TYPE_NAMES } from './shared/constants.js';
 import { ensureAuth, adminFetch, setXhrAuth, logout } from './admin/auth.js';
 import { setupSocketListeners } from './admin/socket-listeners.js';
 import { showCopyProgress, updateCopyProgress, finishCopyProgress } from './admin/copy-progress.js';
-import { renderPowerControlsHtml, initPowerControls, applyPowerState } from './admin/device-power.js';
+import { renderPowerControlsHtml, initPowerControls, applyPowerState, stopPowerControls } from './admin/device-power.js';
 import { loadDevices as loadDevicesModule, renderTVList as renderTVListModule, syncDeviceStatuses, updateDeviceTile, focusDeviceInList as focusDeviceInListModule } from './admin/devices-manager.js';
 import { createDevice, renameDevice, deleteDevice } from './admin/device-crud.js';
 import { loadFilesWithStatus, refreshFilesPanel as refreshFilesPanelModule } from './admin/files-manager.js';
@@ -274,13 +274,12 @@ function createSettingsSection() {
     const data = result.settings;
     const contentRoot = data?.runtime?.contentRoot || data?.contentRoot || '';
     const defaultRoot = data?.defaults?.contentRoot || '';
-    const runtime = data?.runtime || {};
     const version = data?.version || 'N/A';
     const dbType = data?.dbType || '';
     const isSqlite = dbType === 'sqlite';
     const modules = Array.isArray(data?.modules) ? data.modules : [];
     const docker = result.docker;
-    const services = result.services || {};
+    const containers = Array.isArray(result.containers) ? result.containers : null;
     const ldap = data?.ldapAuth || {};
     // Тип хранилища приходит из бэкенда. Раньше его в ответе не было, и
     // карточка «Хранилище» не могла отличить локальное хранилище от S3.
@@ -294,9 +293,9 @@ function createSettingsSection() {
     };
 
     body.innerHTML = `
-      <div class="admin-section-content">
+      <div class="settings-columns"><div class="settings-col settings-col--left">
 
-        <!-- Система: версия/uptime/перезапуск + монитор + используемое ПО -->
+        <!-- Система: версия/uptime/перезапуск + монитор + состояния контейнеров -->
         <div class="st-card" style="background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
           <div class="st-card-h" style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-sm); background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; font-size:0.9rem;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="2" x2="9" y2="4"/><line x1="15" y1="2" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="15" y1="20" x2="15" y2="22"/><line x1="20" y1="9" x2="22" y2="9"/><line x1="20" y1="14" x2="22" y2="14"/><line x1="2" y1="9" x2="4" y2="9"/><line x1="2" y1="14" x2="4" y2="14"/></svg>
@@ -320,33 +319,17 @@ function createSettingsSection() {
 
             <hr style="border:none; border-top:1px solid var(--border); margin:2px 0;" />
 
+            ${containers && containers.length ? `
             <div style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; font-size:0.8rem;">
-              ${[
-                { label: 'FFmpeg', s: services.ffmpeg },
-                { label: 'FFprobe', s: services.ffprobe },
-                { label: 'Node', s: services.node },
-                { label: 'Docker', s: services.docker },
-                { label: 'Git', s: services.git },
-                { label: 'OpenSSL', s: services.openssl }
-              ].map(c => {
-                const ok = c.s?.status === 'ok';
-                const disabled = c.s?.status === 'disabled';
-                const dot = disabled ? 'var(--muted)' : (ok ? 'var(--success)' : 'var(--danger)');
-                // Версию показываем урезанной: ffmpeg отдаёт «ffmpeg version 6.1.1»,
-                // node — «v22.0.0», openssl — длинную строку со сборкой.
-                const raw = c.s?.version ? String(c.s.version) : '';
-                const short = raw
-                  .replace(/^(ffmpeg|ffprobe)\s+version\s+/i, '')
-                  .replace(/^v/i, '')
-                  .split(/\s+/)[0]
-                  .slice(0, 24);
-                const title = raw ? ` title="${escapeHtml(raw)}"` : '';
-                return `<span style="display:inline-flex; align-items:center; gap:5px;"${title}>
+              ${containers.map(c => {
+                const running = String(c.state || '').toLowerCase() === 'running';
+                const dot = running ? 'var(--success)' : 'var(--danger)';
+                return `<span style="display:inline-flex; align-items:center; gap:5px;" title="${escapeHtml(c.image || '')}${c.status ? ` · ${escapeHtml(c.status)}` : ''}">
                   <span style="width:6px; height:6px; border-radius:50%; background:${dot}; flex:none;"></span>
-                  ${escapeHtml(c.label)}${short ? `<span style="color:var(--muted);">${escapeHtml(short)}</span>` : ''}
+                  ${escapeHtml(c.names)}
                 </span>`;
               }).join('<span style="color:var(--muted);">·</span>')}
-            </div>
+            </div>` : ''}
           </div>
         </div>
 
@@ -364,20 +347,32 @@ function createSettingsSection() {
                 <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:110px; color:var(--muted);">Bucket</span><code style="font-family:monospace; word-break:break-all;">${escapeHtml(storageInfo.bucket || 'не задан')}</code></div>
                 <div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:110px; color:var(--muted);">Регион</span><code style="font-family:monospace; word-break:break-all;">${escapeHtml(storageInfo.region || 'по умолчанию')}</code></div>
               </div>
-            ` : ''}
-            <div style="display:flex; gap:var(--space-sm); align-items:center;">
-              <input id="stCrInput" class="input" value="${escapeHtml(contentRoot)}" placeholder="${storageInfo.isRemote ? 'Префикс внутри бакета' : 'Путь к хранилищу'}" style="flex:1;" />
-              <button id="stCrSave" class="primary">Сохранить</button>
-            </div>
-            <div id="stCrStatus" class="meta" style="min-height:1.2em; font-size:0.8rem;"></div>
-            ${storageInfo.isRemote ? '<div class="meta" style="font-size:0.75rem; color:var(--muted);">Бэкенд выбирается переменными STORAGE_BACKEND, S3_ENDPOINT, S3_BUCKET, S3_REGION.</div>' : ''}
+            ` : `
+              <div style="display:flex; gap:var(--space-sm); font-size:0.8rem;"><span class="meta" style="min-width:110px; color:var(--muted);">Путь</span><code style="font-family:monospace; word-break:break-all;">${escapeHtml(contentRoot)}</code></div>
+            `}
+            ${storageInfo.usage ? (() => {
+              const u = storageInfo.usage;
+              const pct = u.totalMB ? Math.min(100, Math.round((u.usedMB / u.totalMB) * 100)) : 0;
+              const barColor = pct >= 90 ? 'var(--danger)' : pct >= 75 ? 'var(--warning)' : 'var(--success)';
+              const fmt = mb => mb >= 1024 ? `${(mb / 1024).toFixed(1)} ГБ` : `${mb} МБ`;
+              return `
+              <div title="${escapeHtml(u.path || '')}" style="font-size:0.75rem;">
+                <div style="display:flex; justify-content:space-between; gap:var(--space-sm); color:var(--muted); margin-bottom:4px;">
+                  <span>Занято ${fmt(u.usedMB)} из ${fmt(u.totalMB)}</span>
+                  <span>${pct}% · свободно ${fmt(u.availableMB)}</span>
+                </div>
+                <div style="height:6px; border-radius:999px; background:rgba(148,163,184,0.16); overflow:hidden;">
+                  <div style="height:100%; width:${pct}%; background:${barColor}; border-radius:999px;"></div>
+                </div>
+              </div>`;
+            })() : ''}
             <details style="font-size:0.8rem;">
-              <summary class="meta" style="cursor:pointer; color:var(--muted);">Рабочие директории</summary>
-              <div style="display:flex; flex-direction:column; gap:2px; margin-top:var(--space-2xs);">
-                ${Object.entries(runtime).filter(([k]) => k !== 'contentRoot').map(([k, v]) =>
-                  `<div style="display:flex; gap:var(--space-sm);"><span class="meta" style="min-width:100px; color:var(--muted);">${escapeHtml(k)}</span><code style="font-family:monospace; word-break:break-all;">${escapeHtml(v || '')}</code></div>`
-                ).join('')}
+              <summary class="meta" style="cursor:pointer; color:var(--muted);">Изменить путь хранения</summary>
+              <div style="display:flex; gap:var(--space-sm); align-items:center; margin-top:var(--space-2xs);">
+                <input id="stCrInput" class="input" value="${escapeHtml(contentRoot)}" placeholder="${storageInfo.isRemote ? 'Префикс внутри бакета' : 'Путь к хранилищу'}" style="flex:1;" />
+                <button id="stCrSave" class="primary">Сохранить</button>
               </div>
+              <div id="stCrStatus" class="meta" style="min-height:1.2em; margin-top:var(--space-2xs); font-size:0.75rem;"></div>
             </details>
           </div>
         </div>
@@ -422,19 +417,14 @@ function createSettingsSection() {
               <input id="stApkId" class="input" placeholder="ID устройства" style="width:130px;" />
               <input id="stApkName" class="input" placeholder="Имя" style="width:120px;" />
               <button id="stApkInstall" class="primary">Установить</button>
+              <button id="stApkBatch" class="secondary" style="margin-left:auto;">Обновить все</button>
             </div>
-            <div id="stApkStatus" class="meta" style="min-height:1.2em; font-size:0.8rem;"></div>
-            <hr style="border:none; border-top:1px solid var(--border); margin:4px 0;" />
-            <div style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap;">
-              <span class="meta" style="font-size:0.8rem;">Массовое обновление на всех привязанных Android-устройствах</span>
-              <button id="stApkBatch" class="secondary">Обновить все</button>
-              <div id="stApkBatchStatus" class="meta" style="min-height:1.2em; font-size:0.8rem;"></div>
+            <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center; min-height:1.2em;">
+              <span id="stApkStatus" class="meta" style="font-size:0.8rem;"></span>
+              <span id="stApkBatchStatus" class="meta" style="font-size:0.8rem; margin-left:auto;"></span>
             </div>
           </div>
         </div>
-
-        <!-- Управление устройствами (сон/пробуждение Android-приставок) -->
-        ${renderPowerControlsHtml(devicesCache)}
 
         <!-- База данных (только SQLite) -->
         ${isSqlite ? `
@@ -473,7 +463,10 @@ function createSettingsSection() {
           </div>
         </div>` : ''}
 
-      </div>
+      </div><div class="settings-col settings-col--right">
+        <!-- Управление устройствами (сон/пробуждение Android-приставок) -->
+        ${renderPowerControlsHtml(devicesCache)}
+      </div></div>
     `;
 
     // --- Bind events ---
@@ -710,10 +703,11 @@ function createSettingsSection() {
     if (root) root.innerHTML = '<div class="meta" style="padding:var(--space-md); text-align:center; color:var(--danger);">Ошибка загрузки настроек</div>';
   });
 
-  // Cleanup system monitor when section is removed
+  // Cleanup system monitor and power list observers when section is removed
   const obs = new MutationObserver(() => {
     if (!document.body.contains(el)) {
       stopSystemMonitor();
+      stopPowerControls();
       obs.disconnect();
     }
   });

@@ -1098,7 +1098,41 @@ export function createAdminRouter(deps = {}) {
         forcePathStyle: process.env.S3_FORCE_PATH_STYLE !== 'false'
       };
 
-      res.json({ settings, network, docker, services, sessions, storage });
+      // Занятость диска под data-корнем. statfs есть в Node ≥18.15; для
+      // несуществующего пути бросает — тогда блок с объёмом просто не показываем.
+      try {
+        const fsp = await import('node:fs');
+        const root = settings?.contentRoot;
+        if (root) {
+          const s = await fsp.promises.statfs(root);
+          const total = Number(s.blocks) * Number(s.bsize);
+          const free = Number(s.bavail) * Number(s.bsize);
+          storage.usage = {
+            path: root,
+            totalMB: Math.round(total / 1048576),
+            usedMB: Math.round((total - free) / 1048576),
+            availableMB: Math.round(free / 1048576)
+          };
+        }
+      } catch { /* путь недоступен — сведения об объёме не отдаём */ }
+
+      // Состояние контейлеров стека: docker CLI входит в образ (INCLUDE_DOCKER_CLI)
+      // и сокет демона примонтирован. Если docker недоступен — отдаём null,
+      // фронт в этом случае строку контейнеров не рисует.
+      const containers = await new Promise(resolve => {
+        exec('docker ps -a --format "{{json .}}"', { timeout: 4000, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+          if (err) return resolve(null);
+          const list = String(stdout || '').split('\n').filter(Boolean).map(line => {
+            try {
+              const c = JSON.parse(line);
+              return { names: c.Names, state: c.State, status: c.Status, image: c.Image };
+            } catch { return null; }
+          }).filter(c => c && c.names);
+          resolve(list);
+        });
+      });
+
+      res.json({ settings, network, docker, services, sessions, storage, containers });
     } catch (error) {
       logger.error('[Admin] Failed to get extended settings:', error);
       res.status(500).json({ error: 'Не удалось загрузить расширенные настройки' });

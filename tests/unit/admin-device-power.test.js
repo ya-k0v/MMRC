@@ -75,6 +75,44 @@ describe('карточка «Управление устройствами»', (
     expect(isPowerControllable({ deviceType: 'browser' })).toBe(false);
   });
 
+  test('если список не влезает в высоту карточки — включается пагинация', () => {
+    document.body.innerHTML = renderPowerControlsHtml(DEVICES);
+    const list = document.getElementById('stPowerList');
+    const offsetDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight');
+    const clientDesc = Object.getOwnPropertyDescriptor(list, 'clientHeight');
+
+    // Колонка вмещает два ряда: 100px при высоте строки 40px + gap 6px.
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get() { return this.hasAttribute?.('data-power-row') ? 40 : 0; }
+    });
+    Object.defineProperty(list, 'clientHeight', { configurable: true, value: 100 });
+
+    try {
+      initPowerControls({ devices: DEVICES, adminFetch: jsonFetch({ ok: true, states: [] }) });
+
+      expect(row('tv1')).not.toBeNull();
+      expect(row('tv2')).not.toBeNull();
+      expect(row('native1')).toBeNull();
+      expect(document.getElementById('stPowerPager').hidden).toBe(false);
+      expect(document.getElementById('stPowerPagerInfo').textContent).toBe('1 / 2');
+
+      document.getElementById('stPowerNext').click();
+      expect(row('tv1')).toBeNull();
+      expect(row('native1')).not.toBeNull();
+      expect(document.getElementById('stPowerPagerInfo').textContent).toBe('2 / 2');
+
+      document.getElementById('stPowerPrev').click();
+      expect(row('tv1')).not.toBeNull();
+      expect(document.getElementById('stPowerPagerInfo').textContent).toBe('1 / 2');
+    } finally {
+      if (offsetDesc) Object.defineProperty(HTMLElement.prototype, 'offsetHeight', offsetDesc);
+      else delete HTMLElement.prototype.offsetHeight;
+      if (clientDesc) Object.defineProperty(list, 'clientHeight', clientDesc);
+      else delete list.clientHeight;
+    }
+  });
+
   test('без Android-устройств в списке показывается подсказка', async () => {
     document.body.innerHTML = renderPowerControlsHtml([
       { device_id: 'browser', deviceType: 'browser' }
