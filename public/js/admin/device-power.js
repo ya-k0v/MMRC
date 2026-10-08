@@ -75,13 +75,6 @@ export function renderPowerControlsHtml(devices) {
         Управление устройствами
       </div>
       <div class="st-power-body">
-        <div class="meta" style="font-size:0.8rem; color:var(--muted); line-height:1.4;">
-          Приставки стоят в стене и не обесточиваются: здесь только сон, пробуждение и перезапуск плеера по ADB.
-          Сон гасит экран и ставит плеер на паузу, сеть остаётся — устройство остаётся управляемым.
-          Если в сне связь по ADB пропала, сервер дополнительно шлёт Wake-on-LAN.
-          Запуск плеера всегда сначала убивает старый процесс и только потом открывает новый,
-          чтобы на одном экране не оказалось двух экземпляров.
-        </div>
         <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center;">
           <button type="button" id="stPowerSleepAll" class="secondary">Усыпить все</button>
           <button type="button" id="stPowerWakeAll" class="primary">Разбудить все</button>

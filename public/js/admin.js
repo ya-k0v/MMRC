@@ -325,10 +325,10 @@ function createSettingsSection() {
 
             ${containers && containers.length ? `
             <div style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; font-size:0.8rem;">
-              ${containers.map(c => {
+              ${containers.filter(c => shortContainerName(c.names) !== 'minio-setup').map(c => {
                 const running = String(c.state || '').toLowerCase() === 'running';
-                // Одноразовые контейнеры (mmrc-minio-setup) не должны гореть
-                // красным «ошибкой»: exited (0) — штатное завершение.
+                // Одноразовые контейнеры (инициализация/миграции) не должны
+                // гореть красным «ошибкой»: exited (0) — штатное завершение.
                 const exitCode = /Exited \((\d+)\)/.exec(String(c.status || ''));
                 const exitedClean = !running && exitCode && Number(exitCode[1]) === 0;
                 const dot = running ? 'var(--success)' : exitedClean ? 'var(--warning)' : 'var(--danger)';
@@ -360,21 +360,25 @@ function createSettingsSection() {
             `}
             ${storageInfo.usage ? (() => {
               const u = storageInfo.usage;
-              // «Занято» = фактический объём контента в хранилище (dataMB),
-              // если провайдер смог его посчитать; иначе — занятость раздела.
-              const occupiedMB = u.dataMB != null ? u.dataMB : u.usedMB;
+              // Основной показатель — занятость раздела с контентом из statfs
+              // (реальные данные системы). dataMB — объём только наших файлов.
+              const occupiedMB = u.usedMB || 0;
               const pct = u.totalMB ? Math.min(100, Math.round((occupiedMB / u.totalMB) * 100)) : 0;
               const barColor = pct >= 90 ? 'var(--danger)' : pct >= 75 ? 'var(--warning)' : 'var(--success)';
               const fmt = mb => mb >= 1024 ? `${(mb / 1024).toFixed(1)} ГБ` : `${mb} МБ`;
+              const dataLine = u.dataMB != null
+                ? `<div style="color:var(--muted); margin-top:2px;">Данные MMRC: <strong style="color:var(--text);">${fmt(u.dataMB)}</strong></div>`
+                : '';
               return `
               <div title="${escapeHtml(u.path || '')}" style="font-size:0.75rem;">
                 <div style="display:flex; justify-content:space-between; gap:var(--space-sm); color:var(--muted); margin-bottom:4px;">
-                  <span>${u.dataMB != null ? `Занято данными: ${fmt(u.dataMB)}` : `Занято: ${fmt(u.usedMB)}`}</span>
+                  <span>Занято на диске: <strong style="color:var(--text);">${fmt(occupiedMB)}</strong></span>
                   <span>свободно ${fmt(u.availableMB)} из ${fmt(u.totalMB)} · ${pct}%</span>
                 </div>
                 <div style="height:6px; border-radius:999px; background:rgba(148,163,184,0.16); overflow:hidden;">
                   <div style="height:100%; width:${pct}%; background:${barColor}; border-radius:999px;"></div>
                 </div>
+                ${dataLine}
               </div>`;
             })() : ''}
           </div>

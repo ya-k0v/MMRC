@@ -268,23 +268,12 @@ function renderNotification(notification) {
   const severityIcon = getSeverityIcon(notification.severity);
   const timeAgo = formatTimeAgo(new Date(notification.timestamp));
   const actions = Array.isArray(notification.actions) ? notification.actions : [];
-  
-  const detailsHtml = notification.details && Object.keys(notification.details).length > 0
-    ? `
-      <details style="margin-top:8px;">
-        <summary style="cursor:pointer; color:var(--text-secondary); font-size:0.875rem;">
-          Подробности
-        </summary>
-        <div style="margin-top:8px; padding:8px; background:var(--bg-secondary); border-radius:4px; font-size:0.875rem; color:var(--text-secondary);">
-          ${renderDetails(notification.details)}
-        </div>
-      </details>
-    `
-    : '';
+  const title = String(notification.title || 'Уведомление');
+  const message = String(notification.message || '');
 
   const actionsHtml = actions.length > 0
     ? `
-      <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;">
+      <span style="display:inline-flex; flex-wrap:wrap; gap:4px; flex:none;">
         ${actions.map((action) => `
           <button
             class="notification-action-btn"
@@ -292,9 +281,10 @@ function renderNotification(notification) {
             data-action-id="${escapeHtml(action.id)}"
             style="
               min-width:auto;
-              padding:6px 10px;
+              padding:4px 10px;
               font-size:0.75rem;
               border-radius:6px;
+              white-space:nowrap;
               ${getActionButtonStyle(action.variant)}
             "
             title="${escapeHtml(action.label)}"
@@ -302,106 +292,59 @@ function renderNotification(notification) {
             ${escapeHtml(action.label)}
           </button>
         `).join('')}
-      </div>
+      </span>
     `
     : '';
-  
+
   return `
-    <div class="notification-item" data-notification-id="${notification.id}" style="
-      padding:var(--space-sm);
+    <div class="notification-item" data-notification-id="${notification.id}" title="${escapeHtml(message ? `${title}: ${message}` : title)}" style="
+      padding:8px 12px;
       border:1px solid var(--border);
       border-left:4px solid ${severityColor};
       border-radius:8px;
       background:var(--card-bg);
+      display:flex;
+      align-items:center;
+      gap:var(--space-sm);
     ">
-      <div style="display:flex; gap:var(--space-sm); align-items:start;">
-        <div style="flex:1; min-width:0;">
-          <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
-            <span style="font-size:18px;">${severityIcon}</span>
-            <div style="font-weight:bold; color:var(--text);">${escapeHtml(notification.title)}</div>
-          </div>
-          <div style="color:var(--text-secondary); font-size:0.875rem; margin-bottom:8px; line-height:1.5; white-space:pre-wrap;">
-            ${escapeHtml(notification.message)}
-          </div>
-          ${detailsHtml}
-          ${actionsHtml}
-          <div style="font-size:0.75rem; color:var(--muted); margin-top:8px;">
-            ${timeAgo}
-          </div>
-        </div>
-        <div style="display:flex; gap:4px; flex-shrink:0;">
-          <button 
-            class="notification-ack-btn" 
-            data-notification-id="${notification.id}"
-            style="
-              min-width:auto; 
-              padding:6px 10px; 
-              font-size:0.75rem;
-              background:var(--bg-secondary);
-              border:1px solid var(--border);
-            "
-            title="Отметить как прочитанное"
-          >
-            ✓
-          </button>
-          <button 
-            class="notification-remove-btn" 
-            data-notification-id="${notification.id}"
-            style="
-              min-width:auto; 
-              padding:6px 10px; 
-              font-size:0.75rem;
-              background:var(--bg-secondary);
-              border:1px solid var(--border);
-            "
-            title="Удалить"
-          >
-            ×
-          </button>
-        </div>
-      </div>
+      <span style="font-size:16px; flex:none; line-height:1;">${severityIcon}</span>
+      <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text);">
+        <strong>${escapeHtml(title)}</strong>${message ? `<span style="color:var(--text-secondary);">: ${escapeHtml(message)}</span>` : ''}
+      </span>
+      ${actionsHtml}
+      <span style="font-size:0.7rem; color:var(--muted); flex:none; white-space:nowrap;">${timeAgo}</span>
+      <span style="display:inline-flex; gap:4px; flex:none;">
+        <button
+          class="notification-ack-btn"
+          data-notification-id="${notification.id}"
+          style="
+            min-width:auto;
+            padding:4px 8px;
+            font-size:0.75rem;
+            background:var(--bg-secondary);
+            border:1px solid var(--border);
+          "
+          title="Отметить как прочитанное"
+        >
+          ✓
+        </button>
+        <button
+          class="notification-remove-btn"
+          data-notification-id="${notification.id}"
+          style="
+            min-width:auto;
+            padding:4px 8px;
+            font-size:0.75rem;
+            background:var(--bg-secondary);
+            border:1px solid var(--border);
+          "
+          title="Удалить"
+        >
+          ×
+        </button>
+      </span>
     </div>
   `;
-}
-
-/**
- * Рендерит детали уведомления
- * @param {Object} details - Детали
- * @returns {string} HTML
- */
-function renderDetails(details) {
-  const items = [];
-  
-  if (details.deviceId) {
-    items.push(`<strong>Устройство:</strong> ${escapeHtml(details.deviceId)}`);
-  }
-  
-  if (details.error) {
-    const errorMsg = typeof details.error === 'string' 
-      ? details.error 
-      : details.error.message || JSON.stringify(details.error);
-    items.push(`<strong>Ошибка:</strong> ${escapeHtml(errorMsg)}`);
-  }
-  
-  if (details.recommendation) {
-    items.push(`<strong>Рекомендация:</strong> ${escapeHtml(details.recommendation)}`);
-  }
-  
-  if (details.action) {
-    items.push(`<strong>Действие:</strong> ${escapeHtml(details.action)}`);
-  }
-  
-  // Остальные поля
-  Object.entries(details).forEach(([key, value]) => {
-    if (!['deviceId', 'error', 'recommendation', 'action'].includes(key)) {
-      const displayValue = typeof value === 'object' 
-        ? JSON.stringify(value, null, 2) 
-        : String(value);
-      items.push(`<strong>${escapeHtml(key)}:</strong> ${escapeHtml(displayValue)}`);
-    }
-  });
-  
-  return items.map(item => `<div style="margin-bottom:4px;">${item}</div>`).join('');
 }
 
 /**
