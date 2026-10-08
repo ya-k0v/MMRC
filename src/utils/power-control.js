@@ -11,6 +11,9 @@ import { sleepDevice, wakeDevice, getDeviceMac, launchAndroidApp, isAndroidDevic
 import { sendWakeOnLan, readArpMac, normalizeMac } from './wol.js';
 import { ANDROID_PACKAGE_NAME, ANDROID_MAIN_ACTIVITY } from '../config/android.js';
 import { isReservedObjectKey } from './sanitize.js';
+import { createModuleLogger } from './logger.js';
+
+const powerLog = createModuleLogger('power');
 
 export const POWER_ACTIONS = ['sleep', 'wake', 'launch'];
 
@@ -147,6 +150,21 @@ export async function runPowerAction(targets, action, options = {}) {
   const results = await Promise.all(targets.map(target =>
     runForTarget(target, action, { commands, adbTimeoutMs, wolWaitMs, relaunch, storeMac })
   ));
+
+  for (const result of results) {
+    if (result.ok) {
+      powerLog.info(`Команда питания выполнена: ${action}`, {
+        deviceId: result.deviceId,
+        awake: result.awake
+      });
+    } else {
+      powerLog.warn(`Команда питания не выполнена: ${action}`, {
+        deviceId: result.deviceId,
+        awake: result.awake ?? null,
+        error: result.error
+      });
+    }
+  }
 
   const succeeded = results.filter(result => result.ok).length;
   return { results, succeeded, failed: results.length - succeeded };

@@ -10,6 +10,9 @@
 
 import { execFile } from 'node:child_process';
 import { ANDROID_PACKAGE_NAME, ANDROID_MAIN_ACTIVITY, DEFAULT_ADB_PORT } from '../config/android.js';
+import { createModuleLogger } from './logger.js';
+
+const adbLog = createModuleLogger('adb');
 
 const DEFAULT_TIMEOUT_MS = 15000;
 
@@ -59,15 +62,20 @@ export async function runAdb(args, timeoutMs = DEFAULT_TIMEOUT_MS) {
 
 function execAdb(args, timeoutMs) {
   return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
     const timer = setTimeout(() => {
       reject(new Error(`adb timeout: ${args.join(' ')}`));
     }, timeoutMs);
     execFile('adb', args, (err, stdout, stderr) => {
       clearTimeout(timer);
+      const durationMs = Date.now() - startedAt;
       if (err) {
-        reject(new Error(stderr || err.message));
+        const message = stderr || err.message;
+        adbLog.error('adb команда упала', { args, durationMs, error: message });
+        reject(new Error(message));
         return;
       }
+      adbLog.debug('adb команда выполнена', { args, durationMs });
       resolve(stdout || '');
     });
   });
@@ -143,8 +151,15 @@ async function adbShellNow(target, command, timeoutMs) {
  *
  * Перед запуском старый процесс приложения обязательно гасится: `am start` по
  * живому плееру с высокой вероятностью укладывает второй экземпляр окном поверх
- * основного. force-stop и start выполняются одной shell-командой (`&&`), чтобы
- * не плодить лишние ADB-сессии.
+ * основного.
+ *
+ * Команды нельзя склеивать через `sh -c` с `&&`: adb передаёт аргументы в
+ * устройство как есть, и `['sh', '-c', 'am force-stop ... && am start ...']`
+ * превращается на стороне приставки в `sh -c am force-stop ... && am start ...`
+ * — `sh -c` берёт строкой только `am` (запускается без аргументов и падает с
+ * ошибкой), поэтому `am start` никогда не выполняется. Поэтому запускаем две
+ * команды последовательно; очередь адресуется к тому же target, так что обе
+ * сессии не конкурируют.
  *
  * @param {string} ip - IP адрес устройства
  * @param {string} [packageName] - package name приложения (по умолчанию из конфига)
@@ -153,9 +168,12 @@ async function adbShellNow(target, command, timeoutMs) {
  * @param {number} [timeoutMs] - таймаут операций adb в мс
  * @returns {Promise<{ok: boolean, output?: string, error?: string}>}
  */
-export function launchAndroidApp(ip, packageName = ANDROID_PACKAGE_NAME, activity = ANDROID_MAIN_ACTIVITY, port = DEFAULT_ADB_PORT, timeoutMs = DEFAULT_TIMEOUT_MS) {
-  const command = `am force-stop ${packageName} && am start -n ${packageName}/${activity}`;
-  return adbShell(ip, port, ['sh', '-c', command], timeoutMs);
+export async function launchAndroidApp(ip, packageName = ANDROID_PACKAGE_NAME, activity = ANDROID_MAIN_ACTIVITY, port = DEFAULT_ADB_PORT, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  const forceStop = await adbShell(ip, port, ['am', 'force-stop', packageName], timeoutMs);
+  if (!forceStop.ok) {
+    return forceStop;
+  }
+  return adbShell(ip, port, ['am', 'start', '-n', `${packageName}/${activity}`], timeoutMs);
 }
 
 /**
