@@ -473,7 +473,7 @@ function createSettingsSection() {
               <summary class="meta st-details-summary">Обслуживание</summary>
               <div class="st-actions st-maintenance">
                 <button id="stDbCheckFiles" class="secondary meta">Проверить файлы</button>
-                <button id="stDbWalCheckpoint" class="secondary meta">WAL Checkpoint</button>
+                <button id="stDbWalCheckpoint" class="secondary meta">Чекпоинт WAL</button>
                 <button id="stDbCleanupMissing" class="secondary meta">Очистить отсутствующие</button>
                 <button id="stDbCleanupOrphaned" class="secondary meta">Очистить осиротевшие</button>
                 <div id="stDbMaintStatus" class="st-status"></div>
@@ -603,28 +603,63 @@ function createSettingsSection() {
 
     // DB Maintenance
     const dbMaintEl = document.getElementById('stDbMaintStatus');
-    async function dbMaint(endpoint, label, method = 'POST') {
-      if (dbMaintEl) { dbMaintEl.textContent = `${label}...`; dbMaintEl.style.color = 'var(--text-secondary)'; }
+    function fmtMb(v) { const n = Number(v); return Number.isFinite(n) && n > 0 ? n.toFixed(2) : '0'; }
+    function fmtDbMaint(kind, result) {
+      const errCount = Array.isArray(result.errors) ? result.errors.length : (Number(result.errors) || 0);
+      const errSuffix = errCount > 0 ? ` Ошибок: ${errCount}.` : '';
+      if (kind === 'check') {
+        if (result.missingOnDisk > 0) return `Проверено файлов: ${result.checked}. Отсутствуют на диске: ${result.missingOnDisk}.${errSuffix}`;
+        if (result.missingInDB > 0) return `Проверено файлов: ${result.checked}. Лишних записей в БД: ${result.missingInDB}.${errSuffix}`;
+        return `Проверено файлов: ${result.checked}. Проблем не обнаружено.`;
+      }
+      if (kind === 'wal') {
+        if (!result.success) return `Ошибка WAL: ${result.error || result.message || 'неизвестно'}`;
+        if ((result.reducedMB || 0) > 0) return `WAL сжат: было ${fmtMb(result.oldSizeMB)} МБ, стало ${fmtMb(result.walSizeMB)} МБ (освобождено ${fmtMb(result.reducedMB)} МБ).`;
+        return `Контрольная точка WAL выполнена. Файл WAL: ${fmtMb(result.walSizeMB)} МБ, порог 100 МБ — сжатие не требуется.`;
+      }
+      if (kind === 'cleanMissing') {
+        if (result.deletedFromDB > 0) return `Удалено записей из БД: ${result.deletedFromDB}.${errSuffix}`;
+        return `Очистка завершена. Удалять было нечего.`;
+      }
+      if (kind === 'cleanOrphaned') {
+        const verb = result.dryRun ? 'Найдено (сухой прогон)' : 'Удалено';
+        if (result.orphaned > 0) return `${verb} осиротевших файлов: ${result.orphaned} (${fmtMb(result.totalSizeMB)} МБ).${errSuffix}`;
+        return `Осиротевшие файлы не найдены.`;
+      }
+      return JSON.stringify(result).slice(0, 200);
+    }
+    const dbMaintBusy = {
+      check: 'Проверяю файлы...',
+      wal: 'Выполняю контрольную точку WAL...',
+      cleanMissing: 'Очищаю записи из БД...',
+      cleanOrphaned: 'Очищаю осиротевшие файлы...'
+    };
+    async function dbMaint(endpoint, kind, method = 'POST') {
+      if (dbMaintEl) { dbMaintEl.textContent = dbMaintBusy[kind] || 'Выполняю...'; dbMaintEl.style.color = 'var(--text-secondary)'; }
       try {
         const opts = method === 'GET' ? {} : { method };
         const r = await adminFetch(endpoint, opts);
-        const result = await r.json();
-        if (dbMaintEl) { dbMaintEl.textContent = label + ': ' + JSON.stringify(result).slice(0, 200); dbMaintEl.style.color = 'var(--success)'; }
-      } catch { if (dbMaintEl) { dbMaintEl.textContent = label + ': ошибка'; dbMaintEl.style.color = 'var(--danger)'; } }
+        let result = {};
+        try { result = await r.json(); } catch { /* нет тела ответа */ }
+        if (!r.ok) throw new Error(result.error || 'Ошибка запроса');
+        const text = fmtDbMaint(kind, result);
+        const color = (kind === 'wal' && !result.success) ? 'var(--danger)' : 'var(--success)';
+        if (dbMaintEl) { dbMaintEl.textContent = text; dbMaintEl.style.color = color; }
+      } catch (err) { if (dbMaintEl) { dbMaintEl.textContent = `Ошибка: ${err.message}`; dbMaintEl.style.color = 'var(--danger)'; } }
     }
     const checkFiles = document.getElementById('stDbCheckFiles');
-    if (checkFiles) checkFiles.onclick = () => dbMaint('/api/admin/database/check-files', 'Проверка', 'GET');
+    if (checkFiles) checkFiles.onclick = () => dbMaint('/api/admin/database/check-files', 'check', 'GET');
     const walCp = document.getElementById('stDbWalCheckpoint');
-    if (walCp) walCp.onclick = () => dbMaint('/api/admin/database/wal-checkpoint', 'WAL Checkpoint');
+    if (walCp) walCp.onclick = () => dbMaint('/api/admin/database/wal-checkpoint', 'wal');
     const cleanupMiss = document.getElementById('stDbCleanupMissing');
     if (cleanupMiss) cleanupMiss.onclick = () => {
       if (!confirm('Удалить из БД записи об отсутствующих на диске файлах?')) return;
-      dbMaint('/api/admin/database/cleanup-missing-files', 'Cleanup missing');
+      dbMaint('/api/admin/database/cleanup-missing-files', 'cleanMissing');
     };
     const cleanupOrph = document.getElementById('stDbCleanupOrphaned');
     if (cleanupOrph) cleanupOrph.onclick = () => {
       const dryRun = !confirm('Удалить осиротевшие файлы? Нажмите OK для удаления, Cancel для сухого прогона.');
-      dbMaint(`/api/admin/database/cleanup-orphaned-files${dryRun ? '?dryRun=true' : ''}`, 'Cleanup orphaned');
+      dbMaint(`/api/admin/database/cleanup-orphaned-files${dryRun ? '?dryRun=true' : ''}`, 'cleanOrphaned');
     };
 
     // APK Version
