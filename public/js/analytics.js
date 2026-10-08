@@ -426,7 +426,7 @@ function renderDocker(docker) {
     <div class="card-row">
       <span class="label">
         <span class="status-dot ${c.status?.includes('Up') ? 'up' : 'down'}"></span>
-        ${c.name}
+        ${String(c.name || '').replace(/^mmrc-/, '')}
         <span style="font-size:0.75rem;color:var(--muted,#6c7086);margin-left:4px;">${c.id}</span>
       </span>
       <span class="value">

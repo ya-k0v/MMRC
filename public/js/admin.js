@@ -262,6 +262,11 @@ function createSectionWrapper(title, icon) {
   return el;
 }
 
+/** Короткое имя контейнера без общего префикса проекта (mmrc-postgres → postgres). */
+function shortContainerName(name) {
+  return String(name || '').replace(/^mmrc-/, '');
+}
+
 function createSettingsSection() {
   const el = createSectionWrapper('Настройки сервера', getSettingsIcon(24));
   const body = el.querySelector('.admin-section-body');
@@ -322,10 +327,14 @@ function createSettingsSection() {
             <div style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; font-size:0.8rem;">
               ${containers.map(c => {
                 const running = String(c.state || '').toLowerCase() === 'running';
-                const dot = running ? 'var(--success)' : 'var(--danger)';
+                // Одноразовые контейнеры (mmrc-minio-setup) не должны гореть
+                // красным «ошибкой»: exited (0) — штатное завершение.
+                const exitCode = /Exited \((\d+)\)/.exec(String(c.status || ''));
+                const exitedClean = !running && exitCode && Number(exitCode[1]) === 0;
+                const dot = running ? 'var(--success)' : exitedClean ? 'var(--warning)' : 'var(--danger)';
                 return `<span style="display:inline-flex; align-items:center; gap:5px;" title="${escapeHtml(c.image || '')}${c.status ? ` · ${escapeHtml(c.status)}` : ''}">
                   <span style="width:6px; height:6px; border-radius:50%; background:${dot}; flex:none;"></span>
-                  ${escapeHtml(c.names)}
+                  ${escapeHtml(shortContainerName(c.names))}
                 </span>`;
               }).join('<span style="color:var(--muted);">·</span>')}
             </div>` : ''}
