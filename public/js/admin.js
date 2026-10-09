@@ -378,7 +378,7 @@ function createSettingsSection() {
             ` : `
               <div class="st-kv">
                 <span class="st-kv-label">Путь</span>
-                <code class="st-kv-code">${escapeHtml(contentRoot)}</code>
+                <code class="st-kv-code">${escapeHtml(storageInfo.hostContentRoot || contentRoot)}</code>
               </div>
             `}
             ${storageInfo.usage ? (() => {
@@ -393,7 +393,7 @@ function createSettingsSection() {
                 ? `<div class="meta">Данные MMRC: <strong>${fmt(u.dataMB)}</strong></div>`
                 : '';
               return `
-              <div title="${escapeHtml(u.path || '')}" class="st-disk">
+              <div title="${escapeHtml(u.hostPath || u.path || '')}" class="st-disk">
                 <div class="st-bar-head">
                   <span>Занято на диске: <strong>${fmt(occupiedMB)}</strong></span>
                   <span>свободно ${fmt(u.availableMB)} из ${fmt(u.totalMB)} · ${pct}%</span>

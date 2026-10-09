@@ -1100,7 +1100,12 @@ export function createAdminRouter(deps = {}) {
         bucket: process.env.S3_BUCKET || null,
         endpoint: process.env.S3_ENDPOINT || null,
         region: process.env.S3_REGION || null,
-        forcePathStyle: process.env.S3_FORCE_PATH_STYLE !== 'false'
+        forcePathStyle: process.env.S3_FORCE_PATH_STYLE !== 'false',
+        // Реальный путь на хосте, где лежит контент. Внутри контейнера
+        // contentRoot = /app/data, а каталог на ПК задаётся HOST_DATA_DIR в
+        // compose (монтируется в /app/data). Для локального запуска без
+        // docker — переменной нет, фронт откатится на contentRoot.
+        hostContentRoot: process.env.HOST_DATA_DIR || null
       };
 
       // Занятость диска под data-корнем. statfs есть в Node ≥18.15; для
@@ -1118,6 +1123,7 @@ export function createAdminRouter(deps = {}) {
           const free = Number(s.bavail) * Number(s.bsize);
           storage.usage = {
             path: root,
+            hostPath: process.env.HOST_DATA_DIR || root,
             totalMB: Math.round(total / 1048576),
             usedMB: Math.round((total - free) / 1048576),
             availableMB: Math.round(free / 1048576)
