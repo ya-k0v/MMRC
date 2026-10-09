@@ -100,7 +100,7 @@ function execAdb(args, timeoutMs) {
  */
 const targetQueues = new Map();
 
-function enqueueAdbCommand(target, task) {
+export function enqueueAdbCommand(target, task) {
   const previous = targetQueues.get(target) || Promise.resolve();
   const current = previous.then(task);
   // Цепочка хранится как промис, который никогда не отклоняется, — упавшая

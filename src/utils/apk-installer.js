@@ -8,6 +8,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { validatePath } from './path-validator.js';
 import { createModuleLogger } from './logger.js';
+import { enqueueAdbCommand, runAdb } from './adb.js';
 import {
   ANDROID_PACKAGE_NAME,
   ANDROID_CONFIG_RECEIVER,
@@ -76,9 +77,85 @@ function resolveAndValidateApkPath(apkPath) {
   return resolved;
 }
 
-async function runAdb(args, options = {}) {
-  const { stdout } = await execFileAsync('adb', args, { ...options, encoding: 'utf-8' });
-  return stdout;
+const INSTALL_ATTEMPTS = 3;
+const INSTALL_TIMEOUT_MS = 120_000;
+const SHELL_TIMEOUT_MS = 15_000;
+const SETTLE_MS = 5_000;
+const RETRY_DELAY_MS = 1_000;
+
+const ADB_CONNECT_FAILURE = /failed to connect|unable to connect|cannot connect|connection refused|no route to host/i;
+const ADB_DEVICE_LOST = /device .*not found|device offline|no such device|connection.*(lost|closed)|closed/i;
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** Подключиться к устройству и убедиться, что connect реально удался. */
+async function connectAdb(adbTarget) {
+  const out = String(await runAdb(['connect', adbTarget], SHELL_TIMEOUT_MS) || '');
+  if (ADB_CONNECT_FAILURE.test(out)) {
+    throw new Error(`adb не удалось подключиться к ${adbTarget}: ${out.trim() || 'нет ответа'}`);
+  }
+  if (!/connected/i.test(out)) {
+    throw new Error(`adb не удалось подключиться к ${adbTarget}: ${out.trim() || 'нет ответа'}`);
+  }
+  return out;
+}
+
+/**
+ * Выполнить adb-команду, переподключаясь при обрыве сессии.
+ *
+ * Сразу после `install` сессия adb на этих приставках часто рвётся («device not
+ * found»), поэтому следующие шаги (force-stop/broadcast/перезапуск) падали и
+ * плеер оставался закрытым. Переподключаемся и повторяем шаг.
+ */
+async function runAdbResilient(adbTarget, args, { timeoutMs = SHELL_TIMEOUT_MS, attempts = 3 } = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await runAdb(args, timeoutMs);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts || !ADB_DEVICE_LOST.test(String(error?.message || ''))) break;
+      logger.warn('[APK] adb-сессия оборвалась, переподключение', {
+        adbTarget,
+        args,
+        attempt,
+        error: error.message
+      });
+      try {
+        await connectAdb(adbTarget);
+      } catch (reconnectError) {
+        logger.warn('[APK] Переподключение не удалось', { adbTarget, error: reconnectError.message });
+      }
+      await delay(RETRY_DELAY_MS);
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * Одна попытка установки. `runAdb` при ненулевом коде возвращает stderr в текст
+ * ошибки, поэтому причина (`INSTALL_FAILED_...`) больше не теряется.
+ */
+async function installApk(adbTarget, apkPath) {
+  const out = String(await runAdbResilient(
+    adbTarget,
+    ['-s', adbTarget, 'install', '-r', apkPath],
+    { timeoutMs: INSTALL_TIMEOUT_MS, attempts: 1 }
+  ) || '');
+  if (!/Success/i.test(out)) {
+    throw new Error(`adb install не подтвердил успех: ${out.trim() || 'пустой ответ'}`);
+  }
+  return out;
+}
+
+function launchPlayer(adbTarget, timeoutMs = SHELL_TIMEOUT_MS) {
+  return runAdbResilient(
+    adbTarget,
+    ['-s', adbTarget, 'shell', 'monkey', '-p', ANDROID_PACKAGE_NAME, '-c', 'android.intent.category.LAUNCHER', '1'],
+    { timeoutMs }
+  );
 }
 
 function escapeXml(value) {
@@ -136,55 +213,82 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
     throw new Error('APK файл не найден');
   }
 
+  const urlForBroadcast = normalizeServerUrlForXml(serverUrl);
   const adbTarget = `${host}:${adbPort}`;
 
-  // Проверяем adb connect
-  const out = await runAdb(['connect', adbTarget], { stdio: ['ignore', 'pipe', 'pipe'] });
-  if (!out.includes('connected') && !out.includes('already connected')) {
-    throw new Error(`adb не удалось подключиться к ${adbTarget}: ${out}`);
-  }
+  // Вся установка идёт эксклюзивно для target, в той же очереди, что и
+  // adbShell (power-watch, опрос статуса). Иначе параллельный
+  // `connect → dumpsys → disconnect` опроса рвёт установку на середине: adb
+  // печатает «Performing Streamed Install» и сессия умирает, а плеер остаётся
+  // закрытым, потому что перезапуск шёл после брошенного install.
+  return enqueueAdbCommand(adbTarget, async () => {
+    await connectAdb(adbTarget);
 
-  try {
-    // Установка APK
-    await runAdb(['connect', adbTarget], { stdio: 'ignore' });
-    await runAdb(['-s', adbTarget, 'install', '-r', safeApkPath], { stdio: 'ignore' });
+    let installError = null;
+    let installed = false;
 
-    // Запуск приложения для создания папок
-    await runAdb(['-s', adbTarget, 'shell', 'monkey', '-p', ANDROID_PACKAGE_NAME, '-c', 'android.intent.category.LAUNCHER', '1'], { stdio: 'ignore' });
-    await new Promise(r => setTimeout(r, 5000));
-
-    // Остановка приложения
-    await runAdb(['-s', adbTarget, 'shell', 'am', 'force-stop', ANDROID_PACKAGE_NAME], { stdio: 'ignore' });
-    await new Promise(r => setTimeout(r, 1000));
-
-    // Формируем URL для broadcast
-    const urlForBroadcast = normalizeServerUrlForXml(serverUrl);
-
-    logger.info('[APK] Sending config via broadcast', { serverUrl: urlForBroadcast, deviceId: safeDeviceId });
-
-    // Отправка настроек через broadcast (ConfigReceiver) — явный вызов компонента
-    try {
-      const broadcastResult = await runAdb(['-s', adbTarget, 'shell', 'am', 'broadcast',
-        '-n', ANDROID_CONFIG_RECEIVER,
-        '-a', ANDROID_CONFIGURE_ACTION,
-        '--es', 'server_url', urlForBroadcast,
-        '--es', 'device_id', safeDeviceId,
-        '--ez', 'show_status', 'false'
-      ], { stdio: ['pipe', 'pipe', 'pipe'] });
-      logger.info('[APK] Broadcast result:', { result: broadcastResult });
-    } catch (broadcastErr) {
-      logger.warn('[APK] Broadcast failed, app may need manual configuration', { error: broadcastErr.message });
+    for (let attempt = 1; attempt <= INSTALL_ATTEMPTS && !installed; attempt++) {
+      try {
+        await installApk(adbTarget, safeApkPath);
+        installed = true;
+      } catch (error) {
+        installError = error;
+        logger.warn('[APK] Установка не удалась, повтор', {
+          adbTarget,
+          attempt,
+          error: error.message
+        });
+        try {
+          await connectAdb(adbTarget);
+        } catch (reconnectError) {
+          logger.warn('[APK] Переподключение не удалось', { adbTarget, error: reconnectError.message });
+        }
+        if (attempt < INSTALL_ATTEMPTS) await delay(RETRY_DELAY_MS);
+      }
     }
 
-    await new Promise(r => setTimeout(r, 1000));
-
-    // Перезапуск приложения чтобы подхватить новые настройки
-    await runAdb(['-s', adbTarget, 'shell', 'monkey', '-p', ANDROID_PACKAGE_NAME, '-c', 'android.intent.category.LAUNCHER', '1'], { stdio: 'ignore' });
-  } finally {
     try {
-      await runAdb(['disconnect', adbTarget], { stdio: 'ignore' });
-    } catch (disconnectErr) {
-      logger.debug('[APK] adb disconnect failed (ignored)', { error: disconnectErr.message });
+      if (!installed) {
+        throw installError || new Error('Не удалось установить APK');
+      }
+
+      // Запуск приложения, чтобы оно создало рабочие папки
+      await launchPlayer(adbTarget);
+      await delay(SETTLE_MS);
+
+      // Остановка перед отправкой настроек
+      await runAdbResilient(adbTarget, ['-s', adbTarget, 'shell', 'am', 'force-stop', ANDROID_PACKAGE_NAME]);
+      await delay(RETRY_DELAY_MS);
+
+      logger.info('[APK] Sending config via broadcast', { serverUrl: urlForBroadcast, deviceId: safeDeviceId });
+
+      // Отправка настроек через broadcast (ConfigReceiver) — явный вызов компонента
+      try {
+        const broadcastResult = await runAdbResilient(adbTarget, ['-s', adbTarget, 'shell', 'am', 'broadcast',
+          '-n', ANDROID_CONFIG_RECEIVER,
+          '-a', ANDROID_CONFIGURE_ACTION,
+          '--es', 'server_url', urlForBroadcast,
+          '--es', 'device_id', safeDeviceId,
+          '--ez', 'show_status', 'false'
+        ]);
+        logger.info('[APK] Broadcast result:', { result: broadcastResult });
+      } catch (broadcastErr) {
+        logger.warn('[APK] Broadcast failed, app may need manual configuration', { error: broadcastErr.message });
+      }
+    } finally {
+      // Гарантированный перезапуск плеера: раньше при сбое ADB приложение
+      // оставалось закрытым до ручного вмешательства.
+      try {
+        await launchPlayer(adbTarget);
+      } catch (launchErr) {
+        logger.warn('[APK] Не удалось перезапустить плеер', { adbTarget, error: launchErr.message });
+      }
+
+      try {
+        await runAdb(['disconnect', adbTarget], SHELL_TIMEOUT_MS);
+      } catch (disconnectErr) {
+        logger.debug('[APK] adb disconnect failed (ignored)', { error: disconnectErr.message });
+      }
     }
-  }
+  });
 }
