@@ -828,6 +828,15 @@ body.admin-page #grid button.meta.st-apk-action {
   border-radius: 999px;
 }
 
+.st-ml-auto {
+  margin-left: auto;
+}
+
+/* Компактные поля инсталлятора APK */
+.st-input-xs { width: 70px; }
+.st-input-sm { width: 120px; }
+.st-input-md { width: 130px; }
+
 /* Строка статуса */
 .st-status {
   min-height: 1.2em;

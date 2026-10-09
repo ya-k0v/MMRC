@@ -441,6 +441,18 @@ function createSettingsSection() {
           </div>
           <div class="st-card-b">
             <div id="stApkVersion" class="meta st-actions">Загрузка...</div>
+            <div class="st-actions">
+              <input id="stApkIp" class="input st-input-sm" placeholder="IP" />
+              <input id="stApkPort" class="input st-input-xs" placeholder="Порт" value="5555" />
+              <input id="stApkId" class="input st-input-md" placeholder="ID устройства" />
+              <input id="stApkName" class="input st-input-sm" placeholder="Имя" />
+              <button id="stApkInstall" class="primary">${getDownloadIcon(14)} Установить</button>
+              <button id="stApkBatch" class="secondary st-ml-auto">${getRestartIcon(14)} Обновить все</button>
+            </div>
+            <div class="st-actions">
+              <span id="stApkStatus" class="st-status"></span>
+              <span id="stApkBatchStatus" class="st-status st-ml-auto"></span>
+            </div>
           </div>
         </div>
 
@@ -519,6 +531,42 @@ function createSettingsSection() {
         } catch { if (modStatus) { modStatus.textContent = 'Ошибка соединения'; modStatus.style.color = 'var(--danger)'; } }
       };
     });
+
+    // APK Install
+    const apkInstall = document.getElementById('stApkInstall');
+    if (apkInstall) {
+      apkInstall.onclick = async () => {
+        const ip = document.getElementById('stApkIp').value.trim();
+        const port = document.getElementById('stApkPort').value.trim() || '5555';
+        const deviceId = document.getElementById('stApkId').value.trim();
+        const deviceName = document.getElementById('stApkName').value.trim();
+        const s = document.getElementById('stApkStatus');
+        if (!ip || !deviceId || !deviceName) { s.textContent = 'Заполните все поля'; s.style.color = 'var(--danger)'; return; }
+        apkInstall.disabled = true; s.textContent = 'Установка...'; s.style.color = 'var(--text-secondary)';
+        try {
+          const r = await adminFetch('/api/admin/install-apk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ip, port, deviceId, deviceName }) });
+          const result = await r.json();
+          s.innerHTML = result.ok ? getCheckIcon(14, 'var(--success)') + ' Установлено!' : (result.error || 'Ошибка'); s.style.color = result.ok ? 'var(--success)' : 'var(--danger)';
+        } catch { s.textContent = 'Ошибка соединения'; s.style.color = 'var(--danger)'; }
+        apkInstall.disabled = false;
+      };
+    }
+
+    // APK Batch
+    const apkBatch = document.getElementById('stApkBatch');
+    if (apkBatch) {
+      apkBatch.onclick = async () => {
+        const s = document.getElementById('stApkBatchStatus');
+        apkBatch.disabled = true; s.textContent = 'Обновление...'; s.style.color = 'var(--text-secondary)';
+        try {
+          const r = await adminFetch('/api/admin/install-apk-bound', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+          const result = await r.json().catch(() => ({}));
+          s.textContent = `Готово: ${result.updated || 0} обновлено, ${result.failed || 0} ошибок`;
+          s.style.color = (result.failed || 0) > 0 ? 'var(--warning)' : 'var(--success)';
+        } catch { s.textContent = 'Ошибка соединения'; s.style.color = 'var(--danger)'; }
+        apkBatch.disabled = false;
+      };
+    }
 
     // DB Export
     const dbExport = document.getElementById('stDbExport');
