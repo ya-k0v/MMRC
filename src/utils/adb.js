@@ -40,6 +40,14 @@ export function isAndroidDevice(device) {
 const DAEMON_STARTUP_ERROR = /daemon not running|cannot connect to daemon|failed to start daemon/i;
 
 /**
+ * Текст ошибки `adb connect`, который adb печатает в stdout, но при этом
+ * завершается кодом 0. Без этой проверки неудачное подключение выглядит как
+ * успешное, а настоящая причина («No route to host», «Connection refused»)
+ * теряется и всплывает лишь позже как «device not found» на shell-команде.
+ */
+const ADB_CONNECT_FAILURE = /failed to connect|unable to connect|cannot connect|connection refused|no route to host/i;
+
+/**
  * Одна adb-команда с таймаутом: без него зависший adb виснет навсегда.
  *
  * При холодном старте два одновременных вызова adb сорятся за порт 5037, и
@@ -126,10 +134,19 @@ export function adbShell(ip, port, command, timeoutMs = DEFAULT_TIMEOUT_MS) {
 }
 
 async function adbShellNow(target, command, timeoutMs) {
+  let connectOutput;
   try {
-    await runAdb(['connect', target], timeoutMs);
+    connectOutput = await runAdb(['connect', target], timeoutMs);
   } catch (error) {
     return { ok: false, error: `adb connect error: ${error.message}` };
+  }
+
+  // `adb connect` возвращает код 0 даже при неудаче, а текст ошибки печатает в
+  // stdout («failed to connect ...: No route to host»). Без этой проверки
+  // реальная причина тонула в последующем «device not found» от shell.
+  const connectText = String(connectOutput || '').trim();
+  if (ADB_CONNECT_FAILURE.test(connectText)) {
+    return { ok: false, error: `adb connect error: ${connectText || 'не удалось подключиться к устройству'}` };
   }
 
   try {
