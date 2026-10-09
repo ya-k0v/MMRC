@@ -102,6 +102,20 @@ test('повторяет install при сбое и в итоге ставит A
   expect(countInstall()).toBe(3);
 }, 30000);
 
+test('чистая переустановка: стоп, удаление, установка, затем настройки', async () => {
+  await installAndSetupApk(callArgs);
+
+  const stopIdx = events.findIndex((command) => command.includes('am force-stop'));
+  const uninstallIdx = events.findIndex(command => command.includes(' uninstall '));
+  const installIdx = events.findIndex(command => command.includes(' install '));
+  const broadcastIdx = events.findIndex(command => command.includes('am broadcast'));
+
+  expect(stopIdx).toBeGreaterThanOrEqual(0);
+  expect(uninstallIdx).toBeGreaterThan(stopIdx);
+  expect(installIdx).toBeGreaterThan(uninstallIdx);
+  expect(broadcastIdx).toBeGreaterThan(installIdx);
+}, 30000);
+
 test('при постоянной ошибке бросает причину из stderr, но перезапускает плеер и отключается', async () => {
   installFailures = 99;
   installStderr = 'Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]';

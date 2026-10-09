@@ -697,7 +697,7 @@ function createSettingsSection() {
         versions.forEach((v) => {
           const chip = document.createElement('button');
           chip.type = 'button';
-          chip.className = 'secondary meta st-apk-chip' + (v.version === selected ? ' is-selected' : '');
+          chip.className = 'meta st-apk-chip' + (v.version === selected ? ' is-selected' : '');
           chip.textContent = v.version;
           chip.title = v.downloaded ? `Выбрать версию ${v.version}` : `Скачать и выбрать версию ${v.version}`;
           chip.disabled = busy;
@@ -714,8 +714,7 @@ function createSettingsSection() {
 
         const upd = document.createElement('button');
         upd.type = 'button';
-        upd.className = 'secondary meta';
-        upd.style.cssText = 'min-width:auto; padding:2px 8px; font-size:0.7rem; margin-left:8px;';
+        upd.className = 'meta st-apk-action';
         upd.textContent = 'Обновить';
         upd.disabled = busy;
         upd.onclick = downloadAll;

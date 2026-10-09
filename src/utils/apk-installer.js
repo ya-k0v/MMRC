@@ -158,6 +158,31 @@ function launchPlayer(adbTarget, timeoutMs = SHELL_TIMEOUT_MS) {
   );
 }
 
+/** Остановить плеер перед удалением: uninstall не сможет убрать запущенный процесс. */
+async function stopPlayer(adbTarget) {
+  try {
+    await runAdbResilient(adbTarget, ['-s', adbTarget, 'shell', 'am', 'force-stop', ANDROID_PACKAGE_NAME]);
+  } catch (error) {
+    logger.debug('[APK] force-stop перед удалением не удался (ignored)', { error: error.message });
+  }
+}
+
+/**
+ * Удалить установленный плеер перед чистой установкой.
+ *
+ * install -r не даёт понизить версию (INSTALL_FAILED_VERSION_DOWNGRADE) и не
+ * сбрасывает старое состояние. Полное удаление решает и то, и другое: работает
+ * апгрейд/даунгрейд, а настройки затем заново отправляются broadcast'ом.
+ */
+async function removePlayer(adbTarget) {
+  try {
+    await runAdbResilient(adbTarget, ['-s', adbTarget, 'uninstall', ANDROID_PACKAGE_NAME]);
+  } catch (error) {
+    // «Failure [not installed for 0]» — норма, если плеера ещё нет.
+    logger.debug('[APK] uninstall не удался (возможно, пакет отсутствует)', { error: error.message });
+  }
+}
+
 function escapeXml(value) {
   return String(value || '')
     .replace(/&/g, '&amp;')
@@ -223,6 +248,12 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
   // закрытым, потому что перезапуск шёл после брошенного install.
   return enqueueAdbCommand(adbTarget, async () => {
     await connectAdb(adbTarget);
+
+    // Чистая переустановка: останавливаем и удаляем старый плеер, затем ставим
+    // выбранную версию. Так работает и апгрейд, и даунгрейд (install -r
+    // блокирует понижение версии), и сбрасывается прежнее состояние.
+    await stopPlayer(adbTarget);
+    await removePlayer(adbTarget);
 
     let installError = null;
     let installed = false;

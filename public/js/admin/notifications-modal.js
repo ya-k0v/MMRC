@@ -287,6 +287,21 @@ function renderNotification(notification) {
     `
     : '';
 
+  // Единый образ: у уведомления либо его собственные действия, либо
+  // универсальный «ОК» (отметить прочитанным). Раньше «ОК» рисовался всегда
+  // и дублировал действие «Ок»/dismiss у уведомления об обновлении.
+  const okHtml = actions.length === 0
+    ? `
+      <button
+        class="notification-action-btn secondary meta notification-ok-btn"
+        data-notification-id="${notification.id}"
+        title="ОК — закрыть это уведомление"
+      >
+        ОК
+      </button>
+    `
+    : '';
+
   return `
     <div class="notification-item is-${severity.key}" data-notification-id="${notification.id}" title="${escapeHtml(message ? `${title}: ${message}` : title)}">
       <span class="notification-item__icon" aria-hidden="true">${severity.icon}</span>
@@ -299,13 +314,7 @@ function renderNotification(notification) {
         ${message ? `<p class="notification-item__message">${escapeHtml(message)}</p>` : ''}
         <div class="notification-item__tools">
           ${actionsHtml}
-          <button
-            class="notification-action-btn secondary meta notification-ok-btn"
-            data-notification-id="${notification.id}"
-            title="ОК — закрыть это уведомление"
-          >
-            ОК
-          </button>
+          ${okHtml}
           <span class="notification-item__tools-actions">
             <button
               class="notification-btn-icon notification-btn-icon--ack notification-ack-btn"

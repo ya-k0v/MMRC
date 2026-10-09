@@ -284,7 +284,7 @@ class DockerUpdateManager {
       actions: [
         {
           id: 'dismiss_update',
-          label: 'Ок',
+          label: 'ОК',
           method: 'POST',
           url: '/api/admin/update/dismiss',
           body: {

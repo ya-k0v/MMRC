@@ -286,8 +286,8 @@ class UpdateManager {
     return {
       type: 'project_update_available',
       severity: 'info',
-      title: 'Доступно обновление проекта',
-      message: `Ветка ${status.branch} отстает на ${behindLabel}: ${localLabel} -> ${remoteLabel}. Обновить сейчас?`,
+      title: 'Доступно обновление',
+      message: `Новая версия: ${localLabel} -> ${remoteLabel} (${behindLabel}). Для обновления выполните в консоли:\nsudo mmrc update`,
       key: UPDATE_NOTIFICATION_KEY,
       source: 'update-manager',
       details: {
@@ -301,20 +301,8 @@ class UpdateManager {
       },
       actions: [
         {
-          id: 'apply_update',
-          label: 'Да, обновить',
-          method: 'POST',
-          url: '/api/admin/update/apply',
-          body: {
-            remoteSha: status.remoteSha,
-            branch: status.branch
-          },
-          confirm: 'Применить обновление проекта и перезапустить сервис?',
-          variant: 'primary'
-        },
-        {
           id: 'dismiss_update',
-          label: 'Нет, позже',
+          label: 'ОК',
           method: 'POST',
           url: '/api/admin/update/dismiss',
           body: {
