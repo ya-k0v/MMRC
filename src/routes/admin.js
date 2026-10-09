@@ -611,7 +611,7 @@ export function createAdminRouter(deps = {}) {
       return res.status(400).json({ error: 'Export is not available in PostgreSQL mode. Use pg_dump instead.' });
     }
     try {
-      const dbFilePath = path.join(PROJECT_ROOT, 'config', 'main.db');
+      const dbFilePath = DB_PATH;
       
       if (!fs.existsSync(dbFilePath)) {
         return res.status(404).json({ error: 'Database file not found' });
