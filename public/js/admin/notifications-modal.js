@@ -361,8 +361,10 @@ function setupNotificationHandlers() {
     };
   });
 
-  // Кнопки действий (например, отмена задачи)
-  document.querySelectorAll('.notification-action-btn').forEach(btn => {
+  // Кнопки действий (например, отмена задачи). Только кнопки с data-action-id:
+// класс notification-action-btn используется также для стилизации кнопки
+// «ОК» (она закрывает уведомление, а не выполняет действие на сервере).
+  document.querySelectorAll('.notification-action-btn[data-action-id]').forEach(btn => {
     btn.onclick = async (e) => {
       e.stopPropagation();
       const notificationId = btn.getAttribute('data-notification-id');
