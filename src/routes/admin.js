@@ -1246,14 +1246,17 @@ export function createAdminRouter(deps = {}) {
         const root = settings?.contentRoot;
         if (root) {
           const s = await fsp.promises.statfs(root);
-          const total = Number(s.blocks) * Number(s.bsize);
-          const free = Number(s.bavail) * Number(s.bsize);
+          const bsize = Number(s.bsize);
+          const total = Number(s.blocks) * bsize;
+          const available = Number(s.bavail) * bsize;
+          const used = (Number(s.blocks) - Number(s.bfree)) * bsize;
           storage.usage = {
             path: root,
             hostPath: process.env.HOST_DATA_DIR || root,
             totalMB: Math.round(total / 1048576),
-            usedMB: Math.round((total - free) / 1048576),
-            availableMB: Math.round(free / 1048576)
+            usedMB: Math.round(used / 1048576),
+            availableMB: Math.round(available / 1048576),
+            usagePercent: (used + available) > 0 ? Math.ceil((used * 100) / (used + available)) : 0
           };
         }
       } catch { /* путь недоступен — сведения об объёме не отдаём */ }

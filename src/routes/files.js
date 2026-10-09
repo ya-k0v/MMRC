@@ -5811,7 +5811,7 @@ for (let i = 0; i < files.length; i++) {
         safeName,
         originalName,
         status: fileStatus.status || 'ready',
-        progress: fileStatus.progress || 100,
+        progress: fileStatus.progress ?? 100,
         canPlay: fileStatus.canPlay !== false,
         error: fileStatus.error || null,
         resolution,

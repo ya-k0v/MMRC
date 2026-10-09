@@ -7,7 +7,7 @@ import { showCopyProgress, updateCopyProgress, finishCopyProgress } from './admi
 import { renderPowerControlsHtml, initPowerControls, applyPowerState, stopPowerControls } from './admin/device-power.js';
 import { loadDevices as loadDevicesModule, renderTVList as renderTVListModule, syncDeviceStatuses, updateDeviceTile, focusDeviceInList as focusDeviceInListModule } from './admin/devices-manager.js';
 import { createDevice, renameDevice, deleteDevice } from './admin/device-crud.js';
-import { loadFilesWithStatus, refreshFilesPanel as refreshFilesPanelModule } from './admin/files-manager.js';
+import { loadFilesWithStatus, refreshFilesPanel as refreshFilesPanelModule, describeProcessing } from './admin/files-manager.js';
 import { previewFile, makeDefault, renameFile, deleteFile } from './admin/file-actions.js';
 import { uploadFiles, copyFile } from './admin/upload-manager.js';
 import { clearDetail, clearFilesPane, openDevice as openDeviceHelper } from './admin/ui-helpers.js';
@@ -15,7 +15,7 @@ import { renderDeviceCard as renderDeviceCardModule, deviceCardSignature, buildD
 import { setupUploadUI as setupUploadUIModule } from './admin/upload-ui.js';
 import { showDevicesModal, showUsersModal, showSettingsModal } from './admin/modal.js';
 import { initSystemMonitor, stopSystemMonitor } from './admin/system-monitor.js';
-import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon, getCloseIcon, getCheckIcon, getWarningIcon, getUnlockIcon, getLockIcon, getDeviceIcon, getKeyIcon, getTrashIcon, getPauseIcon, getPlayIcon, getCopyIcon, getDownloadIcon, getBellIcon, getStorageIcon, getCpuIcon, getSlidersIcon, getDatabaseIcon, getMobileIcon, getMonitorIcon, getBrowserIcon, getTVIcon, getChevronLeftIcon, getChevronRightIcon, getPowerIcon, getSearchIcon, getUpDownloadIcon, getRestartIcon, getUsersIcon, getPlusIcon } from './shared/svg-icons.js';
+import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon, getCloseIcon, getCheckIcon, getWarningIcon, getUnlockIcon, getLockIcon, getDeviceIcon, getKeyIcon, getTrashIcon, getPauseIcon, getPlayIcon, getCopyIcon, getDownloadIcon, getBellIcon, getStorageIcon, getCpuIcon, getSlidersIcon, getDatabaseIcon, getMobileIcon, getMonitorIcon, getBrowserIcon, getTVIcon, getChevronLeftIcon, getChevronRightIcon, getChevronDownIcon, getPowerIcon, getSearchIcon, getUpDownloadIcon, getRestartIcon, getUsersIcon, getPlusIcon } from './shared/svg-icons.js';
 import { escapeHtml } from './shared/utils.js';
 import { initNotifications } from './admin/notifications.js';
 import { mountNotificationsSection } from './admin/notifications-modal.js';
@@ -32,6 +32,7 @@ let filePage = 0;
 const filePageByDevice = new Map();
 let nodeNames = {};
 let user = null;
+let apkMenuOutsideClick = null;
 const volumeStateByDevice = new Map();
 const VOLUME_STEP = 5;
 
@@ -84,8 +85,12 @@ setupSocketListeners(socket, {
     let hasSelection = false;
     if (prev && devicesCache.find(d => d.device_id === prev)) {
       openDevice(prev);
-      // ИСПРАВЛЕНО: Обновляем список файлов для текущего устройства
-      await renderFilesPane(prev);
+      // Пока файл в обработке — не пересоздаём список: полоса прогресса живёт
+      // в DOM и анимируется по сокету (file/progress), а полная перерисовка её
+      // удаляет и создаёт заново — визуально это «моргание».
+      if (!hasActiveProcessing(prev)) {
+        await renderFilesPane(prev);
+      }
       hasSelection = true;
     } else {
       hasSelection = await ensureSelectedDevice();
@@ -326,7 +331,7 @@ function createSettingsSection() {
               <span>${escapeHtml(isSqlite ? 'SQLite' : 'PostgreSQL')}</span>
               <span class="st-sep">·</span>
               <span>Uptime: <strong id="stSysUptime">—</strong></span>
-              ${docker && docker.enabled ? `<span class="st-sep">·</span><span>Docker: <strong>${escapeHtml(docker.mainImage || '')}:${escapeHtml(docker.mainTag || '')}</strong></span>` : ''}
+              ${docker && docker.enabled ? `<span class="st-sep">·</span><span>Docker: <strong>${escapeHtml((docker.mainImage || '').split('/').pop())}:${escapeHtml(docker.mainTag || '')}</strong></span>` : ''}
               <button id="stRestart" class="danger meta st-btn-danger">${getRestartIcon(14)} Перезапустить</button>
             </div>
 
@@ -386,7 +391,9 @@ function createSettingsSection() {
               // Основной показатель — занятость раздела с контентом из statfs
               // (реальные данные системы). dataMB — объём только наших файлов.
               const occupiedMB = u.usedMB || 0;
-              const pct = u.totalMB ? Math.min(100, Math.round((occupiedMB / u.totalMB) * 100)) : 0;
+              const pct = u.usagePercent != null
+                ? Math.min(100, u.usagePercent)
+                : (u.totalMB ? Math.min(100, Math.round((occupiedMB / u.totalMB) * 100)) : 0);
               const barClass = pct >= 90 ? 'st-bar-fill--danger' : pct >= 75 ? 'st-bar-fill--warning' : 'st-bar-fill--success';
               const fmt = mb => mb >= 1024 ? `${(mb / 1024).toFixed(1)} ГБ` : `${mb} МБ`;
               const dataLine = u.dataMB != null
@@ -446,8 +453,13 @@ function createSettingsSection() {
               <input id="stApkPort" class="input st-input-xs" placeholder="Порт" value="5555" />
               <input id="stApkId" class="input st-input-md" placeholder="ID устройства" />
               <input id="stApkName" class="input st-input-sm" placeholder="Имя" />
-              <button id="stApkInstall" class="primary">${getDownloadIcon(14)} Установить</button>
-              <button id="stApkBatch" class="secondary st-ml-auto">${getRestartIcon(14)} Обновить все</button>
+              <span style="position:relative; display:inline-flex; align-items:center; gap:6px;">
+                <button id="stApkInstall" class="primary">${getDownloadIcon(14)} Установить</button>
+                <button id="stApkMenuToggle" type="button" class="secondary" aria-expanded="false" aria-label="Дополнительные действия APK" title="Дополнительные действия APK" style="min-width:36px; width:36px; height:36px; padding:0; display:inline-flex; align-items:center; justify-content:center; border-radius:10px;"><span style="display:inline-flex; transform: rotate(-90deg);">${getChevronDownIcon(16)}</span></button>
+                <div id="stApkMenu" style="display:none; position:absolute; left:calc(100% + 6px); top:50%; transform:translateY(-50%); min-width:190px; background:var(--panel); border:1px solid var(--border); border-radius:12px; box-shadow:0 12px 24px rgba(0,0,0,0.35); padding:8px; z-index:30;">
+                  <button id="stApkBatch" type="button" class="secondary" style="width:100%; text-align:left; justify-content:flex-start; display:flex; align-items:center; gap:8px; border-radius:10px;">${getRestartIcon(14)} Обновить все</button>
+                </div>
+              </span>
             </div>
             <div class="st-actions">
               <span id="stApkStatus" class="st-status"></span>
@@ -552,10 +564,32 @@ function createSettingsSection() {
       };
     }
 
+    const apkMenuToggle = document.getElementById('stApkMenuToggle');
+    const apkMenu = document.getElementById('stApkMenu');
+    const closeApkMenu = () => {
+      if (!apkMenu) return;
+      apkMenu.style.display = 'none';
+      if (apkMenuToggle) apkMenuToggle.setAttribute('aria-expanded', 'false');
+    };
+    if (apkMenuToggle && apkMenu) {
+      if (apkMenuOutsideClick) document.removeEventListener('click', apkMenuOutsideClick);
+      apkMenuOutsideClick = (e) => {
+        if (!apkMenuToggle.contains(e.target) && !apkMenu.contains(e.target)) closeApkMenu();
+      };
+      document.addEventListener('click', apkMenuOutsideClick);
+      apkMenuToggle.onclick = (e) => {
+        e.stopPropagation();
+        if (apkMenu.style.display === 'block') { closeApkMenu(); return; }
+        apkMenu.style.display = 'block';
+        apkMenuToggle.setAttribute('aria-expanded', 'true');
+      };
+    }
+
     // APK Batch
     const apkBatch = document.getElementById('stApkBatch');
     if (apkBatch) {
       apkBatch.onclick = async () => {
+        closeApkMenu();
         const s = document.getElementById('stApkBatchStatus');
         apkBatch.disabled = true; s.textContent = 'Обновление...'; s.style.color = 'var(--text-secondary)';
         try {
@@ -701,14 +735,6 @@ function createSettingsSection() {
           group.appendChild(chip);
         });
         el.appendChild(group);
-
-        const upd = document.createElement('button');
-        upd.type = 'button';
-        upd.className = 'meta st-apk-action';
-        upd.innerHTML = `${getRestartIcon(14)} Обновить`;
-        upd.disabled = busy;
-        upd.onclick = downloadAll;
-        el.appendChild(upd);
       };
 
       const load = async () => {
@@ -731,17 +757,6 @@ function createSettingsSection() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ version })
           });
-        } catch {}
-        busy = false;
-        await load();
-      };
-
-      const downloadAll = async () => {
-        if (busy) return;
-        busy = true;
-        render();
-        try {
-          await adminFetch('/api/admin/apk-update', { method: 'POST' });
         } catch {}
         busy = false;
         await load();
@@ -2265,6 +2280,31 @@ async function refreshFilesPanel(deviceId, panelEl, isStale = null) {
 // появлялся заново уже на другом значении.
 const fileProgressByDevice = new Map(); // deviceId -> Map<safeName, {progress, done, ts}>
 
+// Есть ли в уже отрисованном списке файл, который сейчас обрабатывается и чей
+// прогресс приходит по сокету. Пока true, полную перерисовку списка пропускаем:
+// иначе DOM полосы удаляется и создаётся заново — визуально «моргание».
+// Проверяем именно по видимым элементам: у папок прогресс приходит на исходный
+// PDF, а в списке лежит имя папки, поэтому такие случаи не блокируем и они, как
+// и раньше, обновляются перерисовкой.
+function hasActiveProcessing(deviceId) {
+  const byFile = fileProgressByDevice.get(deviceId);
+  if (!byFile || !byFile.size) return false;
+  const panel = document.getElementById('filesPanel');
+  if (!panel || (panel.dataset.deviceId || '') !== (deviceId || '')) return false;
+  const shown = new Set();
+  panel.querySelectorAll('.file-item').forEach((item) => {
+    try {
+      shown.add(decodeURIComponent(item.getAttribute('data-file-name') || ''));
+    } catch {
+      // некорректный атрибут — пропускаем
+    }
+  });
+  for (const [name, entry] of byFile.entries()) {
+    if (entry && !entry.done && entry.progress < 100 && shown.has(name)) return true;
+  }
+  return false;
+}
+
 function setFileProgress(deviceId, fileName, progress) {
   if (!deviceId || !fileName) return null;
   const numeric = Number(progress);
@@ -2440,6 +2480,17 @@ function updateFileProgress(deviceId, fileName, progress) {
   if (!fileEl) return;
 
   applyProgressToElement(fileEl, entry);
+
+  // Подпись «Обработка N%» раньше обновлялась только при перерисовке панели,
+  // поэтому между перерисовками застывала на значении первого рендера.
+  const statusTextEl = fileEl.querySelector('.file-item-status-text');
+  if (statusTextEl) {
+    const icon = statusTextEl.querySelector('svg');
+    const text = describeProcessing(entry.progress).text;
+    statusTextEl.textContent = '';
+    if (icon) statusTextEl.appendChild(icon);
+    statusTextEl.appendChild(document.createTextNode(` ${text}`));
+  }
 }
 
 // setupUploadUI перенесена в upload-ui.js
@@ -2626,28 +2677,38 @@ function setupVolumePanel(deviceId) {
 }
 
 // ------ Периодическая проверка статусов файлов в обработке ------
+// Полная перерисовка панели при каждом тике удаляла прогресс-бар и создавала
+// его заново — визуально это выглядело как мигание. Сам прогресс приходит по
+// сокету (file/progress) и рисуется точечно, поэтому перерисовываем панель
+// только когда меняется НАБОР статусов (файл появился/перешёл в обработку или
+// завершил её), а не при обычном изменении процентов.
+const processingSignatureByDevice = new Map();
+
 setInterval(async () => {
   if (!currentDeviceId) return;
-  
+
   try {
-    // Получаем статусы всех файлов текущего устройства
     const res = await adminFetch(`/api/devices/${encodeURIComponent(currentDeviceId)}/files-with-status`);
     const filesData = await res.json();
-    
-    // Проверяем есть ли файлы в обработке
-    const hasProcessing = filesData.some(f => 
-      f.status === 'processing' || f.status === 'checking'
-    );
-    
-    // Если есть файлы в обработке - обновляем панель
-    if (hasProcessing) {
-      const panel = document.getElementById('filesPanel');
-      if (panel) {
-        const updatedPage = await refreshFilesPanel(currentDeviceId, panel);
-        if (updatedPage !== undefined) {
-          filePageByDevice.set(currentDeviceId, updatedPage);
-          filePage = updatedPage;
-        }
+
+    const signature = filesData
+      .filter(f => f.status === 'processing' || f.status === 'checking')
+      .map(f => `${f.safeName}:${f.status}`)
+      .sort()
+      .join('|');
+
+    const prevSignature = processingSignatureByDevice.get(currentDeviceId) || '';
+    if (signature === prevSignature) {
+      return;
+    }
+    processingSignatureByDevice.set(currentDeviceId, signature);
+
+    const panel = document.getElementById('filesPanel');
+    if (panel) {
+      const updatedPage = await refreshFilesPanel(currentDeviceId, panel);
+      if (updatedPage !== undefined) {
+        filePageByDevice.set(currentDeviceId, updatedPage);
+        filePage = updatedPage;
       }
     }
   } catch (e) {

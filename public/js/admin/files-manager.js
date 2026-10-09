@@ -218,6 +218,7 @@ function createFileLabelsRow({
     }
 
     const statusTextSpan = document.createElement('span');
+    statusTextSpan.className = 'file-item-status-text';
     statusTextSpan.innerHTML = `${toIconOnlySvg(statusIcon)} ${escapeHtml(statusText)}`;
     statusChip.appendChild(statusTextSpan);
     labelsRow.appendChild(statusChip);
