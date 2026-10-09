@@ -10,7 +10,7 @@ import {
   showLoadingState,
   showErrorState
 } from './hero-utils.js';
-import { attachKeyboard, showKeyboard, hideKeyboard, isKeyboardActive, resetKeyboardInteraction } from './hero-keyboard.js';
+import { attachKeyboard, showKeyboard, hideKeyboard } from './hero-keyboard.js';
 import { getCloseIcon } from '../../js/shared/svg-icons.js';
 
 const searchInput = document.getElementById('searchInput');
@@ -835,6 +835,14 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
+document.addEventListener('contextmenu', (event) => {
+  event.preventDefault();
+});
+
+document.addEventListener('auxclick', (event) => {
+  if (event.button === 1) event.preventDefault();
+});
+
 if (searchInput) {
   attachKeyboard(searchInput);
 
@@ -880,15 +888,8 @@ if (searchInput) {
   });
 
   searchInput.addEventListener('blur', () => {
-    // Даём время на клик по клавиатуре
-    setTimeout(() => {
-      if (isKeyboardActive()) {
-        resetKeyboardInteraction();
-        return;
-      }
-      hideKeyboard();
-    }, 150);
-    
+    hideKeyboard();
+
     // Возвращаем обычное поведение после потери фокуса
     const scrollY = document.body.style.top;
     document.body.style.position = '';
@@ -922,6 +923,28 @@ suggestions.addEventListener('click', (event) => {
   searchInput.value = '';
   hideKeyboard();
 });
+
+function isWithinSearchWidget(target) {
+  if (searchInput && searchInput.contains(target)) return true;
+  if (suggestions && suggestions.contains(target)) return true;
+  const keyboard = document.getElementById('heroKeyboard');
+  return Boolean(keyboard && keyboard.contains(target));
+}
+
+function handleOutsidePointer(event) {
+  if (isWithinSearchWidget(event.target)) return;
+  if (lightboxEl && lightboxEl.style.display === 'block') return;
+  if (suggestions) suggestions.style.display = 'none';
+  if (searchInput.value !== '') searchInput.value = '';
+  if (document.activeElement === searchInput) searchInput.blur();
+  hideKeyboard();
+  if (searchInput.value.trim().length === 0 && !autoChangeTimer && isServerAvailable) {
+    startAutoChangeTimer();
+  }
+}
+
+document.addEventListener('mousedown', handleOutsidePointer, true);
+document.addEventListener('touchstart', handleOutsidePointer, { capture: true, passive: true });
 
 // Инициализация при загрузке страницы
 document.addEventListener('DOMContentLoaded', async () => {

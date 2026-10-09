@@ -15,7 +15,6 @@ let isShifted = false;
 let inputElement = null;
 let keyboardEl = null;
 let isKeyboardVisible = false;
-let isInteractingWithKeyboard = false;
 
 function createKeyboard() {
   if (keyboardEl) return keyboardEl;
@@ -25,8 +24,8 @@ function createKeyboard() {
   keyboardEl.className = 'hero-keyboard';
   keyboardEl.style.display = 'none';
 
-  keyboardEl.addEventListener('mousedown', (e) => { e.preventDefault(); isInteractingWithKeyboard = true; });
-  keyboardEl.addEventListener('touchstart', (e) => { e.preventDefault(); isInteractingWithKeyboard = true; });
+  keyboardEl.addEventListener('mousedown', (e) => { e.preventDefault(); });
+  keyboardEl.addEventListener('touchstart', (e) => { e.preventDefault(); });
 
   document.body.appendChild(keyboardEl);
   return keyboardEl;
@@ -166,12 +165,4 @@ export function toggleKeyboard() {
   } else {
     showKeyboard();
   }
-}
-
-export function isKeyboardActive() {
-  return isInteractingWithKeyboard;
-}
-
-export function resetKeyboardInteraction() {
-  isInteractingWithKeyboard = false;
 }
