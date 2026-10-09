@@ -287,13 +287,13 @@
     window.addEventListener('error', (event) => {
       // Игнорируем ошибки из content.js (расширения браузера)
       if (event.filename && event.filename.includes('content.js')) {
-        console.debug('[Player] ⚠️ Игнорируем ошибку из расширения браузера:', event.message);
+        console.debug('[Player] Игнорируем ошибку из расширения браузера:', event.message);
         event.preventDefault();
         return true;
       }
       // Игнорируем ошибки связанные с undefined переменными в расширениях
       if (event.message && event.message.includes('is not defined') && event.filename && !event.filename.includes('player-videojs.js')) {
-        console.debug('[Player] ⚠️ Игнорируем ошибку из внешнего скрипта:', event.message);
+        console.debug('[Player] Игнорируем ошибку из внешнего скрипта:', event.message);
         event.preventDefault();
         return true;
       }

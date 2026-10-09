@@ -68,14 +68,14 @@ async function processDeviceFiles(deviceId) {
       const success = await applyFaststart(file.file_path, { checkFirst: false });
       if (success) {
         processed++;
-        logger.info(`[Faststart Batch] ✅ Обработан: ${file.safe_name}`);
+        logger.info(`[Faststart Batch] Обработан: ${file.safe_name}`);
       } else {
         skipped++;
-        logger.warn(`[Faststart Batch] ⚠️ Пропущен: ${file.safe_name}`);
+        logger.warn(`[Faststart Batch] Пропущен: ${file.safe_name}`);
       }
     } catch (error) {
       errors++;
-      logger.error(`[Faststart Batch] ❌ Ошибка обработки: ${file.safe_name}`, {
+      logger.error(`[Faststart Batch] Ошибка обработки: ${file.safe_name}`, {
         error: error.message
       });
     }

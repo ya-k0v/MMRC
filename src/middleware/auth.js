@@ -40,21 +40,21 @@ function generateAndSaveJwtSecret() {
     }
 
     fs.writeFileSync(ENV_PATH, content, 'utf-8');
-    logger.info('[Auth] ✅ JWT_SECRET auto-generated and saved to .env');
+    logger.info('[Auth] JWT_SECRET auto-generated and saved to .env');
   } catch (err) {
-    logger.warn('[Auth] ⚠️ Could not write JWT_SECRET to .env file. Secret will not persist across restarts.', { error: err.message });
+    logger.warn('[Auth] Could not write JWT_SECRET to .env file. Secret will not persist across restarts.', { error: err.message });
   }
 
   return secret;
 }
 
 if (!JWT_SECRET) {
-  logger.info('[Auth] 🔑 JWT_SECRET not set. Generating a secure random secret...');
+  logger.info('[Auth] JWT_SECRET not set. Generating a secure random secret...');
   JWT_SECRET = generateAndSaveJwtSecret();
 }
 
 if (JWT_SECRET.length < 32) {
-  logger.warn('[Auth] ⚠️ JWT_SECRET is too short (min 32 chars). Use a stronger secret.');
+  logger.warn('[Auth] JWT_SECRET is too short (min 32 chars). Use a stronger secret.');
 }
 
 const JWT_EXPIRES_IN = process.env.JWT_ACCESS_EXPIRES_IN || '12h';  // 12 часов для работы 24/7

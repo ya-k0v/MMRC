@@ -68,9 +68,9 @@ box_line() {
 }
 
 info() { colorized_echo blue "  $1"; }
-success() { colorized_echo green "✔ $1"; }
-warn() { colorized_echo yellow "⚠ $1"; }
-error() { colorized_echo red "✖ $1"; }
+success() { colorized_echo green "  $1"; }
+warn() { colorized_echo yellow "  $1"; }
+error() { colorized_echo red "  $1"; }
 
 # ========================
 # TTY-чтение и сохранение конфигурации
@@ -179,7 +179,7 @@ check_docker() {
 
         # Run installation
         echo ""
-        echo "  [🐳 Docker Installation]"
+        echo "  [Docker Installation]"
         echo "  ─────────────────────────"
 
         local install_output
@@ -228,7 +228,7 @@ select_database() {
 
     if [ -z "$DB_TYPE" ]; then
         echo ""
-        colorized_echo yellow "🗄️ Select database type:"
+        colorized_echo yellow "Select database type:"
         echo "  [1] SQLite (built-in, no setup required)"
         echo "  [2] PostgreSQL (via Docker, separate container)"
         db_choice=$(read_from_tty "  Choose [1-2]: ") || exit 1
@@ -312,7 +312,7 @@ select_storage() {
     if [ "$STORAGE_BACKEND" = "local" ]; then
         if [ -r /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
             echo ""
-            colorized_echo yellow "💾 Select storage backend:"
+            colorized_echo yellow "Select storage backend:"
             echo "  [1] Local filesystem (built-in, no setup required)"
             echo "  [2] S3/MinIO (via Docker, separate container)"
             read -r -p "  Choose [1-2]: " s3_choice < /dev/tty || s3_choice=""
@@ -334,7 +334,7 @@ select_storage() {
 
 setup_credentials() {
     echo ""
-    colorized_echo cyan "🔐 Service Credentials"
+    colorized_echo cyan "Service Credentials"
     echo ""
     echo "Set login/password for services (MinIO, Database)"
     echo "Press Enter to use defaults"
@@ -460,7 +460,7 @@ install_mmrc() {
 
     colorized_echo cyan "
 ══════════════════════════════════════════
-          📺 MMRC Installer               
+          MMRC Installer               
      Media Management & Remote Control    
            Version ${MMRC_VERSION:-3.4.0}                
 ══════════════════════════════════════════
@@ -715,7 +715,7 @@ ENVEOF3
     content_dir="${CONTENT_DIR:-}"
     if [ -z "$content_dir" ]; then
         echo ""
-        colorized_echo yellow "📁 Where do you want to store media content?"
+        colorized_echo yellow "Where do you want to store media content?"
         echo ""
         echo "  Default: project directory ($INSTALL_DIR/data)"
         echo "  External disk: /mnt/mmrc-content"
@@ -757,7 +757,7 @@ ENVEOF3
         # Streamer: значение уже загружено в STREAMER_ENABLED ниже из .env
     elif [ "$DB_TYPE" = "postgres" ] && [ "$STORAGE_BACKEND" = "s3" ]; then
         echo ""
-        colorized_echo yellow "🏗️ Enable High-Availability (multiple server replicas)?"
+        colorized_echo yellow "Enable High-Availability (multiple server replicas)?"
         echo "  Runs 2+ server instances behind an nginx load balancer."
         echo "  Requires PostgreSQL + S3 (already selected)."
         ha_choice=$(ask_yes_no "  Enable HA? [y/N]: ")
@@ -822,7 +822,7 @@ ENVEOF3
         fi
     else
         echo ""
-        colorized_echo yellow "🎥 Enable Streamer (remote FFmpeg for HLS streaming)?"
+        colorized_echo yellow "Enable Streamer (remote FFmpeg for HLS streaming)?"
         echo "  This runs FFmpeg in a separate container for better isolation."
         echo "  Default: disabled"
         streamer_choice=$(ask_yes_no "  Enable Streamer? [y/N]: ")
@@ -924,22 +924,22 @@ ENVEOF3
 
     echo ""
     colorized_echo cyan "════════════════════════════════════════════════════════════════════════════════════════════════════"
-    box_line "                                                  🎉 MMRC Installed Successfully!                                                  "
+    box_line "                                                  MMRC Installed Successfully!                                                  "
     colorized_echo cyan "════════════════════════════════════════════════════════════════════════════════════════════════════"
     box_line ""
-    box_line "  📺 Admin Panel:                         http://localhost:${NGINX_HTTP_PORT}/admin.html"
-    box_line "  🎤 Speaker Panel:                       http://localhost:${NGINX_HTTP_PORT}/speaker.html"
-    box_line "  🎖️  Hero Module:                         http://localhost:${NGINX_HTTP_PORT}/hero/"
-    box_line "  ❤️  Health Check:                        http://localhost:${NGINX_HTTP_PORT}/health"
+    box_line "  Admin Panel:                         http://localhost:${NGINX_HTTP_PORT}/admin.html"
+    box_line "  Speaker Panel:                       http://localhost:${NGINX_HTTP_PORT}/speaker.html"
+    box_line "   Hero Module:                         http://localhost:${NGINX_HTTP_PORT}/hero/"
+    box_line "   Health Check:                        http://localhost:${NGINX_HTTP_PORT}/health"
     box_line ""
-    box_line "  🌐 From network:                        http://${SERVER_IP}:${NGINX_HTTP_PORT}/"
+    box_line "  From network:                        http://${SERVER_IP}:${NGINX_HTTP_PORT}/"
     box_line ""
-    box_line "  👤 Admin:                               created on first page open"
+    box_line "  Admin:                               created on first page open"
     box_line "                                        (email + password ask on visit)"
     box_line ""
-    box_line "  📁 Config:                              $INSTALL_DIR/.env"
-    box_line "  💾 Data:                                $DATA_DIR"
-    box_line "  📦 Media:                               $content_dir"
+    box_line "  Config:                              $INSTALL_DIR/.env"
+    box_line "  Data:                                $DATA_DIR"
+    box_line "  Media:                               $content_dir"
     box_line ""
     colorized_echo cyan "════════════════════════════════════════════════════════════════════════════════════════════════════"
     echo ""

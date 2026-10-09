@@ -5,7 +5,7 @@
 set -e
 
 if [ "$EUID" -eq 0 ]; then 
-  echo "❌ Не запускайте этот скрипт от root! Используйте обычного пользователя."
+  echo "Не запускайте этот скрипт от root! Используйте обычного пользователя."
   exit 1
 fi
 
@@ -19,7 +19,7 @@ SERVER_IP="$1"
 DEVICE_ID="$2"
 PLAYER_URL="http://${SERVER_IP}/player-videojs.html?device_id=${DEVICE_ID}&autoplay=1"
 
-echo "🚀 Настройка Video Control Player"
+echo "Настройка Video Control Player"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Сервер: $SERVER_IP"
 echo "Device ID: $DEVICE_ID"
@@ -27,12 +27,12 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 # 1. Установка зависимостей
 echo ""
-echo "📦 Шаг 1/5: Установка зависимостей..."
+echo "Шаг 1/5: Установка зависимостей..."
 sudo apt-get update -qq
 sudo apt-get install -y chromium-browser unclutter xdotool x11-xserver-utils
 
 # 2. Создание скрипта запуска плеера
-echo "📝 Шаг 2/5: Создание скрипта запуска..."
+echo "Шаг 2/5: Создание скрипта запуска..."
 cat > ~/start-videocontrol-player.sh << 'SCRIPT_EOF'
 #!/bin/bash
 
@@ -106,7 +106,7 @@ sed -i "s/DEVICE_ID_PLACEHOLDER/$DEVICE_ID/g" ~/start-videocontrol-player.sh
 chmod +x ~/start-videocontrol-player.sh
 
 # 3. Создание desktop entry для автозапуска
-echo "🖥️  Шаг 3/5: Настройка автозапуска..."
+echo " Шаг 3/5: Настройка автозапуска..."
 mkdir -p ~/.config/autostart
 cat > ~/.config/autostart/videocontrol-player.desktop << EOF
 [Desktop Entry]
@@ -122,7 +122,7 @@ Terminal=false
 EOF
 
 # 4. Создание systemd watchdog service
-echo "🔄 Шаг 4/5: Настройка watchdog service..."
+echo "Шаг 4/5: Настройка watchdog service..."
 sudo tee /usr/local/bin/videocontrol-watchdog.sh > /dev/null << 'WATCHDOG_EOF'
 #!/bin/bash
 
@@ -196,30 +196,30 @@ sudo systemctl daemon-reload
 sudo systemctl enable videocontrol-watchdog.service
 
 # 5. Тестирование подключения к серверу
-echo "🔍 Шаг 5/5: Проверка подключения к серверу..."
+echo "Шаг 5/5: Проверка подключения к серверу..."
 if curl -s -f "http://${SERVER_IP}/api/devices" > /dev/null 2>&1; then
-  echo "✅ Сервер доступен!"
+  echo "Сервер доступен!"
 else
-  echo "⚠️  Внимание: Сервер не доступен по адресу http://${SERVER_IP}"
+  echo " Внимание: Сервер не доступен по адресу http://${SERVER_IP}"
   echo "   Убедитесь что сервер запущен и доступен с этого устройства"
 fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "✅ Установка завершена!"
+echo "Установка завершена!"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "📋 Что дальше:"
+echo "Что дальше:"
 echo "1. Перезагрузите систему: sudo reboot"
 echo "2. После перезагрузки плеер запустится автоматически"
 echo "3. Проверьте статус watchdog: sudo systemctl status videocontrol-watchdog"
 echo ""
-echo "🛠️  Управление:"
+echo " Управление:"
 echo "- Запустить плеер вручную: ~/start-videocontrol-player.sh"
 echo "- Остановить watchdog: sudo systemctl stop videocontrol-watchdog"
 echo "- Логи watchdog: sudo journalctl -u videocontrol-watchdog -f"
 echo ""
-echo "💡 Полезные команды:"
+echo "Полезные команды:"
 echo "- Проверить работу плеера: ps aux | grep chromium"
 echo "- Убить все процессы chromium: pkill -f chromium-browser"
 echo "- Открыть админку на другом устройстве: http://${SERVER_IP}/admin.html"

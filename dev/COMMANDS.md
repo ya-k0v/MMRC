@@ -1,10 +1,10 @@
-# 📋 Шпаргалка по командам MMRC 3.3.0
+# Шпаргалка по командам MMRC 3.3.0
 
 Быстрая справка по командам для управления и обслуживания MMRC.
 
 ---
 
-## 🖥️ Сервер (systemd/Node.js)
+## Сервер (systemd/Node.js)
 
 ### Сервис и логи
 ```bash
@@ -59,7 +59,7 @@ curl -H "Authorization: Bearer TOKEN" http://HOST/api/metrics
 
 ---
 
-## 🎬 Ночная оптимизация
+## Ночная оптимизация
 
 ```bash
 # Проверить статус оптимизации
@@ -74,7 +74,7 @@ sqlite3 config/main.db "SELECT * FROM job_resources WHERE status='active';"
 
 ---
 
-## 🌐 Стримы
+## Стримы
 
 ```bash
 # Просмотр активных стримов
@@ -89,7 +89,7 @@ sqlite3 config/main.db "UPDATE streams SET status='stopped' WHERE status='runnin
 
 ---
 
-## 🌐 Nginx
+## Nginx
 
 ```bash
 sudo nginx -t
@@ -103,7 +103,7 @@ sudo tail -n 200 /var/log/nginx/videocontrol-error.log
 
 ---
 
-## 💾 SQL / SQLite
+## SQL / SQLite
 
 ### Консоль и настройки
 ```bash
@@ -170,7 +170,7 @@ node -e "import('bcrypt').then(b=>b.hash('NEW_STRONG_PASSWORD',10).then(console.
 
 ---
 
-## 📁 Хранилище данных
+## Хранилище данных
 
 По умолчанию: `data/*` (локально) или `/mnt/videocontrol-data/*` (если DATA_ROOT задан).
 
@@ -200,7 +200,7 @@ ls -lh data/streams/
 
 ---
 
-## 💿 Бэкапы и восстановление
+## Бэкапы и восстановление
 
 ### SQLite
 ```bash
@@ -235,7 +235,7 @@ rsync -aH --delete /backup/mmrc-data/ data/
 
 ---
 
-## 📱 Android / ADB
+## Android / ADB
 
 ### Подготовка и подключение
 ```bash
@@ -290,7 +290,7 @@ adb -s SERIAL shell dumpsys package com.videocontrol.mediaplayer | grep granted
 
 ---
 
-## 🎖️ Hero Module
+## Hero Module
 
 ```bash
 # Проверить БД героев
@@ -306,7 +306,7 @@ ls -la config/hero/
 
 ---
 
-## 🚀 Быстрая установка и переменные
+## Быстрая установка и переменные
 
 ```bash
 # Переменные для quick-install.sh
@@ -326,7 +326,7 @@ sudo AUTO_CONFIRM=1 bash scripts/install-server.sh
 
 ---
 
-## 🔍 Дополнительные проверки
+## Дополнительные проверки
 
 ```bash
 # Проверка синхронизации панели спикера

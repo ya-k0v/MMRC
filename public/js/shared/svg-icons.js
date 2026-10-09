@@ -1,5 +1,5 @@
 /**
- * SVG иконки для замены эмодзи
+ * SVG иконки проекта
  * @module shared/svg-icons
  */
 
@@ -302,14 +302,6 @@ export function getTrashIcon(size = 16, color = 'currentColor') {
 }
 
 /**
- * Получить SVG иконку булавки (pin)
- * @param {number} size - Размер иконки (по умолчанию 16)
- * @param {string} color - Цвет (по умолчанию currentColor)
- * @returns {string} SVG код
- */
- 
-
-/**
  * Получить SVG иконку успеха (галочка в круге)
  * @param {number} size - Размер иконки (по умолчанию 16)
  * @param {string} color - Цвет (по умолчанию currentColor)
@@ -351,7 +343,7 @@ export function getUpDownloadIcon(size = 16, color = 'currentColor') {
  * @returns {string} SVG код
  */
 /**
- * Получить SVG иконку устройства/antenna (📡)
+ * Получить SVG иконку устройства/antenna
  */
 export function getDeviceIcon(size = 16, color = 'currentColor') {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
@@ -363,7 +355,7 @@ export function getDeviceIcon(size = 16, color = 'currentColor') {
 }
 
 /**
- * Получить SVG иконку паузы (❚❚)
+ * Получить SVG иконку паузы
  */
 export function getPauseIcon(size = 16, color = 'currentColor') {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="${color}" style="display:inline-block;vertical-align:middle;">
@@ -373,7 +365,7 @@ export function getPauseIcon(size = 16, color = 'currentColor') {
 }
 
 /**
- * Получить SVG иконку воспроизведения (▶)
+ * Получить SVG иконку воспроизведения
  */
 export function getPlayIcon(size = 16, color = 'currentColor') {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="${color}" style="display:inline-block;vertical-align:middle;">
@@ -382,7 +374,7 @@ export function getPlayIcon(size = 16, color = 'currentColor') {
 }
 
 /**
- * Получить SVG иконку «спит» (🌙)
+ * Получить SVG иконку «спит»
  */
 export function getMoonIcon(size = 16, color = 'currentColor') {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
@@ -391,7 +383,7 @@ export function getMoonIcon(size = 16, color = 'currentColor') {
 }
 
 /**
- * Получить SVG иконку копирования (📋)
+ * Получить SVG иконку копирования
  */
 export function getCopyIcon(size = 16, color = 'currentColor') {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
@@ -401,7 +393,7 @@ export function getCopyIcon(size = 16, color = 'currentColor') {
 }
 
 /**
- * Получить SVG иконку уведомления (🔔)
+ * Получить SVG иконку уведомления
  */
 export function getBellIcon(size = 16, color = 'currentColor') {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
@@ -426,7 +418,7 @@ export function getBellOffIcon(size = 20, color = 'currentColor') {
 }
 
 /**
- * Получить SVG иконку телефона (📱)
+ * Получить SVG иконку телефона
  */
 export function getMobileIcon(size = 16, color = 'currentColor') {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
@@ -436,7 +428,7 @@ export function getMobileIcon(size = 16, color = 'currentColor') {
 }
 
 /**
- * Получить SVG иконку поиска (🔍)
+ * Получить SVG иконку поиска
  */
 export function getSearchIcon(size = 16, color = 'currentColor') {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
@@ -535,7 +527,7 @@ export function getPowerIcon(size = 16, color = 'currentColor') {
 }
 
 /**
- * Получить SVG иконку «бодрствует» (☀)
+ * Получить SVG иконку «бодрствует»
  */
 export function getSunIcon(size = 16, color = 'currentColor') {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
@@ -548,6 +540,55 @@ export function getSunIcon(size = 16, color = 'currentColor') {
     <line x1="21" y1="12" x2="23" y2="12"/>
     <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
     <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+  </svg>`;
+}
+
+/**
+ * Получить SVG иконку стрелки влево
+ */
+export function getChevronLeftIcon(size = 16, color = 'currentColor') {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+    <polyline points="15 18 9 12 15 6"></polyline>
+  </svg>`;
+}
+
+/**
+ * Получить SVG иконку стрелки вправо
+ */
+export function getChevronRightIcon(size = 16, color = 'currentColor') {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+    <polyline points="9 18 15 12 9 6"></polyline>
+  </svg>`;
+}
+
+/**
+ * Получить SVG иконку остановки
+ */
+export function getStopIcon(size = 16, color = 'currentColor') {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="${color}" style="display:inline-block;vertical-align:middle;">
+    <rect x="6" y="6" width="12" height="12" rx="1"></rect>
+  </svg>`;
+}
+
+/**
+ * Получить SVG иконку перезапуска
+ */
+export function getRestartIcon(size = 16, color = 'currentColor') {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+    <polyline points="1 4 1 10 7 10"></polyline>
+    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+  </svg>`;
+}
+
+/**
+ * Получить SVG иконку ожидания (песочные часы)
+ */
+export function getHourglassIcon(size = 16, color = 'currentColor') {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+    <path d="M6 2h12"></path>
+    <path d="M6 22h12"></path>
+    <path d="M6 2c0 4 4 6 4 9s-4 5-4 9"></path>
+    <path d="M18 2c0 4-4 6-4 9s4 5 4 9"></path>
   </svg>`;
 }
 

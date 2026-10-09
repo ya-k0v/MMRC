@@ -52,7 +52,7 @@ export async function extractZipToFolder(deviceId, zipFileName, deviceFolderName
       return { success: false, error: 'ZIP file not found' };
     }
 
-    logger.info(`[FolderConverter] 📝 Имя папки: "${originalFolderName}" → "${folderName}"`, { deviceId, zipFileName, originalFolderName, folderName });
+    logger.info(`[FolderConverter] Имя папки: "${originalFolderName}" → "${folderName}"`, { deviceId, zipFileName, originalFolderName, folderName });
 
     if (fs.existsSync(outputFolder)) {
       fs.rmSync(outputFolder, { recursive: true, force: true });
@@ -60,7 +60,7 @@ export async function extractZipToFolder(deviceId, zipFileName, deviceFolderName
 
     fs.mkdirSync(outputFolder, { recursive: true });
 
-    logger.info(`[FolderConverter] 📦 Распаковка ZIP: ${zipFileName} -> ${folderName}/`, { deviceId, zipFileName, folderName });
+    logger.info(`[FolderConverter] Распаковка ZIP: ${zipFileName} -> ${folderName}/`, { deviceId, zipFileName, folderName });
 
     try {
       await execFileAsync('unzip', ['-q', zipPath, '-d', outputFolder]);
@@ -120,7 +120,7 @@ export async function extractZipToFolder(deviceId, zipFileName, deviceFolderName
     }
 
     if (movedCount > 0) {
-      logger.info(`[FolderConverter] 📁 Перемещено файлов из подпапок: ${movedCount}`, { deviceId, zipFileName, movedCount });
+      logger.info(`[FolderConverter] Перемещено файлов из подпапок: ${movedCount}`, { deviceId, zipFileName, movedCount });
 
       const subdirs = fs.readdirSync(outputFolder, { withFileTypes: true })
         .filter(dirent => dirent.isDirectory())
@@ -130,7 +130,7 @@ export async function extractZipToFolder(deviceId, zipFileName, deviceFolderName
         try {
           fs.rmSync(subdir, { recursive: true, force: true });
         } catch (e) {
-          logger.warn(`[FolderConverter] ⚠️ Не удалось удалить подпапку ${subdir}`, { error: e.message, deviceId, zipFileName, subdir });
+          logger.warn(`[FolderConverter] Не удалось удалить подпапку ${subdir}`, { error: e.message, deviceId, zipFileName, subdir });
         }
       }
     }
@@ -140,7 +140,7 @@ export async function extractZipToFolder(deviceId, zipFileName, deviceFolderName
       try {
         fs.chmodSync(file, 0o644);
       } catch (e) {
-        logger.warn(`[FolderConverter] ⚠️ Не удалось установить права на ${file}`, { error: e.message, deviceId, zipFileName, file });
+        logger.warn(`[FolderConverter] Не удалось установить права на ${file}`, { error: e.message, deviceId, zipFileName, file });
       }
     });
 
@@ -152,9 +152,9 @@ export async function extractZipToFolder(deviceId, zipFileName, deviceFolderName
           const fileStream = fs.createReadStream(file);
           await storage.write(fileKey, fileStream);
         }
-        logger.info(`[FolderConverter] ☁️ Загружено ${allFiles.length} изображений в storage`, { deviceId, zipFileName });
+        logger.info(`[FolderConverter] Загружено ${allFiles.length} изображений в storage`, { deviceId, zipFileName });
       } catch (uploadErr) {
-        logger.warn(`[FolderConverter] ⚠️ Ошибка загрузки изображений в storage`, { error: uploadErr.message, deviceId, zipFileName });
+        logger.warn(`[FolderConverter] Ошибка загрузки изображений в storage`, { error: uploadErr.message, deviceId, zipFileName });
       }
       try {
         const zipKey = toStorageKey(zipPath);
@@ -165,7 +165,7 @@ export async function extractZipToFolder(deviceId, zipFileName, deviceFolderName
 
     fs.unlinkSync(zipPath);
 
-    logger.info(`[FolderConverter] ✅ ZIP распакован: ${allFiles.length} изображений`, { deviceId, zipFileName, imagesCount: allFiles.length, folderName });
+    logger.info(`[FolderConverter] ZIP распакован: ${allFiles.length} изображений`, { deviceId, zipFileName, imagesCount: allFiles.length, folderName });
 
     return {
       success: true,
@@ -175,7 +175,7 @@ export async function extractZipToFolder(deviceId, zipFileName, deviceFolderName
     };
 
   } catch (error) {
-    logger.error('[FolderConverter] ❌ Ошибка распаковки ZIP', { error: error.message, stack: error.stack, deviceId, zipFileName });
+    logger.error('[FolderConverter] Ошибка распаковки ZIP', { error: error.message, stack: error.stack, deviceId, zipFileName });
     return { success: false, error: error.message };
   }
 }
@@ -264,7 +264,7 @@ export async function getFolderImages(deviceId, folderName, storage = null) {
 
     return { files: [], folderPath: null };
   } catch (error) {
-    logger.error('[FolderConverter] ❌ Ошибка чтения папки', { error: error.message, stack: error.stack, deviceId, folderName });
+    logger.error('[FolderConverter] Ошибка чтения папки', { error: error.message, stack: error.stack, deviceId, folderName });
     return { files: [], folderPath: null };
   }
 }

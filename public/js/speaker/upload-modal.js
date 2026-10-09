@@ -101,7 +101,7 @@ export function setupUploadModal(getDeviceId, getSocket, onUploadComplete) {
       `<div style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:var(--panel-2); border-radius:var(--radius-sm); font-size:var(--font-size-sm);">
         <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;">${f.name}</span>
         <span style="color:var(--muted); margin:0 8px; white-space:nowrap;">${(f.size / 1024 / 1024).toFixed(1)} MB</span>
-        <button class="secondary remove-file-btn" data-index="${i}" type="button" style="padding:2px 8px; min-width:auto; border-radius:var(--radius-sm);">✕</button>
+        <button class="secondary remove-file-btn" data-index="${i}" type="button" style="padding:2px 8px; min-width:auto; border-radius:var(--radius-sm);"></button>
       </div>`
     ).join('');
 

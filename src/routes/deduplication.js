@@ -74,7 +74,7 @@ export function createDeduplicationRouter(deps) {
     const duplicate = await findDuplicateFile(md5, size, targetDeviceId, isBigFile);
     
     if (duplicate) {
-      logFile('info', '✅ Duplicate found!', {
+      logFile('info', 'Duplicate found!', {
         targetDevice: targetDeviceId,
         filename,
         sourceDevice: duplicate.device_id,
@@ -90,7 +90,7 @@ export function createDeduplicationRouter(deps) {
         sourcePath: duplicate.file_path
       });
     } else {
-      logFile('info', '❌ No duplicate found - will upload', {
+      logFile('info', 'No duplicate found - will upload', {
         targetDevice: targetDeviceId,
         filename,
         md5: md5.substring(0, 12)
@@ -179,7 +179,7 @@ export function createDeduplicationRouter(deps) {
         }
       }
       
-      logFile('info', '⚡ Instant copy via deduplication (DB only)', {
+      logFile('info', 'Instant copy via deduplication (DB only)', {
         sourceDevice,
         sourceFile,
         targetDevice: targetDeviceId,
@@ -216,7 +216,7 @@ export function createDeduplicationRouter(deps) {
         uploadedBy: sourceMetadata.uploaded_by || null
       });
       
-      logFile('info', '✅ Instant copy completed (0 bytes transferred)', {
+      logFile('info', 'Instant copy completed (0 bytes transferred)', {
         targetDevice: targetDeviceId,
         targetFile: targetFilename,
         md5: sourceMetadata.md5_hash?.substring(0, 12),

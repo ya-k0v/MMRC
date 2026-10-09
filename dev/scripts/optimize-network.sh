@@ -45,7 +45,7 @@ echo ""
 
 # Проверка прав
 if [ "$EUID" -ne 0 ]; then 
-    echo "❌ Please run as root (sudo)"
+    echo "Please run as root (sudo)"
     exit 1
 fi
 
@@ -83,7 +83,7 @@ sysctl -w net.core.somaxconn=1024
 sysctl -w net.ipv4.tcp_fastopen=3                 # TCP Fast Open
 
 echo ""
-echo "✅ Network optimizations applied!"
+echo "Network optimizations applied!"
 echo ""
 echo "New TCP buffer sizes:"
 echo "  net.core.rmem_max = $(sysctl -n net.core.rmem_max)"
@@ -121,10 +121,10 @@ net.core.somaxconn = 1024
 net.ipv4.tcp_fastopen = 3
 EOF
 
-echo "✅ Settings saved to $SYSCTL_CONF"
+echo "Settings saved to $SYSCTL_CONF"
 echo "   Will be applied automatically on next boot"
 echo ""
-echo "⚡ Expected upload speed improvement:"
+echo "Expected upload speed improvement:"
 echo "   Before: ~10-20 MB/s (limited by 200KB buffers)"
 echo "   After:  ~80-120 MB/s (full Gigabit speed)"
 echo ""

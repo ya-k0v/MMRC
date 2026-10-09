@@ -201,13 +201,13 @@ export function createVideoInfoRouter(deps) {
     const hasFailures = recentResults.some((entry) => entry.status === 'failed');
     const severity = hasFailures ? 'warning' : 'info';
 
-    let title = '🌙 Ночная обработка';
+    let title = 'Ночная обработка';
     if (currentNightQueueJob) {
-      title = '🌙 Ночная обработка: выполняется';
+      title = 'Ночная обработка: выполняется';
     } else if (queueItems.length > 0) {
-      title = `🌙 Ночная обработка: в очереди ${queueItems.length}`;
+      title = `Ночная обработка: в очереди ${queueItems.length}`;
     } else if (recentResults.length > 0) {
-      title = '🌙 Ночная обработка: результаты';
+      title = 'Ночная обработка: результаты';
     }
 
     const messageParts = [];
@@ -352,7 +352,7 @@ export function createVideoInfoRouter(deps) {
         syncNightQueueNotification();
 
         try {
-          logger.info('[video-info] 🌙 Запуск ночной обработки', {
+          logger.info('[video-info] Запуск ночной обработки', {
             deviceId: job.deviceId,
             fileName: job.fileName
           });
@@ -368,7 +368,7 @@ export function createVideoInfoRouter(deps) {
             pushNightQueueResult(job, 'done', result?.message || 'Успешно обработано');
           }
         } catch (error) {
-          logger.error('[video-info] ❌ Ночная обработка завершилась ошибкой', {
+          logger.error('[video-info] Ночная обработка завершилась ошибкой', {
             deviceId: job.deviceId,
             fileName: job.fileName,
             error: error.message,
@@ -520,7 +520,7 @@ export function createVideoInfoRouter(deps) {
       });
       
     } catch (error) {
-      logger.error(`[video-info] ❌ Ошибка`, { error: error.message, stack: error.stack, deviceId: id, fileName });
+      logger.error(`[video-info] Ошибка`, { error: error.message, stack: error.stack, deviceId: id, fileName });
       if (!res.headersSent) {
         res.status(500).json({
           error: 'Не удалось получить информацию о видео',
@@ -570,7 +570,7 @@ export function createVideoInfoRouter(deps) {
 
     removeNightSchedule(id, fileName);
     
-    logger.info(`[API] 🎬 Ручная оптимизация: ${fileName}`, { deviceId: id, fileName });
+    logger.info(`[API] Ручная оптимизация: ${fileName}`, { deviceId: id, fileName });
 
     res.status(202).json({
       success: true,
@@ -583,7 +583,7 @@ export function createVideoInfoRouter(deps) {
         await autoOptimizeVideoWrapper(id, fileName);
       })
       .catch((error) => {
-        logger.error('[optimize] ❌ Фоновая обработка завершилась ошибкой', {
+        logger.error('[optimize] Фоновая обработка завершилась ошибкой', {
           error: error.message,
           stack: error.stack,
           deviceId: id,

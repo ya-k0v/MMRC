@@ -174,25 +174,23 @@ export function isStaticContent(contentType) {
  */
 export function getContentTypeInfo(contentType, streamProtocol = null) {
   const info = {
-    audio: { label: 'Аудио', shortLabel: 'AUDIO', type: 'audio', icon: '♪' },
-    video: { label: 'Видео', shortLabel: 'VID', type: 'video', icon: '▶' },
-    image: { label: 'Изображение', shortLabel: 'IMG', type: 'image', icon: '🖼' },
-    pdf: { label: 'PDF', shortLabel: 'PDF', type: 'pdf', icon: '📄' },
-    pptx: { label: 'Презентация', shortLabel: 'PPTX', type: 'pptx', icon: '📊' },
-    folder: { label: 'Папка', shortLabel: 'FOLDER', type: 'folder', icon: '📁' },
+    audio: { label: 'Аудио', shortLabel: 'AUDIO', type: 'audio' },
+    video: { label: 'Видео', shortLabel: 'VID', type: 'video' },
+    image: { label: 'Изображение', shortLabel: 'IMG', type: 'image' },
+    pdf: { label: 'PDF', shortLabel: 'PDF', type: 'pdf' },
+    pptx: { label: 'Презентация', shortLabel: 'PPTX', type: 'pptx' },
+    folder: { label: 'Папка', shortLabel: 'FOLDER', type: 'folder' },
     streaming: {
       label: streamProtocol ? `Стрим (${streamProtocol.toUpperCase()})` : 'Стрим',
       shortLabel: 'STREAM',
-      type: 'streaming',
-      icon: '📡'
+      type: 'streaming'
     }
   };
   
   return info[contentType] || { 
     label: 'Файл',
     shortLabel: 'FILE',
-    type: contentType,
-    icon: '📦'
+    type: contentType
   };
 }
 

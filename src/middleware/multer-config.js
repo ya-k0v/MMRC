@@ -68,7 +68,7 @@ export function createUploadMiddleware(devices) {
           if (fixed !== originalName) originalName = fixed;
         }
       } catch (e) {
-        logger.warn(`[Multer] ⚠️ Ошибка исправления кодировки`, { error: e.message, fileName: originalName, stack: e.stack });
+        logger.warn(`[Multer] Ошибка исправления кодировки`, { error: e.message, fileName: originalName, stack: e.stack });
       }
       
       const base = path.basename(originalName);

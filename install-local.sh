@@ -58,9 +58,9 @@ box_line() {
 }
 
 info() { colorized_echo blue "  $1"; }
-success() { colorized_echo green "✔ $1"; }
-warn() { colorized_echo yellow "⚠ $1"; }
-error() { colorized_echo red "✖ $1"; }
+success() { colorized_echo green "  $1"; }
+warn() { colorized_echo yellow "  $1"; }
+error() { colorized_echo red "  $1"; }
 
 # ========================
 # TTY-чтение и сохранение конфигурации

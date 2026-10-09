@@ -257,7 +257,7 @@ export function setupControlHandlers(socket, deps) {
         // КРИТИЧНО: Останавливаем только если это другой файл или другой тип контента
         if (currentSafeName !== file || requestedType !== 'streaming') {
           removeStreamJob(device_id, currentSafeName, 'switch_content');
-          logger.info('[Control] 🛑 Stopped FFmpeg stream on content switch', { 
+          logger.info('[Control] Stopped FFmpeg stream on content switch', { 
             deviceId: device_id, 
             currentFile: currentSafeName,
             newFile: file,
@@ -333,7 +333,7 @@ export function setupControlHandlers(socket, deps) {
                   try {
                     localPlaybackStreamUrl = await streamManager.ensureStreamRunning(device_id, file, metadata);
                   } catch (err) {
-                    logger.error('[Control] ❌ Failed to start stream in setTimeout', { deviceId: device_id, file, error: err.message });
+                    logger.error('[Control] Failed to start stream in setTimeout', { deviceId: device_id, file, error: err.message });
                     localPlaybackStreamUrl = streamEntry.proxyUrl || streamEntry.url;
                   }
                 }
@@ -350,7 +350,7 @@ export function setupControlHandlers(socket, deps) {
 
           if (streamEntry) {
             localEffectiveStreamProtocol = detectStreamProtocolFromUrl(localPlaybackStreamUrl) || resolvedStreamProtocol;
-            logger.info('[Control] 🔍 localEffectiveStreamProtocol determined (setTimeout)', {
+            logger.info('[Control] localEffectiveStreamProtocol determined (setTimeout)', {
               deviceId: device_id,
               file,
               streamEntryProxyUrl: streamEntry?.proxyUrl,
@@ -395,7 +395,7 @@ export function setupControlHandlers(socket, deps) {
           if (type === 'streaming') {
             deviceStillExists.current.streamUrl = localPlaybackStreamUrl;
             deviceStillExists.current.streamProtocol = localEffectiveStreamProtocol || 'hls'; // По умолчанию HLS для рестрима
-            logger.info('[Control] ✅ Set streamProtocol in device.current (setTimeout)', {
+            logger.info('[Control] Set streamProtocol in device.current (setTimeout)', {
               deviceId: device_id,
               file,
               streamProtocol: deviceStillExists.current.streamProtocol,
@@ -405,7 +405,7 @@ export function setupControlHandlers(socket, deps) {
           
           // Логируем перед отправкой (для первого случая - переключение типа контента)
           if (type === 'streaming') {
-            logger.info('[Control] 📡 [1] Sending player/play for stream (type switch)', {
+            logger.info('[Control] [1] Sending player/play for stream (type switch)', {
               deviceId: device_id,
               file,
               stream_url: localPlaybackStreamUrl,
@@ -438,7 +438,7 @@ export function setupControlHandlers(socket, deps) {
         const sourceDevice = devices[originDeviceId];
         if (sourceDevice && sourceDevice.streams) {
           streamEntry = sourceDevice.streams[file];
-          logger.info('[Control] 🔍 Stream found in source device', {
+          logger.info('[Control] Stream found in source device', {
             deviceId: device_id,
             sourceDeviceId: originDeviceId,
             file,
@@ -456,7 +456,7 @@ export function setupControlHandlers(socket, deps) {
       const requestedStreamProtocol = sanitizeStreamProtocol(streamProtocol);
       const resolvedStreamProtocol = resolveStreamProtocol(streamEntry?.protocol, requestedStreamProtocol, streamEntry?.url);
       
-      logger.info('[Control] 🔍 Stream entry lookup', {
+      logger.info('[Control] Stream entry lookup', {
         deviceId: device_id,
         originDeviceId,
         file,
@@ -484,7 +484,7 @@ export function setupControlHandlers(socket, deps) {
           if (streamManager) {
             // Проверяем, есть ли уже запущенный процесс или существующие файлы
             const existingUrl = streamManager.getPlaybackUrl(device_id, file);
-            logger.info('[Control] 🔍 Checking stream status', {
+            logger.info('[Control] Checking stream status', {
               deviceId: device_id,
               file,
               protocol: streamProtocol,
@@ -498,7 +498,7 @@ export function setupControlHandlers(socket, deps) {
               // КРИТИЧНО: Если стрим найден в устройстве-источнике, берем метаданные оттуда
               const metadataDeviceId = streamSourceDeviceId;
               const metadata = await getFileMetadata(metadataDeviceId, file);
-              logger.info('[Control] 🔍 Checking metadata for stream', {
+              logger.info('[Control] Checking metadata for stream', {
                 deviceId: device_id,
                 metadataDeviceId,
                 originDeviceId,
@@ -511,7 +511,7 @@ export function setupControlHandlers(socket, deps) {
               
               if (metadata && metadata.content_type === 'streaming') {
                 try {
-                  logger.info('[Control] 🚀 Calling ensureStreamRunning', {
+                  logger.info('[Control] Calling ensureStreamRunning', {
                     deviceId: device_id,
                     file,
                     streamUrl: metadata.stream_url,
@@ -521,7 +521,7 @@ export function setupControlHandlers(socket, deps) {
                   
                   // КРИТИЧНО: Если ensureStreamRunning вернул null, используем fallback
                   if (!playbackStreamUrl) {
-                    logger.warn('[Control] ⚠️ ensureStreamRunning returned null, using fallback', {
+                    logger.warn('[Control] ensureStreamRunning returned null, using fallback', {
                       deviceId: device_id,
                       file,
                       streamEntryProxyUrl: streamEntry.proxyUrl,
@@ -529,7 +529,7 @@ export function setupControlHandlers(socket, deps) {
                     });
                     playbackStreamUrl = streamEntry.proxyUrl || streamEntry.url;
                   } else {
-                    logger.info('[Control] ✅ Lazy started stream for playback', { 
+                    logger.info('[Control] Lazy started stream for playback', { 
                       deviceId: device_id, 
                       file,
                       protocol: streamProtocol,
@@ -540,7 +540,7 @@ export function setupControlHandlers(socket, deps) {
                     streamEntry.proxyUrl = playbackStreamUrl;
                   }
                 } catch (err) {
-                  logger.error('[Control] ❌ Failed to start stream', { 
+                  logger.error('[Control] Failed to start stream', { 
                     deviceId: device_id, 
                     file,
                     error: err.message,
@@ -550,7 +550,7 @@ export function setupControlHandlers(socket, deps) {
                   playbackStreamUrl = streamEntry.proxyUrl || streamEntry.url;
                 }
               } else {
-                logger.warn('[Control] ⚠️ Stream metadata not found or wrong type', {
+                logger.warn('[Control] Stream metadata not found or wrong type', {
                   deviceId: device_id,
                   file,
                   hasMetadata: !!metadata,
@@ -565,7 +565,7 @@ export function setupControlHandlers(socket, deps) {
               logger.debug('[Control] Stream already running', { deviceId: device_id, file, playbackUrl: existingUrl });
             }
           } else {
-            logger.warn('[Control] ⚠️ StreamManager not available', { deviceId: device_id, file });
+            logger.warn('[Control] StreamManager not available', { deviceId: device_id, file });
             // Fallback: используем предварительно сформированный URL
             playbackStreamUrl = streamEntry.proxyUrl || streamEntry.url;
           }
@@ -574,7 +574,7 @@ export function setupControlHandlers(socket, deps) {
           playbackStreamUrl = streamProtocol === 'dash'
             ? (buildDashManifestRelayUrl(streamSourceDeviceId, file) || streamEntry.url || streamEntry.proxyUrl)
             : (streamEntry.url || streamEntry.proxyUrl);
-          logger.info('[Control] ✅ Using direct stream URL (no proxy)', {
+          logger.info('[Control] Using direct stream URL (no proxy)', {
             deviceId: device_id,
             file,
             protocol: streamProtocol,
@@ -606,7 +606,7 @@ export function setupControlHandlers(socket, deps) {
         const metadata = await getFileMetadata(metadataDeviceId, file);
         if (metadata && metadata.content_type) {
           type = metadata.content_type;
-          logger.info('[Control] 🔍 Type from DB', {
+          logger.info('[Control] Type from DB', {
             deviceId: device_id,
             metadataDeviceId,
             originDeviceId,
@@ -636,7 +636,7 @@ export function setupControlHandlers(socket, deps) {
         }
       }
       
-      logger.info('[Control] 📋 Content type determined', {
+      logger.info('[Control] Content type determined', {
         deviceId: device_id,
         file,
         type,
@@ -647,7 +647,7 @@ export function setupControlHandlers(socket, deps) {
       // КРИТИЧНО: Если тип streaming, но streamEntry не найден - проверяем БД
       // Это может произойти после перезапуска сервера, когда d.streams еще не обновлен
       if (type === 'streaming' && !streamEntry) {
-        logger.warn('[Control] ⚠️ Streaming entry not found in d.streams, checking DB', { 
+        logger.warn('[Control] Streaming entry not found in d.streams, checking DB', { 
           deviceId: device_id, 
           file,
           hasStreams: !!d.streams,
@@ -656,7 +656,7 @@ export function setupControlHandlers(socket, deps) {
         
         // Проверяем БД - может быть стрим есть, но d.streams не обновлен
         const metadata = await getFileMetadata(device_id, file);
-        logger.info('[Control] 🔍 DB metadata check', {
+        logger.info('[Control] DB metadata check', {
           deviceId: device_id,
           file,
           hasMetadata: !!metadata,
@@ -668,7 +668,7 @@ export function setupControlHandlers(socket, deps) {
         if (metadata && metadata.content_type === 'streaming') {
           const metadataProtocol = resolveStreamProtocol(metadata.stream_protocol, requestedStreamProtocol, metadata.stream_url);
 
-          logger.info('[Control] ✅ Stream found in DB, preparing playback strategy', { 
+          logger.info('[Control] Stream found in DB, preparing playback strategy', { 
             deviceId: device_id, 
             file,
             streamUrl: metadata.stream_url,
@@ -692,7 +692,7 @@ export function setupControlHandlers(socket, deps) {
                 
                 // КРИТИЧНО: Если ensureStreamRunning вернул null, используем fallback
                 if (!playbackStreamUrl) {
-                  logger.warn('[Control] ⚠️ ensureStreamRunning returned null from DB, using fallback', {
+                  logger.warn('[Control] ensureStreamRunning returned null from DB, using fallback', {
                     deviceId: device_id,
                     file,
                     streamUrl: metadata.stream_url
@@ -701,7 +701,7 @@ export function setupControlHandlers(socket, deps) {
                   tempStreamEntry.proxyUrl = null;
                 } else {
                   tempStreamEntry.proxyUrl = playbackStreamUrl;
-                  logger.info('[Control] ✅ FFmpeg started from DB metadata', { 
+                  logger.info('[Control] FFmpeg started from DB metadata', { 
                     deviceId: device_id, 
                     file,
                     protocol: tempStreamEntry.protocol,
@@ -709,7 +709,7 @@ export function setupControlHandlers(socket, deps) {
                   });
                 }
               } catch (err) {
-                logger.error('[Control] ❌ Failed to start stream from DB', { 
+                logger.error('[Control] Failed to start stream from DB', { 
                   deviceId: device_id, 
                   file,
                   error: err.message 
@@ -719,7 +719,7 @@ export function setupControlHandlers(socket, deps) {
                 tempStreamEntry.proxyUrl = null;
               }
             } else {
-              logger.error('[Control] ❌ StreamManager not available', { deviceId: device_id, file });
+              logger.error('[Control] StreamManager not available', { deviceId: device_id, file });
               // Fallback: используем оригинальный URL
               playbackStreamUrl = metadata.stream_url;
               tempStreamEntry.proxyUrl = null;
@@ -731,7 +731,7 @@ export function setupControlHandlers(socket, deps) {
               ? (buildDashManifestRelayUrl(device_id, file) || metadata.stream_url)
               : metadata.stream_url;
             tempStreamEntry.proxyUrl = null;
-            logger.info('[Control] ✅ Using direct stream URL from DB (no proxy)', {
+            logger.info('[Control] Using direct stream URL from DB (no proxy)', {
               deviceId: device_id,
               file,
               protocol: tempStreamEntry.protocol,
@@ -743,7 +743,7 @@ export function setupControlHandlers(socket, deps) {
           streamEntry = tempStreamEntry;
           playbackStreamUrl = streamEntry.proxyUrl || streamEntry.url;
         } else {
-          logger.error('[Control] ❌ Stream not found in DB either', { deviceId: device_id, file });
+          logger.error('[Control] Stream not found in DB either', { deviceId: device_id, file });
           return; // Стрим не найден ни в d.streams, ни в БД
         }
       }
@@ -759,7 +759,7 @@ export function setupControlHandlers(socket, deps) {
       
       // Логируем для отладки DASH стримов
       if (type === 'streaming' && streamEntry) {
-        logger.info('[Control] 🔍 Protocol determination', {
+        logger.info('[Control] Protocol determination', {
           deviceId: device_id,
           file,
           streamEntryProtocol: streamEntry.protocol,
@@ -787,7 +787,7 @@ export function setupControlHandlers(socket, deps) {
         if (currentType === 'streaming' && d.current?.file) {
           const safeName = d.current.file;
           removeStreamJob(device_id, safeName, 'type_switch');
-          logger.info('[Control] 🛑 Stopped FFmpeg stream on type switch', { deviceId: device_id, file: safeName });
+          logger.info('[Control] Stopped FFmpeg stream on type switch', { deviceId: device_id, file: safeName });
         }
         
         io.to(`device:${device_id}`).emit('player/stop', { reason: 'switch_content' });
@@ -814,7 +814,7 @@ export function setupControlHandlers(socket, deps) {
           if (type === 'streaming') {
             d.current.streamUrl = playbackStreamUrl;
             d.current.streamProtocol = effectiveStreamProtocol || 'hls'; // По умолчанию HLS для рестрима
-            logger.info('[Control] ✅ Set streamProtocol in device.current (setTimeout type switch)', {
+            logger.info('[Control] Set streamProtocol in device.current (setTimeout type switch)', {
               deviceId: device_id,
               file,
               streamProtocol: d.current.streamProtocol,
@@ -833,7 +833,7 @@ export function setupControlHandlers(socket, deps) {
           
           // Логируем перед отправкой (для второго случая - переключение типа контента в setTimeout)
           if (type === 'streaming') {
-            logger.info('[Control] 📡 [2] Sending player/play for stream (type switch setTimeout)', {
+            logger.info('[Control] [2] Sending player/play for stream (type switch setTimeout)', {
               deviceId: device_id,
               file,
               stream_url: playbackStreamUrl,
@@ -874,7 +874,7 @@ export function setupControlHandlers(socket, deps) {
       if (type === 'streaming') {
         d.current.streamUrl = playbackStreamUrl;
         d.current.streamProtocol = effectiveStreamProtocol || 'hls'; // По умолчанию HLS для рестрима
-        logger.info('[Control] ✅ Set streamProtocol in device.current', {
+        logger.info('[Control] Set streamProtocol in device.current', {
           deviceId: device_id,
           file,
           streamProtocol: d.current.streamProtocol,
@@ -893,7 +893,7 @@ export function setupControlHandlers(socket, deps) {
       
       // КРИТИЧНО: Логируем что отправляется в плеер
       if (type === 'streaming') {
-        logger.info('[Control] 📡 Sending player/play for stream', {
+        logger.info('[Control] Sending player/play for stream', {
           deviceId: device_id,
           file,
           type,
@@ -905,7 +905,7 @@ export function setupControlHandlers(socket, deps) {
         
         // Проверяем, что playbackStreamUrl установлен
         if (!playbackStreamUrl) {
-          logger.error('[Control] ❌ playbackStreamUrl is null for streaming! Using fallback URL.', {
+          logger.error('[Control] playbackStreamUrl is null for streaming! Using fallback URL.', {
             deviceId: device_id,
             file,
             streamEntry: !!streamEntry,
@@ -915,7 +915,7 @@ export function setupControlHandlers(socket, deps) {
           // Используем fallback URL из streamEntry
           playbackStreamUrl = streamEntry?.proxyUrl || streamEntry?.url;
           if (!playbackStreamUrl) {
-            logger.error('[Control] ❌ No fallback URL available! Cannot play stream.', {
+            logger.error('[Control] No fallback URL available! Cannot play stream.', {
               deviceId: device_id,
               file
             });
@@ -949,7 +949,7 @@ export function setupControlHandlers(socket, deps) {
       }
       io.to(`device:${device_id}`).emit('player/resume');
       emitDeviceVolumeState(device_id, 'control_resume');
-      logger.info(`[Control] ▶️ Resume: ${device_id} (продолжение с места паузы)`, { deviceId: device_id });
+      logger.info(`[Control] Resume: ${device_id} (продолжение с места паузы)`, { deviceId: device_id });
     }
     
   };
@@ -1034,7 +1034,7 @@ export function setupControlHandlers(socket, deps) {
       if (!file || d.current.file === file) {
         const targetPosition = typeof position === 'number' && position >= 0 ? position : 0;
         io.to(`device:${device_id}`).emit('player/seek', { position: targetPosition });
-        logger.info(`[Control] 🎯 Seek: ${device_id} -> ${targetPosition}s`, { deviceId: device_id, position: targetPosition });
+        logger.info(`[Control] Seek: ${device_id} -> ${targetPosition}s`, { deviceId: device_id, position: targetPosition });
       }
     }
   });
@@ -1048,7 +1048,7 @@ export function setupControlHandlers(socket, deps) {
     if (d.current && d.current.type === 'streaming' && d.current.file) {
       const safeName = d.current.file;
       removeStreamJob(device_id, safeName, 'manual_stop');
-      logger.info('[Control] 🛑 Stopped FFmpeg stream on manual stop', { deviceId: device_id, file: safeName });
+      logger.info('[Control] Stopped FFmpeg stream on manual stop', { deviceId: device_id, file: safeName });
     }
     
     // Останавливаем плейлист если был активен
@@ -1207,14 +1207,14 @@ export function setupControlHandlers(socket, deps) {
           const prevImage = Math.max(1, (d.current.page || 1) - 1);
           logger.info(`[Control] pdfPrev folder: prevImage=${prevImage}, currentPage=${d.current.page}`, { deviceId: device_id, prevImage, currentPage: d.current.page });
           d.current.page = prevImage;
-          logger.info(`[Control] 📁 Folder prev: ${device_id} -> page ${prevImage}/${maxImages}`, { deviceId: device_id, page: prevImage, maxImages, file: d.current.file });
+          logger.info(`[Control] Folder prev: ${device_id} -> page ${prevImage}/${maxImages}`, { deviceId: device_id, page: prevImage, maxImages, file: d.current.file });
           io.to(`device:${device_id}`).emit('player/folderPage', d.current.page);
           socket.emit('preview/refresh', { device_id });
         } else {
           logger.warn(`[Control] pdfPrev folder: maxImages is 0`, { deviceId: device_id, folderName });
         }
       } catch (error) {
-        logger.error(`[Control] ❌ Error getting folder images count for ${device_id}/${folderName}`, { error: error.message, deviceId: device_id, folderName, stack: error.stack });
+        logger.error(`[Control] Error getting folder images count for ${device_id}/${folderName}`, { error: error.message, deviceId: device_id, folderName, stack: error.stack });
       }
     }
     // else больше не нужен - все несовместимые типы обработаны выше
@@ -1270,14 +1270,14 @@ export function setupControlHandlers(socket, deps) {
           const nextImage = Math.min((d.current.page || 1) + 1, maxImages);
           logger.info(`[Control] pdfNext folder: nextImage=${nextImage}, currentPage=${d.current.page}`, { deviceId: device_id, nextImage, currentPage: d.current.page });
           d.current.page = nextImage;
-          logger.info(`[Control] 📁 Folder next: ${device_id} -> page ${nextImage}/${maxImages}`, { deviceId: device_id, page: nextImage, maxImages, file: d.current.file });
+          logger.info(`[Control] Folder next: ${device_id} -> page ${nextImage}/${maxImages}`, { deviceId: device_id, page: nextImage, maxImages, file: d.current.file });
           io.to(`device:${device_id}`).emit('player/folderPage', d.current.page);
           socket.emit('preview/refresh', { device_id });
         } else {
           logger.warn(`[Control] pdfNext folder: maxImages is 0`, { deviceId: device_id, folderName });
         }
       } catch (error) {
-        logger.error(`[Control] ❌ Error getting folder images count for ${device_id}/${folderName}`, { error: error.message, deviceId: device_id, folderName, stack: error.stack });
+        logger.error(`[Control] Error getting folder images count for ${device_id}/${folderName}`, { error: error.message, deviceId: device_id, folderName, stack: error.stack });
       }
     }
     // else больше не нужен - все несовместимые типы обработаны выше

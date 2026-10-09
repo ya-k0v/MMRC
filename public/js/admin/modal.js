@@ -20,7 +20,11 @@ import {
   getBellIcon,
   getMobileIcon,
   getDeviceIcon,
-  getSearchIcon
+  getSearchIcon,
+  getHourglassIcon,
+  getChevronLeftIcon,
+  getChevronRightIcon,
+  getRestartIcon
 } from '../shared/svg-icons.js';
 import { escapeHtml } from '../shared/utils.js';
 
@@ -504,7 +508,7 @@ export function showModal(title, content, options = {}) {
     backBtn.className = 'secondary';
     backBtn.onclick = goBackModal;
     backBtn.style.cssText = 'min-width:auto; padding:8px 10px; display:flex; align-items:center; justify-content:center;';
-    backBtn.textContent = '← Назад';
+    backBtn.innerHTML = `${getChevronLeftIcon(16)} Назад`;
     headerLeft.appendChild(backBtn);
   }
   
@@ -559,7 +563,7 @@ export function showModal(title, content, options = {}) {
     restartBtn.type = 'button';
     restartBtn.title = 'Перезапустить сервис';
     restartBtn.style.cssText = 'min-width:auto; padding:8px 10px; display:flex; align-items:center; justify-content:center; font-weight:700;';
-    restartBtn.textContent = '↻';
+    restartBtn.innerHTML = getRestartIcon(16);
     restartBtn.onclick = async () => {
       if (restartBtn.disabled) return;
       try {
@@ -856,7 +860,7 @@ export async function showUsersModal(adminFetch) {
               style="min-width:auto; padding:6px 12px;"
               disabled
             >
-              ← Назад
+              ${getChevronLeftIcon(16)} Назад
             </button>
             <span class="meta" id="modalUsersPageInfo" style="padding:0 var(--space-sm);"></span>
             <button 
@@ -865,7 +869,7 @@ export async function showUsersModal(adminFetch) {
               style="min-width:auto; padding:6px 12px;"
               disabled
             >
-              Вперед →
+              Вперед ${getChevronRightIcon(16)}
             </button>
           </div>
         </div>
@@ -1612,7 +1616,7 @@ window.showUserDevicesModalInModal = async function(userId, username, userRole) 
               style="min-width:auto; padding:6px 12px;"
               disabled
             >
-              ← Назад
+              ${getChevronLeftIcon(16)} Назад
             </button>
             <span class="meta" id="modalDevicesPageInfo" style="padding:0 var(--space-sm);"></span>
             <button 
@@ -1621,7 +1625,7 @@ window.showUserDevicesModalInModal = async function(userId, username, userRole) 
               style="min-width:auto; padding:6px 12px;"
               disabled
             >
-              Вперед →
+              Вперед ${getChevronRightIcon(16)}
             </button>
           </div>
         </div>
@@ -2348,7 +2352,7 @@ async function loadSettingsContent(adminFetch) {
   apkMenuToggleBtn.style.cssText = 'min-width:36px; width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center; border-radius:10px;';
   apkMenuToggleBtn.title = 'Дополнительные действия APK';
   apkMenuToggleBtn.setAttribute('aria-expanded', 'false');
-  apkMenuToggleBtn.textContent = '▾';
+  apkMenuToggleBtn.textContent = '';
   const apkMenu = document.createElement('div');
   apkMenu.style.cssText = 'display:none; position:absolute; top:calc(100% + 6px); right:0; min-width:180px; background:var(--panel); border:1px solid var(--border); border-radius:12px; box-shadow:0 12px 24px rgba(0,0,0,0.35); padding:8px; z-index:30;';
   const apkBatchUpdateBtn = document.createElement('button');
@@ -2860,7 +2864,7 @@ async function loadSettingsContent(adminFetch) {
 
   checkFilesBtn.onclick = async () => {
     checkFilesBtn.disabled = true;
-    checkFilesBtn.innerHTML = '⏳';
+    checkFilesBtn.innerHTML = getHourglassIcon(16);
     cleanupStatusEl.textContent = '';
     cleanupStatusEl.style.color = 'var(--text-secondary)';
     cleanupFilesBtn.disabled = true;
@@ -2923,7 +2927,7 @@ async function loadSettingsContent(adminFetch) {
     }
 
     cleanupFilesBtn.disabled = true;
-    cleanupFilesBtn.innerHTML = '⏳';
+    cleanupFilesBtn.innerHTML = getHourglassIcon(16);
     cleanupStatusEl.textContent = 'Удаление...';
     cleanupStatusEl.style.color = 'var(--text-secondary)';
 
@@ -2972,7 +2976,7 @@ async function loadSettingsContent(adminFetch) {
 
   checkOrphanedBtn.onclick = async () => {
     checkOrphanedBtn.disabled = true;
-    checkOrphanedBtn.innerHTML = '⏳';
+    checkOrphanedBtn.innerHTML = getHourglassIcon(16);
     orphanedStatusEl.textContent = '';
     orphanedStatusEl.style.color = 'var(--text-secondary)';
     cleanupOrphanedBtn.disabled = true;
@@ -3039,7 +3043,7 @@ async function loadSettingsContent(adminFetch) {
     }
 
     cleanupOrphanedBtn.disabled = true;
-    cleanupOrphanedBtn.innerHTML = '⏳';
+    cleanupOrphanedBtn.innerHTML = getHourglassIcon(16);
     orphanedStatusEl.textContent = 'Удаление...';
     orphanedStatusEl.style.color = 'var(--text-secondary)';
 

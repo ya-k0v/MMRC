@@ -44,7 +44,7 @@ async function checkPlayerVersion(deviceId, playerVersion, io) {
   notificationsManager.add(
     'player_update_available',
     'info',
-    '📱 Доступно обновление плеера',
+    'Доступно обновление плеера',
     `Устройство ${deviceId} работает на версии ${playerVersion}. Доступна версия ${latestApkVersion}.`,
     {
       deviceId,

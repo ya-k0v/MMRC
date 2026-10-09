@@ -1,7 +1,7 @@
 import { initThemeToggle } from './theme.js';
 import { sortDevices, debounce, loadNodeNames, getPageSize } from './utils.js';
 import { ensureAuth, speakerFetch, logout } from './speaker/auth.js';
-import { getCrossIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon } from './shared/svg-icons.js';
+import { getCrossIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon, getTrashIcon, getPlayIcon, getHourglassIcon } from './shared/svg-icons.js';
 import { formatTime } from './shared/formatters.js';
 import {
   IMAGE_EXTENSIONS,
@@ -386,7 +386,7 @@ function sendVolumeBeforePlay(deviceId) {
       level: volumeState.level,
       muted: volumeState.muted
     });
-    console.log('[Speaker] 🔊 Sending volume before play:', { deviceId, level: volumeState.level, muted: volumeState.muted });
+    console.log('[Speaker] Sending volume before play:', { deviceId, level: volumeState.level, muted: volumeState.muted });
   }
 }
 
@@ -1018,7 +1018,7 @@ function startPreviewStreamTracking(safeName) {
     isPlaying: false
   });
   
-  console.log('[Speaker] 📡 Начато отслеживание превью стрима:', { safeName });
+  console.log('[Speaker] Начато отслеживание превью стрима:', { safeName });
   
   // Отслеживаем события плеера для определения активности
   if (iframe) {
@@ -1053,7 +1053,7 @@ function stopPreviewStreamTracking(safeName) {
     return; // Уже остановлено или не отслеживалось
   }
   
-  console.log('[Speaker] 📡 Остановка отслеживания превью стрима:', { safeName });
+  console.log('[Speaker] Остановка отслеживания превью стрима:', { safeName });
   
   // Просто удаляем из отслеживания - сервер сам проверит активность
   activePreviewStreams.delete(safeName);
@@ -1913,7 +1913,7 @@ async function showStreamingPreview(deviceId, safeName, streamProtocol = '') {
   
   // КРИТИЧНО: Логика такая же, как на плеере - просто запускаем стрим через API и показываем в iframe
   try {
-    console.log('[Speaker] 📡 Запускаем стрим для превью:', { deviceId, safeName, streamProtocol });
+    console.log('[Speaker] Запускаем стрим для превью:', { deviceId, safeName, streamProtocol });
     
     // Показываем индикатор "Стрим запускается..."
     filePreview.innerHTML = `
@@ -1935,10 +1935,10 @@ async function showStreamingPreview(deviceId, safeName, streamProtocol = '') {
         // Запускаем стрим через API (точно так же, как на плеере)
         const res = await fetch(`/api/devices/${encodeURIComponent(deviceId)}/streams/${encodeURIComponent(safeName)}`);
         if (!res.ok) {
-          console.error('[Speaker] ❌ Не удалось запустить стрим для превью:', res.status);
+          console.error('[Speaker] Не удалось запустить стрим для превью:', res.status);
           if (retryCount < maxRetries) {
             retryCount++;
-            console.log(`[Speaker] ⏳ Повтор запроса через ${retryDelay}ms (попытка ${retryCount}/${maxRetries})`);
+            console.log(`[Speaker] Повтор запроса через ${retryDelay}ms (попытка ${retryCount}/${maxRetries})`);
             setTimeout(tryGetStreamUrl, retryDelay);
           } else {
             filePreview.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary)">Ошибка запуска стрима (HTTP ${res.status})</div>`;
@@ -1947,18 +1947,18 @@ async function showStreamingPreview(deviceId, safeName, streamProtocol = '') {
         }
         
         const data = await res.json();
-        console.log('[Speaker] ✅ Ответ API:', { streamProxyUrl: data.streamProxyUrl, protocol: data.protocol, attempt: retryCount + 1 });
+        console.log('[Speaker] Ответ API:', { streamProxyUrl: data.streamProxyUrl, protocol: data.protocol, attempt: retryCount + 1 });
         
         // КРИТИЧНО: Используем ИСКЛЮЧИТЕЛЬНО streamProxyUrl (без fallback) - точно как на плеере
         const playbackUrl = data?.streamProxyUrl;
         if (!playbackUrl) {
           if (retryCount < maxRetries) {
             retryCount++;
-            console.log(`[Speaker] ⏳ streamProxyUrl еще не готов, повтор через ${retryDelay}ms (попытка ${retryCount}/${maxRetries})`);
+            console.log(`[Speaker] streamProxyUrl еще не готов, повтор через ${retryDelay}ms (попытка ${retryCount}/${maxRetries})`);
             setTimeout(tryGetStreamUrl, retryDelay);
             return;
           } else {
-            console.warn('[Speaker] ⚠️ streamProxyUrl не получен после всех попыток');
+            console.warn('[Speaker] streamProxyUrl не получен после всех попыток');
             filePreview.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary)">Стрим не готов. Попробуйте позже.</div>`;
             return;
           }
@@ -1971,7 +1971,7 @@ async function showStreamingPreview(deviceId, safeName, streamProtocol = '') {
           proto = 'hls';
         }
         
-        console.log('[Speaker] 📡 Используем streamProxyUrl для превью (из API):', { playbackUrl, proto });
+        console.log('[Speaker] Используем streamProxyUrl для превью (из API):', { playbackUrl, proto });
         
         // Обновляем контекст превью
         currentPreviewContext = { deviceId, file: safeName, page: null };
@@ -1981,7 +1981,7 @@ async function showStreamingPreview(deviceId, safeName, streamProtocol = '') {
         
         // КРИТИЧНО: Для HLS стримов проверяем доступность плейлиста с retry (точно как на плеере)
         if (playbackUrl.includes('.m3u8') || proto === 'hls') {
-          console.log('[Speaker] 📡 Проверяем доступность HLS плейлиста для превью...');
+          console.log('[Speaker] Проверяем доступность HLS плейлиста для превью...');
           let playlistRetryCount = 0;
           const maxPlaylistRetries = 5;
           const playlistRetryDelay = 1000; // 1 секунда
@@ -1991,23 +1991,23 @@ async function showStreamingPreview(deviceId, safeName, streamProtocol = '') {
               // Проверяем доступность плейлиста
               const checkRes = await fetch(playbackUrl, { method: 'HEAD', cache: 'no-cache' });
               if (checkRes.ok) {
-                console.log('[Speaker] ✅ HLS плейлист доступен, показываем плеер');
+                console.log('[Speaker] HLS плейлист доступен, показываем плеер');
                 showStreamPlayer(playbackUrl, deviceId, safeName, proto);
               } else if (playlistRetryCount < maxPlaylistRetries) {
                 playlistRetryCount++;
-                console.log(`[Speaker] ⏳ HLS плейлист еще не готов, повтор через ${playlistRetryDelay}ms (попытка ${playlistRetryCount}/${maxPlaylistRetries})`);
+                console.log(`[Speaker] HLS плейлист еще не готов, повтор через ${playlistRetryDelay}ms (попытка ${playlistRetryCount}/${maxPlaylistRetries})`);
                 setTimeout(tryLoadStream, playlistRetryDelay);
               } else {
-                console.warn('[Speaker] ⚠️ HLS плейлист не стал доступен после всех попыток, пробуем запустить');
+                console.warn('[Speaker] HLS плейлист не стал доступен после всех попыток, пробуем запустить');
                 showStreamPlayer(playbackUrl, deviceId, safeName, proto);
               }
             } catch (err) {
               if (playlistRetryCount < maxPlaylistRetries) {
                 playlistRetryCount++;
-                console.log(`[Speaker] ⏳ Ошибка проверки плейлиста, повтор через ${playlistRetryDelay}ms (попытка ${playlistRetryCount}/${maxPlaylistRetries}):`, err.message);
+                console.log(`[Speaker] Ошибка проверки плейлиста, повтор через ${playlistRetryDelay}ms (попытка ${playlistRetryCount}/${maxPlaylistRetries}):`, err.message);
                 setTimeout(tryLoadStream, playlistRetryDelay);
               } else {
-                console.warn('[Speaker] ⚠️ Не удалось проверить HLS плейлист, пробуем запустить:', err);
+                console.warn('[Speaker] Не удалось проверить HLS плейлист, пробуем запустить:', err);
                 showStreamPlayer(playbackUrl, deviceId, safeName, proto);
               }
             }
@@ -2016,7 +2016,7 @@ async function showStreamingPreview(deviceId, safeName, streamProtocol = '') {
           // Начинаем с небольшой задержки
           setTimeout(tryLoadStream, 500);
         } else if (playbackUrl.includes('.mpd') || proto === 'dash') {
-          console.log('[Speaker] 📡 Проверяем доступность DASH манифеста для превью...');
+          console.log('[Speaker] Проверяем доступность DASH манифеста для превью...');
           let dashRetryCount = 0;
           const maxDashRetries = 5;
           const dashRetryDelay = 1000;
@@ -2025,23 +2025,23 @@ async function showStreamingPreview(deviceId, safeName, streamProtocol = '') {
             try {
               const checkRes = await fetch(playbackUrl, { method: 'HEAD', cache: 'no-cache' });
               if (checkRes.ok) {
-                console.log('[Speaker] ✅ DASH манифест доступен, показываем плеер');
+                console.log('[Speaker] DASH манифест доступен, показываем плеер');
                 showStreamPlayer(playbackUrl, deviceId, safeName, proto);
               } else if (dashRetryCount < maxDashRetries) {
                 dashRetryCount++;
-                console.log(`[Speaker] ⏳ DASH манифест еще не готов, повтор через ${dashRetryDelay}ms (попытка ${dashRetryCount}/${maxDashRetries})`);
+                console.log(`[Speaker] DASH манифест еще не готов, повтор через ${dashRetryDelay}ms (попытка ${dashRetryCount}/${maxDashRetries})`);
                 setTimeout(tryLoadDash, dashRetryDelay);
               } else {
-                console.warn('[Speaker] ⚠️ DASH манифест не стал доступен, пробуем запустить');
+                console.warn('[Speaker] DASH манифест не стал доступен, пробуем запустить');
                 showStreamPlayer(playbackUrl, deviceId, safeName, proto);
               }
             } catch (err) {
               if (dashRetryCount < maxDashRetries) {
                 dashRetryCount++;
-                console.log(`[Speaker] ⏳ Ошибка проверки DASH манифеста, повтор через ${dashRetryDelay}ms (попытка ${dashRetryCount}/${maxDashRetries}):`, err.message);
+                console.log(`[Speaker] Ошибка проверки DASH манифеста, повтор через ${dashRetryDelay}ms (попытка ${dashRetryCount}/${maxDashRetries}):`, err.message);
                 setTimeout(tryLoadDash, dashRetryDelay);
               } else {
-                console.warn('[Speaker] ⚠️ Не удалось проверить DASH манифест, пробуем запустить:', err);
+                console.warn('[Speaker] Не удалось проверить DASH манифест, пробуем запустить:', err);
                 showStreamPlayer(playbackUrl, deviceId, safeName, proto);
               }
             }
@@ -2053,10 +2053,10 @@ async function showStreamingPreview(deviceId, safeName, streamProtocol = '') {
           showStreamPlayer(playbackUrl, deviceId, safeName, proto);
         }
       } catch (error) {
-        console.error('[Speaker] ❌ Ошибка при получении streamProxyUrl:', error);
+        console.error('[Speaker] Ошибка при получении streamProxyUrl:', error);
         if (retryCount < maxRetries) {
           retryCount++;
-          console.log(`[Speaker] ⏳ Ошибка, повтор через ${retryDelay}ms (попытка ${retryCount}/${maxRetries})`);
+          console.log(`[Speaker] Ошибка, повтор через ${retryDelay}ms (попытка ${retryCount}/${maxRetries})`);
           setTimeout(tryGetStreamUrl, retryDelay);
         } else {
           const safeError = escapeHtml(error?.message || 'Неизвестная ошибка');
@@ -2068,7 +2068,7 @@ async function showStreamingPreview(deviceId, safeName, streamProtocol = '') {
     // Начинаем запрос
     tryGetStreamUrl();
   } catch (error) {
-    console.error('[Speaker] ❌ Ошибка при запуске стрима для превью:', error);
+    console.error('[Speaker] Ошибка при запуске стрима для превью:', error);
     const safeError = escapeHtml(error?.message || 'Неизвестная ошибка');
     filePreview.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary)">Ошибка: ${safeError}</div>`;
   }
@@ -2711,7 +2711,7 @@ async function loadFiles(stabilizeAttempt = 0) {
                     "
                     role="button"
                     tabindex="0"
-                    aria-label="Удалить ${displayName}">🗑</span>
+                    aria-label="Удалить ${displayName}">${getTrashIcon(14)}</span>
             ` : ''}
           </div>
         </div>
@@ -2737,7 +2737,7 @@ async function loadFiles(stabilizeAttempt = 0) {
              role="button"
              tabindex="${isProcessing ? '-1' : '0'}"
               aria-label="${isProcessing ? 'Обработка...' : `Воспроизвести ${displayName}`}">
-          ${isProcessing ? '⏳' : '▶'}
+          ${isProcessing ? getHourglassIcon(28) : getPlayIcon(28)}
         </div>
       </li>
     `;
@@ -2819,7 +2819,7 @@ async function loadFiles(stabilizeAttempt = 0) {
       
       // КРИТИЧНО: Для стримов показываем превью через showStreamingPreview
       if (contentType === 'streaming') {
-        console.log('[Speaker] 📡 Показываем превью стрима:', safeName);
+        console.log('[Speaker] Показываем превью стрима:', safeName);
         showStreamingPreview(currentDevice, safeName, streamProtocol);
         return;
       }
@@ -3307,7 +3307,7 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
                       "
                       role="button"
                       tabindex="0"
-                      aria-label="Удалить ${displayName}">🗑</span>
+                      aria-label="Удалить ${displayName}">${getTrashIcon(14)}</span>
               ` : ''}
             </div>
           </div>
@@ -3335,7 +3335,7 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
                role="button"
                tabindex="0"
                aria-label="Воспроизвести ${displayName}">
-            ▶
+            ${getPlayIcon(28)}
           </div>
         </li>
       `;
@@ -4817,7 +4817,7 @@ if (pdfPrevBtn) {
     e.stopPropagation();
     const targetDeviceIds = getPanelControlTargetDeviceIds();
     if (!targetDeviceIds.length) return;
-    console.log('[Speaker] ◀ Назад clicked');
+    console.log('[Speaker] Назад clicked');
     targetDeviceIds.forEach((deviceId) => {
       socket.emit('control/pdfPrev', { device_id: deviceId });
     });
@@ -4829,7 +4829,7 @@ if (pdfNextBtn) {
     e.stopPropagation();
     const targetDeviceIds = getPanelControlTargetDeviceIds();
     if (!targetDeviceIds.length) return;
-    console.log('[Speaker] Вперёд ▶ clicked');
+    console.log('[Speaker] Вперёд clicked');
     targetDeviceIds.forEach((deviceId) => {
       socket.emit('control/pdfNext', { device_id: deviceId });
     });

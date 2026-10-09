@@ -30,15 +30,15 @@ check_command() {
     
     if command -v "$cmd" > /dev/null 2>&1; then
         local version=$(eval "$cmd --version 2>&1 | head -1" || echo "unknown")
-        echo -e "${GREEN}✅${NC} $name: $version"
+        echo -e "${GREEN}${NC} $name: $version"
         return 0
     else
         if [ "$required" = "true" ]; then
-            echo -e "${RED}❌${NC} $name: не установлен (обязательно)"
+            echo -e "${RED}${NC} $name: не установлен (обязательно)"
             ((ERRORS+=1))
             return 1
         else
-            echo -e "${YELLOW}⚠️${NC}  $name: не установлен (опционально)"
+            echo -e "${YELLOW}${NC}  $name: не установлен (опционально)"
             ((WARNINGS+=1))
             return 0
         fi
@@ -51,13 +51,13 @@ check_node_version() {
         local version=$(node --version | sed 's/v//')
         local major=$(echo "$version" | cut -d. -f1)
         if [ "$major" -ge 20 ]; then
-            echo -e "${GREEN}✅${NC} Node.js: v$version (требуется >= 20.x)"
+            echo -e "${GREEN}${NC} Node.js: v$version (требуется >= 20.x)"
         else
-            echo -e "${RED}❌${NC} Node.js: v$version (требуется >= 20.x)"
+            echo -e "${RED}${NC} Node.js: v$version (требуется >= 20.x)"
             ((ERRORS+=1))
         fi
     else
-        echo -e "${RED}❌${NC} Node.js: не установлен"
+        echo -e "${RED}${NC} Node.js: не установлен"
         ((ERRORS+=1))
     fi
 }
@@ -65,16 +65,16 @@ check_node_version() {
 # Функция проверки npm пакетов
 check_npm_packages() {
     echo ""
-    echo -e "${BLUE}📦 Проверка npm зависимостей...${NC}"
+    echo -e "${BLUE}Проверка npm зависимостей...${NC}"
     
     if [ ! -f "package.json" ]; then
-        echo -e "${RED}❌${NC} package.json не найден"
+        echo -e "${RED}${NC} package.json не найден"
         ((ERRORS+=1))
         return
     fi
     
     if [ ! -d "node_modules" ]; then
-        echo -e "${YELLOW}⚠️${NC}  node_modules не найден, запустите: npm install"
+        echo -e "${YELLOW}${NC}  node_modules не найден, запустите: npm install"
         ((WARNINGS+=1))
         return
     fi
@@ -84,9 +84,9 @@ check_npm_packages() {
     for dep in "${deps[@]}"; do
         if [ -d "node_modules/$dep" ]; then
             local version=$(node -p "require('$dep/package.json').version" 2>/dev/null || echo "unknown")
-            echo -e "${GREEN}✅${NC} $dep: v$version"
+            echo -e "${GREEN}${NC} $dep: v$version"
         else
-            echo -e "${RED}❌${NC} $dep: не установлен"
+            echo -e "${RED}${NC} $dep: не установлен"
             ((ERRORS+=1))
         fi
     done
@@ -95,14 +95,14 @@ check_npm_packages() {
 # Функция проверки директорий
 check_directories() {
     echo ""
-    echo -e "${BLUE}📁 Проверка структуры директорий...${NC}"
+    echo -e "${BLUE}Проверка структуры директорий...${NC}"
     
     local dirs=("src" "public" "config" "scripts")
     for dir in "${dirs[@]}"; do
         if [ -d "$dir" ]; then
-            echo -e "${GREEN}✅${NC} $dir/"
+            echo -e "${GREEN}${NC} $dir/"
         else
-            echo -e "${RED}❌${NC} $dir/: не найдена"
+            echo -e "${RED}${NC} $dir/: не найдена"
             ((ERRORS+=1))
         fi
     done
@@ -111,9 +111,9 @@ check_directories() {
     local files=("server.js" "package.json" "src/database/init.sql")
     for file in "${files[@]}"; do
         if [ -f "$file" ]; then
-            echo -e "${GREEN}✅${NC} $file"
+            echo -e "${GREEN}${NC} $file"
         else
-            echo -e "${RED}❌${NC} $file: не найден"
+            echo -e "${RED}${NC} $file: не найден"
             ((ERRORS+=1))
         fi
     done
@@ -122,24 +122,24 @@ check_directories() {
 # Функция проверки прав доступа
 check_permissions() {
     echo ""
-    echo -e "${BLUE}🔐 Проверка прав доступа...${NC}"
+    echo -e "${BLUE}Проверка прав доступа...${NC}"
     
     # Проверяем, можем ли мы создать директории данных
     local test_dirs=("data" "config" "logs")
     for dir in "${test_dirs[@]}"; do
         if [ ! -d "$dir" ]; then
             if mkdir -p "$dir" 2>/dev/null; then
-                echo -e "${GREEN}✅${NC} Можем создать $dir/"
+                echo -e "${GREEN}${NC} Можем создать $dir/"
                 rmdir "$dir" 2>/dev/null || true
             else
-                echo -e "${RED}❌${NC} Нет прав на создание $dir/"
+                echo -e "${RED}${NC} Нет прав на создание $dir/"
                 ((ERRORS+=1))
             fi
         else
             if [ -w "$dir" ]; then
-                echo -e "${GREEN}✅${NC} $dir/ доступен для записи"
+                echo -e "${GREEN}${NC} $dir/ доступен для записи"
             else
-                echo -e "${RED}❌${NC} $dir/ недоступен для записи"
+                echo -e "${RED}${NC} $dir/ недоступен для записи"
                 ((ERRORS+=1))
             fi
         fi
@@ -149,25 +149,25 @@ check_permissions() {
 # Функция проверки портов
 check_ports() {
     echo ""
-    echo -e "${BLUE}🔌 Проверка портов...${NC}"
+    echo -e "${BLUE}Проверка портов...${NC}"
     
     local port="${PORT:-3000}"
     if command -v netstat > /dev/null 2>&1; then
         if netstat -tuln 2>/dev/null | grep -q ":$port "; then
-            echo -e "${YELLOW}⚠️${NC}  Порт $port уже занят"
+            echo -e "${YELLOW}${NC}  Порт $port уже занят"
             ((WARNINGS+=1))
         else
-            echo -e "${GREEN}✅${NC} Порт $port свободен"
+            echo -e "${GREEN}${NC} Порт $port свободен"
         fi
     elif command -v ss > /dev/null 2>&1; then
         if ss -tuln 2>/dev/null | grep -q ":$port "; then
-            echo -e "${YELLOW}⚠️${NC}  Порт $port уже занят"
+            echo -e "${YELLOW}${NC}  Порт $port уже занят"
             ((WARNINGS+=1))
         else
-            echo -e "${GREEN}✅${NC} Порт $port свободен"
+            echo -e "${GREEN}${NC} Порт $port свободен"
         fi
     else
-        echo -e "${YELLOW}⚠️${NC}  Не удалось проверить порт (netstat/ss не установлены)"
+        echo -e "${YELLOW}${NC}  Не удалось проверить порт (netstat/ss не установлены)"
         ((WARNINGS+=1))
     fi
 }
@@ -175,11 +175,11 @@ check_ports() {
 # Основная функция
 main() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo -e "${BLUE}🔍 Проверка окружения VideoControl${NC}"
+    echo -e "${BLUE}Проверка окружения VideoControl${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
     
-    echo -e "${BLUE}🛠️  Проверка системных инструментов...${NC}"
+    echo -e "${BLUE} Проверка системных инструментов...${NC}"
     check_node_version
     check_command "npm" "npm" true
     check_command "ffmpeg" "FFmpeg" true
@@ -188,25 +188,25 @@ main() {
     # LibreOffice обязателен для PPTX конвертации
     if command -v soffice > /dev/null 2>&1; then
         local version=$(soffice --version 2>&1 | head -1 || echo "unknown")
-        echo -e "${GREEN}✅${NC} LibreOffice (soffice): $version"
+        echo -e "${GREEN}${NC} LibreOffice (soffice): $version"
     elif command -v libreoffice > /dev/null 2>&1; then
         local version=$(libreoffice --version 2>&1 | head -1 || echo "unknown")
-        echo -e "${YELLOW}⚠️${NC}  LibreOffice найден, но soffice недоступен. Создайте симлинк: ln -s $(which libreoffice) /usr/bin/soffice"
+        echo -e "${YELLOW}${NC}  LibreOffice найден, но soffice недоступен. Создайте симлинк: ln -s $(which libreoffice) /usr/bin/soffice"
         ((WARNINGS+=1))
     else
-        echo -e "${RED}❌${NC} LibreOffice (soffice): не установлен (обязателен для PPTX конвертации)"
+        echo -e "${RED}${NC} LibreOffice (soffice): не установлен (обязателен для PPTX конвертации)"
         ((ERRORS+=1))
     fi
     
     # GraphicsMagick или ImageMagick обязательны для PDF конвертации (pdf2pic)
     if command -v gm > /dev/null 2>&1; then
         local version=$(gm version 2>&1 | head -1 || echo "unknown")
-        echo -e "${GREEN}✅${NC} GraphicsMagick: $version"
+        echo -e "${GREEN}${NC} GraphicsMagick: $version"
     elif command -v convert > /dev/null 2>&1; then
         local version=$(convert -version 2>&1 | head -1 || echo "unknown")
-        echo -e "${GREEN}✅${NC} ImageMagick: $version (будет использован для pdf2pic)"
+        echo -e "${GREEN}${NC} ImageMagick: $version (будет использован для pdf2pic)"
     else
-        echo -e "${RED}❌${NC} GraphicsMagick или ImageMagick: не установлены (обязательны для PDF конвертации)"
+        echo -e "${RED}${NC} GraphicsMagick или ImageMagick: не установлены (обязательны для PDF конвертации)"
         ((ERRORS+=1))
     fi
     
@@ -220,13 +220,13 @@ main() {
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     if [ $ERRORS -eq 0 ] && [ $WARNINGS -eq 0 ]; then
-        echo -e "${GREEN}✅ Все проверки пройдены успешно!${NC}"
+        echo -e "${GREEN}Все проверки пройдены успешно!${NC}"
         exit 0
     elif [ $ERRORS -eq 0 ]; then
-        echo -e "${YELLOW}⚠️  Проверки завершены с предупреждениями ($WARNINGS)${NC}"
+        echo -e "${YELLOW} Проверки завершены с предупреждениями ($WARNINGS)${NC}"
         exit 0
     else
-        echo -e "${RED}❌ Найдено ошибок: $ERRORS, предупреждений: $WARNINGS${NC}"
+        echo -e "${RED}Найдено ошибок: $ERRORS, предупреждений: $WARNINGS${NC}"
         echo ""
         echo "Для установки недостающих компонентов:"
         echo "  - Node.js 20+: https://nodejs.org/"

@@ -112,7 +112,7 @@ export async function registerUploadedFilesImmediately(deviceId, files, devicesP
       }
 
       registered.push(safeName);
-      logFile('info', '⚡ File registered in DB immediately after upload', {
+      logFile('info', 'File registered in DB immediately after upload', {
         deviceId,
         safeName,
         filePath,
@@ -218,7 +218,7 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
 
       if (duplicate && duplicatePresent) {
         // Дубликат найден! Удаляем обработанный новый файл, используем существующий
-        logFile('info', '⚡ Duplicate detected - using existing file (instant deduplication)', {
+        logFile('info', 'Duplicate detected - using existing file (instant deduplication)', {
           deviceId,
           safeName,
           duplicateDevice: duplicate.device_id,
@@ -237,7 +237,7 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
           
           deduplicationApplied = true;
           
-          logFile('info', '✅ Instant deduplication applied (0 bytes copied, saved disk space!)', {
+          logFile('info', 'Instant deduplication applied (0 bytes copied, saved disk space!)', {
             deviceId,
             safeName,
             referencesTo: duplicate.file_path,
@@ -290,7 +290,7 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
         };
         mimeType = sourceMetadata.mime_type;
         
-        logFile('info', '✅ Metadata copied from duplicate (no FFmpeg needed!)', {
+        logFile('info', 'Metadata copied from duplicate (no FFmpeg needed!)', {
           deviceId,
           safeName,
           resolution: `${videoParams.width}x${videoParams.height}`
@@ -343,7 +343,7 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
     // Сохраняем метаданные в БД
     try {
       // КРИТИЧНО: Логируем перед сохранением на уровне warn для видимости в production
-      logger.warn('[FileMetadata] 💾 Saving file metadata to database', {
+      logger.warn('[FileMetadata] Saving file metadata to database', {
         deviceId,
         safeName,
         originalName,
@@ -367,7 +367,7 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
         uploadedBy
       });
       
-      logger.warn('[FileMetadata] ✅ File metadata saved successfully', { 
+      logger.warn('[FileMetadata] File metadata saved successfully', { 
         deviceId, 
         safeName,
         originalName,
@@ -379,7 +379,7 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
         mimeType
       });
       
-      logFile('info', '✅ File metadata saved to database', { 
+      logFile('info', 'File metadata saved to database', { 
         deviceId, 
         safeName,
         originalName,
@@ -391,7 +391,7 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
         mimeType
       });
     } catch (saveError) {
-      logger.error('[FileMetadata] ❌ Failed to save file metadata', {
+      logger.error('[FileMetadata] Failed to save file metadata', {
         deviceId,
         safeName,
         originalName,
@@ -399,7 +399,7 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
         error: saveError.message,
         stack: saveError.stack
       });
-      logFile('error', '❌ Failed to save file metadata', {
+      logFile('error', 'Failed to save file metadata', {
         deviceId,
         safeName,
         originalName,
@@ -451,7 +451,7 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
  */
 export async function processUploadedFilesAsync(deviceId, files, devicesPath, fileNamesMap, uploadedBy = null) {
   
-  logger.info('[FileMetadata] 📦 Starting batch metadata processing', {
+  logger.info('[FileMetadata] Starting batch metadata processing', {
     deviceId,
     filesCount: files.length,
     devicesPath,
@@ -472,7 +472,7 @@ export async function processUploadedFilesAsync(deviceId, files, devicesPath, fi
     } else {
       // Fallback: строим путь вручную
       filePath = path.join(devicesPath, safeName);
-      logger.warn('[FileMetadata] ⚠️ Building file path manually (file.path not available)', {
+      logger.warn('[FileMetadata] Building file path manually (file.path not available)', {
         deviceId,
         safeName,
         filePath,
@@ -484,7 +484,7 @@ export async function processUploadedFilesAsync(deviceId, files, devicesPath, fi
     
     // Проверяем существование файла перед обработкой
     if (!fs.existsSync(filePath)) {
-      logger.error('[FileMetadata] ❌ File not found for metadata processing', { 
+      logger.error('[FileMetadata] File not found for metadata processing', { 
         deviceId, 
         safeName, 
         filePath,
@@ -550,7 +550,7 @@ export async function processUploadedFilesAsync(deviceId, files, devicesPath, fi
     }
   }
   
-  logger.info('[FileMetadata] ✅ Batch file metadata processing completed', { 
+  logger.info('[FileMetadata] Batch file metadata processing completed', { 
     deviceId, 
     filesCount: files.length,
     deduplicatedCount,
@@ -569,12 +569,12 @@ export async function processUploadedFilesAsync(deviceId, files, devicesPath, fi
   });
   
   if (deduplicatedCount > 0) {
-    logger.info(`[FileMetadata] 🎯 Deduplication saved ${deduplicatedCount} file upload(s)`, {
+    logger.info(`[FileMetadata] Deduplication saved ${deduplicatedCount} file upload(s)`, {
       deviceId,
       deduplicatedCount,
       totalFiles: files.length
     });
-    logFile('info', `🎯 Deduplication saved ${deduplicatedCount} file upload(s)`, {
+    logFile('info', `Deduplication saved ${deduplicatedCount} file upload(s)`, {
       deviceId,
       deduplicatedCount,
       totalFiles: files.length
@@ -582,7 +582,7 @@ export async function processUploadedFilesAsync(deviceId, files, devicesPath, fi
   }
   
   if (errorCount > 0) {
-    logger.error('[FileMetadata] ❌ Some files failed metadata processing', {
+    logger.error('[FileMetadata] Some files failed metadata processing', {
       deviceId,
       errorCount,
       totalFiles: files.length,
@@ -804,11 +804,11 @@ export async function processUploadedStaticContent(
                   removeLocal: false
                 });
                 if (commitResult.synced) {
-                  logger.info('[FileMetadata] ✅ Слайды закоммичены в S3', {
+                  logger.info('[FileMetadata] Слайды закоммичены в S3', {
                     deviceId, folderName, count: commitResult.count
                   });
                 } else {
-                  logger.warn('[FileMetadata] ⚠️ Часть слайдов не попала в S3', {
+                  logger.warn('[FileMetadata] Часть слайдов не попала в S3', {
                     deviceId, folderName,
                     count: commitResult.count,
                     failed: commitResult.failed.length
@@ -817,13 +817,13 @@ export async function processUploadedStaticContent(
               } catch (commitError) {
                 // Ошибка S3 не должна ломать успешную конвертацию:
                 // слайды уже на диске и доступны устройствам
-                logger.error('[FileMetadata] ❌ Ошибка коммита слайдов в S3', {
+                logger.error('[FileMetadata] Ошибка коммита слайдов в S3', {
                   deviceId, folderName, error: commitError.message
                 });
               }
             }
 
-            logger.info('[FileMetadata] ✅ PDF/PPTX конвертирован, метаданные обновлены на папку', {
+            logger.info('[FileMetadata] PDF/PPTX конвертирован, метаданные обновлены на папку', {
               deviceId,
               originalFile: safeName,
               folderName,
@@ -852,7 +852,7 @@ export async function processUploadedStaticContent(
             }
 
           } catch (updateErr) {
-            logger.error('[FileMetadata] ❌ Ошибка обновления метаданных после конвертации', {
+            logger.error('[FileMetadata] Ошибка обновления метаданных после конвертации', {
               deviceId,
               safeName,
               error: updateErr.message,
@@ -861,7 +861,7 @@ export async function processUploadedStaticContent(
           }
 
         } catch (err) {
-          logger.error('[FileMetadata] ❌ Ошибка конвертации PDF/PPTX', {
+          logger.error('[FileMetadata] Ошибка конвертации PDF/PPTX', {
             error: err.message,
             stack: err.stack,
             deviceId,
@@ -874,7 +874,7 @@ export async function processUploadedStaticContent(
           }
         }
       }).catch(err => {
-        logger.error('[FileMetadata] ❌ Необработанная ошибка в фоновой конвертации', {
+        logger.error('[FileMetadata] Необработанная ошибка в фоновой конвертации', {
           deviceId,
           safeName,
           error: err.message,
@@ -922,7 +922,7 @@ export async function processUploadedStaticContent(
         uploadedBy: options.uploadedBy || null
       });
 
-      logger.info('[FileMetadata] ✅ Static content metadata saved to database', {
+      logger.info('[FileMetadata] Static content metadata saved to database', {
         deviceId,
         safeName: finalSafeName,
         originalName,
@@ -931,7 +931,7 @@ export async function processUploadedStaticContent(
         filePath: finalFilePath
       });
 
-      logFile('info', '✅ Static content metadata saved to database', {
+      logFile('info', 'Static content metadata saved to database', {
         deviceId,
         safeName: finalSafeName,
         originalName,
@@ -943,7 +943,7 @@ export async function processUploadedStaticContent(
       return { success: true, pagesCount };
 
     } catch (saveError) {
-      logger.error('[FileMetadata] ❌ Failed to save static content metadata', {
+      logger.error('[FileMetadata] Failed to save static content metadata', {
         deviceId,
         safeName: finalSafeName,
         originalName,
@@ -955,7 +955,7 @@ export async function processUploadedStaticContent(
     }
 
   } catch (error) {
-    logger.error('[FileMetadata] ❌ Error processing static content', {
+    logger.error('[FileMetadata] Error processing static content', {
       deviceId,
       safeName,
       originalName,

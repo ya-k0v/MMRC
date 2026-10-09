@@ -180,7 +180,7 @@ export async function saveFileMetadata({
         fileExists: filePath ? fs.existsSync(filePath) : false
       });
       
-      logFile('info', '✅ File metadata saved to database', { 
+      logFile('info', 'File metadata saved to database', { 
         deviceId, 
         safeName,
         originalName,
@@ -587,7 +587,7 @@ export async function migrateFilePaths(oldRoot, newRoot) {
     ]);
     
     if (result.changes > 0) {
-      logFile('info', '✅ File paths migrated in database', {
+      logFile('info', 'File paths migrated in database', {
         oldRoot: normalizedOldRoot,
         newRoot: normalizedNewRoot,
         updated: result.changes

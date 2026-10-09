@@ -406,14 +406,14 @@ export async function applyFaststart(filePath, options = {}) {
     fs.renameSync(tempPath, filePath);
     fs.chmodSync(filePath, originalStats.mode);
 
-    logger.info('[Faststart] ✅ Обработка завершена успешно', {
+    logger.info('[Faststart] Обработка завершена успешно', {
       filePath,
       size: fs.statSync(filePath).size
     });
 
     return true;
   } catch (error) {
-    logger.error('[Faststart] ❌ Ошибка обработки', {
+    logger.error('[Faststart] Ошибка обработки', {
       filePath,
       error: error.message,
       stack: error.stack

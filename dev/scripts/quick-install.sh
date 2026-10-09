@@ -89,17 +89,17 @@ if [ -f /etc/os-release ]; then
     . /etc/os-release
     OS_NAME=$ID
 else
-    echo -e "${RED}❌ Cannot detect OS${NC}"
+    echo -e "${RED}Cannot detect OS${NC}"
     exit 1
 fi
 
 if [ "$OS_NAME" != "ubuntu" ] && [ "$OS_NAME" != "debian" ]; then
-    echo -e "${YELLOW}⚠️  This script is designed for Ubuntu/Debian${NC}"
+    echo -e "${YELLOW} This script is designed for Ubuntu/Debian${NC}"
     echo -e "${YELLOW}   For other OS, use manual installation${NC}"
     exit 1
 fi
 
-echo -e "${GREEN}✅ OS: $PRETTY_NAME${NC}"
+echo -e "${GREEN}OS: $PRETTY_NAME${NC}"
 echo ""
 
 # Определяем установочную директорию
@@ -174,7 +174,7 @@ fi
 # Для режима external_fstab запросим источник, если не задан
 if [ "$STORAGE_MODE" = "external_fstab" ] && [ -z "$CONTENT_SOURCE" ]; then
     if [ "$AUTO_CONFIRM" = "1" ]; then
-        echo "❌ CONTENT_SOURCE must be set when STORAGE_MODE=external_fstab in AUTO_CONFIRM mode"
+        echo "CONTENT_SOURCE must be set when STORAGE_MODE=external_fstab in AUTO_CONFIRM mode"
         exit 1
     fi
     read -p "Enter content device/UUID for /etc/fstab (e.g., /dev/sdb1 or UUID=xxxx): " CONTENT_SOURCE
@@ -259,9 +259,9 @@ if [ "$DB_TYPE" = "postgres" ]; then
         fi
         if [ -z "$DB_POSTGRES_PASSWORD" ]; then
             DB_POSTGRES_PASSWORD="mmrc"
-            echo -e "  ${YELLOW}⚠️  Using default password: mmrc${NC}"
+            echo -e "  ${YELLOW} Using default password: mmrc${NC}"
         fi
-        echo -e "  ${GREEN}✅ Using existing PostgreSQL at ${DB_POSTGRES_HOST}:${DB_POSTGRES_PORT}/${DB_POSTGRES_DB}${NC}"
+        echo -e "  ${GREEN}Using existing PostgreSQL at ${DB_POSTGRES_HOST}:${DB_POSTGRES_PORT}/${DB_POSTGRES_DB}${NC}"
     else
         # Docker setup
         echo -e "${BLUE}  Setting up PostgreSQL via Docker...${NC}"
@@ -272,9 +272,9 @@ if [ "$DB_TYPE" = "postgres" ]; then
             curl -fsSL https://get.docker.com | bash
             systemctl enable docker
             systemctl start docker
-            echo -e "  ${GREEN}✅ Docker installed${NC}"
+            echo -e "  ${GREEN}Docker installed${NC}"
         else
-            echo -e "  ${GREEN}✅ Docker already installed${NC}"
+            echo -e "  ${GREEN}Docker already installed${NC}"
         fi
 
         # Ask for DB credentials
@@ -297,7 +297,7 @@ if [ "$DB_TYPE" = "postgres" ]; then
 
         if [ -z "$DB_POSTGRES_PASSWORD" ]; then
             DB_POSTGRES_PASSWORD="mmrc"
-            echo -e "  ${YELLOW}⚠️  Using default password: mmrc${NC}"
+            echo -e "  ${YELLOW} Using default password: mmrc${NC}"
         fi
 
         # Pull and start PostgreSQL container
@@ -325,18 +325,18 @@ if [ "$DB_TYPE" = "postgres" ]; then
         echo "  Waiting for PostgreSQL to be ready..."
         for i in {1..30}; do
             if docker exec mmrc-postgres pg_isready -U ${DB_POSTGRES_USER} >/dev/null 2>&1; then
-                echo -e "  ${GREEN}✅ PostgreSQL is ready${NC}"
+                echo -e "  ${GREEN}PostgreSQL is ready${NC}"
                 break
             fi
             if [ "$i" -eq 30 ]; then
-                echo -e "  ${RED}❌ PostgreSQL failed to start${NC}"
+                echo -e "  ${RED}PostgreSQL failed to start${NC}"
                 docker logs mmrc-postgres --tail 20
                 exit 1
             fi
             sleep 2
         done
 
-        echo -e "${GREEN}✅ PostgreSQL container running on 127.0.0.1:${DB_POSTGRES_PORT}${NC}"
+        echo -e "${GREEN}PostgreSQL container running on 127.0.0.1:${DB_POSTGRES_PORT}${NC}"
     fi
 fi
 
@@ -357,9 +357,9 @@ if ! command -v node &> /dev/null; then
     echo "  Installing Node.js 20 LTS..."
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
     apt-get install -y nodejs
-    echo -e "  ${GREEN}✅ Node.js $(node --version)${NC}"
+    echo -e "  ${GREEN}Node.js $(node --version)${NC}"
 else
-    echo -e "  ${GREEN}✅ Node.js already installed: $(node --version)${NC}"
+    echo -e "  ${GREEN}Node.js already installed: $(node --version)${NC}"
 fi
 
 # FFmpeg, LibreOffice, ImageMagick, GraphicsMagick, unzip
@@ -368,31 +368,31 @@ apt-get install -y ffmpeg libreoffice imagemagick graphicsmagick unzip sqlite3
 
 # Проверяем что LibreOffice доступен
 if ! command -v soffice &> /dev/null; then
-    echo -e "  ${YELLOW}⚠️  soffice не найден, проверяем LibreOffice...${NC}"
+    echo -e "  ${YELLOW} soffice не найден, проверяем LibreOffice...${NC}"
     if command -v libreoffice &> /dev/null; then
         # Создаем симлинк если нужно
         if [ ! -f /usr/bin/soffice ]; then
             LIBREOFFICE_PATH=$(which libreoffice)
             if [ -n "$LIBREOFFICE_PATH" ]; then
                 ln -sf "$LIBREOFFICE_PATH" /usr/bin/soffice 2>/dev/null || true
-                echo -e "  ${GREEN}✅ Создан симлинк для soffice${NC}"
+                echo -e "  ${GREEN}Создан симлинк для soffice${NC}"
             fi
         fi
     else
-        echo -e "  ${RED}❌ LibreOffice не установлен${NC}"
+        echo -e "  ${RED}LibreOffice не установлен${NC}"
     fi
 fi
 
 # Проверяем GraphicsMagick или ImageMagick (нужен для pdf2pic)
 if command -v gm &> /dev/null; then
-    echo -e "  ${GREEN}✅ GraphicsMagick установлен${NC}"
+    echo -e "  ${GREEN}GraphicsMagick установлен${NC}"
 elif command -v convert &> /dev/null; then
-    echo -e "  ${GREEN}✅ ImageMagick установлен (будет использован для pdf2pic)${NC}"
+    echo -e "  ${GREEN}ImageMagick установлен (будет использован для pdf2pic)${NC}"
 else
-    echo -e "  ${RED}❌ GraphicsMagick или ImageMagick не установлены (нужны для PDF конвертации)${NC}"
+    echo -e "  ${RED}GraphicsMagick или ImageMagick не установлены (нужны для PDF конвертации)${NC}"
 fi
 
-echo -e "${GREEN}✅ System dependencies installed${NC}"
+echo -e "${GREEN}System dependencies installed${NC}"
 
 # ==========================================
 # PHASE 2: DOWNLOAD/CLONE PROJECT
@@ -401,7 +401,7 @@ echo ""
 echo -e "${BLUE}[2/7] Setting up project...${NC}"
 
 if [ -d "$INSTALL_DIR" ]; then
-    echo -e "${YELLOW}⚠️  Directory $INSTALL_DIR already exists${NC}"
+    echo -e "${YELLOW} Directory $INSTALL_DIR already exists${NC}"
     if [ "$AUTO_CONFIRM" = "1" ]; then
         echo "AUTO_CONFIRM=1 → removing existing directory"
         rm -rf "$INSTALL_DIR"
@@ -428,7 +428,7 @@ else
     git clone https://github.com/ya-k0v/MMRC.git .
 fi
 
-echo -e "${GREEN}✅ Project downloaded${NC}"
+echo -e "${GREEN}Project downloaded${NC}"
 
 # ==========================================
 # PHASE 3: NPM DEPENDENCIES
@@ -438,14 +438,14 @@ echo -e "${BLUE}[3/7] Installing Node.js packages...${NC}"
 
 npm install
 
-echo -e "${GREEN}✅ NPM packages installed${NC}"
+echo -e "${GREEN}NPM packages installed${NC}"
 
 # Проверяем окружение после установки зависимостей
 if [ -f dev/scripts/check-environment.sh ]; then
     echo ""
     echo "  Running environment check..."
     bash dev/scripts/check-environment.sh || {
-        echo -e "  ${YELLOW}⚠️  Environment check completed with warnings${NC}"
+        echo -e "  ${YELLOW} Environment check completed with warnings${NC}"
     }
 fi
 
@@ -595,7 +595,7 @@ AUTO_CLEANUP_MISSING_FILES=false
 EOF
     # Права будут установлены на vcuser в PHASE 7
     chown $CURRENT_USER:$CURRENT_USER .env 2>/dev/null || true
-    echo -e "  ${GREEN}✅ .env created with secure JWT secret and default settings${NC}"
+    echo -e "  ${GREEN}.env created with secure JWT secret and default settings${NC}"
 fi
 
 # Инициализируем БД и применяем миграции
@@ -605,19 +605,19 @@ if [ "$DB_TYPE" = "sqlite" ]; then
         sqlite3 config/main.db < src/database/init.sql
         # Права будут установлены на vcuser в PHASE 7
         chown $CURRENT_USER:$CURRENT_USER config/main.db 2>/dev/null || true
-        echo -e "  ${GREEN}✅ Database initialized with default schema and admin user${NC}"
-        echo -e "  ${YELLOW}📝 Default admin: admin / admin123${NC}"
-        echo -e "  ${RED}⚠️  CHANGE PASSWORD AFTER FIRST LOGIN!${NC}"
+        echo -e "  ${GREEN}Database initialized with default schema and admin user${NC}"
+        echo -e "  ${YELLOW}Default admin: admin / admin123${NC}"
+        echo -e "  ${RED} CHANGE PASSWORD AFTER FIRST LOGIN!${NC}"
     else
-        echo -e "  ${YELLOW}⚠️  Database already exists${NC}"
+        echo -e "  ${YELLOW} Database already exists${NC}"
     fi
 elif [ "$DB_TYPE" = "postgres" ]; then
     echo "  Initializing PostgreSQL database via migration..."
     # Run migration to create schema (reads DB_TYPE from .env)
     node src/database/migrate.js
-    echo -e "  ${GREEN}✅ PostgreSQL schema initialized${NC}"
-    echo -e "  ${YELLOW}📝 Default admin: admin / admin123${NC}"
-    echo -e "  ${RED}⚠️  CHANGE PASSWORD AFTER FIRST LOGIN!${NC}"
+    echo -e "  ${GREEN}PostgreSQL schema initialized${NC}"
+    echo -e "  ${YELLOW}Default admin: admin / admin123${NC}"
+    echo -e "  ${RED} CHANGE PASSWORD AFTER FIRST LOGIN!${NC}"
 fi
 
 echo "  Hero module uses main database (initialized at server startup)"
@@ -701,12 +701,12 @@ if [ ! -f config/app-settings.json ]; then
 EOF
     # Права будут установлены на vcuser в PHASE 7
     chown $CURRENT_USER:$CURRENT_USER config/app-settings.json 2>/dev/null || true
-    echo -e "  ${GREEN}✅ app-settings.json created with contentRoot: $CONTENT_ROOT${NC}"
+    echo -e "  ${GREEN}app-settings.json created with contentRoot: $CONTENT_ROOT${NC}"
 else
-    echo -e "  ${YELLOW}⚠️  app-settings.json already exists${NC}"
+    echo -e "  ${YELLOW} app-settings.json already exists${NC}"
 fi
 
-echo -e "${GREEN}✅ Project structure created${NC}"
+echo -e "${GREEN}Project structure created${NC}"
 
 # ==========================================
 # PHASE 5: NETWORK OPTIMIZATION
@@ -716,7 +716,7 @@ echo -e "${BLUE}[5/7] Optimizing network for large file uploads...${NC}"
 
 if [ -f dev/scripts/optimize-network.sh ]; then
     bash dev/scripts/optimize-network.sh
-    echo -e "${GREEN}✅ TCP buffers optimized (16MB for fast uploads)${NC}"
+    echo -e "${GREEN}TCP buffers optimized (16MB for fast uploads)${NC}"
 fi
 
 # ==========================================
@@ -754,24 +754,24 @@ ln -sf /etc/nginx/sites-available/videocontrol /etc/nginx/sites-enabled/videocon
 
 # Проверяем что симлинк создан
 if [ ! -L /etc/nginx/sites-enabled/videocontrol ]; then
-    echo -e "${RED}❌ Failed to create Nginx symlink${NC}"
+    echo -e "${RED}Failed to create Nginx symlink${NC}"
     echo "   Trying to create manually..."
     rm -f /etc/nginx/sites-enabled/videocontrol
     ln -s /etc/nginx/sites-available/videocontrol /etc/nginx/sites-enabled/videocontrol
     if [ ! -L /etc/nginx/sites-enabled/videocontrol ]; then
-        echo -e "${RED}❌ Cannot create Nginx symlink. Check permissions.${NC}"
+        echo -e "${RED}Cannot create Nginx symlink. Check permissions.${NC}"
         exit 1
     fi
 fi
-echo -e "  ${GREEN}✅ Nginx symlink created${NC}"
+echo -e "  ${GREEN}Nginx symlink created${NC}"
 
 # Проверяем конфигурацию
 if nginx -t; then
     systemctl enable nginx
     systemctl restart nginx
-    echo -e "${GREEN}✅ Nginx configured and running${NC}"
+    echo -e "${GREEN}Nginx configured and running${NC}"
 else
-    echo -e "${RED}❌ Nginx configuration error${NC}"
+    echo -e "${RED}Nginx configuration error${NC}"
     echo "   Check: nginx -t"
     exit 1
 fi
@@ -785,17 +785,17 @@ echo -e "${BLUE}[7/7] Creating systemd service...${NC}"
 # Создаем группу vcgroup для управления правами
 if ! getent group $SERVICE_GROUP > /dev/null 2>&1; then
     groupadd $SERVICE_GROUP
-    echo -e "  ${GREEN}✅ Group $SERVICE_GROUP created${NC}"
+    echo -e "  ${GREEN}Group $SERVICE_GROUP created${NC}"
 else
-    echo -e "  ${GREEN}✅ Group $SERVICE_GROUP already exists${NC}"
+    echo -e "  ${GREEN}Group $SERVICE_GROUP already exists${NC}"
 fi
 
 # Создаем пользователя vcuser (если не существует)
 if ! id -u $SERVICE_USER > /dev/null 2>&1; then
     useradd -r -g $SERVICE_GROUP -d /home/$SERVICE_USER -s /bin/bash $SERVICE_USER
-    echo -e "  ${GREEN}✅ User $SERVICE_USER created${NC}"
+    echo -e "  ${GREEN}User $SERVICE_USER created${NC}"
 else
-    echo -e "  ${GREEN}✅ User $SERVICE_USER already exists${NC}"
+    echo -e "  ${GREEN}User $SERVICE_USER already exists${NC}"
     # Убеждаемся что пользователь в правильной группе
     usermod -a -G $SERVICE_GROUP $SERVICE_USER 2>/dev/null || true
 fi
@@ -807,14 +807,14 @@ chown -R $SERVICE_USER:$SERVICE_GROUP /home/$SERVICE_USER/.cache /home/$SERVICE_
 chmod 700 /home/$SERVICE_USER/.android
 chmod 600 /home/$SERVICE_USER/.android/adb_usb.ini
 chmod 755 /home/$SERVICE_USER/.cache /home/$SERVICE_USER/.config
-echo -e "  ${GREEN}✅ LibreOffice cache directories created for $SERVICE_USER${NC}"
+echo -e "  ${GREEN}LibreOffice cache directories created for $SERVICE_USER${NC}"
 
 # Убеждаемся что LibreOffice доступен для vcuser
 if command -v soffice &> /dev/null; then
     SOFFICE_PATH=$(which soffice)
-    echo -e "  ${GREEN}✅ LibreOffice (soffice) доступен: $SOFFICE_PATH${NC}"
+    echo -e "  ${GREEN}LibreOffice (soffice) доступен: $SOFFICE_PATH${NC}"
 else
-    echo -e "  ${YELLOW}⚠️  soffice не найден в PATH, проверьте установку LibreOffice${NC}"
+    echo -e "  ${YELLOW} soffice не найден в PATH, проверьте установку LibreOffice${NC}"
 fi
 
 # Устанавливаем права на проект для vcuser
@@ -825,7 +825,7 @@ if [ "$STORAGE_MODE" != "local" ]; then
         chown -R $SERVICE_USER:$SERVICE_GROUP "$CONTENT_DIR" 2>/dev/null || true
     fi
 fi
-echo -e "  ${GREEN}✅ Permissions set for $SERVICE_USER${NC}"
+echo -e "  ${GREEN}Permissions set for $SERVICE_USER${NC}"
 
 # Читаем JWT_SECRET из .env
 JWT_SECRET_VALUE=""
@@ -835,7 +835,7 @@ fi
 
 # Если JWT_SECRET не найден, генерируем новый
 if [ -z "$JWT_SECRET_VALUE" ]; then
-    echo -e "  ${YELLOW}⚠️  JWT_SECRET not found in .env, generating new one${NC}"
+    echo -e "  ${YELLOW} JWT_SECRET not found in .env, generating new one${NC}"
     JWT_SECRET_VALUE=$(node -e "console.log(require('crypto').randomBytes(64).toString('hex'))")
     # Обновляем .env
     if grep -q "^JWT_SECRET=" "$INSTALL_DIR/.env"; then
@@ -845,9 +845,9 @@ if [ -z "$JWT_SECRET_VALUE" ]; then
     fi
     chown $SERVICE_USER:$SERVICE_GROUP "$INSTALL_DIR/.env"
     chmod 600 "$INSTALL_DIR/.env"
-    echo -e "  ${GREEN}✅ JWT_SECRET generated and saved to .env${NC}"
+    echo -e "  ${GREEN}JWT_SECRET generated and saved to .env${NC}"
 else
-    echo -e "  ${GREEN}✅ JWT_SECRET found in .env${NC}"
+    echo -e "  ${GREEN}JWT_SECRET found in .env${NC}"
 fi
 
 # Создаем systemd unit файл
@@ -892,9 +892,9 @@ EOF
 chown $SERVICE_USER:$SERVICE_GROUP "$INSTALL_DIR/.env"
 chmod 600 "$INSTALL_DIR/.env"
 
-echo -e "  ${GREEN}✅ Systemd unit file created${NC}"
-echo -e "  ${GREEN}✅ Service user: $SERVICE_USER${NC}"
-echo -e "  ${GREEN}✅ ProtectSystem: full${NC}"
+echo -e "  ${GREEN}Systemd unit file created${NC}"
+echo -e "  ${GREEN}Service user: $SERVICE_USER${NC}"
+echo -e "  ${GREEN}ProtectSystem: full${NC}"
 
 systemctl daemon-reload
 systemctl enable videocontrol
@@ -903,9 +903,9 @@ systemctl start videocontrol
 # Проверяем запуск
 sleep 3
 if systemctl is-active --quiet videocontrol; then
-    echo -e "${GREEN}✅ VideoControl service running as $SERVICE_USER${NC}"
+    echo -e "${GREEN}VideoControl service running as $SERVICE_USER${NC}"
 else
-    echo -e "${RED}❌ Service failed to start. Check logs:${NC}"
+    echo -e "${RED}Service failed to start. Check logs:${NC}"
     echo "   journalctl -u videocontrol -n 50"
     echo "   systemctl status videocontrol"
     exit 1
@@ -916,21 +916,21 @@ fi
 # ==========================================
 echo ""
 echo -e "${GREEN}============================================${NC}"
-echo -e "${GREEN}  ✅ Installation Complete!${NC}"
+echo -e "${GREEN}  Installation Complete!${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo ""
-echo "🎉 VideoControl v3.3.0 successfully installed!"
+echo "VideoControl v3.3.0 successfully installed!"
 echo ""
-echo "📂 Installation directory: $INSTALL_DIR"
-echo "👤 Service user: $SERVICE_USER ($SERVICE_GROUP)"
+echo "Installation directory: $INSTALL_DIR"
+echo "Service user: $SERVICE_USER ($SERVICE_GROUP)"
 if [ "$DB_TYPE" = "postgres" ]; then
-echo "📊 Database: PostgreSQL (${POSTGRES_SOURCE:-docker}) - $DB_POSTGRES_HOST:$DB_POSTGRES_PORT/$DB_POSTGRES_DB"
+echo "Database: PostgreSQL (${POSTGRES_SOURCE:-docker}) - $DB_POSTGRES_HOST:$DB_POSTGRES_PORT/$DB_POSTGRES_DB"
 else
-echo "📊 Database: config/main.db (SQLite)"
+echo "Database: config/main.db (SQLite)"
 fi
-echo "🌐 Server: http://$(hostname -I | awk '{print $1}')"
+echo "Server: http://$(hostname -I | awk '{print $1}')"
 echo ""
-echo "📦 Data storage:"
+echo "Data storage:"
 echo "  Mode: $STORAGE_MODE"
 if [ "$STORAGE_MODE" = "local" ]; then
 echo "  Path: $INSTALL_DIR/data/*"
@@ -948,32 +948,32 @@ echo "    - logs/ - application logs"
 echo "    - temp/ - temporary files"
 fi
 echo ""
-echo "🔐 Default Admin Credentials:"
+echo "Default Admin Credentials:"
 echo "  Username: admin"
 echo "  Password: admin123"
-echo "  🚨 ОБЯЗАТЕЛЬНО смените пароль после первого входа!"
+echo "  ОБЯЗАТЕЛЬНО смените пароль после первого входа!"
 echo ""
-echo "🚀 Access URLs:"
-echo "  📱 Admin:   http://$(hostname -I | awk '{print $1}')/"
-echo "  🎤 Speaker: http://$(hostname -I | awk '{print $1}')/speaker.html"
-echo "  🎮 Player:  http://$(hostname -I | awk '{print $1}')/player-videojs.html?device_id=DEVICE_ID"
+echo "Access URLs:"
+echo "  Admin:   http://$(hostname -I | awk '{print $1}')/"
+echo "  Speaker: http://$(hostname -I | awk '{print $1}')/speaker.html"
+echo "  Player:  http://$(hostname -I | awk '{print $1}')/player-videojs.html?device_id=DEVICE_ID"
 echo ""
-echo "🔒 Security Features:"
-echo "  ✅ JWT Authentication (12h access, 30d refresh)"
-echo "  ✅ Two-level security (Network + JWT)"
-echo "  ✅ Rate limiting (disabled for local network)"
-echo "  ✅ Path traversal protection"
-echo "  ✅ Audit logging to database"
-echo "  ✅ Winston structured logs (data/logs/)"
+echo "Security Features:"
+echo "  JWT Authentication (12h access, 30d refresh)"
+echo "  Two-level security (Network + JWT)"
+echo "  Rate limiting (disabled for local network)"
+echo "  Path traversal protection"
+echo "  Audit logging to database"
+echo "  Winston structured logs (data/logs/)"
 echo ""
-echo "📋 Quick Start:"
+echo "Quick Start:"
 echo "  1. Login: http://$(hostname -I | awk '{print $1}')/ (admin/admin123)"
 echo "  2. Create users in Admin panel"
 echo "  3. Add devices in Admin panel"
 echo "  4. Upload content (max 5GB per file)"
 echo "  5. Control via Speaker panel"
 echo ""
-echo "🔧 Useful commands:"
+echo "Useful commands:"
 echo "  Status:  sudo systemctl status videocontrol"
 echo "  Restart: sudo systemctl restart videocontrol"
 if [ "$STORAGE_MODE" = "local" ]; then
@@ -988,14 +988,14 @@ echo "  Audit:   sqlite3 $INSTALL_DIR/config/main.db 'SELECT * FROM audit_log OR
 fi
 echo "  Stop:    sudo systemctl stop videocontrol"
 echo ""
-echo "📚 Documentation:"
+echo "Documentation:"
 echo "  Main:     $INSTALL_DIR/README.md"
 echo "  Install:  $INSTALL_DIR/dev/INSTALL.md (new OS setup)"
 echo "  Quick:    $INSTALL_DIR/dev/README.md"
 echo "  Manual:   $INSTALL_DIR/dev/MANUAL.md"
 echo "  Clients:  $INSTALL_DIR/dev/CLIENTS.md"
 echo ""
-echo "🛠️  Utility scripts:"
+echo " Utility scripts:"
 echo "  Check env:  bash $INSTALL_DIR/dev/scripts/check-environment.sh"
 echo "  Cleanup:    bash $INSTALL_DIR/dev/scripts/cleanup.sh"
 echo ""

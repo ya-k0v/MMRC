@@ -98,23 +98,23 @@ async function checkFiles() {
   const dataRoot = getDataRoot();
   const contentDir = path.join(dataRoot, 'content');
   
-  console.log(`📁 Корневая папка данных: ${dataRoot}`);
-  console.log(`📁 Папка контента: ${contentDir}`);
+  console.log(`Корневая папка данных: ${dataRoot}`);
+  console.log(`Папка контента: ${contentDir}`);
   console.log();
 
   // 1. Получаем файлы из БД
-  console.log('📊 Загрузка файлов из базы данных...');
+  console.log('Загрузка файлов из базы данных...');
   const dbFiles = getFilesFromDB();
   console.log(`   Найдено записей в БД: ${dbFiles.length}`);
   console.log();
 
   // 2. Получаем устройства
   const devices = getDevices();
-  console.log(`📱 Найдено устройств: ${devices.length}`);
+  console.log(`Найдено устройств: ${devices.length}`);
   console.log();
 
   // 3. Сканируем файлы на диске
-  console.log('🔍 Сканирование файлов на диске...');
+  console.log('Сканирование файлов на диске...');
   const diskFiles = getAllFiles(contentDir);
   console.log(`   Найдено файлов на диске: ${diskFiles.length}`);
   console.log();
@@ -140,7 +140,7 @@ async function checkFiles() {
   }
 
   // 5. Находим файлы в БД, которых нет на диске
-  console.log('🔍 Проверка файлов из БД на наличие на диске...');
+  console.log('Проверка файлов из БД на наличие на диске...');
   const missingOnDisk = [];
   
   for (const file of dbFiles) {
@@ -166,7 +166,7 @@ async function checkFiles() {
   console.log();
 
   // 6. Находим файлы на диске, которых нет в БД
-  console.log('🔍 Проверка файлов на диске на наличие в БД...');
+  console.log('Проверка файлов на диске на наличие в БД...');
   const missingInDB = [];
   
   for (const filePath of diskFiles) {
@@ -196,7 +196,7 @@ async function checkFiles() {
   console.log();
 
   if (missingOnDisk.length > 0) {
-    console.log(`❌ Файлы в БД, которых НЕТ на диске (${missingOnDisk.length}):`);
+    console.log(`Файлы в БД, которых НЕТ на диске (${missingOnDisk.length}):`);
     console.log('-'.repeat(80));
     
     // Группируем по устройствам
@@ -209,7 +209,7 @@ async function checkFiles() {
     }
     
     for (const [deviceId, files] of Object.entries(byDevice)) {
-      console.log(`\n  📱 Устройство: ${deviceId} (${files.length} файлов)`);
+      console.log(`\n  Устройство: ${deviceId} (${files.length} файлов)`);
       for (const file of files.slice(0, 10)) { // Показываем первые 10
         console.log(`     - ${file.originalName || file.safeName}`);
         console.log(`       Путь: ${file.filePath}`);
@@ -221,12 +221,12 @@ async function checkFiles() {
     }
     console.log();
   } else {
-    console.log('✅ Все файлы из БД найдены на диске');
+    console.log('Все файлы из БД найдены на диске');
     console.log();
   }
 
   if (missingInDB.length > 0) {
-    console.log(`⚠️  Файлы на диске, которых НЕТ в БД (${missingInDB.length}):`);
+    console.log(` Файлы на диске, которых НЕТ в БД (${missingInDB.length}):`);
     console.log('-'.repeat(80));
     
     // Группируем по папкам устройств
@@ -244,7 +244,7 @@ async function checkFiles() {
     }
     
     for (const [folder, files] of Object.entries(byDeviceFolder)) {
-      console.log(`\n  📁 Папка: ${folder} (${files.length} файлов)`);
+      console.log(`\n  Папка: ${folder} (${files.length} файлов)`);
       for (const file of files.slice(0, 10)) { // Показываем первые 10
         const relativePath = path.relative(contentDir, file.filePath);
         console.log(`     - ${relativePath}`);
@@ -256,7 +256,7 @@ async function checkFiles() {
     }
     console.log();
   } else {
-    console.log('✅ Все файлы на диске найдены в БД');
+    console.log('Все файлы на диске найдены в БД');
     console.log();
   }
 
@@ -278,7 +278,7 @@ async function checkFiles() {
   console.log();
 
   // 9. Анализ дедупликации (файлы, на которые ссылаются несколько устройств)
-  console.log('🔍 Анализ дедупликации...');
+  console.log('Анализ дедупликации...');
   const fileReferences = new Map(); // file_path -> [devices]
   
   for (const file of dbFiles) {
@@ -311,7 +311,7 @@ async function checkFiles() {
 
   // 10. Попытка найти альтернативные пути для отсутствующих файлов
   if (missingOnDisk.length > 0) {
-    console.log('🔍 Поиск альтернативных путей для отсутствующих файлов...');
+    console.log('Поиск альтернативных путей для отсутствующих файлов...');
     const alternativesFound = [];
     
     for (const missing of missingOnDisk.slice(0, 10)) { // Проверяем первые 10
@@ -359,7 +359,7 @@ async function checkFiles() {
     console.log();
     
     if (missingOnDisk.length > 0) {
-      console.log('⚠️  Файлы в БД, которых нет на диске:');
+      console.log(' Файлы в БД, которых нет на диске:');
       console.log(`   - Найдено ${missingOnDisk.length} отсутствующих файлов`);
       console.log('   - Возможно, файлы были удалены вручную или перемещены');
       console.log('   - Можно удалить записи из БД с помощью функции cleanupMissingFiles:');
@@ -368,7 +368,7 @@ async function checkFiles() {
     }
     
     if (missingInDB.length > 0) {
-      console.log('⚠️  Файлы на диске, которых нет в БД:');
+      console.log(' Файлы на диске, которых нет в БД:');
       console.log(`   - Найдено ${missingInDB.length} файлов без записей в БД`);
       console.log('   - Эти файлы не отображаются в интерфейсе');
       console.log('   - Можно добавить их в БД через интерфейс (пересканировать устройство)');
@@ -426,10 +426,10 @@ async function checkFiles() {
         fs.mkdirSync(logsDir, { recursive: true });
       }
       fs.writeFileSync(resultsFile, JSON.stringify(results, null, 2), 'utf-8');
-      console.log(`💾 Результаты сохранены в: ${resultsFile}`);
+      console.log(`Результаты сохранены в: ${resultsFile}`);
       console.log();
     } catch (error) {
-      console.warn(`⚠️  Не удалось сохранить результаты в файл: ${error.message}`);
+      console.warn(` Не удалось сохранить результаты в файл: ${error.message}`);
     }
   }
 
@@ -440,7 +440,7 @@ async function checkFiles() {
 try {
   await checkFiles();
 } catch (error) {
-  console.error('❌ Ошибка при проверке файлов:', error);
+  console.error('Ошибка при проверке файлов:', error);
   process.exit(1);
 } finally {
   closeDatabase();

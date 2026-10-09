@@ -15,7 +15,7 @@ import { renderDeviceCard as renderDeviceCardModule, deviceCardSignature, buildD
 import { setupUploadUI as setupUploadUIModule } from './admin/upload-ui.js';
 import { showDevicesModal, showUsersModal, showSettingsModal } from './admin/modal.js';
 import { initSystemMonitor, stopSystemMonitor } from './admin/system-monitor.js';
-import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon, getCloseIcon, getCheckIcon, getUnlockIcon, getLockIcon, getDeviceIcon, getKeyIcon, getTrashIcon, getPauseIcon, getPlayIcon, getCopyIcon, getDownloadIcon, getBellIcon, getStorageIcon, getCpuIcon, getSlidersIcon, getDatabaseIcon, getMobileIcon } from './shared/svg-icons.js';
+import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon, getCloseIcon, getCheckIcon, getWarningIcon, getUnlockIcon, getLockIcon, getDeviceIcon, getKeyIcon, getTrashIcon, getPauseIcon, getPlayIcon, getCopyIcon, getDownloadIcon, getBellIcon, getStorageIcon, getCpuIcon, getSlidersIcon, getDatabaseIcon, getMobileIcon, getMonitorIcon, getBrowserIcon, getTVIcon, getChevronLeftIcon, getChevronRightIcon, getPowerIcon } from './shared/svg-icons.js';
 import { escapeHtml } from './shared/utils.js';
 import { initNotifications } from './admin/notifications.js';
 import { mountNotificationsSection } from './admin/notifications-modal.js';
@@ -797,7 +797,7 @@ function createSettingsSection() {
         const localSha = s.localSha ? s.localSha.slice(0, 7) : '—';
         const hasUpdate = s.updateAvailable && !s.dismissed;
 
-        branchEl.textContent = hasUpdate ? '⚠' : '✓';
+        branchEl.innerHTML = hasUpdate ? getWarningIcon(14) : getCheckIcon(14);
         branchEl.style.color = hasUpdate ? 'var(--warning)' : 'var(--success)';
         branchEl.title = hasUpdate
           ? `${branch} (${localSha}) — доступно обновление`
@@ -881,9 +881,9 @@ function createUsersSection() {
     <div id="usPager" style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-sm); padding-top:var(--space-sm); margin-top:var(--space-sm);">
       <div class="meta" id="usPagInfo"></div>
       <div style="display:flex; gap:var(--space-2xs); align-items:center;">
-        <button id="usPrev" class="secondary meta" disabled>← Назад</button>
+        <button id="usPrev" class="secondary meta" disabled>${getChevronLeftIcon(14)} Назад</button>
         <span class="meta" id="usPageInfo" style="min-width:80px; text-align:center;"></span>
-        <button id="usNext" class="secondary meta" disabled>Вперёд →</button>
+        <button id="usNext" class="secondary meta" disabled>Вперёд ${getChevronRightIcon(14)}</button>
       </div>
     </div>
   `;
@@ -1079,7 +1079,7 @@ function createUsersSection() {
         const isAndroid = deviceType.includes('android') || deviceType.includes('native');
         const isBrowser = deviceType.includes('browser') || deviceType.includes('web');
         const isMpv = deviceType.includes('mpv');
-        const icon = isAndroid ? '📱' : isMpv ? '🖥️' : isBrowser ? '🌐' : '📺';
+        const icon = isAndroid ? getMobileIcon(24) : isMpv ? getMonitorIcon(24) : isBrowser ? getBrowserIcon(24) : getTVIcon(24);
         const statusColor = d.is_online ? 'var(--success)' : 'var(--muted)';
         return `
           <label class="device-card ${checked ? 'assigned' : ''}" style="display:flex; flex-direction:column; align-items:center; gap:6px; padding:12px 8px; border:2px solid ${checked ? 'var(--brand)' : 'var(--border)'}; border-radius:12px; cursor:pointer; transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s; background:${checked ? 'rgba(var(--brand-rgb, 59,130,246),0.08)' : 'var(--panel-2)'};">
@@ -1088,7 +1088,7 @@ function createUsersSection() {
             <div style="font-weight:500; font-size:0.85rem; text-align:center; line-height:1.2; word-break:break-word;">${escapeHtml(d.device_name || d.device_id)}</div>
             <div style="font-size:0.7rem; color:var(--text-secondary); text-align:center;">${escapeHtml(d.device_id)}</div>
             <div style="width:8px; height:8px; border-radius:50%; background:${statusColor};"></div>
-            ${checked ? '<div style="position:absolute; top:6px; right:6px; width:18px; height:18px; border-radius:50%; background:var(--brand); color:white; display:flex; align-items:center; justify-content:center; font-size:10px;">✓</div>' : ''}
+            ${checked ? `<div style="position:absolute; top:6px; right:6px; width:18px; height:18px; border-radius:50%; background:var(--brand); color:white; display:flex; align-items:center; justify-content:center; font-size:10px;">${getCheckIcon(12, '#fff')}</div>` : ''}
           </label>
         `;
       }).join('');
@@ -1251,9 +1251,9 @@ function createUsersSection() {
         <div style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:var(--space-sm); margin-top:var(--space-sm);">
           <div id="usDevicePager" style="display:flex; align-items:center; gap:4px;">
             ${hasDevices && totalPages > 1 ? `
-              <button id="usDevicePrev" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage <= 1 ? 'disabled' : ''}>◀</button>
+              <button id="usDevicePrev" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage <= 1 ? 'disabled' : ''}>${getChevronLeftIcon(14)}</button>
               <span style="font-size:0.75rem; color:var(--text-secondary);">${devicePage}/${totalPages}</span>
-              <button id="usDeviceNext" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage >= totalPages ? 'disabled' : ''}>▶</button>
+              <button id="usDeviceNext" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage >= totalPages ? 'disabled' : ''}>${getChevronRightIcon(14)}</button>
             ` : ''}
           </div>
           <button id="usModalSave" class="primary" style="font-size:0.85rem;">Сохранить</button>
@@ -1369,9 +1369,9 @@ function createUsersSection() {
           document.getElementById('usDeviceList').innerHTML = renderDeviceList();
           const maxPage = Math.ceil(allDevices.filter(d => !deviceSearch || (d.device_id || '').toLowerCase().includes(deviceSearch.toLowerCase()) || (d.device_name || '').toLowerCase().includes(deviceSearch.toLowerCase())).length / devicePerPage);
           document.getElementById('usDevicePager').innerHTML = `
-            <button id="usDevicePrev" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage <= 1 ? 'disabled' : ''}>◀</button>
+            <button id="usDevicePrev" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage <= 1 ? 'disabled' : ''}>${getChevronLeftIcon(14)}</button>
             <span style="font-size:0.75rem; color:var(--text-secondary);">${devicePage}/${maxPage || 1}</span>
-            <button id="usDeviceNext" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage >= maxPage ? 'disabled' : ''}>▶</button>
+            <button id="usDeviceNext" class="secondary" style="min-width:28px; padding:2px 6px; font-size:0.75rem;" ${devicePage >= maxPage ? 'disabled' : ''}>${getChevronRightIcon(14)}</button>
           `;
           document.getElementById('usDevicePrev').onclick = () => { if (devicePage > 1) { devicePage--; refreshDeviceList(); } };
           document.getElementById('usDeviceNext').onclick = () => { if (devicePage < maxPage) { devicePage++; refreshDeviceList(); } };
@@ -1524,7 +1524,7 @@ function renderUsersSectionList() {
       <td style="padding:10px 12px; text-align:center; color:var(--text); font-size:0.85rem;">${u.role === 'admin' ? '—' : (u.deviceCount || 0)}</td>
       <td style="padding:10px 12px; text-align:right;">
         <div style="display:inline-flex; gap:4px;">
-          ${u.online ? `<button class="danger meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="event.stopPropagation(); window._usRevokeAllSessions(${u.id}, '${escapeHtml(u.username)}')" title="Завершить все сессии (${u.sessions.length})">⏻</button>` : ''}
+          ${u.online ? `<button class="danger meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="event.stopPropagation(); window._usRevokeAllSessions(${u.id}, '${escapeHtml(u.username)}')" title="Завершить все сессии (${u.sessions.length})">${getPowerIcon(16)}</button>` : ''}
           ${!isLdap ? `<button class="secondary meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="event.stopPropagation(); window._usResetPass(${u.id}, '${escapeHtml(u.username)}')" title="Сбросить пароль">${getKeyIcon(14)}</button>` : ''}
           ${u.id !== 1 ? `<button class="danger meta" style="min-width:auto; padding:4px 8px; font-size:0.75rem;" onclick="event.stopPropagation(); window._usDelete(${u.id}, '${escapeHtml(u.username)}')" title="Удалить">${getTrashIcon(14)}</button>` : ''}
         </div>

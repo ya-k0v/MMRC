@@ -97,7 +97,7 @@ export function createConversionRouter(deps) {
       }
       res.json({ count });
     } catch (error) {
-      logger.error(`[slides-count] ❌ Ошибка`, { error: error.message, stack: error.stack, deviceId: id, fileName });
+      logger.error(`[slides-count] Ошибка`, { error: error.message, stack: error.stack, deviceId: id, fileName });
       res.status(500).json({ error: 'Не удалось получить количество слайдов' });
     }
   });
@@ -212,7 +212,7 @@ export function createConversionRouter(deps) {
       stream.pipe(res);
       
     } catch (error) {
-      logger.error(`[converted] ❌ Ошибка`, { error: error.message, stack: error.stack, deviceId: id, fileName, type, num });
+      logger.error(`[converted] Ошибка`, { error: error.message, stack: error.stack, deviceId: id, fileName, type, num });
       res.status(500).json({ error: 'Не удалось отдать конвертированный файл' });
     }
   });

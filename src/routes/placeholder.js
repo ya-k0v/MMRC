@@ -91,7 +91,7 @@ export function createPlaceholderRouter(deps) {
       }
 
       if (placeholder) {
-        logger.info('[placeholder] ✅ Placeholder found in DB', { 
+        logger.info('[placeholder] Placeholder found in DB', { 
           deviceId: id, 
           fileName: placeholder.safe_name,
           mimeType: placeholder.mime_type
@@ -102,7 +102,7 @@ export function createPlaceholderRouter(deps) {
         });
       }
       
-      logger.info('[placeholder] ℹ️ No placeholder set', { deviceId: id });
+      logger.info('[placeholder] No placeholder set', { deviceId: id });
       res.json({ placeholder: null });
       
     } catch (error) {
@@ -165,7 +165,7 @@ export function createPlaceholderRouter(deps) {
         return res.status(404).json({ error: 'Файл не найден в базе данных' });
       }
       
-      logger.info('[make-default] ✅ Placeholder set instantly via DB', { 
+      logger.info('[make-default] Placeholder set instantly via DB', { 
         deviceId: id, 
         fileName: file 
       });
@@ -180,7 +180,7 @@ export function createPlaceholderRouter(deps) {
       setTimeout(() => {
         io.to(`device:${id}`).emit('placeholder/refresh');
         io.emit('preview/refresh', { device_id: id });
-        logger.info('[make-default] 📡 Placeholder refresh events sent', { deviceId: id });
+        logger.info('[make-default] Placeholder refresh events sent', { deviceId: id });
       }, 100); // Минимальная задержка для синхронизации
         
       } catch (e) {

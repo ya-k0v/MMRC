@@ -289,10 +289,10 @@ let videoOptConfig = {};
 try {
   if (fs.existsSync(VIDEO_OPTIMIZATION_CONFIG_PATH)) {
     videoOptConfig = JSON.parse(fs.readFileSync(VIDEO_OPTIMIZATION_CONFIG_PATH, 'utf-8'));
-    logger.info('[VideoOpt] ✅ Конфигурация загружена');
+    logger.info('[VideoOpt] Конфигурация загружена');
   }
 } catch (e) {
-  logger.warn('[VideoOpt] ⚠️ Ошибка загрузки конфигурации, используем defaults', { error: e.message, stack: e.stack });
+  logger.warn('[VideoOpt] Ошибка загрузки конфигурации, используем defaults', { error: e.message, stack: e.stack });
   videoOptConfig = { enabled: false };
 }
 
@@ -428,7 +428,7 @@ async function runFfmpegWithProgress({ deviceId, fileName, ffmpegArgs, io, jobKe
       const timeout = setTimeout(() => {
         if (!isResolved) {
           isResolved = true;
-          logger.error('[VideoOpt] ⏱️ FFmpeg timeout', { deviceId, fileName, timeoutMs });
+          logger.error('[VideoOpt] FFmpeg timeout', { deviceId, fileName, timeoutMs });
           killManagedProcess(ffmpegProcess, 'SIGKILL');
           activeOptimizationJobs.delete(jobKey);
           reject(new Error('FFmpeg timeout'));
@@ -493,7 +493,7 @@ async function runFfmpegWithProgress({ deviceId, fileName, ffmpegArgs, io, jobKe
         if (code === 0) {
           resolve();
         } else {
-          logger.error('[VideoOpt] ❌ FFmpeg exited with error', {
+          logger.error('[VideoOpt] FFmpeg exited with error', {
             deviceId,
             fileName,
             code,
@@ -655,14 +655,14 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
         return { success: false, message: 'File not found locally or in storage' };
       }
       filePath = materialized;
-      logger.info('[VideoOpt] ⬇️ Файл получен из хранилища для обработки', {
+      logger.info('[VideoOpt] Файл получен из хранилища для обработки', {
         deviceId,
         fileName,
         filePath
       });
     }
 
-    logger.info(`[VideoOpt] 🔍 Проверка: ${fileName}`, { deviceId, fileName });
+    logger.info(`[VideoOpt] Проверка: ${fileName}`, { deviceId, fileName });
 
     // Устанавливаем статус "проверка"
     setFileStatus(deviceId, fileName, { status: 'checking', progress: 0, canPlay: false });
@@ -710,7 +710,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       return { success: false, message: 'Cannot read video parameters' };
     }
 
-    logger.info('[VideoOpt] 📊 Итоговые параметры файла', {
+    logger.info('[VideoOpt] Итоговые параметры файла', {
     deviceId,
     fileName,
     width: params.width,
@@ -733,7 +733,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       try {
         seekRisk = await needsFaststart(filePath);
       } catch (error) {
-        logger.warn('[VideoOpt] ⚠️ Не удалось проверить seek-структуру, включаем безопасный режим', {
+        logger.warn('[VideoOpt] Не удалось проверить seek-структуру, включаем безопасный режим', {
           deviceId,
           fileName,
           error: error.message
@@ -749,7 +749,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     seekRisk;
 
     if (!requiresWork) {
-      logger.info(`[VideoOpt] ✅ Видео оптимально: ${fileName}`, { deviceId, fileName });
+      logger.info(`[VideoOpt] Видео оптимально: ${fileName}`, { deviceId, fileName });
 
       // Даже оптимальное видео должно попасть в S3: хранилище — источник
       // истины, иначе после удаления локальной копии файла не существовало бы
@@ -764,13 +764,13 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
             removeLocal: true
           });
           if (!syncResult.synced) {
-            logger.warn('[VideoOpt] ⚠️ Оптимальное видео не попало в S3', {
+            logger.warn('[VideoOpt] Оптимальное видео не попало в S3', {
               deviceId, fileName, reason: syncResult.reason
             });
           }
         } catch (error) {
           // Локальная копия остаётся на диске — файл рабочий, ошибка не критична
-          logger.error('[VideoOpt] ❌ Ошибка загрузки оптимального видео в S3', {
+          logger.error('[VideoOpt] Ошибка загрузки оптимального видео в S3', {
             deviceId, fileName, error: error.message
           });
         }
@@ -785,13 +785,13 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       return { success: true, message: 'Already optimized', optimized: false };
     }
 
-    logger.info(`[VideoOpt] ⚠️ Требуется оптимизация: ${fileName}`, { deviceId, fileName });
+    logger.info(`[VideoOpt] Требуется оптимизация: ${fileName}`, { deviceId, fileName });
 
     // Устанавливаем статус "обработка"
     setFileStatus(deviceId, fileName, { status: 'processing', progress: 5, canPlay: false });
     io.emit('file/processing', { device_id: deviceId, file: fileName });
     io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 5 });
-    logger.info(`[VideoOpt] 📊 Начало обработки: ${fileName} (5%)`, {
+    logger.info(`[VideoOpt] Начало обработки: ${fileName} (5%)`, {
     deviceId,
     fileName,
     videoNeedsTranscode,
@@ -870,7 +870,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     ];
   }
 
-    logger.info('[VideoOpt] 🎬 Выбран режим обработки', {
+    logger.info('[VideoOpt] Выбран режим обработки', {
     deviceId,
     fileName,
     processingMode,
@@ -883,7 +883,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
 
     setFileStatus(deviceId, fileName, { status: 'processing', progress: 90, canPlay: false });
     io.emit('file/progress', { device_id: deviceId, file: fileName, progress: 90 });
-    logger.info(`[VideoOpt] ✅ Конвертация завершена: ${fileName} (90%)`, { deviceId, fileName });
+    logger.info(`[VideoOpt] Конвертация завершена: ${fileName} (90%)`, { deviceId, fileName });
 
     // Проверяем что файл создан и не пустой
     const stats = fs.statSync(tempPath);
@@ -897,7 +897,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     // КРИТИЧНО: Удаляем оригинал и заменяем оптимизированным
     // Если конвертация изменила формат (webm→mp4, m4v→mp4) - переименовываем файл
     if (ext !== '.mp4') {
-      logger.info(`[VideoOpt] 🔄 Замена формата: ${fileName} → ${finalFileName}`, { deviceId, fileName, finalFileName });
+      logger.info(`[VideoOpt] Замена формата: ${fileName} → ${finalFileName}`, { deviceId, fileName, finalFileName });
 
       // Удаляем оригинал (.webm, .mkv, etc)
       fs.unlinkSync(filePath);
@@ -914,7 +914,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
         delete fileNamesMap[deviceId][fileName];
         fileNamesMap[deviceId][finalFileName] = originalName;
         saveFileNamesMapFn(fileNamesMap);
-        logger.info(`[VideoOpt] 📝 Маппинг обновлен: ${fileName} → ${finalFileName}`, { deviceId, fileName, finalFileName, originalName });
+        logger.info(`[VideoOpt] Маппинг обновлен: ${fileName} → ${finalFileName}`, { deviceId, fileName, finalFileName, originalName });
       }
 
       // Устанавливаем права
@@ -929,7 +929,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
         }
       }
 
-      logger.info(`[VideoOpt] 🎉 Видео конвертировано: ${fileName} → ${finalFileName}`, { deviceId, fileName, finalFileName, sizeMB: Math.round(stats.size / 1024 / 1024) });
+      logger.info(`[VideoOpt] Видео конвертировано: ${fileName} → ${finalFileName}`, { deviceId, fileName, finalFileName, sizeMB: Math.round(stats.size / 1024 / 1024) });
     } else {
       // MP4 → MP4 (просто замена на оптимизированный)
       fs.unlinkSync(filePath);
@@ -938,7 +938,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       // Устанавливаем права
       fs.chmodSync(filePath, 0o644);
 
-      logger.info(`[VideoOpt] 🎉 Видео оптимизировано: ${fileName}`, { deviceId, fileName, sizeMB: Math.round(stats.size / 1024 / 1024) });
+      logger.info(`[VideoOpt] Видео оптимизировано: ${fileName}`, { deviceId, fileName, sizeMB: Math.round(stats.size / 1024 / 1024) });
     }
 
     // Снимаем метрики ДО коммита в хранилище.
@@ -981,7 +981,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
           force: true
         });
         if (!syncResult.synced) {
-          logger.warn('[VideoOpt] ⚠️ Файл не синхронизирован с S3', {
+          logger.warn('[VideoOpt] Файл не синхронизирован с S3', {
             deviceId,
             fileName: resultingSafeName,
             reason: syncResult.reason
@@ -1003,7 +1003,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       } catch (err) {
         // Ошибка синхронизации не должна ломать обработку — файл остаётся
         // на диске, оттуда его подхватит повторная синхронизация
-        logger.error('[VideoOpt] ❌ Ошибка синхронизации с S3', {
+        logger.error('[VideoOpt] Ошибка синхронизации с S3', {
           deviceId,
           fileName,
           key: resultKey,
@@ -1046,7 +1046,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
         uploadedBy: metadata.uploaded_by || null
       });
 
-      logger.info('[VideoOpt] 📊 Метаданные обновлены в БД', {
+      logger.info('[VideoOpt] Метаданные обновлены в БД', {
         deviceId,
         originalFile: fileName,
         finalFile: resultingSafeName,
@@ -1089,7 +1089,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     } catch (error) {
       const cancelled = isOptimizationCancelError(error) || hasOptimizationCancelRequest(optimizationKey);
       if (cancelled) {
-      logger.info('[VideoOpt] ⏹️ Обработка отменена пользователем', {
+      logger.info('[VideoOpt] Обработка отменена пользователем', {
         deviceId,
         fileName,
         reason: error.message
@@ -1115,7 +1115,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       return { success: false, cancelled: true, message: error.message || 'Обработка отменена пользователем' };
     }
 
-      logger.error(`[VideoOpt] ❌ Ошибка конвертации`, { error: error.message, stack: error.stack, deviceId, fileName });
+      logger.error(`[VideoOpt] Ошибка конвертации`, { error: error.message, stack: error.stack, deviceId, fileName });
 
       // Очищаем временный файл
       if (tempPath && fs.existsSync(tempPath)) {
@@ -1128,7 +1128,7 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
 
       if (codecLower === 'av1') {
         errorMessage = `Кодек AV1 не поддерживается вашей версией FFmpeg. Файл воспроизводится как WebM, но может тормозить на Android. Рекомендация: конвертируйте файл в H.264 вручную или обновите FFmpeg.`;
-        logger.warn(`[VideoOpt] ⚠️ AV1 кодек не поддерживается`, { deviceId, fileName });
+        logger.warn(`[VideoOpt] AV1 кодек не поддерживается`, { deviceId, fileName });
       } else if (codecLower === 'vp9') {
         errorMessage = `Кодек VP9 может не поддерживаться. Файл воспроизводится как WebM, но может тормозить на Android.`;
       }

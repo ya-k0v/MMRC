@@ -57,16 +57,16 @@ export function setupSocketHandlers(io, deps) {
   
   io.on('connection', socket => {
     const transport = socket.conn?.transport?.name;
-    logger.debug(`[Socket.IO] 🔌 connection id=${socket.id}`, { socketId: socket.id, transport });
+    logger.debug(`[Socket.IO] connection id=${socket.id}`, { socketId: socket.id, transport });
 
     // Логирование transport events
     if (socket.conn) {
       socket.conn.on('upgrade', () => {
-        logger.debug(`[Socket.IO] 🚀 transport upgraded for ${socket.id}`, { socketId: socket.id, newTransport: socket.conn.transport.name });
+        logger.debug(`[Socket.IO] transport upgraded for ${socket.id}`, { socketId: socket.id, newTransport: socket.conn.transport.name });
       });
       
       socket.conn.on('close', (reason) => {
-        logger.warn(`[Socket.IO] 🔌 connection closed id=${socket.id}`, { socketId: socket.id, reason });
+        logger.warn(`[Socket.IO] connection closed id=${socket.id}`, { socketId: socket.id, reason });
       });
     }
 
@@ -75,7 +75,7 @@ export function setupSocketHandlers(io, deps) {
       const snapshot = getOnlineDevices();
       socket.emit('players/onlineSnapshot', snapshot);
     } catch (e) {
-      logger.error(`[Socket.IO] ❌ Ошибка отправки snapshot`, { error: e.message, stack: e.stack, socketId: socket.id });
+      logger.error(`[Socket.IO] Ошибка отправки snapshot`, { error: e.message, stack: e.stack, socketId: socket.id });
     }
 
     if (deviceVolumeState) {
@@ -90,7 +90,7 @@ export function setupSocketHandlers(io, deps) {
         }
         socket.emit('devices/volume/stateBatch', volumeSnapshot);
       } catch (e) {
-        logger.error(`[Socket.IO] ❌ Ошибка отправки volume snapshot`, { error: e.message, stack: e.stack, socketId: socket.id });
+        logger.error(`[Socket.IO] Ошибка отправки volume snapshot`, { error: e.message, stack: e.stack, socketId: socket.id });
       }
     }
     

@@ -93,7 +93,7 @@ PACKAGE_NAME="${MMRC_ANDROID_PACKAGE:-com.videocontrol.mediaplayer}"
 # ========================================
 
 if [ -z "$DEVICE" ] || [ -z "$SERVER_URL" ] || [ -z "$DEVICE_ID" ]; then
-    echo -e "${RED}❌ Использование:${NC}"
+    echo -e "${RED}Использование:${NC}"
     echo "   $0 <device_ip:port> <server_url> <device_id>"
     echo ""
     echo -e "${YELLOW}Примеры:${NC}"
@@ -105,14 +105,14 @@ fi
 
 # Проверка формата SERVER_URL
 if [[ ! "$SERVER_URL" =~ ^https?:// ]]; then
-    echo -e "${RED}❌ Неверный формат SERVER_URL. Должен начинаться с http:// или https://${NC}"
+    echo -e "${RED}Неверный формат SERVER_URL. Должен начинаться с http:// или https://${NC}"
     echo "   Пример: http://192.168.11.1"
     exit 1
 fi
 
 # Проверка формата DEVICE_ID (только буквы, цифры, _ и -)
 if [[ ! "$DEVICE_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
-    echo -e "${RED}❌ Неверный формат DEVICE_ID. Только буквы, цифры, _ и -${NC}"
+    echo -e "${RED}Неверный формат DEVICE_ID. Только буквы, цифры, _ и -${NC}"
     echo "   Пример: ATV001, Living_Room, TV-Kitchen"
     exit 1
 fi
@@ -123,7 +123,7 @@ if [ -z "$APK_PATH" ]; then
     APK_PATH=$(ls -t ../../VCMplayer-v*.apk 2>/dev/null | head -1)
 fi
 if [ -z "$APK_PATH" ]; then
-    echo -e "${RED}❌ APK файл не найден!${NC}"
+    echo -e "${RED}APK файл не найден!${NC}"
     echo "   Соберите APK с помощью: ./gradlew assembleDebug"
     echo "   или скопируйте готовый APK в корень проекта"
     exit 1
@@ -132,14 +132,14 @@ fi
 APK_VERSION=$(basename "$APK_PATH" | grep -oP 'v\d+\.\d+\.\d+')
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}🚀 VideoControl Android Quick Setup${NC}"
+echo -e "${GREEN}VideoControl Android Quick Setup${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 echo -e "${YELLOW}Параметры:${NC}"
-echo "   📱 Устройство: $DEVICE"
-echo "   🌐 Сервер: $SERVER_URL"
-echo "   🆔 Device ID: $DEVICE_ID"
-echo "   📦 APK: $(basename $APK_PATH)"
+echo "   Устройство: $DEVICE"
+echo "   Сервер: $SERVER_URL"
+echo "   Device ID: $DEVICE_ID"
+echo "   APK: $(basename $APK_PATH)"
 echo ""
 
 # ========================================
@@ -147,14 +147,14 @@ echo ""
 # ========================================
 
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}1️⃣ Подключение к устройству${NC}"
+echo -e "${GREEN}1. Подключение к устройству${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 adb connect $DEVICE
 sleep 2
 
 if ! adb -s $DEVICE shell "echo test" > /dev/null 2>&1; then
-    echo -e "${RED}❌ Не удалось подключиться к устройству $DEVICE${NC}"
+    echo -e "${RED}Не удалось подключиться к устройству $DEVICE${NC}"
     echo ""
     echo "Проверьте:"
     echo "   • Устройство включено и подключено к сети"
@@ -163,7 +163,7 @@ if ! adb -s $DEVICE shell "echo test" > /dev/null 2>&1; then
     exit 1
 fi
 
-echo -e "${GREEN}✅ Подключено к $DEVICE${NC}"
+echo -e "${GREEN}Подключено к $DEVICE${NC}"
 echo ""
 
 # ========================================
@@ -171,7 +171,7 @@ echo ""
 # ========================================
 
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}2️⃣ Информация об устройстве${NC}"
+echo -e "${GREEN}2. Информация об устройстве${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 ANDROID_VERSION=$(adb -s $DEVICE shell "getprop ro.build.version.release" | tr -d '\r')
@@ -189,15 +189,15 @@ echo ""
 # ========================================
 
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}3️⃣ Проверка установленного приложения${NC}"
+echo -e "${GREEN}3. Проверка установленного приложения${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 if adb -s $DEVICE shell "pm list packages | grep $PACKAGE_NAME" > /dev/null 2>&1; then
     INSTALLED_VERSION=$(adb -s $DEVICE shell "dumpsys package $PACKAGE_NAME | grep versionName" | head -1 | sed 's/.*versionName=//' | tr -d '\r')
-    echo -e "${YELLOW}⚠️ Приложение уже установлено (версия: $INSTALLED_VERSION)${NC}"
+    echo -e "${YELLOW}Приложение уже установлено (версия: $INSTALLED_VERSION)${NC}"
     echo "   Удаляю старую версию..."
     adb -s $DEVICE uninstall $PACKAGE_NAME
-    echo -e "${GREEN}✅ Старая версия удалена${NC}"
+    echo -e "${GREEN}Старая версия удалена${NC}"
 else
     echo "   Приложение не установлено"
 fi
@@ -208,14 +208,14 @@ echo ""
 # ========================================
 
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}4️⃣ Установка APK${NC}"
+echo -e "${GREEN}4. Установка APK${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 echo "   Установка $APK_VERSION на $DEVICE..."
 if adb -s $DEVICE install "$APK_PATH"; then
-    echo -e "${GREEN}✅ APK установлен успешно!${NC}"
+    echo -e "${GREEN}APK установлен успешно!${NC}"
 else
-    echo -e "${RED}❌ Ошибка установки APK${NC}"
+    echo -e "${RED}Ошибка установки APK${NC}"
     exit 1
 fi
 echo ""
@@ -225,7 +225,7 @@ echo ""
 # ========================================
 
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}5️⃣ Настройка Server URL и Device ID${NC}"
+echo -e "${GREEN}5. Настройка Server URL и Device ID${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 # Запускаем приложение для создания SharedPreferences
@@ -261,13 +261,13 @@ EOF
 # Копируем настройки в приложение
 adb -s $DEVICE push /tmp/VCMediaPlayerSettings.xml /sdcard/VCMediaPlayerSettings.xml > /dev/null 2>&1
 adb -s $DEVICE shell "run-as $PACKAGE_NAME cp /sdcard/VCMediaPlayerSettings.xml shared_prefs/VCMediaPlayerSettings.xml" 2>/dev/null || {
-    echo -e "${YELLOW}   ⚠️ Не удалось применить настройки автоматически${NC}"
+    echo -e "${YELLOW}   Не удалось применить настройки автоматически${NC}"
     echo "   Настройте вручную в приложении после первого запуска"
 }
 adb -s $DEVICE shell "rm /sdcard/VCMediaPlayerSettings.xml" 2>/dev/null || true
 rm /tmp/VCMediaPlayerSettings.xml
 
-echo -e "${GREEN}✅ Настройки применены${NC}"
+echo -e "${GREEN}Настройки применены${NC}"
 echo ""
 
 # ========================================
@@ -275,26 +275,26 @@ echo ""
 # ========================================
 
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}6️⃣ Отключение оптимизации батареи${NC}"
+echo -e "${GREEN}6. Отключение оптимизации батареи${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 # Добавить в whitelist doze mode
 echo "   Добавление в whitelist Doze mode..."
 adb -s $DEVICE shell "dumpsys deviceidle whitelist +$PACKAGE_NAME" 2>/dev/null && \
-    echo -e "${GREEN}   ✅ Добавлено в Doze whitelist${NC}" || \
-    echo -e "${YELLOW}   ⚠️ Doze whitelist недоступен на этой версии Android${NC}"
+    echo -e "${GREEN}   Добавлено в Doze whitelist${NC}" || \
+    echo -e "${YELLOW}   Doze whitelist недоступен на этой версии Android${NC}"
 
 # Разрешить работу в фоне
 echo "   Разрешение работы в фоне..."
 adb -s $DEVICE shell "cmd appops set $PACKAGE_NAME RUN_IN_BACKGROUND allow" 2>/dev/null && \
-    echo -e "${GREEN}   ✅ Разрешена работа в фоне${NC}" || \
-    echo -e "${YELLOW}   ⚠️ RUN_IN_BACKGROUND недоступен${NC}"
+    echo -e "${GREEN}   Разрешена работа в фоне${NC}" || \
+    echo -e "${YELLOW}   RUN_IN_BACKGROUND недоступен${NC}"
 
 # Разрешить автозапуск
 echo "   Разрешение автозапуска..."
 adb -s $DEVICE shell "cmd appops set $PACKAGE_NAME RUN_ANY_IN_BACKGROUND allow" 2>/dev/null || true
 
-echo -e "${GREEN}✅ Оптимизация батареи отключена${NC}"
+echo -e "${GREEN}Оптимизация батареи отключена${NC}"
 echo ""
 
 # ========================================
@@ -302,7 +302,7 @@ echo ""
 # ========================================
 
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}7️⃣ Настройка экрана для 24/7${NC}"
+echo -e "${GREEN}7. Настройка экрана для 24/7${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 # Отключить таймаут выключения экрана
@@ -322,7 +322,7 @@ echo "   Установка яркости на 100%..."
 adb -s $DEVICE shell "settings put system screen_brightness 255"
 echo "   Яркость: 255/255 (100%)"
 
-echo -e "${GREEN}✅ Экран настроен для 24/7${NC}"
+echo -e "${GREEN}Экран настроен для 24/7${NC}"
 echo ""
 
 # ========================================
@@ -330,34 +330,34 @@ echo ""
 # ========================================
 
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}8️⃣ Настройка автозапуска${NC}"
+echo -e "${GREEN}8. Настройка автозапуска${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 # Проверка разрешения RECEIVE_BOOT_COMPLETED
 BOOT_PERM=$(adb -s $DEVICE shell "dumpsys package $PACKAGE_NAME | grep 'android.permission.RECEIVE_BOOT_COMPLETED: granted'" | tr -d '\r')
 if [ -n "$BOOT_PERM" ]; then
-    echo -e "${GREEN}   ✅ RECEIVE_BOOT_COMPLETED: granted${NC}"
+    echo -e "${GREEN}   RECEIVE_BOOT_COMPLETED: granted${NC}"
 else
-    echo -e "${RED}   ❌ RECEIVE_BOOT_COMPLETED: NOT granted${NC}"
+    echo -e "${RED}   RECEIVE_BOOT_COMPLETED: NOT granted${NC}"
 fi
 
 # Проверка разрешения WAKE_LOCK
 WAKE_PERM=$(adb -s $DEVICE shell "dumpsys package $PACKAGE_NAME | grep 'android.permission.WAKE_LOCK: granted'" | tr -d '\r')
 if [ -n "$WAKE_PERM" ]; then
-    echo -e "${GREEN}   ✅ WAKE_LOCK: granted${NC}"
+    echo -e "${GREEN}   WAKE_LOCK: granted${NC}"
 else
-    echo -e "${RED}   ❌ WAKE_LOCK: NOT granted${NC}"
+    echo -e "${RED}   WAKE_LOCK: NOT granted${NC}"
 fi
 
 # Проверка разрешения INTERNET
 INTERNET_PERM=$(adb -s $DEVICE shell "dumpsys package $PACKAGE_NAME | grep 'android.permission.INTERNET: granted'" | tr -d '\r')
 if [ -n "$INTERNET_PERM" ]; then
-    echo -e "${GREEN}   ✅ INTERNET: granted${NC}"
+    echo -e "${GREEN}   INTERNET: granted${NC}"
 else
-    echo -e "${RED}   ❌ INTERNET: NOT granted${NC}"
+    echo -e "${RED}   INTERNET: NOT granted${NC}"
 fi
 
-echo -e "${GREEN}✅ Автозапуск настроен${NC}"
+echo -e "${GREEN}Автозапуск настроен${NC}"
 echo ""
 
 # ========================================
@@ -365,20 +365,20 @@ echo ""
 # ========================================
 
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}9️⃣ Дополнительные настройки (производитель: $MANUFACTURER)${NC}"
+echo -e "${GREEN}9. Дополнительные настройки (производитель: $MANUFACTURER)${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 case "$MANUFACTURER" in
     *Xiaomi*|*xiaomi*|*XIAOMI*)
-        echo -e "${YELLOW}   🔧 Xiaomi устройство - требуются ручные настройки:${NC}"
+        echo -e "${YELLOW}   Xiaomi устройство - требуются ручные настройки:${NC}"
         echo "      Settings → Apps → Manage apps → VideoControl MediaPlayer"
-        echo "      → Autostart: ${GREEN}ON ✅${NC}"
+        echo "      → Autostart: ${GREEN}ON ${NC}"
         echo "      → Battery saver: ${GREEN}No restrictions${NC}"
         echo "      → Display pop-up windows: ${GREEN}ON${NC}"
         echo "      → Display pop-up window while running in the background: ${GREEN}ON${NC}"
         ;;
     *Samsung*|*samsung*|*SAMSUNG*)
-        echo -e "${YELLOW}   🔧 Samsung устройство - требуются ручные настройки:${NC}"
+        echo -e "${YELLOW}   Samsung устройство - требуются ручные настройки:${NC}"
         echo "      Settings → Apps → VideoControl MediaPlayer"
         echo "      → Battery → ${GREEN}Unrestricted${NC}"
         echo "      → Background usage limits → ${GREEN}Don't restrict${NC}"
@@ -386,15 +386,15 @@ case "$MANUFACTURER" in
         adb -s $DEVICE shell "cmd package set-home-activity $PACKAGE_NAME/.MainActivity" 2>/dev/null || true
         ;;
     *Huawei*|*huawei*|*HUAWEI*|*Honor*|*honor*)
-        echo -e "${YELLOW}   🔧 Huawei/Honor устройство - требуются ручные настройки:${NC}"
+        echo -e "${YELLOW}   Huawei/Honor устройство - требуются ручные настройки:${NC}"
         echo "      Settings → Battery → App launch → VideoControl MediaPlayer"
         echo "      → Manual management: ${GREEN}ON${NC}"
-        echo "      → Auto-launch: ${GREEN}ON ✅${NC}"
-        echo "      → Secondary launch: ${GREEN}ON ✅${NC}"
-        echo "      → Run in background: ${GREEN}ON ✅${NC}"
+        echo "      → Auto-launch: ${GREEN}ON ${NC}"
+        echo "      → Secondary launch: ${GREEN}ON ${NC}"
+        echo "      → Run in background: ${GREEN}ON ${NC}"
         ;;
     *)
-        echo -e "${GREEN}   ✅ Стандартное Android устройство - базовые настройки применены!${NC}"
+        echo -e "${GREEN}   Стандартное Android устройство - базовые настройки применены!${NC}"
         ;;
 esac
 echo ""
@@ -404,7 +404,7 @@ echo ""
 # ========================================
 
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}🔟 Запуск приложения${NC}"
+echo -e "${GREEN}Запуск приложения${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 echo "   Запуск VideoControl MediaPlayer..."
@@ -413,9 +413,9 @@ sleep 3
 
 # Проверка запущено ли приложение
 if adb -s $DEVICE shell "ps -A | grep $PACKAGE_NAME" > /dev/null 2>&1; then
-    echo -e "${GREEN}✅ Приложение запущено и работает!${NC}"
+    echo -e "${GREEN}Приложение запущено и работает!${NC}"
 else
-    echo -e "${YELLOW}⚠️ Приложение не обнаружено в процессах${NC}"
+    echo -e "${YELLOW}Приложение не обнаружено в процессах${NC}"
     echo "   Попробуйте запустить вручную"
 fi
 echo ""
@@ -425,22 +425,22 @@ echo ""
 # ========================================
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}✅ НАСТРОЙКА ЗАВЕРШЕНА!${NC}"
+echo -e "${GREEN}НАСТРОЙКА ЗАВЕРШЕНА!${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
-echo -e "${GREEN}📱 Устройство:${NC} $DEVICE"
-echo -e "${GREEN}🌐 Сервер:${NC} $SERVER_URL"
-echo -e "${GREEN}🆔 Device ID:${NC} $DEVICE_ID"
-echo -e "${GREEN}📦 Версия APK:${NC} $APK_VERSION"
+echo -e "${GREEN}Устройство:${NC} $DEVICE"
+echo -e "${GREEN}Сервер:${NC} $SERVER_URL"
+echo -e "${GREEN}Device ID:${NC} $DEVICE_ID"
+echo -e "${GREEN}Версия APK:${NC} $APK_VERSION"
 echo ""
-echo -e "${YELLOW}🎯 Что дальше:${NC}"
+echo -e "${YELLOW}Что дальше:${NC}"
 echo ""
-echo "   1️⃣ Откройте приложение на устройстве и проверьте подключение"
-echo "   2️⃣ Проверьте что устройство появилось в админ-панели: $SERVER_URL/admin.html"
-echo "   3️⃣ Для проверки автозапуска - перезагрузите устройство:"
+echo "   1. Откройте приложение на устройстве и проверьте подключение"
+echo "   2. Проверьте что устройство появилось в админ-панели: $SERVER_URL/admin.html"
+echo "   3. Для проверки автозапуска - перезагрузите устройство:"
 echo "      ${BLUE}adb -s $DEVICE reboot${NC}"
 echo ""
-echo -e "${YELLOW}🔍 Полезные команды:${NC}"
+echo -e "${YELLOW}Полезные команды:${NC}"
 echo ""
 echo "   Проверка процесса:"
 echo "   ${BLUE}adb -s $DEVICE shell \"ps -A | grep videocontrol\"${NC}"
@@ -457,12 +457,12 @@ echo ""
 
 # Производитель-специфичные рекомендации
 if [[ "$MANUFACTURER" =~ Xiaomi|Samsung|Huawei|Honor ]]; then
-    echo -e "${YELLOW}⚠️ ВАЖНО для $MANUFACTURER:${NC}"
+    echo -e "${YELLOW}ВАЖНО для $MANUFACTURER:${NC}"
     echo "   Выполните дополнительные настройки вручную (см. выше)"
     echo "   Иначе автозапуск может не работать!"
     echo ""
 fi
 
-echo -e "${GREEN}🎉 Готово к использованию 24/7!${NC}"
+echo -e "${GREEN}Готово к использованию 24/7!${NC}"
 echo ""
 

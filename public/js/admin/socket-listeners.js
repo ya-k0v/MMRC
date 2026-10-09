@@ -64,7 +64,7 @@ export function setupSocketListeners(socket, callbacks) {
   
   // file/error - Ошибка обработки файла
   socket.on('file/error', ({ device_id, file, error }) => {
-    console.error(`[Admin] ❌ Ошибка обработки: ${file} (${device_id}):`, error);
+    console.error(`[Admin] Ошибка обработки: ${file} (${device_id}):`, error);
     if (onFileError) onFileError(device_id, file, error);
   });
   

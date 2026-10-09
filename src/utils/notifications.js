@@ -408,7 +408,7 @@ export const notifyDiskFull = (details = {}) => {
   return notificationsManager.add(
     'disk_full',
     'critical',
-    '🚨 Переполнение диска',
+    'Переполнение диска',
     'Обнаружена критическая ошибка переполнения диска. Выполнена экстренная очистка.',
     {
       ...details,
@@ -425,7 +425,7 @@ export const notifyServiceHanging = (service, details = {}) => {
   return notificationsManager.add(
     'service_hanging',
     'critical',
-    '⚠️ Сервис завис',
+    'Сервис завис',
     `Сервис ${service} не отвечает длительное время`,
     {
       service,
@@ -442,7 +442,7 @@ export const notifyDbError = (details = {}) => {
   return notificationsManager.add(
     'db_error',
     'critical',
-    '❌ Ошибка базы данных',
+    'Ошибка базы данных',
     'Обнаружена критическая ошибка базы данных',
     {
       ...details,
@@ -458,7 +458,7 @@ export const notifyFfmpegError = (details = {}) => {
   return notificationsManager.add(
     'ffmpeg_error',
     'warning',
-    '⚠️ Ошибка FFmpeg',
+    'Ошибка FFmpeg',
     'Ошибка при обработке видео или стрима',
     {
       ...details,
@@ -474,7 +474,7 @@ export const notifyCriticalError = (details = {}) => {
   return notificationsManager.add(
     'critical_error',
     'critical',
-    '💥 Критическая ошибка',
+    'Критическая ошибка',
     'Обнаружена критическая ошибка, требующая внимания',
     {
       ...details,
@@ -490,7 +490,7 @@ export const notifyDeviceUnavailable = (deviceId, details = {}) => {
   return notificationsManager.add(
     'device_unavailable',
     'warning',
-    '📱 Устройство недоступно',
+    'Устройство недоступно',
     `Устройство ${deviceId} не отвечает`,
     {
       deviceId,
@@ -507,7 +507,7 @@ export const notifyFileProcessingError = (deviceId, fileName, details = {}) => {
   return notificationsManager.add(
     'file_processing_error',
     'warning',
-    '📄 Ошибка обработки файла',
+    'Ошибка обработки файла',
     `Не удалось обработать файл ${fileName}`,
     {
       deviceId,
@@ -524,8 +524,8 @@ export const notifyFileProcessingError = (deviceId, fileName, details = {}) => {
 export const notifyDiskUsageHigh = (usagePercent, details = {}) => {
   const severity = usagePercent >= 95 ? 'critical' : 'warning';
   const title = usagePercent >= 95 
-    ? '🚨 Критически мало места на диске' 
-    : '⚠️ Мало места на диске';
+    ? 'Критически мало места на диске' 
+    : 'Мало места на диске';
   const message = usagePercent >= 95
     ? `Диск заполнен на ${usagePercent.toFixed(1)}%. Требуется немедленное освобождение места.`
     : `Диск заполнен на ${usagePercent.toFixed(1)}%. Рекомендуется освободить место.`;
@@ -550,7 +550,7 @@ export const notifyFfmpegProcessHung = (deviceId, safeName, details = {}) => {
   return notificationsManager.add(
     'ffmpeg_hung',
     'critical',
-    '⚠️ FFmpeg процесс завис',
+    'FFmpeg процесс завис',
     `Процесс FFmpeg для стрима ${safeName} не отвечает длительное время`,
     {
       deviceId,
@@ -568,7 +568,7 @@ export const notifyStreamSourceUnavailable = (deviceId, safeName, streamUrl, det
   return notificationsManager.add(
     'stream_source_unavailable',
     'warning',
-    '📡 Источник стрима недоступен',
+    'Источник стрима недоступен',
     `Источник стрима ${safeName} недоступен или не отвечает`,
     {
       deviceId,
@@ -587,7 +587,7 @@ export const notifyStreamStartFailed = (deviceId, safeName, details = {}) => {
   return notificationsManager.add(
     'stream_start_failed',
     'critical',
-    '❌ Не удалось запустить стрим',
+    'Не удалось запустить стрим',
     `Стрим ${safeName} не может быть запущен после всех попыток`,
     {
       deviceId,
@@ -605,7 +605,7 @@ export const notifyMemoryUsageHigh = (usagePercent, details = {}) => {
   return notificationsManager.add(
     'memory_usage_high',
     'warning',
-    '💾 Высокое использование памяти',
+    'Высокое использование памяти',
     `Использование памяти: ${usagePercent.toFixed(1)}%`,
     {
       usagePercent,

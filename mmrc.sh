@@ -81,9 +81,9 @@ box_line() {
 }
 
 info() { colorized_echo blue "  $1"; }
-success() { colorized_echo green "✔ $1"; }
-warn() { colorized_echo yellow "⚠ $1" >&2; }
-error() { colorized_echo red "✖ $1" >&2; }
+success() { colorized_echo green "$1"; }
+warn() { colorized_echo yellow "$1" >&2; }
+error() { colorized_echo red "$1" >&2; }
 
 check_root() {
     if [ "$(id -u)" != "0" ]; then
@@ -248,7 +248,7 @@ read_from_tty() {
     if [ -r /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
         read -r -p "$prompt" reply < /dev/tty || reply=""
     else
-        printf '✖ %s\n' "Interactive input required (no TTY available). Re-run from a terminal." >&2
+        printf '%s\n' "Interactive input required (no TTY available). Re-run from a terminal." >&2
         return 1
     fi
     printf '%s' "${reply:-$default}"
@@ -280,7 +280,7 @@ cmd_install() {
 
     colorized_echo cyan "
 ══════════════════════════════════════════
-          📺 MMRC Installer               
+          MMRC Installer               
      Media Management & Remote Control    
 ══════════════════════════════════════════
 "
@@ -295,7 +295,7 @@ cmd_reinstall() {
     check_root
     require_installed
 
-    colorized_echo yellow "⚠️  This will reinstall MMRC."
+    colorized_echo yellow " This will reinstall MMRC."
     colorized_echo yellow "    Existing configuration ($APP_DIR/.env) will be PRESERVED and backed up (.env.bak.*)."
     confirm_reply=$(confirm "  Continue? [y/N]: ")
     if [[ ! "$confirm_reply" =~ ^[Yy]$ ]]; then
@@ -359,7 +359,7 @@ cmd_reset() {
 
     colorized_echo red "
 ══════════════════════════════════════════
-            ⚠️  MMRC Reset                      
+             MMRC Reset                      
         THIS WILL DELETE ALL DATA!            
 ══════════════════════════════════════════
 "
@@ -413,7 +413,7 @@ cmd_reset_password() {
 
     colorized_echo yellow "
 ══════════════════════════════════════════
-         🔑 Reset Admin Password
+         Reset Admin Password
 ══════════════════════════════════════════
 "
 
@@ -573,7 +573,7 @@ cmd_status() {
     cd "$APP_DIR"
     echo ""
     colorized_echo cyan "══════════════════════════════════════"
-    colorized_echo cyan "         📊 MMRC Status              "
+    colorized_echo cyan "         MMRC Status              "
     colorized_echo cyan "══════════════════════════════════════"
     echo ""
     COMPOSE_HA=$(get_compose_ha)
@@ -714,7 +714,7 @@ cmd_update() {
 
     colorized_echo cyan "
 ══════════════════════════════════════════
-            🔄 MMRC Updater                  
+            MMRC Updater                  
 ══════════════════════════════════════════
 "
 
@@ -776,7 +776,7 @@ cmd_backup() {
 
     colorized_echo cyan "
 ══════════════════════════════════════════
-            💾 MMRC Backup                   
+            MMRC Backup                   
 ══════════════════════════════════════════
 "
 
@@ -855,7 +855,7 @@ cmd_ssl() {
 
     colorized_echo cyan "
 ══════════════════════════════════════════
-         🔐 MMRC SSL Setup
+         MMRC SSL Setup
 ══════════════════════════════════════════
 "
 
@@ -1056,7 +1056,7 @@ cmd_uninstall() {
 
     colorized_echo red "
 ══════════════════════════════════════════
-            ⚠️  MMRC Uninstall                  
+             MMRC Uninstall                  
         THIS WILL DELETE ALL DATA!            
 ══════════════════════════════════════════
 "
@@ -1287,7 +1287,7 @@ Note: HA requires PostgreSQL + S3/MinIO (not SQLite).
 cmd_help() {
     colorized_echo cyan "
 ══════════════════════════════════════════════════════
-                   📺 MMRC CLI                             
+                   MMRC CLI                             
             Media Management & Remote Control            
 ══════════════════════════════════════════════════════
 

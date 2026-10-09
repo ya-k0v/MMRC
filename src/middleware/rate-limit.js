@@ -71,7 +71,7 @@ export const authLimiter = rateLimit({
   message: { error: 'Too many login attempts, please try again later' },
   skipSuccessfulRequests: true,
   skipFailedRequests: false,
-  skip: neverSkip, // ⚡ ОГРАНИЧИВАЕМ ВСЕГДА - защита от brute force
+  skip: neverSkip, // ОГРАНИЧИВАЕМ ВСЕГДА - защита от brute force
   validate: { trustProxy: false }
 });
 

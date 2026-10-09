@@ -337,7 +337,7 @@ class StreamManager extends EventEmitter {
         if (job.status === 'running' && job.process && !job.process.killed) {
           const isProcessAlive = this._checkProcessAlive(job.process);
           if (!isProcessAlive) {
-            logger.warn('[StreamManager] 🔴 FFmpeg process is dead but not detected', {
+            logger.warn('[StreamManager] FFmpeg process is dead but not detected', {
               safeName,
               pid: job.process.pid
             });
@@ -348,7 +348,7 @@ class StreamManager extends EventEmitter {
           if (job.lastSegmentWrite) {
             const timeSinceLastWrite = now - job.lastSegmentWrite;
             if (timeSinceLastWrite > this.options.hungProcessTimeout) {
-              logger.warn('[StreamManager] 🔴 Detected hung FFmpeg process (no heartbeat)', {
+              logger.warn('[StreamManager] Detected hung FFmpeg process (no heartbeat)', {
                 safeName,
                 timeSinceLastWriteMs: timeSinceLastWrite,
                 pid: job.process.pid
@@ -398,7 +398,7 @@ class StreamManager extends EventEmitter {
                            timeSinceLastAccess > MAX_IDLE_TIME;
         
         if (shouldStop) {
-          logger.info('[StreamManager] 🕐 Stopping stream (no active viewers/requests)', {
+          logger.info('[StreamManager] Stopping stream (no active viewers/requests)', {
             safeName,
             activeViewers: viewerCount,
             activeRequests: hasActiveRequests,
@@ -744,7 +744,7 @@ class StreamManager extends EventEmitter {
    * Экстренная очистка всех стримов при переполнении диска
    */
   _emergencyCleanupAllStreams() {
-    logger.warn('[StreamManager] 🚨 Starting emergency cleanup of ALL streams due to disk full');
+    logger.warn('[StreamManager] Starting emergency cleanup of ALL streams due to disk full');
     
     let cleanedCount = 0;
     for (const [key, job] of this.jobs.entries()) {
@@ -762,7 +762,7 @@ class StreamManager extends EventEmitter {
       }
     }
     
-    logger.warn('[StreamManager] ✅ Emergency cleanup of all streams completed', {
+    logger.warn('[StreamManager] Emergency cleanup of all streams completed', {
       cleanedCount,
       totalStreams: this.jobs.size
     });
@@ -783,7 +783,7 @@ class StreamManager extends EventEmitter {
         return;
       }
 
-      logger.warn('[StreamManager] 🚨 EMERGENCY CLEANUP: Removing all files except m3u8 and last 3 ts files', { folderPath });
+      logger.warn('[StreamManager] EMERGENCY CLEANUP: Removing all files except m3u8 and last 3 ts files', { folderPath });
 
       const files = fs.readdirSync(folderPath);
       
@@ -853,14 +853,14 @@ class StreamManager extends EventEmitter {
         }
       }
 
-      logger.warn('[StreamManager] ✅ Emergency cleanup completed', {
+      logger.warn('[StreamManager] Emergency cleanup completed', {
         folderPath,
         deletedCount,
         freedMB: Math.round(freedBytes / 1024 / 1024),
         remainingTsFiles: Math.min(tsFiles.length, 3)
       });
     } catch (error) {
-      logger.error('[StreamManager] ❌ Failed to perform emergency cleanup', {
+      logger.error('[StreamManager] Failed to perform emergency cleanup', {
         folderPath,
         error: error.message,
         stack: error.stack
@@ -1232,7 +1232,7 @@ class StreamManager extends EventEmitter {
     } catch (err) {
       // КРИТИЧНО: Обрабатываем ошибки переполнения диска
       if (err.code === 'ENOSPC' || err.message.includes('No space left on device')) {
-        logger.error('[StreamManager] 🚨 DISK FULL ERROR while creating stream folder, triggering emergency cleanup', {
+        logger.error('[StreamManager] DISK FULL ERROR while creating stream folder, triggering emergency cleanup', {
           deviceId: device_id,
           safeName: safe_name,
           folderPath: paths.folderPath,
@@ -1576,7 +1576,7 @@ class StreamManager extends EventEmitter {
         
         if (isDiskFullError && !job.emergencyCleanupTriggered) {
           job.emergencyCleanupTriggered = true;
-          logger.error('[StreamManager] 🚨 DISK FULL ERROR detected in FFmpeg stderr, triggering emergency cleanup', {
+          logger.error('[StreamManager] DISK FULL ERROR detected in FFmpeg stderr, triggering emergency cleanup', {
             deviceId: device_id,
             safeName: safe_name,
             chunk: chunk.substring(0, 500)
@@ -1678,7 +1678,7 @@ class StreamManager extends EventEmitter {
       
       // КРИТИЧНО: Обрабатываем ошибки переполнения диска
       if (err.code === 'ENOSPC' || err.message.includes('No space left on device')) {
-        logger.error('[StreamManager] 🚨 DISK FULL ERROR in FFmpeg spawn, triggering emergency cleanup', {
+        logger.error('[StreamManager] DISK FULL ERROR in FFmpeg spawn, triggering emergency cleanup', {
           deviceId: device_id,
           safeName: safe_name,
           error: err.message,
@@ -1957,7 +1957,7 @@ class StreamManager extends EventEmitter {
     }
     
     const pid = job.process.pid;
-    logger.warn('[StreamManager] 🔴 Force killing hung FFmpeg process', {
+    logger.warn('[StreamManager] Force killing hung FFmpeg process', {
       deviceId: job.deviceId,
       safeName: job.safeName,
       pid,
@@ -4221,7 +4221,7 @@ class StreamManager extends EventEmitter {
             } catch (err) {
               // КРИТИЧНО: Обрабатываем ошибки переполнения диска
               if (err.code === 'ENOSPC') {
-                logger.error('[StreamManager] 🚨 DISK FULL ERROR while reading file stats for size calculation', {
+                logger.error('[StreamManager] DISK FULL ERROR while reading file stats for size calculation', {
                   deviceId: job.deviceId,
                   safeName: job.safeName,
                   file: file,
@@ -4236,7 +4236,7 @@ class StreamManager extends EventEmitter {
         } catch (err) {
           // КРИТИЧНО: Обрабатываем ошибки переполнения диска при чтении директории
           if (err.code === 'ENOSPC') {
-            logger.error('[StreamManager] 🚨 DISK FULL ERROR while reading directory for size calculation', {
+            logger.error('[StreamManager] DISK FULL ERROR while reading directory for size calculation', {
               deviceId: job.deviceId,
               safeName: job.safeName,
               folderPath,
@@ -4323,7 +4323,7 @@ class StreamManager extends EventEmitter {
               } catch (err) {
                 // КРИТИЧНО: Обрабатываем ошибки переполнения диска при чтении файлов
                 if (err.code === 'ENOSPC') {
-                  logger.error('[StreamManager] 🚨 DISK FULL ERROR while reading file stats, triggering emergency cleanup', {
+                  logger.error('[StreamManager] DISK FULL ERROR while reading file stats, triggering emergency cleanup', {
                     deviceId: job.deviceId,
                     safeName: job.safeName,
                     file: f,
@@ -4349,7 +4349,7 @@ class StreamManager extends EventEmitter {
               } catch (err) {
                 // КРИТИЧНО: Обрабатываем ошибки переполнения диска при удалении файлов
                 if (err.code === 'ENOSPC') {
-                  logger.error('[StreamManager] 🚨 DISK FULL ERROR while deleting file, triggering emergency cleanup', {
+                  logger.error('[StreamManager] DISK FULL ERROR while deleting file, triggering emergency cleanup', {
                     deviceId: job.deviceId,
                     safeName: job.safeName,
                     file: file.path,
@@ -4386,7 +4386,7 @@ class StreamManager extends EventEmitter {
         } catch (readError) {
           // КРИТИЧНО: Обрабатываем ошибки переполнения диска при чтении директории
           if (readError.code === 'ENOSPC') {
-            logger.error('[StreamManager] 🚨 DISK FULL ERROR while reading directory, triggering emergency cleanup', {
+            logger.error('[StreamManager] DISK FULL ERROR while reading directory, triggering emergency cleanup', {
               deviceId: job.deviceId,
               safeName: job.safeName,
               folderPath,
@@ -4407,7 +4407,7 @@ class StreamManager extends EventEmitter {
       } catch (error) {
         // КРИТИЧНО: Обрабатываем ошибки переполнения диска
         if (error.code === 'ENOSPC' || error.message.includes('No space left on device')) {
-          logger.error('[StreamManager] 🚨 DISK FULL ERROR during segment cleanup, triggering emergency cleanup', {
+          logger.error('[StreamManager] DISK FULL ERROR during segment cleanup, triggering emergency cleanup', {
             deviceId: job.deviceId,
             safeName: job.safeName,
             error: error.message,

@@ -253,7 +253,7 @@ function bindTileEvents(li, ctx) {
           await ctx.renderFilesPane(currentDeviceId);
         }
       } else {
-        console.error(`[DragDrop] ❌ Ошибка: ${result.error || 'Unknown error'}`);
+        console.error(`[DragDrop] Ошибка: ${result.error || 'Unknown error'}`);
         finishCopyProgress({
           opId,
           ok: false,
@@ -261,7 +261,7 @@ function bindTileEvents(li, ctx) {
         });
       }
     } catch (error) {
-      console.error('[DragDrop] ❌ Ошибка:', error);
+      console.error('[DragDrop] Ошибка:', error);
       finishCopyProgress({ opId, ok: false, error: error.message || 'Ошибка соединения' });
     }
   });

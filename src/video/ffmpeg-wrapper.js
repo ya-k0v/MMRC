@@ -63,9 +63,9 @@ export async function checkVideoParameters(filePath) {
   } catch (error) {
     // Проверяем timeout ошибку
     if (error.killed && error.signal === 'SIGTERM') {
-      logger.error(`[VideoOpt] ⏱️ FFprobe timeout для файла: ${filePath}`, { filePath, error: error.message });
+      logger.error(`[VideoOpt] FFprobe timeout для файла: ${filePath}`, { filePath, error: error.message });
     } else {
-      logger.error(`[VideoOpt] ❌ Ошибка ffprobe: ${error.message}`, { filePath, error: error.message, stack: error.stack });
+      logger.error(`[VideoOpt] Ошибка ffprobe: ${error.message}`, { filePath, error: error.message, stack: error.stack });
     }
     return null;
   }

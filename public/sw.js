@@ -179,7 +179,7 @@ self.addEventListener('fetch', (event) => {
               </head>
               <body>
                 <div>
-                  <h1>📡 Офлайн режим</h1>
+                  <h1>Офлайн режим</h1>
                   <p>Сервер MMRC недоступен</p>
                   <p>Ожидание подключения...</p>
                   <div class="status">Service Worker v${VERSION}</div>

@@ -490,10 +490,10 @@ export async function initializeSettings() {
           // Например: /var/lib/mmrc/public/content/video.mp4 -> /var/lib/mmrc/public/content
           const oldRoot = firstPathRoot || trimTrailingPathSeparators(DEFAULT_DATA_ROOT);
           
-          logger.info(`[Settings] 🔄 Detected path mismatch, migrating: ${oldRoot} -> ${pathNormalized}`);
+          logger.info(`[Settings] Detected path mismatch, migrating: ${oldRoot} -> ${pathNormalized}`);
           const updated = await migrateFilePaths(oldRoot, pathNormalized);
           if (updated > 0) {
-            logger.info(`[Settings] ✅ Migrated ${updated} file paths on startup`);
+            logger.info(`[Settings] Migrated ${updated} file paths on startup`);
           }
         }
       }
@@ -507,12 +507,12 @@ export async function initializeSettings() {
   }
   
   currentContentRoot = normalizedPath;
-  logger.info(`[Settings] 📁 Data root (contentRoot): ${normalizedPath}`);
-  logger.info(`[Settings] 📁 Devices (content): ${getDevicesPath()}`);
-  logger.info(`[Settings] 📁 Streams: ${getStreamsOutputDir()}`);
-  logger.info(`[Settings] 📁 Converted: ${getConvertedCache()}`);
-  logger.info(`[Settings] 📁 Logs: ${getLogsDir()}`);
-  logger.info(`[Settings] 📁 Temp: ${getTempDir()}`);
+  logger.info(`[Settings] Data root (contentRoot): ${normalizedPath}`);
+  logger.info(`[Settings] Devices (content): ${getDevicesPath()}`);
+  logger.info(`[Settings] Streams: ${getStreamsOutputDir()}`);
+  logger.info(`[Settings] Converted: ${getConvertedCache()}`);
+  logger.info(`[Settings] Logs: ${getLogsDir()}`);
+  logger.info(`[Settings] Temp: ${getTempDir()}`);
 }
 
 /**
@@ -685,7 +685,7 @@ export async function updateContentRootPath(newPath) {
   // КРИТИЧНО: Используем lazy import logger, чтобы избежать циклической зависимости
   const { default: logger } = await import('../utils/logger.js');
 
-  logger.info('[Settings] 📁 Created all data directories', {
+  logger.info('[Settings] Created all data directories', {
     dataRoot: canonicalRoot,
     devices: getDevicesPath(),
     streams: getStreamsOutputDir(),
@@ -701,13 +701,13 @@ export async function updateContentRootPath(newPath) {
       const updated = await migrateFilePaths(normalizedOldRoot, normalizedNewRoot);
 
       if (updated > 0) {
-        logger.info(`[Settings] ✅ Migrated ${updated} file paths in database`, {
+        logger.info(`[Settings] Migrated ${updated} file paths in database`, {
           oldRoot: normalizedOldRoot,
           newRoot: normalizedNewRoot,
           updated
         });
       } else {
-        logger.info('[Settings] 🔄 Content root updated (no paths to migrate)', {
+        logger.info('[Settings] Content root updated (no paths to migrate)', {
           oldRoot: normalizedOldRoot,
           newRoot: normalizedNewRoot
         });
@@ -721,13 +721,13 @@ export async function updateContentRootPath(newPath) {
       // НЕ прерываем выполнение - путь всё равно обновлен в настройках
     }
   } else {
-    logger.info('[Settings] 🔄 Content root updated (same path, no migration needed)', {
+    logger.info('[Settings] Content root updated (same path, no migration needed)', {
       path: normalizedNewRoot
     });
   }
 
   currentContentRoot = normalizedNewRoot;
-  logger.info('[Settings] 📁 Updated paths', {
+  logger.info('[Settings] Updated paths', {
     dataRoot: canonicalRoot,
     streams: getStreamsOutputDir(),
     converted: getConvertedCache(),

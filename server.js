@@ -106,15 +106,15 @@ if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
 const storage = createStorage(dataRoot);
-logger.info(`[Config] 📦 Storage backend: ${storage.constructor.name} (root: ${storage.root})`);
+logger.info(`[Config] Storage backend: ${storage.constructor.name} (root: ${storage.root})`);
 
 // Логируем используемые директории данных
-logger.info(`[Config] 📁 Data root (contentRoot): ${dataRoot}`);
-logger.info(`[Config] 📁 Devices (content): ${devicesDir}`);
-logger.info(`[Config] 📁 Streams: ${streamsDir}`);
-logger.info(`[Config] 📁 Converted: ${convertedDir}`);
-logger.info(`[Config] 📁 Logs: ${logsDir}`);
-logger.info(`[Config] 📁 Temp: ${tempDir}`);
+logger.info(`[Config] Data root (contentRoot): ${dataRoot}`);
+logger.info(`[Config] Devices (content): ${devicesDir}`);
+logger.info(`[Config] Streams: ${streamsDir}`);
+logger.info(`[Config] Converted: ${convertedDir}`);
+logger.info(`[Config] Logs: ${logsDir}`);
+logger.info(`[Config] Temp: ${tempDir}`);
 
 // ========================================
 // EXPRESS MIDDLEWARE
@@ -168,7 +168,7 @@ if (!isPostgres) {
   // MMRC_HA_MODE=true). Одиночный процесс на SQLite + Redis безопасен: Bull и
   // Socket.IO-адаптер работают на одном пишущем процессе, WAL не страдает.
   if (process.env.MMRC_HA_MODE) {
-    logger.error('[Server] 🚫 SQLite + HA (multiple processes) is NOT SUPPORTED.');
+    logger.error('[Server] SQLite + HA (multiple processes) is NOT SUPPORTED.');
     logger.error('[Server]    SQLite is unsafe with multiple processes — data corruption will occur.');
     logger.error('[Server]    Set DB_TYPE=postgres in .env and use PostgreSQL for HA deployments.');
     logger.error('[Server]    Server will exit. Fix .env and restart.');
@@ -919,10 +919,10 @@ async function gracefulShutdown(signal, exitCode = 0) {
   if (isShuttingDown) return;
   isShuttingDown = true;
 
-  logger.info(`🛑 Received ${signal}, starting graceful shutdown...`);
+  logger.info(`Received ${signal}, starting graceful shutdown...`);
 
   const forceExit = setTimeout(() => {
-    logger.warn('⚠️ Force exit after shutdown timeout');
+    logger.warn('Force exit after shutdown timeout');
     process.exit(exitCode);
   }, 15000);
 
@@ -932,7 +932,7 @@ async function gracefulShutdown(signal, exitCode = 0) {
       new Promise(resolve => server.close(resolve)),
       new Promise((_, reject) => setTimeout(() => reject(new Error('HTTP server close timeout')), 5000))
     ]);
-    logger.info('✅ HTTP server closed');
+    logger.info('HTTP server closed');
 
     // 2. Закрываем WebSocket соединения
     if (io) {
@@ -940,19 +940,19 @@ async function gracefulShutdown(signal, exitCode = 0) {
         new Promise(resolve => io.close(resolve)),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Socket.IO close timeout')), 5000))
       ]);
-      logger.info('✅ WebSocket connections closed');
+      logger.info('WebSocket connections closed');
     }
 
     // 3. Останавливаем системный мониторинг
     stopSystemMonitor();
-    logger.info('✅ System monitor stopped');
+    logger.info('System monitor stopped');
 
     // 4. Очищаем все таймеры через реестр
     timerRegistry.clearAll('graceful_shutdown');
-    logger.info('✅ All timers cleared');
+    logger.info('All timers cleared');
 
     stopReconnectWatcher();
-    logger.info('✅ Reconnect watcher stopped');
+    logger.info('Reconnect watcher stopped');
 
     // Останавливаем WAL checkpoint
     stopWalCheckpointInterval();
@@ -961,7 +961,7 @@ async function gracefulShutdown(signal, exitCode = 0) {
     // 4. Останавливаем StreamManager
     if (streamManager && typeof streamManager.stop === 'function') {
       streamManager.stop();
-      logger.info('✅ StreamManager stopped');
+      logger.info('StreamManager stopped');
     }
 
     // 4b. Закрываем очереди Bull
@@ -969,18 +969,18 @@ async function gracefulShutdown(signal, exitCode = 0) {
       await Promise.allSettled([
         videoOptimizeQueue?.close().catch(() => {}),
       ]);
-      logger.info('✅ Bull queues closed');
+      logger.info('Bull queues closed');
     }
 
     // 5. Закрываем базу данных
     await closeDatabase();
-    logger.info('✅ Database closed');
+    logger.info('Database closed');
 
     clearTimeout(forceExit);
-    logger.info('✅ Graceful shutdown completed');
+    logger.info('Graceful shutdown completed');
     process.exit(exitCode);
   } catch (e) {
-    logger.error('❌ Error during shutdown:', e);
+    logger.error('Error during shutdown:', e);
     clearTimeout(forceExit);
     process.exit(exitCode === 0 ? 1 : exitCode);
   }
@@ -1023,7 +1023,7 @@ timerRegistry.setInterval(async () => {
 }, 10000, 'Devices cache reload check');
 
 process.on('uncaughtException', (err) => {
-  logger.error('💥 Uncaught Exception:', {
+  logger.error('Uncaught Exception:', {
     message: err.message,
     stack: err.stack,
     name: err.name
@@ -1060,7 +1060,7 @@ process.on('uncaughtException', (err) => {
     
     // Если слишком много критических ошибок - выполняем graceful shutdown
     if (criticalErrorCount >= MAX_CRITICAL_ERRORS) {
-      logger.error('💥 Too many critical errors, initiating graceful shutdown', {
+      logger.error('Too many critical errors, initiating graceful shutdown', {
         count: criticalErrorCount
       });
       notifyCriticalError({
@@ -1087,7 +1087,7 @@ process.on('uncaughtException', (err) => {
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error('💥 Unhandled Rejection', {
+  logger.error('Unhandled Rejection', {
     reason: reason instanceof Error ? {
       message: reason.message,
       stack: reason.stack
@@ -1125,7 +1125,7 @@ process.on('unhandledRejection', (reason, promise) => {
     
     // Если слишком много критических ошибок - выполняем graceful shutdown
     if (criticalErrorCount >= MAX_CRITICAL_ERRORS) {
-      logger.error('💥 Too many critical errors from rejections, initiating graceful shutdown', {
+      logger.error('Too many critical errors from rejections, initiating graceful shutdown', {
         count: criticalErrorCount
       });
       notifyCriticalError({

@@ -62,7 +62,7 @@ export function createNotificationsRouter() {
       const testNotification = notificationsManager.add(
         `test_${type}`,
         severity || 'info',
-        title || '🧪 Тестовое уведомление',
+        title || 'Тестовое уведомление',
         message || 'Это тестовое уведомление для проверки системы. Вы можете удалить его.',
         {
           test: true,

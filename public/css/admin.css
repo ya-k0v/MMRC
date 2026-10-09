@@ -755,15 +755,22 @@ body.admin-page .sidebar-menu-btn {
   flex-wrap: wrap;
 }
 
+/* Ряд версий APK — плотный: подписи той же высоты, что и чипы (16px) */
+#stApkVersion,
+#stApkVersion .meta {
+  font-size: 0.7rem;
+  line-height: 16px;
+}
+
 /* Чипы выбора версии APK — маленькие «таблетки», как бейджи питания/модулей.
    Селектор с двумя классами нужен, чтобы перебить button.meta (32px). */
 button.meta.st-apk-chip {
   min-width: auto;
   min-height: 0;
-  height: auto;
-  padding: 1px 8px;
+  height: 16px;
+  padding: 0 8px;
   font-size: 0.7rem;
-  line-height: 1.6;
+  line-height: 14px;
   border: 1px solid transparent;
   border-radius: 999px;
   background: rgba(148, 163, 184, 0.12);
@@ -786,11 +793,11 @@ button.meta.st-apk-chip.is-selected {
 button.meta.st-apk-action {
   min-width: auto;
   min-height: 0;
-  height: auto;
-  padding: 1px 10px;
+  height: 16px;
+  padding: 0 10px;
   margin-left: 8px;
   font-size: 0.7rem;
-  line-height: 1.6;
+  line-height: 14px;
   border-radius: 999px;
 }
 

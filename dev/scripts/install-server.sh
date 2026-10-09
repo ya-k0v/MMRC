@@ -96,7 +96,7 @@ if [ "$OS" = "ubuntu" ] || [ "$OS" = "debian" ]; then
 elif [ "$OS" = "centos" ] || [ "$OS" = "rhel" ]; then
     sudo yum install -y ffmpeg libreoffice ImageMagick GraphicsMagick unzip sqlite nmap-ncat || sudo yum install -y ffmpeg libreoffice ImageMagick GraphicsMagick unzip sqlite
     if ! command -v adb &> /dev/null; then
-        sudo yum install -y android-tools || echo "⚠️  adb package not found in current repos; install it manually"
+        sudo yum install -y android-tools || echo " adb package not found in current repos; install it manually"
     fi
 fi
 
@@ -128,7 +128,7 @@ JWT_REFRESH_EXPIRES_IN=30d
 # Logging level (off | debug | info | warning)
 LOG_LEVEL=info
 EOF
-    echo "✅ Created .env with secure JWT secret"
+    echo "Created .env with secure JWT secret"
     echo "   Access Token: 12 hours"
     echo "   Refresh Token: 30 days"
 fi
@@ -148,16 +148,16 @@ mkdir -p config/hero
 echo ""
 echo "Initializing/migrating database..."
 SKIP_NPM_INSTALL=1 SKIP_SERVICE_RESTART=1 bash ./scripts/post-pull-sync.sh
-echo "✅ Database schema is up to date"
+echo "Database schema is up to date"
 echo "   Default admin user: admin / admin123 (if first install)"
 
 # Initialize hero module database
 echo ""
 if [ ! -f config/hero/heroes.db ]; then
     sqlite3 config/hero/heroes.db < src/hero/database/schema.sql
-    echo "✅ Hero database initialized (config/hero/heroes.db)"
+    echo "Hero database initialized (config/hero/heroes.db)"
 else
-    echo "ℹ️  Hero database already exists (config/hero/heroes.db)"
+    echo " Hero database already exists (config/hero/heroes.db)"
 fi
 
 # Create default config files if not exist
@@ -278,56 +278,56 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         sudo bash install-nginx.sh
         cd ..
     else
-        echo "ℹ️  Nginx configuration file not found (nginx/install-nginx.sh)"
+        echo " Nginx configuration file not found (nginx/install-nginx.sh)"
         echo "   Use quick-install.sh for automatic Nginx setup"
     fi
 fi
 
 echo ""
 echo "==================================="
-echo "✅ Installation Complete!"
+echo "Installation Complete!"
 echo "==================================="
 echo ""
-echo "🔐 Default Admin Credentials:"
+echo "Default Admin Credentials:"
 echo "  Username: admin"
 echo "  Password: admin123"
-echo "  🚨 ОБЯЗАТЕЛЬНО смените после первого входа!"
+echo "  ОБЯЗАТЕЛЬНО смените после первого входа!"
 echo ""
-echo "📁 Project structure created:"
-echo "  ✅ config/ - configuration files + main.db"
-echo "  ✅ data/content/ - device content (up to 5GB per file)"
-echo "  ✅ data/streams/ - HLS restream output"
-echo "  ✅ data/converted/ - converted PDF/PPTX cache"
-echo "  ✅ data/logs/ - Winston structured logs"
-echo "  ✅ data/temp/ - temporary files"
+echo "Project structure created:"
+echo "  config/ - configuration files + main.db"
+echo "  data/content/ - device content (up to 5GB per file)"
+echo "  data/streams/ - HLS restream output"
+echo "  data/converted/ - converted PDF/PPTX cache"
+echo "  data/logs/ - Winston structured logs"
+echo "  data/temp/ - temporary files"
 echo ""
-echo "🚀 Start server:"
+echo "Start server:"
 echo "  Development: npm start"
 echo "  Production:  sudo systemctl start videocontrol"
 echo ""
-echo "🌐 Access URLs:"
+echo "Access URLs:"
 echo "  Login:        http://localhost/"
 echo "  Admin Panel:  http://localhost/ (admin/admin123)"
 echo "  Speaker Panel: http://localhost/speaker.html"
 echo "  Player:       http://localhost/player-videojs.html?device_id=YOUR_ID"
 echo ""
-echo "🔒 Security Features:"
-echo "  ✅ JWT Authentication (12h access, 30d refresh)"
-echo "  ✅ Rate limiting (disabled for local network)"
-echo "  ✅ Path traversal protection"
-echo "  ✅ Audit logging to database"
+echo "Security Features:"
+echo "  JWT Authentication (12h access, 30d refresh)"
+echo "  Rate limiting (disabled for local network)"
+echo "  Path traversal protection"
+echo "  Audit logging to database"
 echo ""
-echo "📊 Monitoring:"
+echo "Monitoring:"
 echo "  Status:  sudo systemctl status videocontrol"
 echo "  Logs:    tail -f data/logs/combined-*.log"
 echo "  Errors:  tail -f data/logs/error-*.log"
 echo "  Audit:   sqlite3 config/main.db 'SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 10;'"
 echo "  Journal: sudo journalctl -u videocontrol -f"
 echo ""
-echo "📖 Documentation:"
-echo "  📘 Overview:      README.md"
-echo "  🛠️  Install:       dev/INSTALL.md"
-echo "  🧰 Operations:    dev/MANUAL.md"
-echo "  📱 Clients:       dev/CLIENTS.md"
+echo "Documentation:"
+echo "  Overview:      README.md"
+echo "   Install:       dev/INSTALL.md"
+echo "  Operations:    dev/MANUAL.md"
+echo "  Clients:       dev/CLIENTS.md"
 echo ""
 

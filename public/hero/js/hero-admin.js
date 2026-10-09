@@ -1,4 +1,5 @@
 import { ensureAuth, adminFetch, logout } from '../../js/admin/auth.js';
+import { getCloseIcon, getTrashIcon, getSlidersIcon } from '../../js/shared/svg-icons.js';
 import { 
   escapeHtml, 
   normalizeString, 
@@ -642,8 +643,8 @@ function renderHeroDetail(hero, previousHeroId = null) {
           <div data-avatar style="cursor: pointer; position: relative;">
             ${photoSrc
               ? `<img src="${photoSrc}" class="hero-photo" alt="${escapeHtml(hero.full_name || '')}" style="object-position: ${objPos}; transform: scale(${sc});"/>
-                 <button class="hero-avatar-delete" data-action="delete-avatar" title="Удалить фото">×</button>
-                 <button class="hero-avatar-position" data-action="position-photo" title="Настроить позицию" style="position: absolute; bottom: 8px; right: 8px; z-index: 5; background: rgba(0,0,0,0.6); color: #fff; border: none; border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 12px;">&#9998;</button>`
+                 <button class="hero-avatar-delete" data-action="delete-avatar" title="Удалить фото">${getCloseIcon(20)}</button>
+                 <button class="hero-avatar-position" data-action="position-photo" title="Настроить позицию" style="position: absolute; bottom: 8px; right: 8px; z-index: 5; background: rgba(0,0,0,0.6); color: #fff; border: none; border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 12px;">${getSlidersIcon(12)}</button>`
               : `<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--muted); height: 100%; min-height: clamp(320px, 60vh, 520px);">
                    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.5;">
                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
@@ -826,7 +827,7 @@ function openLightbox(index) {
 
   const lightboxHTML = `
     <div class="lightbox-overlay" data-action="${isLast ? 'close' : 'next'}">
-      <button class="lightbox-close" data-action="close" title="Закрыть">✕</button>
+      <button class="lightbox-close" data-action="close" title="Закрыть">${getCloseIcon(20)}</button>
       <div class="lightbox-content" data-action="${isLast ? 'close' : 'next'}">
         ${
           media.type === 'photo'
@@ -1361,7 +1362,7 @@ async function saveField(field, rawValue, hero, restoreEditor = false) {
               deleteBtn.className = 'hero-avatar-delete';
               deleteBtn.setAttribute('data-action', 'delete-avatar');
               deleteBtn.title = 'Удалить фото';
-              deleteBtn.textContent = '×';
+              deleteBtn.innerHTML = getCloseIcon(20);
               
               avatarContainer.appendChild(img);
               avatarContainer.appendChild(deleteBtn);
@@ -1378,7 +1379,7 @@ async function saveField(field, rawValue, hero, restoreEditor = false) {
               deleteBtn.className = 'hero-avatar-delete';
               deleteBtn.setAttribute('data-action', 'delete-avatar');
               deleteBtn.title = 'Удалить фото';
-              deleteBtn.textContent = '×';
+              deleteBtn.innerHTML = getCloseIcon(20);
               avatarContainer.appendChild(deleteBtn);
               // Перепривязываем обработчики после небольшой задержки, чтобы DOM обновился
               setTimeout(() => {
@@ -1627,7 +1628,7 @@ function renderMediaThumbnailAdmin(media, index) {
     '<div class="media-thumbnail" style="position: relative;"'
   ).replace(
     '</div>',
-    `<button class="hero-media-thumbnail-delete" data-action="remove-media" data-id="${media.id}" data-index="${index}" title="Удалить материал">×</button></div>`
+    `<button class="hero-media-thumbnail-delete" data-action="remove-media" data-id="${media.id}" data-index="${index}" title="Удалить материал">${getTrashIcon(12)}</button></div>`
   );
 }
 
@@ -1640,7 +1641,7 @@ function renderMediaItem(media, index) {
           : `<video src="${getMediaSrc(media, state.active.id)}" preload="metadata"></video>`
       }
       ${media.caption ? `<div class="media-item-caption">${escapeHtml(media.caption)}</div>` : ''}
-      <button class="hero-media__remove" data-action="remove-media" data-id="${media.id}" title="Удалить материал">×</button>
+      <button class="hero-media__remove" data-action="remove-media" data-id="${media.id}" title="Удалить материал">${getTrashIcon(12)}</button>
     </div>
   `;
 }

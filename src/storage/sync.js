@@ -112,7 +112,7 @@ export async function syncFileToStorage(localPath, storage, options = {}) {
 
   const localRemoved = removeLocal ? await removeLocalCopy(localPath, key) : false;
 
-  logger.info('[StorageSync] ✅ Файл загружен в S3', {
+  logger.info('[StorageSync] Файл загружен в S3', {
     deviceId,
     fileName,
     key,
@@ -223,13 +223,13 @@ export async function materializeToLocal(localPath, storage, options = {}) {
     } catch {
       // Частичный файл мог исчезнуть сам
     }
-    logger.error('[StorageSync] ❌ Не удалось скачать файл из хранилища', {
+    logger.error('[StorageSync] Не удалось скачать файл из хранилища', {
       deviceId, fileName, key, error: error.message
     });
     return null;
   }
 
-  logger.info('[StorageSync] ⬇️ Файл скачан из S3 для обработки', {
+  logger.info('[StorageSync] Файл скачан из S3 для обработки', {
     deviceId,
     fileName,
     key,
@@ -304,7 +304,7 @@ export function cleanupScratchDir(maxAgeMs = 6 * 60 * 60 * 1000) {
   }
 
   if (removed > 0) {
-    logger.info('[StorageSync] 🧹 Очищена временная рабочая область', { removed });
+    logger.info('[StorageSync] Очищена временная рабочая область', { removed });
   }
   return { removed };
 }
@@ -550,7 +550,7 @@ export async function commitFolderToStorage(folderPath, storage, options = {}) {
         }
       } catch (error) {
         failed.push(entryPath);
-        logger.error('[StorageSync] ❌ Не удалось загрузить файл из папки', {
+        logger.error('[StorageSync] Не удалось загрузить файл из папки', {
           entryPath, error: error.message
         });
       }
@@ -560,7 +560,7 @@ export async function commitFolderToStorage(folderPath, storage, options = {}) {
   try {
     await walk(folderPath);
   } catch (error) {
-    logger.error('[StorageSync] ❌ Ошибка обхода папки', { folderPath, error: error.message });
+    logger.error('[StorageSync] Ошибка обхода папки', { folderPath, error: error.message });
     return { synced: false, count, failed, reason: 'walk-failed' };
   }
 
@@ -568,7 +568,7 @@ export async function commitFolderToStorage(folderPath, storage, options = {}) {
   if (removeLocal && count > 0 && failed.length === 0) {
     try {
       fs.rmSync(folderPath, { recursive: true, force: true });
-      logger.info('[StorageSync] 🗑️ Локальная папка удалена после коммита', { folderPath, count });
+      logger.info('[StorageSync] Локальная папка удалена после коммита', { folderPath, count });
     } catch (error) {
       logger.warn('[StorageSync] Не удалось удалить локальную папку', {
         folderPath, error: error.message
@@ -576,7 +576,7 @@ export async function commitFolderToStorage(folderPath, storage, options = {}) {
     }
   }
 
-  logger.info('[StorageSync] ✅ Папка закоммичена в S3', { folderPath, count, failed: failed.length });
+  logger.info('[StorageSync] Папка закоммичена в S3', { folderPath, count, failed: failed.length });
 
   return { synced: failed.length === 0, count, failed };
 }

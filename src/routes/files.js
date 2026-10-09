@@ -675,7 +675,7 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
     const suffix = '_' + crypto.randomBytes(3).toString('hex');
     targetSafeName = `${folderName}${suffix}`;
     targetPath = path.join(targetFolder, targetSafeName);
-    logFile('info', '⚠️ Target folder exists, using unique name', {
+    logFile('info', 'Target folder exists, using unique name', {
       sourceId,
       targetId,
       folderName,
@@ -708,7 +708,7 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
 
   try {
     // Асинхронное копирование папки
-    logFile('info', '📁 Copying folder (async)', { sourceId, targetId, folderName, opId });
+    logFile('info', 'Copying folder (async)', { sourceId, targetId, folderName, opId });
 
     await copyFolderEverywhere(sourcePath, targetPath, storage, { onProgress });
 
@@ -779,7 +779,7 @@ async function copyFolderPhysically(sourceId, targetId, folderName, move, device
     io.emit('devices/updated');
     io.emit('copy/done', baseEvent);
     
-    logFile('info', `✅ Folder ${move ? 'moved' : 'copied'} successfully`, {
+    logFile('info', `Folder ${move ? 'moved' : 'copied'} successfully`, {
       sourceDevice: sourceId,
       targetDevice: targetId,
       folderName: targetSafeName,
@@ -868,7 +868,7 @@ export async function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
   const physicalMetadata = filesMetadata.filter(f => 
     f.content_type !== 'streaming' && 
     (!f.stream_url || f.file_path) &&
-    f.content_type !== 'folder' &&  // ✅ Исключаем статический контент
+    f.content_type !== 'folder' &&  // Исключаем статический контент
     f.content_type !== 'pdf' &&
     f.content_type !== 'pptx'
   );
@@ -1015,7 +1015,7 @@ export async function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
     
     // КРИТИЧНО: Пропускаем стримы без stream_url - они невалидны и не могут быть воспроизведены
     if (!f.stream_url) {
-      logger.warn('[updateDeviceFilesFromDB] ⚠️ Stream metadata missing stream_url, skipping', {
+      logger.warn('[updateDeviceFilesFromDB] Stream metadata missing stream_url, skipping', {
         deviceId,
         safeName,
         hasStreamUrl: !!f.stream_url,
@@ -1143,7 +1143,7 @@ export async function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
                 uploadedBy: f.uploaded_by || null
               });
               
-              logger.info('[updateDeviceFilesFromDB] ✅ Метаданные обновлены для конвертированного файла', {
+              logger.info('[updateDeviceFilesFromDB] Метаданные обновлены для конвертированного файла', {
                 deviceId,
                 oldSafeName: safeName,
                 newSafeName: folderName,
@@ -1198,7 +1198,7 @@ export async function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
       files.push(safeName);
       fileNames.push(displayName);
       
-      logger.info('[updateDeviceFilesFromDB] ✅ Static content added to files list', {
+      logger.info('[updateDeviceFilesFromDB] Static content added to files list', {
         deviceId,
         safeName,
         displayName,
@@ -1771,7 +1771,7 @@ export function createFilesRouter(deps) {
         io.emit('devices/updated');
         io.emit('file/ready', { device_id: deviceId, file: safeName });
 
-        logger.info('[yt-dlp] ✅ Full transcode skipped: file is already seekable and compatible', {
+        logger.info('[yt-dlp] Full transcode skipped: file is already seekable and compatible', {
           deviceId,
           safeName,
           filePath,
@@ -1780,7 +1780,7 @@ export function createFilesRouter(deps) {
         return;
       }
 
-      logger.info('[yt-dlp] ⚠️ Full optimization required after compatibility check', {
+      logger.info('[yt-dlp] Full optimization required after compatibility check', {
         deviceId,
         safeName,
         reasons: decision.reasons,
@@ -3281,7 +3281,7 @@ export function createFilesRouter(deps) {
         // Проверяем что файлы действительно существуют на диске
         for (const file of req.files) {
           if (file.path && !fs.existsSync(file.path)) {
-            logger.error('[UPLOAD ROUTE] ⚠️ File path from multer does not exist!', {
+            logger.error('[UPLOAD ROUTE] File path from multer does not exist!', {
               filename: file.filename,
               path: file.path
             });
@@ -3345,7 +3345,7 @@ export function createFilesRouter(deps) {
           const validationResult = await validateFilesAsync(req.files);
           
           if (!validationResult.valid) {
-            logger.warn('[Upload] ⚠️ File MIME type validation failed', {
+            logger.warn('[Upload] File MIME type validation failed', {
               deviceId: id,
               invalidFiles: validationResult.invalid
             });
@@ -3362,13 +3362,13 @@ export function createFilesRouter(deps) {
           // Сохраняем результаты валидации для дальнейшего использования
           req.validatedFiles = validationResult.results;
           
-          logger.debug('[Upload] ✅ File MIME type validation passed', {
+          logger.debug('[Upload] File MIME type validation passed', {
             deviceId: id,
             filesCount: req.files.length,
             validatedMimes: validationResult.results.map(r => r.mime)
           });
         } catch (validationErr) {
-          logger.error('[Upload] ❌ File MIME type validation error', {
+          logger.error('[Upload] File MIME type validation error', {
             deviceId: id,
             error: validationErr.message,
             stack: validationErr.stack
@@ -3426,7 +3426,7 @@ export function createFilesRouter(deps) {
             await updateDeviceFilesFromDB(id, devices, fileNamesMap);
             io.emit('devices/updated');
 
-            logger.info('[Upload] ⚡ Files registered immediately after upload', {
+            logger.info('[Upload] Files registered immediately after upload', {
               deviceId: id,
               registered: immediateResult.registered,
               failed: immediateResult.failed
@@ -3504,7 +3504,7 @@ export function createFilesRouter(deps) {
         const ext = path.extname(file.filename).toLowerCase();
         const isStatic = ext === '.pdf' || ext === '.pptx' || ext === '.zip';
         if (isStatic) {
-          logger.debug(`[upload] 📄 Статический файл обнаружен: ${file.filename} (${ext})`, { 
+          logger.debug(`[upload] Статический файл обнаружен: ${file.filename} (${ext})`, { 
             deviceId: id, 
             filename: file.filename, 
             originalname: file.originalname,
@@ -3514,7 +3514,7 @@ export function createFilesRouter(deps) {
         return isStatic;
       }) : [];
       
-      logger.info(`[upload] 📊 Анализ загруженных файлов`, {
+      logger.info(`[upload] Анализ загруженных файлов`, {
         deviceId: id,
         totalFiles: req.files ? req.files.length : 0,
         staticContentFiles: staticContentFiles.length,
@@ -3523,7 +3523,7 @@ export function createFilesRouter(deps) {
       
       // Обрабатываем статический контент в фоне
       if (staticContentFiles.length > 0) {
-        logger.info(`[upload] 📦 Найдено статического контента для обработки: ${staticContentFiles.length}`, {
+        logger.info(`[upload] Найдено статического контента для обработки: ${staticContentFiles.length}`, {
           deviceId: id,
           files: staticContentFiles.map(f => ({ filename: f.filename, originalname: f.originalname }))
         });
@@ -3535,7 +3535,7 @@ export function createFilesRouter(deps) {
               const sourcePath = path.join(devicesPath, file.filename);  // В /content/
               const originalName = fileNamesMap[id]?.[file.filename] || file.originalname || file.filename;
               
-              logger.info(`[upload] 🔄 Начало обработки статического контента: ${file.filename}`, {
+              logger.info(`[upload] Начало обработки статического контента: ${file.filename}`, {
                 deviceId: id,
                 filename: file.filename,
                 originalname: file.originalname,
@@ -3545,7 +3545,7 @@ export function createFilesRouter(deps) {
               });
               
               if (!fs.existsSync(sourcePath)) {
-                logger.warn(`[upload] ⚠️ Статический файл не найден: ${file.filename}`, { 
+                logger.warn(`[upload] Статический файл не найден: ${file.filename}`, { 
                   deviceId: id, 
                   filePath: sourcePath,
                   devicesPath,
@@ -3577,7 +3577,7 @@ export function createFilesRouter(deps) {
                 
                 const extractResult = await extractZipToFolder(id, file.filename, devices[id]?.folder || id, storage);
                 if (!extractResult.success) {
-                  logger.error(`[upload] ❌ Ошибка распаковки ZIP ${file.filename}`, { 
+                  logger.error(`[upload] Ошибка распаковки ZIP ${file.filename}`, { 
                     deviceId: id, 
                     fileName: file.filename, 
                     error: extractResult.error 
@@ -3619,7 +3619,7 @@ export function createFilesRouter(deps) {
                     fileNamesMap[id][folderName] = originalFolderName;
                     saveFileNamesMap(fileNamesMap);
                     
-                    logger.info(`[upload] ✅ Папка обработана: ${folderName} (${result.pagesCount} изображений)`, {
+                    logger.info(`[upload] Папка обработана: ${folderName} (${result.pagesCount} изображений)`, {
                       deviceId: id,
                       folderName,
                       pagesCount: result.pagesCount
@@ -3634,7 +3634,7 @@ export function createFilesRouter(deps) {
                     const device = devices[id];
                     const isInList = device && device.files && device.files.includes(folderName);
                     
-                    logger.info(`[upload] 📋 Список файлов обновлен для устройства ${id}`, {
+                    logger.info(`[upload] Список файлов обновлен для устройства ${id}`, {
                       deviceId: id,
                       folderName,
                       isInList,
@@ -3642,14 +3642,14 @@ export function createFilesRouter(deps) {
                     });
                     
                     if (!isInList) {
-                      logger.warn(`[upload] ⚠️ Папка не добавлена в список файлов после обработки`, {
+                      logger.warn(`[upload] Папка не добавлена в список файлов после обработки`, {
                         deviceId: id,
                         folderName,
                         deviceFiles: device ? device.files : null
                       });
                     }
                   } else {
-                    logger.error(`[upload] ❌ Ошибка обработки папки ${folderName}`, {
+                    logger.error(`[upload] Ошибка обработки папки ${folderName}`, {
                       deviceId: id,
                       folderName,
                       error: result.error
@@ -3662,14 +3662,14 @@ export function createFilesRouter(deps) {
                 try {
                   if (fs.existsSync(zipTargetPath)) {
                     fs.unlinkSync(zipTargetPath);
-                    logger.info(`[upload] 🗑️ Исходный ZIP удален: ${file.filename}`, { deviceId: id });
+                    logger.info(`[upload] Исходный ZIP удален: ${file.filename}`, { deviceId: id });
                   } else if (fs.existsSync(sourcePath)) {
                     // Fallback: если не найден в zipTargetPath, проверяем sourcePath
                     fs.unlinkSync(sourcePath);
-                    logger.info(`[upload] 🗑️ Исходный ZIP удален (из sourcePath): ${file.filename}`, { deviceId: id });
+                    logger.info(`[upload] Исходный ZIP удален (из sourcePath): ${file.filename}`, { deviceId: id });
                   }
                 } catch (delErr) {
-                  logger.warn(`[upload] ⚠️ Не удалось удалить ZIP: ${file.filename}`, { error: delErr.message });
+                  logger.warn(`[upload] Не удалось удалить ZIP: ${file.filename}`, { error: delErr.message });
                 }
                 
                 continue;
@@ -3688,10 +3688,10 @@ export function createFilesRouter(deps) {
               if (fs.existsSync(sourcePath) && !fs.existsSync(targetPath)) {
                 fs.renameSync(sourcePath, targetPath);
                 fs.chmodSync(targetPath, 0o644);
-                logger.info(`[upload] 📄 Файл перемещен в папку устройства: ${file.filename}`, { deviceId: id });
+                logger.info(`[upload] Файл перемещен в папку устройства: ${file.filename}`, { deviceId: id });
               } else if (!fs.existsSync(targetPath)) {
                 // Если файл уже не в sourcePath, возможно он уже перемещен
-                logger.warn(`[upload] ⚠️ Файл не найден ни в sourcePath, ни в targetPath: ${file.filename}`, { 
+                logger.warn(`[upload] Файл не найден ни в sourcePath, ни в targetPath: ${file.filename}`, { 
                   deviceId: id, 
                   sourcePath, 
                   targetPath 
@@ -3720,7 +3720,7 @@ export function createFilesRouter(deps) {
               );
               
               if (result.success) {
-                logger.info(`[upload] ✅ ${contentType.toUpperCase()} обработан: ${file.filename} (${result.pagesCount} слайдов)`, {
+                logger.info(`[upload] ${contentType.toUpperCase()} обработан: ${file.filename} (${result.pagesCount} слайдов)`, {
                   deviceId: id,
                   fileName: file.filename,
                   contentType,
@@ -3735,7 +3735,7 @@ export function createFilesRouter(deps) {
                 const folderName = file.filename.replace(/\.(pdf|pptx)$/i, '');
                 const isInList = device && device.files && device.files.includes(folderName);
                 
-                logger.info(`[upload] 📋 Список файлов обновлен для устройства ${id}`, {
+                logger.info(`[upload] Список файлов обновлен для устройства ${id}`, {
                   deviceId: id,
                   fileName: file.filename,
                   folderName,
@@ -3744,7 +3744,7 @@ export function createFilesRouter(deps) {
                 });
                 
                 if (!isInList) {
-                  logger.warn(`[upload] ⚠️ Папка не добавлена в список файлов после обработки`, {
+                  logger.warn(`[upload] Папка не добавлена в список файлов после обработки`, {
                     deviceId: id,
                     folderName,
                     deviceFiles: device ? device.files : null
@@ -3753,7 +3753,7 @@ export function createFilesRouter(deps) {
                 
                 io.emit('devices/updated');
               } else {
-                logger.error(`[upload] ❌ Ошибка обработки ${contentType} ${file.filename}`, {
+                logger.error(`[upload] Ошибка обработки ${contentType} ${file.filename}`, {
                   deviceId: id,
                   fileName: file.filename,
                   contentType,
@@ -3762,7 +3762,7 @@ export function createFilesRouter(deps) {
               }
               
             } catch (err) {
-              logger.error(`[upload] ❌ Ошибка обработки статического контента ${file.filename}`, {
+              logger.error(`[upload] Ошибка обработки статического контента ${file.filename}`, {
                 deviceId: id,
                 fileName: file.filename,
                 error: err.message,
@@ -3782,7 +3782,7 @@ export function createFilesRouter(deps) {
               return { filename: f.filename, folderName, inList: device.files.includes(folderName) };
             }) : [];
           
-          logger.info(`[upload] ✅ Обработка статического контента завершена для устройства ${id}`, {
+          logger.info(`[upload] Обработка статического контента завершена для устройства ${id}`, {
             deviceId: id,
             processedFiles: staticContentFiles.length,
             totalFiles: device ? device.files.length : 0,
@@ -3791,7 +3791,7 @@ export function createFilesRouter(deps) {
           
           io.emit('devices/updated');
         }).catch(err => {
-          logger.error('[upload] ❌ Критическая ошибка обработки статического контента', {
+          logger.error('[upload] Критическая ошибка обработки статического контента', {
             deviceId: id,
             error: err.message,
             stack: err.stack,
@@ -3811,7 +3811,7 @@ export function createFilesRouter(deps) {
       if (folderName && req.files && req.files.length > 0) {
         // Запускаем обработку папки в фоне (не блокирует ответ)
         Promise.resolve().then(async () => {
-          logger.info(`[upload] 📁 Обнаружена загрузка папки: ${folderName}`);
+          logger.info(`[upload] Обнаружена загрузка папки: ${folderName}`);
           
           // Создаем безопасное имя папки через транслитерацию
           const safeFolderName = makeSafeFolderName(folderName);
@@ -3819,7 +3819,7 @@ export function createFilesRouter(deps) {
           const deviceFolder = path.join(devicesPath, devices[id]?.folder || id);
           const targetFolder = path.join(deviceFolder, safeFolderName);
           
-          logger.info(`[upload] 📝 Имя папки: "${folderName}" → "${safeFolderName}"`);
+          logger.info(`[upload] Имя папки: "${folderName}" → "${safeFolderName}"`);
           
           if (!fs.existsSync(targetFolder)) {
             fs.mkdirSync(targetFolder, { recursive: true });
@@ -3845,37 +3845,37 @@ export function createFilesRouter(deps) {
               const targetPath = path.join(targetFolder, targetFileName);
               
               if (fs.existsSync(targetPath)) {
-                logFile('info', `🔄 Файл уже существует, заменяем: ${targetFileName}`, { fileName: targetFileName, deviceId: id });
+                logFile('info', `Файл уже существует, заменяем: ${targetFileName}`, { fileName: targetFileName, deviceId: id });
                 fs.unlinkSync(targetPath);
               }
               
               if (!fs.existsSync(sourcePath)) {
-                logFile('info', `⚠️ Исходный файл не найден: ${file.filename}`, { fileName: file.filename, deviceId: id });
+                logFile('info', `Исходный файл не найден: ${file.filename}`, { fileName: file.filename, deviceId: id });
                 
                 const devicesPath = getDevicesPath();
                 const sharedFile = path.join(devicesPath, targetFileName);
                 if (fs.existsSync(sharedFile)) {
-                  logFile('info', `🔄 Файл найден в shared storage, копируем: ${targetFileName}`, { fileName: targetFileName, deviceId: id });
+                  logFile('info', `Файл найден в shared storage, копируем: ${targetFileName}`, { fileName: targetFileName, deviceId: id });
                   
                   fs.copyFileSync(sharedFile, targetPath);
                   fs.chmodSync(targetPath, 0o644);
-                  logFile('info', `✅ Скопирован из shared: ${targetFileName} -> ${safeFolderName}/${targetFileName}`, { fileName: targetFileName, folderName: safeFolderName, deviceId: id });
+                  logFile('info', `Скопирован из shared: ${targetFileName} -> ${safeFolderName}/${targetFileName}`, { fileName: targetFileName, folderName: safeFolderName, deviceId: id });
                   movedCount++;
                   continue;
                 }
                 
-                logFile('warn', `❌ Файл не найден ни в uploads, ни в shared: ${targetFileName}`, { fileName: targetFileName, deviceId: id });
+                logFile('warn', `Файл не найден ни в uploads, ни в shared: ${targetFileName}`, { fileName: targetFileName, deviceId: id });
                 errorCount++;
                 continue;
               }
               
               fs.renameSync(sourcePath, targetPath);
               fs.chmodSync(targetPath, 0o644);
-              logFile('info', `✅ Перемещен: ${file.filename} -> ${safeFolderName}/${targetFileName}`, { fileName: file.filename, folderName: safeFolderName, deviceId: id });
+              logFile('info', `Перемещен: ${file.filename} -> ${safeFolderName}/${targetFileName}`, { fileName: file.filename, folderName: safeFolderName, deviceId: id });
               movedCount++;
             } catch (e) {
               errorCount++;
-              logger.error('[upload] ❌ Ошибка перемещения файла в папку', { 
+              logger.error('[upload] Ошибка перемещения файла в папку', { 
                 error: e.message, 
                 fileName: file.filename,
                 originalName: file.originalname,
@@ -3889,7 +3889,7 @@ export function createFilesRouter(deps) {
                 const sourcePath = path.join(devicesPath, file.filename);
                 if (fs.existsSync(sourcePath)) {
                   fs.unlinkSync(sourcePath);
-                  logFile('info', `🗑️ Удален файл который не удалось переместить: ${file.filename}`, { fileName: file.filename, deviceId: id });
+                  logFile('info', `Удален файл который не удалось переместить: ${file.filename}`, { fileName: file.filename, deviceId: id });
                 }
               } catch (cleanupErr) {
                 logger.error('[upload] Failed to cleanup unmoved file', { 
@@ -3901,7 +3901,7 @@ export function createFilesRouter(deps) {
             }
           }
           
-          logFile('info', `📁 Папка создана: ${safeFolderName} (${movedCount}/${req.files.length} файлов перемещено${errorCount > 0 ? `, ${errorCount} ошибок` : ''})`, { folderName: safeFolderName, movedCount, totalFiles: req.files.length, errorCount, deviceId: id });
+          logFile('info', `Папка создана: ${safeFolderName} (${movedCount}/${req.files.length} файлов перемещено${errorCount > 0 ? `, ${errorCount} ошибок` : ''})`, { folderName: safeFolderName, movedCount, totalFiles: req.files.length, errorCount, deviceId: id });
           
           if (errorCount > 0) {
             logger.warn('[upload] Some files failed to move to folder', { 
@@ -3917,14 +3917,14 @@ export function createFilesRouter(deps) {
           if (req.body.expectedFiles) {
             try {
               allExpectedFiles = JSON.parse(req.body.expectedFiles);
-              logFile('info', `📋 Frontend передал список ожидаемых файлов: ${allExpectedFiles.length}`, { deviceId: id, folderName: safeFolderName, expectedFilesCount: allExpectedFiles.length });
+              logFile('info', `Frontend передал список ожидаемых файлов: ${allExpectedFiles.length}`, { deviceId: id, folderName: safeFolderName, expectedFilesCount: allExpectedFiles.length });
             } catch (e) {
-              logger.warn('[upload] ⚠️ Не удалось распарсить expectedFiles', { error: e.message, deviceId: id, stack: e.stack });
+              logger.warn('[upload] Не удалось распарсить expectedFiles', { error: e.message, deviceId: id, stack: e.stack });
             }
           }
           
           if (allExpectedFiles.length === 0) {
-            logFile('info', '⚠️ Frontend не передал expectedFiles, используем req.files', { deviceId: id, folderName: safeFolderName });
+            logFile('info', 'Frontend не передал expectedFiles, используем req.files', { deviceId: id, folderName: safeFolderName });
             allExpectedFiles = req.files.map(f => {
               let fileName = f.originalname;
               if (fileName.includes('/')) {
@@ -3937,7 +3937,7 @@ export function createFilesRouter(deps) {
           const filesInFolder = fs.readdirSync(targetFolder);
           const missingFiles = allExpectedFiles.filter(f => !filesInFolder.includes(f));
           
-          logFile('info', `🔍 Проверка папки: ожидалось ${allExpectedFiles.length}, найдено ${filesInFolder.length}, не хватает ${missingFiles.length}`, { deviceId: id, folderName: safeFolderName, expected: allExpectedFiles.length, found: filesInFolder.length, missing: missingFiles.length });
+          logFile('info', `Проверка папки: ожидалось ${allExpectedFiles.length}, найдено ${filesInFolder.length}, не хватает ${missingFiles.length}`, { deviceId: id, folderName: safeFolderName, expected: allExpectedFiles.length, found: filesInFolder.length, missing: missingFiles.length });
           
           let copiedFromShared = 0;
           const devicesPathForCopy = getDevicesPath();
@@ -3948,7 +3948,7 @@ export function createFilesRouter(deps) {
               try {
                 fs.copyFileSync(sharedPath, targetPath);
                 fs.chmodSync(targetPath, 0o644);
-                logFile('info', `✅ Скопирован из shared: ${missingFile}`, { fileName: missingFile, deviceId: id, folderName: safeFolderName });
+                logFile('info', `Скопирован из shared: ${missingFile}`, { fileName: missingFile, deviceId: id, folderName: safeFolderName });
                 copiedFromShared++;
               } catch (e) {
                 logger.error('[upload] Failed to copy from shared', { 
@@ -3960,12 +3960,12 @@ export function createFilesRouter(deps) {
                 });
               }
             } else {
-              logFile('warn', `⚠️ Файл не найден в shared storage: ${missingFile}`, { fileName: missingFile, deviceId: id, folderName: safeFolderName });
+              logFile('warn', `Файл не найден в shared storage: ${missingFile}`, { fileName: missingFile, deviceId: id, folderName: safeFolderName });
             }
           }
           
           const finalCount = fs.readdirSync(targetFolder).length;
-          logFile('info', `📁 Папка готова: ${safeFolderName} (${finalCount} файлов${copiedFromShared > 0 ? `, ${copiedFromShared} скопировано из shared` : ''})`, { deviceId: id, folderName: safeFolderName, finalCount, copiedFromShared });
+          logFile('info', `Папка готова: ${safeFolderName} (${finalCount} файлов${copiedFromShared > 0 ? `, ${copiedFromShared} скопировано из shared` : ''})`, { deviceId: id, folderName: safeFolderName, finalCount, copiedFromShared });
           
           if (!fileNamesMap[id]) fileNamesMap[id] = {};
           fileNamesMap[id][safeFolderName] = folderName;
@@ -3990,14 +3990,14 @@ export function createFilesRouter(deps) {
                 .catch((err) => logger.error('[Upload] Ошибка коммита папки в S3', {
                   deviceId: id, folder: safeFolderName, error: err.message
                 }));
-              logFile('info', `✅ Папка сохранена в БД: ${safeFolderName} (${processResult.pagesCount} изображений)`, {
+              logFile('info', `Папка сохранена в БД: ${safeFolderName} (${processResult.pagesCount} изображений)`, {
                 deviceId: id,
                 folderName: safeFolderName,
                 pagesCount: processResult.pagesCount,
                 targetFolder
               });
             } else {
-              logger.error('[upload] ❌ Не удалось сохранить метаданные папки', {
+              logger.error('[upload] Не удалось сохранить метаданные папки', {
                 deviceId: id,
                 folderName: safeFolderName,
                 error: processResult.error,
@@ -4005,7 +4005,7 @@ export function createFilesRouter(deps) {
               });
             }
           } catch (err) {
-            logger.error('[upload] ❌ Ошибка сохранения метаданных папки', {
+            logger.error('[upload] Ошибка сохранения метаданных папки', {
               deviceId: id,
               folderName: safeFolderName,
               error: err.message,
@@ -4017,7 +4017,7 @@ export function createFilesRouter(deps) {
           updateDeviceFilesFromDB(id, devices, fileNamesMap);
           io.emit('devices/updated');
         }).catch(err => {
-          logger.error('[upload] ❌ Ошибка обработки папки в фоне', { 
+          logger.error('[upload] Ошибка обработки папки в фоне', { 
             error: err.message, 
             deviceId: id, 
             folderName,
@@ -4036,9 +4036,9 @@ export function createFilesRouter(deps) {
             const devicesPath = getDevicesPath();
             const filePath = path.join(devicesPath, file.filename);  // В /content/
             fs.chmodSync(filePath, 0o644);
-            logFile('info', `✅ Права 644 установлены: ${file.filename}`, { fileName: file.filename, deviceId: id });
+            logFile('info', `Права 644 установлены: ${file.filename}`, { fileName: file.filename, deviceId: id });
           } catch (e) {
-            logger.warn(`[upload] ⚠️ Не удалось установить права на ${file.filename}`, { error: e.message, fileName: file.filename, deviceId: id, stack: e.stack });
+            logger.warn(`[upload] Не удалось установить права на ${file.filename}`, { error: e.message, fileName: file.filename, deviceId: id, stack: e.stack });
           }
         }
       }
@@ -4130,7 +4130,7 @@ export function createFilesRouter(deps) {
             });
             
             // Дополнительное логирование в файл
-            logFile('info', '🚀 Starting metadata processing for uploaded files', {
+            logFile('info', 'Starting metadata processing for uploaded files', {
               deviceId: id,
               filesCount: filesToProcess.length,
               devicesPath,
@@ -4144,11 +4144,11 @@ export function createFilesRouter(deps) {
             
             processUploadedFilesAsync(id, filesToProcess, devicesPath, fileNamesMap, req.user?.userId)
               .then(() => {
-                logger.warn('[Upload] ✅ File metadata processed successfully', { 
+                logger.warn('[Upload] File metadata processed successfully', { 
                   deviceId: id, 
                   filesCount: filesToProcess.length 
                 });
-                logFile('info', '✅ File metadata processed successfully', { 
+                logFile('info', 'File metadata processed successfully', { 
                   deviceId: id, 
                   filesCount: filesToProcess.length 
                 });
@@ -4187,7 +4187,7 @@ export function createFilesRouter(deps) {
                       });
 
                       if (result.synced) {
-                        logger.info('[Upload] ✅ Файл закоммичен в S3', {
+                        logger.info('[Upload] Файл закоммичен в S3', {
                           deviceId: id,
                           fileName,
                           key: result.key,
@@ -4195,14 +4195,14 @@ export function createFilesRouter(deps) {
                           localRemoved: result.localRemoved
                         });
                       } else if (result.reason !== 'local-storage') {
-                        logger.warn('[Upload] ⚠️ Файл не попал в S3', {
+                        logger.warn('[Upload] Файл не попал в S3', {
                           deviceId: id,
                           fileName,
                           reason: result.reason
                         });
                       }
                     } catch (err) {
-                      logger.error('[Upload] ❌ Ошибка коммита файла в S3', {
+                      logger.error('[Upload] Ошибка коммита файла в S3', {
                         error: err.message,
                         deviceId: id,
                         fileName,
@@ -4239,7 +4239,7 @@ export function createFilesRouter(deps) {
           }
               })
               .catch(err => {
-                logger.error('[Upload] ❌ Metadata processing failed', { 
+                logger.error('[Upload] Metadata processing failed', { 
                   error: err.message,
                   stack: err.stack,
                   deviceId: id,
@@ -4367,7 +4367,7 @@ export function createFilesRouter(deps) {
         });
       }
 
-      logFile('info', '📋 Copying file metadata', {
+      logFile('info', 'Copying file metadata', {
         sourceDevice: sourceId,
         targetDevice: targetId,
         fileName,
@@ -4386,13 +4386,13 @@ export function createFilesRouter(deps) {
         const suffix = '_' + crypto.randomBytes(3).toString('hex');
         targetSafeName = `${name}${suffix}${ext}`;
         
-        logFile('info', '⚠️ File exists on target, using unique name', {
+        logFile('info', 'File exists on target, using unique name', {
           original: fileName,
           unique: targetSafeName
         });
         }
         
-      // 3. ⚡ МГНОВЕННОЕ КОПИРОВАНИЕ: просто INSERT метаданных с тем же file_path!
+      // 3. МГНОВЕННОЕ КОПИРОВАНИЕ: просто INSERT метаданных с тем же file_path!
       // КРИТИЧНО: Определяем правильное original_name - приоритет у original_name из БД (обновляется при переименовании)
       // Если в БД нет или оно не актуально - проверяем fileNamesMap
       let targetOriginalName = fileName;
@@ -4408,7 +4408,7 @@ export function createFilesRouter(deps) {
         deviceId: targetId,
         safeName: targetSafeName,
         originalName: targetOriginalName,
-        filePath: sourceMetadata.file_path,  // ✅ ТОТ ЖЕ физический файл!
+        filePath: sourceMetadata.file_path,  // ТОТ ЖЕ физический файл!
         fileSize: sourceMetadata.file_size,
         md5Hash: sourceMetadata.md5_hash,
         partialMd5: sourceMetadata.partial_md5,
@@ -4446,7 +4446,7 @@ export function createFilesRouter(deps) {
           saveFileNamesMap(fileNamesMap);
         }
         
-        logFile('info', '🔄 File moved (metadata only)', {
+        logFile('info', 'File moved (metadata only)', {
           from: sourceId,
           to: targetId,
           fileName
@@ -4461,7 +4461,7 @@ export function createFilesRouter(deps) {
       
       io.emit('devices/updated');
       
-      logFile('info', `✅ File ${move ? 'moved' : 'copied'} instantly via DB`, {
+      logFile('info', `File ${move ? 'moved' : 'copied'} instantly via DB`, {
         sourceDevice: sourceId,
         targetDevice: targetId,
         fileName,
@@ -4517,7 +4517,7 @@ export function createFilesRouter(deps) {
     const metadata = await getFileMetadata(id, oldName);
     if (metadata) {
       // Медиафайл - обновляем только original_name в БД, физический файл НЕ трогаем
-      logFile('info', `📝 Обновление originalName в БД: ${oldName} -> ${newName}`, { deviceId: id, oldName, newName });
+      logFile('info', `Обновление originalName в БД: ${oldName} -> ${newName}`, { deviceId: id, oldName, newName });
       await updateFileOriginalName(id, oldName, newName);
       
       // КРИТИЧНО: Также обновляем fileNamesMap чтобы при копировании использовалось правильное имя
@@ -4525,7 +4525,7 @@ export function createFilesRouter(deps) {
       fileNamesMap[id][oldName] = newName; // safe_name -> original_name (переименованное)
       saveFileNamesMap(fileNamesMap);
       
-      logFile('info', `📝 Обновлен fileNamesMap: ${oldName} -> ${newName}`, { deviceId: id, oldName, newName });
+      logFile('info', `Обновлен fileNamesMap: ${oldName} -> ${newName}`, { deviceId: id, oldName, newName });
       
       // КРИТИЧНО: Если переименованный файл был текущим воспроизводимым - обновляем состояние
       if (devices[id] && devices[id].current && devices[id].current.file === oldName) {
@@ -4555,7 +4555,7 @@ export function createFilesRouter(deps) {
       oldPath = possiblePdfFolder;
       isFolder = true;
       actualOldName = folderNamePdf;
-      logFile('info', `📁 Переименование папки PDF/PPTX: ${folderNamePdf}`, { deviceId: id, oldName, folderNamePdf });
+      logFile('info', `Переименование папки PDF/PPTX: ${folderNamePdf}`, { deviceId: id, oldName, folderNamePdf });
     } 
     // Проверяем, может это папка с изображениями (без расширения)
     else if (!oldName.includes('.')) {
@@ -4564,12 +4564,12 @@ export function createFilesRouter(deps) {
         oldPath = folderPath;
         isFolder = true;
         actualOldName = oldName;
-        logFile('info', `📁 Переименование папки с изображениями: ${oldName}`, { deviceId: id, oldName });
+        logFile('info', `Переименование папки с изображениями: ${oldName}`, { deviceId: id, oldName });
       }
     }
     
     if (!fs.existsSync(oldPath)) {
-      logFile('error', `❌ Не найден: ${oldPath}`, { deviceId: id, oldName, oldPath });
+      logFile('error', `Не найден: ${oldPath}`, { deviceId: id, oldName, oldPath });
       return res.status(404).json({ error: 'Файл не найден', path: oldPath });
     }
     
@@ -4588,7 +4588,7 @@ export function createFilesRouter(deps) {
     }
     
     try {
-      logFile('info', `🔄 ${oldPath} -> ${newPath}`, { deviceId: id, oldName, newName, oldPath, newPath });
+      logFile('info', `${oldPath} -> ${newPath}`, { deviceId: id, oldName, newName, oldPath, newPath });
       try { await storage.move(toStorageKey(oldPath), toStorageKey(newPath)); } catch { fs.renameSync(oldPath, newPath); }
       
       // Обновляем маппинг имен
@@ -5202,7 +5202,7 @@ export function createFilesRouter(deps) {
         await deleteFileMetadata(id, name);
         deletedFileName = name;
         isFolder = true;
-        logFile('warn', '🧹 Удалена устаревшая запись о несуществующей папке', {
+        logFile('warn', 'Удалена устаревшая запись о несуществующей папке', {
           deviceId: id,
           fileName: name
         });
@@ -5265,12 +5265,12 @@ export function createFilesRouter(deps) {
             }
 
             if (deletedAnywhere) {
-              logFile('info', '🗑️ Physical file deleted (no references)', {
+              logFile('info', 'Physical file deleted (no references)', {
                 filePath: physicalPath,
                 sizeMB: (metadata.file_size / 1024 / 1024).toFixed(2)
               });
             } else {
-              logFile('warn', '⚠️ Файл не найден ни в хранилище, ни на диске', {
+              logFile('warn', 'Файл не найден ни в хранилище, ни на диске', {
                 filePath: physicalPath
               });
             }
@@ -5281,7 +5281,7 @@ export function createFilesRouter(deps) {
             });
           }
         } else {
-          logFile('info', '✅ Physical file kept (still used)', {
+          logFile('info', 'Physical file kept (still used)', {
             filePath: physicalPath,
             usedByDevices: refCount
           });
@@ -5304,7 +5304,7 @@ export function createFilesRouter(deps) {
           try {
             if (fs.existsSync(candidatePath)) {
               try { await storage.rm(toStorageKey(candidatePath)); } catch { fs.rmSync(candidatePath, { recursive: true, force: true }); }
-              logFile('info', '🗑️ File deleted from disk (no DB record)', {
+              logFile('info', 'File deleted from disk (no DB record)', {
                 filePath: candidatePath,
                 deviceId: id
               });
@@ -5674,7 +5674,7 @@ for (let i = 0; i < files.length; i++) {
                   uploadedBy: metadata?.uploaded_by || null
                 });
                 
-                logger.info('[files-with-status] ✅ Метаданные обновлены для конвертированного файла', {
+                logger.info('[files-with-status] Метаданные обновлены для конвертированного файла', {
                   deviceId: id,
                   oldSafeName: safeName,
                   newSafeName: folderName,

@@ -11,6 +11,7 @@ import {
   showErrorState
 } from './hero-utils.js';
 import { attachKeyboard, showKeyboard, hideKeyboard, isKeyboardActive, resetKeyboardInteraction } from './hero-keyboard.js';
+import { getCloseIcon } from '../../js/shared/svg-icons.js';
 
 const searchInput = document.getElementById('searchInput');
 const suggestions = document.getElementById('suggestions');
@@ -517,7 +518,7 @@ function openAvatarLightbox() {
   
   const lightboxHTML = `
     <div class="lightbox-overlay" data-action="close">
-      <button class="lightbox-close" data-action="close" title="Закрыть">✕</button>
+      <button class="lightbox-close" data-action="close" title="Закрыть">${getCloseIcon(20)}</button>
       <div class="lightbox-content" data-action="close">
         <img src="${currentHero.photo_key ? `/api/hero/${currentHero.id}/photo` : currentHero.photo_base64}" alt="${escapeHtml(currentHero.full_name || '')}" style="max-width: ${maxWidth}px; max-height: ${maxHeight}px; width: auto; height: auto; object-fit: contain;"/>
       </div>
@@ -634,7 +635,7 @@ function openLightbox(index) {
 
   const lightboxHTML = `
     <div class="lightbox-overlay" data-action="${isLast ? 'close' : 'next'}">
-      <button class="lightbox-close" data-action="close" title="Закрыть">✕</button>
+      <button class="lightbox-close" data-action="close" title="Закрыть">${getCloseIcon(20)}</button>
       <div class="lightbox-content" data-action="${isLast ? 'close' : 'next'}">
         ${
           media.type === 'photo'
