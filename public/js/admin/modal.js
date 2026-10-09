@@ -152,12 +152,14 @@ function clampServiceLogsLines(value) {
   return Math.max(20, Math.min(2000, parsed));
 }
 
-function setServiceLogsStatus(text, color = 'var(--text-secondary)') {
+function setServiceLogsStatus(text, color = 'var(--muted)') {
   const { statusEl } = getServiceLogsElements();
   if (!statusEl) return;
   statusEl.textContent = text || '';
   statusEl.style.color = color;
 }
+
+const SERVICE_LOG_LEVEL_LABELS = { error: 'ERR', warn: 'WRN', warning: 'WRN', info: 'INF', debug: 'DBG' };
 
 function formatServiceLogLine(rawLine) {
   try {
@@ -167,15 +169,6 @@ function formatServiceLogLine(rawLine) {
     const mod = obj.module || obj.category || '';
     const message = obj.message || obj.msg || rawLine;
 
-    const COLORS = {
-      error:  { bg: 'rgba(239,68,68,0.12)',  text: '#ef4444', label: 'ERR' },
-      warn:   { bg: 'rgba(234,179,8,0.10)',  text: '#eab308', label: 'WRN' },
-      warning:{ bg: 'rgba(234,179,8,0.10)',  text: '#eab308', label: 'WRN' },
-      info:   { bg: 'rgba(59,130,246,0.08)',  text: '#3b82f6', label: 'INF' },
-      debug:  { bg: 'rgba(156,163,175,0.08)', text: '#9ca3af', label: 'DBG' }
-    };
-    const lc = COLORS[level] || { bg: 'transparent', text: 'var(--text)', label: '---' };
-
     const skip = new Set(['level','message','msg','timestamp','time','t','module','category','service']);
     let rest = message;
     const extra = Object.entries(obj).filter(([k]) => !skip.has(k));
@@ -183,15 +176,17 @@ function formatServiceLogLine(rawLine) {
       try { const o = {}; extra.forEach(([k, v]) => o[k] = v); rest += ' ' + JSON.stringify(o); } catch {}
     }
 
-    const parts = [];
-    if (ts) parts.push(`<span style="color:var(--muted);white-space:nowrap;">${escapeHtml(ts)}</span>`);
-    if (level) parts.push(`<span style="display:inline-block;min-width:28px;text-align:center;padding:0 4px;border-radius:3px;font-size:0.72rem;font-weight:600;background:${lc.bg};color:${lc.text};">${lc.label}</span>`);
-    if (mod) parts.push(`<span style="color:var(--brand);font-weight:500;">[${escapeHtml(mod)}]</span>`);
-    parts.push(`<span style="color:${lc.text};">${escapeHtml(rest)}</span>`);
+    const label = SERVICE_LOG_LEVEL_LABELS[level] || (level ? level.toUpperCase().slice(0, 5) : '');
 
-    return `<div class="lg-line" data-level="${level}" style="padding:1px 4px;border-left:2px solid ${lc.bg === 'transparent' ? 'var(--border)' : lc.text};margin-bottom:1px;">${parts.join(' ')}</div>`;
+    const parts = [];
+    if (ts) parts.push(`<span class="lg-ts">${escapeHtml(ts)}</span>`);
+    if (label) parts.push(`<span class="lg-level">${label}</span>`);
+    if (mod) parts.push(`<span class="lg-mod">[${escapeHtml(mod)}]</span>`);
+    parts.push(`<span class="lg-msg">${escapeHtml(rest)}</span>`);
+
+    return `<div class="lg-line" data-level="${escapeHtml(level)}">${parts.join(' ')}</div>`;
   } catch {
-    return `<div class="lg-line" data-level="" style="padding:1px 4px;border-left:2px solid var(--border);margin-bottom:1px;"><span style="color:var(--text);">${escapeHtml(rawLine)}</span></div>`;
+    return `<div class="lg-line"><span class="lg-msg">${escapeHtml(rawLine)}</span></div>`;
   }
 }
 
@@ -311,63 +306,54 @@ function openServiceLogsModal(adminFetch) {
   stopServiceLogsViewer();
 
   const content = `
-    <div style="display:flex; flex-direction:column; gap:var(--space-sm);">
-      <div style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap;">
-        <label class="meta" for="serviceLogsLevelSelect" style="display:flex; align-items:center; gap:6px;">
-          Уровень:
-          <select id="serviceLogsLevelSelect" class="input" style="min-width:100px; padding:6px 8px;">
-            <option value="combined">все</option>
-            <option value="error">error</option>
-            <option value="warn">warn</option>
-            <option value="info">info</option>
-            <option value="debug">debug</option>
-          </select>
+    <div class="lg lg--modal">
+      <div class="lg-toolbar">
+        <select id="serviceLogsLevelSelect" class="input lg-field lg-field--level" aria-label="Уровень логов">
+          <option value="combined">все</option>
+          <option value="error">error</option>
+          <option value="warn">warn</option>
+          <option value="info">info</option>
+          <option value="debug">debug</option>
+        </select>
+
+        <select id="serviceLogsModuleSelect" class="input lg-field lg-field--module" aria-label="Модуль">
+          <option value="">все модули</option>
+          <option value="api">api</option>
+          <option value="auth">auth</option>
+          <option value="convert">convert</option>
+          <option value="db">db</option>
+          <option value="device">device</option>
+          <option value="file">file</option>
+          <option value="hero">hero</option>
+          <option value="http">http</option>
+          <option value="resolver">resolver</option>
+          <option value="security">security</option>
+          <option value="socket">socket</option>
+          <option value="stream">stream</option>
+          <option value="system">system</option>
+          <option value="video">video</option>
+        </select>
+
+        <select id="serviceLogsLinesSelect" class="input lg-field lg-field--lines" aria-label="Строк">
+          <option value="100" selected>100</option>
+          <option value="200">200</option>
+          <option value="500">500</option>
+          <option value="1000">1000</option>
+          <option value="2000">2000</option>
+        </select>
+
+        <label class="lg-check">
+          <input id="serviceLogsAutoscroll" type="checkbox" checked /> Авто
         </label>
 
-        <label class="meta" for="serviceLogsModuleSelect" style="display:flex; align-items:center; gap:6px;">
-          Модуль:
-          <select id="serviceLogsModuleSelect" class="input" style="min-width:110px; padding:6px 8px;">
-            <option value="">все</option>
-            <option value="api">api</option>
-            <option value="auth">auth</option>
-            <option value="convert">convert</option>
-            <option value="db">db</option>
-            <option value="device">device</option>
-            <option value="file">file</option>
-            <option value="hero">hero</option>
-            <option value="http">http</option>
-            <option value="resolver">resolver</option>
-            <option value="security">security</option>
-            <option value="socket">socket</option>
-            <option value="stream">stream</option>
-            <option value="system">system</option>
-            <option value="video">video</option>
-          </select>
-        </label>
-
-        <label class="meta" for="serviceLogsLinesSelect" style="display:flex; align-items:center; gap:6px;">
-          Строк:
-          <select id="serviceLogsLinesSelect" class="input" style="min-width:92px; padding:6px 8px;">
-            <option value="100" selected>100</option>
-            <option value="200">200</option>
-            <option value="500">500</option>
-            <option value="1000">1000</option>
-            <option value="2000">2000</option>
-          </select>
-        </label>
-
-        <label class="meta" style="display:flex; align-items:center; gap:6px;">
-          <input id="serviceLogsAutoscroll" type="checkbox" checked />
-          Автопрокрутка
-        </label>
-
-        <button id="serviceLogsRefreshBtn" class="secondary" type="button" style="min-width:auto;">Обновить</button>
-        <button id="serviceLogsClearBtn" class="secondary" type="button" style="min-width:auto;">Очистить</button>
+        <div class="lg-spacer"></div>
+        <button id="serviceLogsRefreshBtn" class="secondary lg-btn" type="button">Обновить</button>
+        <button id="serviceLogsClearBtn" class="secondary lg-btn" type="button">Очистить</button>
       </div>
 
-      <div id="serviceLogsStatus" class="meta" style="min-height:1.2em; color:var(--text-secondary);"></div>
+      <div id="serviceLogsStatus" class="lg-info"></div>
 
-      <pre id="serviceLogsOutput" style="margin:0; padding:12px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--panel); color:var(--text-primary); font-family:'Fira Code', Consolas, 'Courier New', monospace; font-size:0.84rem; line-height:1.35; white-space:pre-wrap; word-break:break-word; height:min(72vh, 760px); overflow:auto;"></pre>
+      <pre id="serviceLogsOutput" class="lg-output"></pre>
     </div>
   `;
 
@@ -448,7 +434,7 @@ function openServiceLogsModal(adminFetch) {
         serviceLogsViewerState.isTyping = false;
         serviceLogsViewerState.htmlQueue = '';
       }
-      setServiceLogsStatus('Окно логов очищено.', 'var(--text-secondary)');
+      setServiceLogsStatus('Окно логов очищено.', 'var(--muted)');
     };
 
     logSocket.on('logs/chunk', (data) => {
@@ -462,7 +448,7 @@ function openServiceLogsModal(adminFetch) {
       }
 
       const sourceText = data.fileName ? `Файл: ${data.fileName}` : 'Логи сервиса';
-      setServiceLogsStatus(`${sourceText} • реальное время`, 'var(--text-secondary)');
+      setServiceLogsStatus(`${sourceText} • реальное время`, 'var(--muted)');
     });
 
     logSocket.on('logs/reset', (data) => {
@@ -475,7 +461,7 @@ function openServiceLogsModal(adminFetch) {
       state.htmlQueue = '';
 
       const sourceText = data.fileName ? `Файл: ${data.fileName}` : 'Логи сервиса';
-      setServiceLogsStatus(`${sourceText} • подключение...`, 'var(--text-secondary)');
+      setServiceLogsStatus(`${sourceText} • подключение...`, 'var(--muted)');
     });
   }, 0);
 }

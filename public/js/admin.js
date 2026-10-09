@@ -672,7 +672,7 @@ function createSettingsSection() {
 
       const setHint = (text, color) => {
         const hint = document.getElementById('stApkVersionStatus');
-        if (hint) { hint.textContent = text || ''; hint.style.color = color || 'var(--text-secondary)'; }
+        if (hint) { hint.textContent = text || ''; hint.style.color = color || 'var(--muted)'; }
       };
 
       const render = () => {
@@ -689,7 +689,7 @@ function createSettingsSection() {
 
         const label = document.createElement('span');
         label.textContent = 'Версия:';
-        label.style.cssText = 'color:var(--text-secondary);';
+        label.style.cssText = 'color:var(--muted);';
         el.appendChild(label);
 
         const group = document.createElement('span');
@@ -697,9 +697,7 @@ function createSettingsSection() {
         versions.forEach((v) => {
           const chip = document.createElement('button');
           chip.type = 'button';
-          chip.className = 'secondary meta';
-          chip.style.cssText = 'min-width:auto; padding:2px 10px; font-size:0.72rem; border-radius:999px;' +
-            (v.version === selected ? ' border-color:var(--success,#4caf50); color:var(--success,#4caf50);' : '');
+          chip.className = 'secondary meta st-apk-chip' + (v.version === selected ? ' is-selected' : '');
           chip.textContent = v.version;
           chip.title = v.downloaded ? `Выбрать версию ${v.version}` : `Скачать и выбрать версию ${v.version}`;
           chip.disabled = busy;
@@ -710,7 +708,7 @@ function createSettingsSection() {
 
         const installed = document.createElement('span');
         installed.className = 'meta';
-        installed.style.cssText = 'color:var(--text-secondary); margin-left:8px;';
+        installed.style.cssText = 'color:var(--muted); margin-left:8px;';
         installed.textContent = data.installedVersion ? `на сервере: ${data.installedVersion}` : '';
         el.appendChild(installed);
 
@@ -1561,17 +1559,17 @@ function createLogsSection() {
   body.style.cssText = 'display:flex; flex-direction:column; min-height:0; height:100%;';
 
   body.innerHTML = `
-    <div style="display:flex; flex-direction:column; gap:var(--space-sm); flex:1; min-height:0;">
+    <div class="lg">
 
       <!-- Toolbar -->
-      <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center; padding:var(--space-sm) var(--space-sm); background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius-sm); flex-shrink:0;">
-        <select id="lgLevel" class="input" style="width:110px; height:30px; min-height:30px; padding:2px 8px; font-size:0.8rem;">
+      <div class="lg-toolbar">
+        <select id="lgLevel" class="input lg-field lg-field--level" aria-label="Уровень логов">
           <option value="combined">все</option>
         </select>
-        <select id="lgModule" class="input" style="width:120px; height:30px; min-height:30px; padding:2px 8px; font-size:0.8rem;">
+        <select id="lgModule" class="input lg-field lg-field--module" aria-label="Модуль">
           <option value="">все модули</option>
         </select>
-        <select id="lgLines" class="input" style="width:80px; height:30px; min-height:30px; padding:2px 8px; font-size:0.8rem;">
+        <select id="lgLines" class="input lg-field lg-field--lines" aria-label="Строк">
           <option value="50">50</option>
           <option value="100" selected>100</option>
           <option value="200">200</option>
@@ -1579,21 +1577,22 @@ function createLogsSection() {
           <option value="1000">1000</option>
           <option value="2000">2000</option>
         </select>
-        <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem; cursor:pointer;">
-          <input type="checkbox" id="lgAutoscroll" checked style="width:14px; height:14px;" /> Авто
+        <label class="lg-check">
+          <input type="checkbox" id="lgAutoscroll" checked /> Авто
         </label>
-        <button id="lgPause" class="secondary meta" style="min-width:auto; width:30px; height:30px; padding:0; font-size:0.8rem;" title="Пауза">${getPauseIcon(14)}</button>
-        <button id="lgRefresh" class="secondary meta" style="min-width:auto; height:30px; padding:2px 10px; font-size:0.8rem;">Обновить</button>
-        <button id="lgClear" class="secondary meta" style="min-width:auto; height:30px; padding:2px 10px; font-size:0.8rem;">Очистить</button>
-        <button id="lgCopy" class="secondary meta" style="min-width:auto; height:30px; padding:2px 10px; font-size:0.8rem;" title="Копировать">${getCopyIcon(14)}</button>
-        <button id="lgDownload" class="secondary meta" style="min-width:auto; height:30px; padding:2px 10px; font-size:0.8rem;" title="Скачать">${getDownloadIcon(14)}</button>
+        <div class="lg-spacer"></div>
+        <button id="lgPause" type="button" class="secondary lg-btn-icon" title="Пауза" aria-label="Пауза">${getPauseIcon(14)}</button>
+        <button id="lgRefresh" type="button" class="secondary lg-btn">Обновить</button>
+        <button id="lgClear" type="button" class="secondary lg-btn">Очистить</button>
+        <button id="lgCopy" type="button" class="secondary lg-btn-icon" title="Копировать" aria-label="Копировать">${getCopyIcon(14)}</button>
+        <button id="lgDownload" type="button" class="secondary lg-btn-icon" title="Скачать" aria-label="Скачать">${getDownloadIcon(14)}</button>
       </div>
 
       <!-- Info bar -->
-      <div id="lgInfo" class="meta" style="font-size:0.75rem; color:var(--muted); min-height:1.2em; padding:0 4px;"></div>
+      <div id="lgInfo" class="lg-info"></div>
 
       <!-- Output -->
-      <pre id="lgOutput" style="margin:0; padding:12px; flex:1; min-height:0; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--panel-2); font-family:'Fira Code', Consolas, monospace; font-size:0.84rem; line-height:1.35; white-space:pre-wrap; word-break:break-word; overflow:auto;">Загрузка...</pre>
+      <pre id="lgOutput" class="lg-output">Загрузка...</pre>
     </div>
   `;
 
@@ -1606,14 +1605,7 @@ function createLogsSection() {
 
   const ql = (sel) => el.querySelector(sel);
 
-  const LOG_LEVEL_COLORS = {
-    error:  { bg: 'rgba(239,68,68,0.12)',   text: '#ef4444', label: 'ERR' },
-    warn:   { bg: 'rgba(234,179,8,0.10)',   text: '#eab308', label: 'WRN' },
-    warning:{ bg: 'rgba(234,179,8,0.10)',   text: '#eab308', label: 'WRN' },
-    info:   { bg: 'rgba(59,130,246,0.08)',   text: '#3b82f6', label: 'INF' },
-    debug:  { bg: 'rgba(156,163,175,0.08)',  text: '#9ca3af', label: 'DBG' },
-    default:{ bg: 'transparent',             text: 'var(--text)', label: '---' }
-  };
+  const LEVEL_LABELS = { error: 'ERR', warn: 'WRN', warning: 'WRN', info: 'INF', debug: 'DBG' };
 
   function parseLogLine(rawLine) {
     try {
@@ -1636,10 +1628,11 @@ function createLogsSection() {
 
   function formatLogLine(rawLine) {
     const parsed = parseLogLine(rawLine);
-    const lc = LOG_LEVEL_COLORS[parsed.level] || LOG_LEVEL_COLORS.default;
 
     const ts = parsed.timestamp ? escapeHtml(parsed.timestamp) : '';
-    const levelTag = parsed.level ? escapeHtml(parsed.level.toUpperCase().slice(0, 5)) : '';
+    const levelTag = parsed.level
+      ? escapeHtml(LEVEL_LABELS[parsed.level] || parsed.level.toUpperCase().slice(0, 5))
+      : '';
     const mod = parsed.module ? escapeHtml(parsed.module) : '';
 
     let rest = parsed.message;
@@ -1656,18 +1649,16 @@ function createLogsSection() {
     }
 
     const parts = [];
-    if (ts) parts.push(`<span style="color:var(--muted);white-space:nowrap;">${ts}</span>`);
-    if (levelTag) parts.push(`<span style="display:inline-block;min-width:28px;text-align:center;padding:0 4px;border-radius:3px;font-size:0.72rem;font-weight:600;background:${lc.bg};color:${lc.text};">${levelTag}</span>`);
-    if (mod) parts.push(`<span style="color:var(--brand);font-weight:500;">[${mod}]</span>`);
+    if (ts) parts.push(`<span class="lg-ts">${ts}</span>`);
+    if (levelTag) parts.push(`<span class="lg-level">${levelTag}</span>`);
+    if (mod) parts.push(`<span class="lg-mod">[${mod}]</span>`);
+    parts.push(`<span class="lg-msg">${escapeHtml(rest)}</span>`);
 
-    const msgColor = lc !== LOG_LEVEL_COLORS.default ? lc.text : 'var(--text)';
-    parts.push(`<span style="color:${msgColor};">${escapeHtml(rest)}</span>`);
-
-    return `<div class="lg-line" data-level="${parsed.level || ''}" style="padding:1px 4px;border-left:2px solid ${lc.bg === 'transparent' ? 'var(--border)' : lc.text};margin-bottom:1px;">${parts.join(' ')}</div>`;
+    return `<div class="lg-line" data-level="${escapeHtml(parsed.level || '')}">${parts.join(' ')}</div>`;
   }
 
   function formatLogLines(arr) {
-    if (!arr.length) return 'Логи пусты';
+    if (!arr.length) return '<span class="lg-empty">Логи пусты</span>';
     return arr.map(formatLogLine).join('');
   }
 
@@ -1718,7 +1709,7 @@ function createLogsSection() {
       }
 
       if (result.reset || initial) {
-        output.innerHTML = arr.length ? formatLogLines(arr) : '<span style="color:var(--muted);">Логи пусты</span>';
+        output.innerHTML = formatLogLines(arr);
       } else if (arr.length > 0) {
         const newHtml = formatLogLines(arr);
         output.insertAdjacentHTML('beforeend', newHtml);
