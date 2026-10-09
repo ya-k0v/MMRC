@@ -472,6 +472,28 @@ body.admin-page .sidebar-menu-btn {
   box-shadow: var(--shadow-sm);
 }
 
+/* ===== Единая шкала кнопок админ-панели =====
+   Убираем разнобой (было 16…44px), оставляем три ступени:
+   плотные иконочные элементы — 28px, вторичные действия — 32px,
+   основные — 36px. Слой поднят над #grid button:not(.tvTile) (40px)
+   из app.css за счёт класса body. */
+body.admin-page #grid button {
+  min-height: 36px;
+  height: 36px;
+  padding: 6px 14px;
+  font-size: var(--font-size-sm);
+}
+
+body.admin-page #grid button.meta,
+body.admin-page #grid button.meta-lg,
+body.admin-page #grid button.lg-btn,
+body.admin-page #grid button.lg-btn-icon {
+  min-height: 32px;
+  height: 32px;
+  padding: 6px 12px;
+  font-size: var(--font-size-sm);
+}
+
 /* Admin sections for sidebar navigation */
 .admin-section {
   grid-column: 1 / -1;
@@ -762,58 +784,49 @@ body.admin-page .sidebar-menu-btn {
   line-height: 16px;
 }
 
-/* Чипы выбора версии APK — маленькие «таблетки», как бейджи питания/модулей.
-   Селектор с #grid нужен, чтобы перебить:
-   - button.meta (32px) из app.css,
+/* Чипы выбора версии APK — плотные «таблетки» (ступень 28px).
+   Селектор с #grid и body нужен, чтобы перебить:
+   - единую шкалу body.admin-page #grid button.meta (32px),
    - #grid button:not(.tvTile) (40px) на десктопе ≥1024px — оно на (1,1,1)
      сильнее любого классового селектора, поэтому без id чипы «раздувались». */
-#grid button.meta.st-apk-chip {
+body.admin-page #grid button.meta.st-apk-chip {
   min-width: auto;
-  min-height: 0;
-  height: 16px;
-  padding: 0 8px;
-  font-size: 0.7rem;
-  line-height: 14px;
+  min-height: 28px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 0.8rem;
+  line-height: 1;
   border: 1px solid transparent;
   border-radius: 999px;
   background: rgba(148, 163, 184, 0.12);
   color: var(--text-2);
 }
 
-#grid button.meta.st-apk-chip:hover:not(:disabled) {
+body.admin-page #grid button.meta.st-apk-chip:hover:not(:disabled) {
   background: rgba(148, 163, 184, 0.2);
   border-color: transparent;
   transform: none;
   box-shadow: none;
 }
 
-#grid button.meta.st-apk-chip.is-selected {
+body.admin-page #grid button.meta.st-apk-chip.is-selected {
   background: rgba(34, 197, 94, 0.14);
   color: var(--success);
   border-color: rgba(34, 197, 94, 0.55);
   font-weight: var(--font-weight-semibold);
 }
 
-/* Действие «Обновить» рядом с чипами — такая же небольшая «таблетка» */
-#grid button.meta.st-apk-action {
+/* Действие «Обновить» рядом с чипами — такая же плотная «таблетка» */
+body.admin-page #grid button.meta.st-apk-action {
   min-width: auto;
-  min-height: 0;
-  height: 16px;
-  padding: 0 10px;
-  margin-left: 8px;
-  font-size: 0.7rem;
-  line-height: 14px;
+  min-height: 28px;
+  height: 28px;
+  padding: 0 12px;
+  margin-left: auto;
+  font-size: 0.8rem;
+  line-height: 1;
   border-radius: 999px;
 }
-
-.st-ml-auto {
-  margin-left: auto;
-}
-
-/* Компактные поля инсталлятора APK */
-.st-input-xs { width: 70px; }
-.st-input-sm { width: 120px; }
-.st-input-md { width: 130px; }
 
 /* Строка статуса */
 .st-status {
@@ -826,21 +839,20 @@ body.admin-page .sidebar-menu-btn {
   min-height: 1.2em;
 }
 
-/* Кнопка «Перезапустить» — компактная опасная.
-   #grid перебивает #grid button:not(.tvTile) (40px) на десктопе. */
-#grid button.st-btn-danger {
+/* Кнопка «Перезапустить» — вторичное опасное действие (ступень 32px). */
+body.admin-page #grid button.st-btn-danger {
   margin-left: auto;
   background: var(--danger);
   color: #fff;
   border-color: var(--danger);
   min-width: auto;
-  padding: 4px 12px;
-  font-size: 0.75rem;
-  min-height: auto;
-  height: auto;
+  padding: 0 12px;
+  font-size: var(--font-size-sm);
+  min-height: 32px;
+  height: 32px;
 }
 
-#grid button.st-btn-danger:hover:not(:disabled) {
+body.admin-page #grid button.st-btn-danger:hover:not(:disabled) {
   background: var(--danger-2);
   border-color: var(--danger-2);
 }
@@ -922,12 +934,12 @@ body.admin-page .sidebar-menu-btn {
   flex: none;
 }
 
-#grid button.st-power-btn {
-  font-size: 0.75rem;
-  padding: 3px 6px;
-  min-width: auto;
-  min-height: auto;
-  height: auto;
+body.admin-page #grid button.st-power-btn {
+  font-size: 0.8rem;
+  padding: 0 6px;
+  min-width: 28px;
+  min-height: 28px;
+  height: 28px;
   line-height: 1;
 }
 
@@ -941,11 +953,11 @@ body.admin-page .sidebar-menu-btn {
 }
 
 /* Кнопки пагинации питания */
-#grid button.st-pager-btn {
-  min-width: auto;
-  padding: 2px 12px;
-  min-height: auto;
-  height: auto;
+body.admin-page #grid button.st-pager-btn {
+  min-width: 28px;
+  padding: 0 10px;
+  min-height: 28px;
+  height: 28px;
 }
 
 .st-power-pager {
@@ -1203,21 +1215,35 @@ button.lg-btn-icon {
   outline-offset: 2px;
 }
 
-/* На тач-устройствах компактные «таблетки» доводим до удобного тап-таргета.
-   Значения поднимаются поверх #grid button:not(.tvTile) за счёт более позднего
-   и специфичного селектора. */
+/* На тач-устройствах поднимаем тап-таргеты: основные — 40px,
+   плотные «таблетки» — 36px. Значения подняты поверх
+   #grid button:not(.tvTile) за счёт класса body и специфичности. */
 @media (pointer: coarse) {
-  #grid button.meta.st-apk-chip,
-  #grid button.meta.st-apk-action,
-  #grid button.st-power-btn,
-  #grid button.st-pager-btn {
-    height: auto;
+  body.admin-page #grid button {
+    min-height: 40px;
+    height: 40px;
+  }
+
+  body.admin-page #grid button.meta,
+  body.admin-page #grid button.meta-lg,
+  body.admin-page #grid button.lg-btn,
+  body.admin-page #grid button.lg-btn-icon,
+  body.admin-page #grid button.st-btn-danger {
+    min-height: 40px;
+    height: 40px;
+  }
+
+  body.admin-page #grid button.meta.st-apk-chip,
+  body.admin-page #grid button.meta.st-apk-action,
+  body.admin-page #grid button.st-power-btn,
+  body.admin-page #grid button.st-pager-btn {
+    height: 36px;
     min-height: 36px;
     padding-top: 0;
     padding-bottom: 0;
     font-size: 0.8rem;
   }
 
-  #grid button.meta.st-apk-chip { padding-left: 12px; padding-right: 12px; }
-  #grid button.st-power-btn { min-width: 36px; }
+  body.admin-page #grid button.meta.st-apk-chip { padding-left: 12px; padding-right: 12px; }
+  body.admin-page #grid button.st-power-btn { min-width: 36px; }
 }
