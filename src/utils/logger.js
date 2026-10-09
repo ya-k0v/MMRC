@@ -187,7 +187,11 @@ export const httpLoggerMiddleware = (req, res, next) => {
     else if (isServiceLogsPoll) level = 'debug';
     else if (isAdminWrite) level = 'warn';
 
-    logAPI(level, `${req.method} ${req.originalUrl || req.url}`, logData);
+    const isApi = urlPath === '/api' || urlPath.startsWith('/api/');
+    const isSuccessfulApiRead = (req.method === 'GET' || req.method === 'POST') && isApi && res.statusCode < 400;
+    if (!isSuccessfulApiRead) {
+      logAPI(level, `${req.method} ${req.originalUrl || req.url}`, logData);
+    }
 
     import('./metrics.js').then(({ recordRequest }) => {
       recordRequest(req.method, req.originalUrl || req.url, duration, res.statusCode >= 400);
