@@ -858,22 +858,15 @@ body.admin-page #grid button.meta.st-apk-action {
   min-height: 1.2em;
 }
 
-/* Кнопка «Перезапустить» — вторичное опасное действие (ступень 32px). */
+/* Кнопка «Перезапустить» — вторичное опасное действие (ступень 32px).
+   Цвет берём из общей кнопки .danger (translucent), здесь только раскладка. */
 body.admin-page #grid button.st-btn-danger {
   margin-left: auto;
-  background: var(--danger);
-  color: #fff;
-  border-color: var(--danger);
   min-width: auto;
   padding: 0 12px;
   font-size: var(--font-size-sm);
   min-height: 32px;
   height: 32px;
-}
-
-body.admin-page #grid button.st-btn-danger:hover:not(:disabled) {
-  background: var(--danger-2);
-  border-color: var(--danger-2);
 }
 
 /* Параметры LDAP в отдельной карточке */

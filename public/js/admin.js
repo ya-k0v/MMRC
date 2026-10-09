@@ -327,7 +327,7 @@ function createSettingsSection() {
               <span class="st-sep">·</span>
               <span>Uptime: <strong id="stSysUptime">—</strong></span>
               ${docker && docker.enabled ? `<span class="st-sep">·</span><span>Docker: <strong>${escapeHtml(docker.mainImage || '')}:${escapeHtml(docker.mainTag || '')}</strong></span>` : ''}
-              <button id="stRestart" class="secondary meta st-btn-danger">${getRestartIcon(14)} Перезапустить</button>
+              <button id="stRestart" class="danger meta st-btn-danger">${getRestartIcon(14)} Перезапустить</button>
             </div>
 
             <div id="stSysMonitorBody">
