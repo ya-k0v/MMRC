@@ -662,47 +662,129 @@ function createSettingsSection() {
       dbMaint(`/api/admin/database/cleanup-orphaned-files${dryRun ? '?dryRun=true' : ''}`, 'cleanOrphaned');
     };
 
-    // APK Version
+    // APK Version — выбор одной из последних версий релиза
     (async () => {
       const el = document.getElementById('stApkVersion');
       if (!el) return;
-      try {
-        const r = await adminFetch('/api/admin/apk-version');
-        const data = await r.json();
-        if (data.available) {
-          let html = `Версия: <strong>${escapeHtml(data.version || '?')}</strong>`;
-          if (data.installedVersion && data.installedVersion !== data.version) {
-            html += ` <span style="color:var(--warning);">(${escapeHtml(data.installedVersion)} на сервере, доступно обновление)</span>`;
-          }
-          if (data.updateAvailable) {
-            html += ` <button id="stApkDownload" class="secondary meta" style="min-width:auto; padding:2px 8px; font-size:0.7rem;">Обновить</button>`;
-          }
-          el.innerHTML = html;
-          el.style.color = data.updateAvailable ? 'var(--warning)' : 'var(--success)';
-          if (data.updateAvailable) {
-            const dlBtn = document.getElementById('stApkDownload');
-            if (dlBtn) {
-              dlBtn.onclick = async () => {
-                dlBtn.disabled = true; dlBtn.textContent = 'Загрузка...';
-                try {
-                  const dr = await adminFetch('/api/admin/apk-update', { method: 'POST' });
-                  const dd = await dr.json();
-                  if (dd.ok) {
-                    el.innerHTML = `Версия: <strong>${escapeHtml(dd.version || data.version)}</strong> <span style="color:var(--success);">обновлено</span>`;
-                    el.style.color = 'var(--success)';
-                  } else {
-                    dlBtn.textContent = 'Ошибка'; dlBtn.disabled = false;
-                  }
-                } catch { dlBtn.textContent = 'Ошибка'; dlBtn.disabled = false; }
-              };
-            }
-          }
-        } else {
-          el.textContent = data.error || 'Не удалось проверить версию APK';
+
+      let data = null;
+      let busy = false;
+
+      const setHint = (text, color) => {
+        const hint = document.getElementById('stApkVersionStatus');
+        if (hint) { hint.textContent = text || ''; hint.style.color = color || 'var(--text-secondary)'; }
+      };
+
+      const render = () => {
+        const versions = data && Array.isArray(data.versions) ? data.versions : [];
+        if (!data || !data.available || !versions.length) {
+          el.textContent = data?.error ? `Версия APK: ${data.error}` : 'Версия APK: неизвестна';
           el.style.color = 'var(--muted)';
+          return;
         }
-      } catch { el.textContent = 'Не удалось загрузить версию APK'; }
+
+        const selected = data.selectedVersion || data.latestVersion || versions[0].version;
+        el.innerHTML = '';
+        el.style.color = '';
+
+        const label = document.createElement('span');
+        label.textContent = 'Версия:';
+        label.style.cssText = 'color:var(--text-secondary);';
+        el.appendChild(label);
+
+        const group = document.createElement('span');
+        group.style.cssText = 'display:inline-flex; gap:6px; flex-wrap:wrap; align-items:center;';
+        versions.forEach((v) => {
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = 'secondary meta';
+          chip.style.cssText = 'min-width:auto; padding:2px 10px; font-size:0.72rem; border-radius:999px;' +
+            (v.version === selected ? ' border-color:var(--success,#4caf50); color:var(--success,#4caf50);' : '');
+          chip.textContent = v.version;
+          chip.title = v.downloaded ? `Выбрать версию ${v.version}` : `Скачать и выбрать версию ${v.version}`;
+          chip.disabled = busy;
+          chip.onclick = () => selectVersion(v.version);
+          group.appendChild(chip);
+        });
+        el.appendChild(group);
+
+        const installed = document.createElement('span');
+        installed.className = 'meta';
+        installed.style.cssText = 'color:var(--text-secondary); margin-left:8px;';
+        installed.textContent = data.installedVersion ? `на сервере: ${data.installedVersion}` : '';
+        el.appendChild(installed);
+
+        const upd = document.createElement('button');
+        upd.type = 'button';
+        upd.className = 'secondary meta';
+        upd.style.cssText = 'min-width:auto; padding:2px 8px; font-size:0.7rem; margin-left:8px;';
+        upd.textContent = 'Обновить';
+        upd.disabled = busy;
+        upd.onclick = downloadAll;
+        el.appendChild(upd);
+
+        const hint = document.createElement('span');
+        hint.id = 'stApkVersionStatus';
+        hint.className = 'meta';
+        hint.style.cssText = 'margin-left:8px;';
+        el.appendChild(hint);
+      };
+
+      const load = async () => {
+        try {
+          const r = await adminFetch('/api/admin/apk-version');
+          data = await r.json();
+        } catch {
+          data = { available: false, error: 'Ошибка соединения' };
+        }
+        render();
+      };
+
+      const selectVersion = async (version) => {
+        if (busy) return;
+        busy = true;
+        render();
+        setHint('Сохранение...');
+        let errMsg = null;
+        try {
+          const r = await adminFetch('/api/admin/apk-version/select', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ version })
+          });
+          const result = await r.json().catch(() => ({}));
+          if (!r.ok || !result.ok) errMsg = result.error || 'Не удалось выбрать версию';
+        } catch { errMsg = 'Ошибка соединения'; }
+        busy = false;
+        await load();
+        setHint(errMsg || 'выбрано', errMsg ? 'var(--danger)' : 'var(--success)');
+      };
+
+      const downloadAll = async () => {
+        if (busy) return;
+        busy = true;
+        render();
+        setHint('Загрузка версий...');
+        let errMsg = null;
+        let okMsg = '';
+        try {
+          const r = await adminFetch('/api/admin/apk-update', { method: 'POST' });
+          const result = await r.json().catch(() => ({}));
+          if (!r.ok || !result.ok) {
+            errMsg = result.error || 'Не удалось скачать версии';
+          } else {
+            const names = (result.downloaded || []).map((d) => d.version).join(', ');
+            okMsg = names ? `скачано: ${names}` : 'скачано';
+          }
+        } catch { errMsg = 'Ошибка соединения'; }
+        busy = false;
+        await load();
+        setHint(errMsg || okMsg, errMsg ? 'var(--danger)' : 'var(--success)');
+      };
+
+      await load();
     })();
+
 
     // Update system — показываем версию сервера в шапке
     (async () => {

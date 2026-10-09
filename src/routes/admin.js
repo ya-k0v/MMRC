@@ -11,8 +11,9 @@ import { validateUploadSize } from '../middleware/multer-config.js';
 import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('api');
 import { installAndSetupApk } from '../utils/apk-installer.js';
+import { APK_MAX_VERSIONS, sanitizeApkVersion, normalizeApkReleases } from '../utils/apk-releases.js';
 import { isAndroidDevice as isAndroidDeviceCandidate } from '../utils/adb.js';
-import { getSettings, updateContentRootPath, getDevicesPath, getLogsDir } from '../config/settings-manager.js';
+import { getSettings, updateContentRootPath, getDevicesPath, getLogsDir, getApkVersion, setApkVersion } from '../config/settings-manager.js';
 import { validatePath } from '../utils/path-validator.js';
 import {
   closeDatabase,
@@ -279,6 +280,80 @@ function resolveDefaultApkPath() {
   return candidates.length ? candidates[0].filePath : null;
 }
 
+const APK_REPO = 'ya-k0v/MMRC-android-player';
+const APK_DIR = path.resolve(PROJECT_ROOT, 'clients', 'android-mediaplayer');
+const APK_VERSIONS_DIR = path.join(APK_DIR, 'versions');
+
+function getVersionApkPath(version) {
+  const safe = sanitizeApkVersion(version);
+  if (!safe) {
+    return null;
+  }
+  return path.join(APK_VERSIONS_DIR, safe, 'app-release.apk');
+}
+
+function readInstalledApkVersion() {
+  const versionFile = path.join(APK_DIR, 'version.txt');
+  try {
+    return fs.readFileSync(versionFile, 'utf-8').trim().replace(/^v/, '');
+  } catch {
+    return '';
+  }
+}
+
+async function fetchApkReleases(limit = APK_MAX_VERSIONS) {
+  const response = await fetch(`https://api.github.com/repos/${APK_REPO}/releases?per_page=${limit}`, {
+    headers: { 'Accept': 'application/vnd.github.v3+json' }
+  });
+
+  if (!response.ok) {
+    throw new Error(`GitHub API ${response.status}`);
+  }
+
+  return normalizeApkReleases(await response.json(), limit);
+}
+
+async function downloadApkRelease(release) {
+  const targetPath = getVersionApkPath(release.version);
+  if (!targetPath) {
+    throw new Error('Некорректная версия APK');
+  }
+
+  const response = await fetch(release.downloadUrl);
+  if (!response.ok) {
+    throw new Error(`Download failed: ${response.status}`);
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.writeFileSync(targetPath, buffer);
+  return { path: targetPath, size: buffer.length };
+}
+
+// Установочный APK: явно выбранная в настройках версия, иначе самый свежий файл.
+function resolveInstallApkPath() {
+  const selected = getApkVersion();
+  if (selected) {
+    const selectedPath = getVersionApkPath(selected);
+    if (selectedPath && fs.existsSync(selectedPath)) {
+      return selectedPath;
+    }
+  }
+  return resolveDefaultApkPath();
+}
+
+// Кладём версию в корень клиента для совместимости с прежней логикой установки.
+function syncLegacyApkAlias(version, tag = null) {
+  const sourcePath = getVersionApkPath(version);
+  if (!sourcePath || !fs.existsSync(sourcePath)) {
+    return false;
+  }
+  fs.mkdirSync(APK_DIR, { recursive: true });
+  fs.copyFileSync(sourcePath, path.join(APK_DIR, 'app-release.apk'));
+  fs.writeFileSync(path.join(APK_DIR, 'version.txt'), tag || `v${version}`);
+  return true;
+}
+
 function parseRequestedDeviceIds(rawValue) {
   if (Array.isArray(rawValue)) {
     return rawValue
@@ -390,7 +465,7 @@ export function createAdminRouter(deps = {}) {
       }
     }
 
-    let apkPath = uploadedApkPath || resolveDefaultApkPath();
+    let apkPath = uploadedApkPath || resolveInstallApkPath();
 
     if (!ip || !deviceId || !deviceName) {
       return res.status(400).json({ ok: false, error: 'IP, ID и имя устройства обязательны' });
@@ -495,7 +570,7 @@ export function createAdminRouter(deps = {}) {
       }
     }
 
-    const apkPath = uploadedApkPath || resolveDefaultApkPath();
+    const apkPath = uploadedApkPath || resolveInstallApkPath();
     if (!apkPath) {
       return res.status(400).json({
         ok: false,
@@ -816,40 +891,43 @@ export function createAdminRouter(deps = {}) {
     }
   });
 
-  // GET /api/admin/apk-version — latest version from GitHub releases
+  // GET /api/admin/apk-version — последние версии из GitHub releases + выбранная в настройках
   router.get('/apk-version', requireAdmin, async (req, res) => {
     try {
-      // Читаем установленную версию
-      const installedVersionFile = path.resolve(PROJECT_ROOT, 'clients', 'android-mediaplayer', 'version.txt');
-      let installedVersion = '';
+      const installedVersion = readInstalledApkVersion();
+      const selectedVersion = getApkVersion();
+
+      let versions = [];
+      let releasesError = null;
       try {
-        installedVersion = fs.readFileSync(installedVersionFile, 'utf-8').trim().replace(/^v/, '');
-      } catch {}
-
-      const response = await fetch('https://api.github.com/repos/ya-k0v/MMRC-android-player/releases/latest', {
-        headers: { 'Accept': 'application/vnd.github.v3+json' }
-      });
-
-      if (!response.ok) {
-        return res.json({ available: false, error: `GitHub API ${response.status}` });
+        const releases = await fetchApkReleases(APK_MAX_VERSIONS);
+        versions = releases.map((release) => ({
+          version: release.version,
+          tag: release.tag,
+          publishedAt: release.publishedAt,
+          downloadUrl: release.downloadUrl,
+          downloaded: fs.existsSync(getVersionApkPath(release.version))
+        }));
+      } catch (error) {
+        releasesError = error.message;
       }
 
-      const release = await response.json();
-      const tag = release.tag_name || '';
-      const version = tag.replace(/^v/, '');
-      const apkAsset = (release.assets || []).find(a => a.name?.endsWith('.apk'));
-      const downloadUrl = apkAsset?.browser_download_url || null;
-      const publishedAt = release.published_at || null;
+      const latest = versions[0] || null;
 
       res.json({
-        available: true,
-        version,
-        tag,
-        downloadUrl,
-        publishedAt,
+        available: versions.length > 0,
+        error: releasesError,
+        versions,
+        latestVersion: latest?.version || '',
         installedVersion,
-        updateAvailable: installedVersion !== version,
-        releaseNotes: release.body || ''
+        selectedVersion: selectedVersion || null,
+        // Поля ниже оставлены для обратной совместимости со старым UI.
+        version: latest?.version || '',
+        tag: latest?.tag || '',
+        downloadUrl: latest?.downloadUrl || null,
+        publishedAt: latest?.publishedAt || null,
+        updateAvailable: latest ? installedVersion !== latest.version : false,
+        releaseNotes: ''
       });
     } catch (error) {
       logger.error('[Admin] Failed to fetch APK version:', error);
@@ -857,53 +935,92 @@ export function createAdminRouter(deps = {}) {
     }
   });
 
-  // POST /api/admin/apk-update — download new APK version into container
+  // POST /api/admin/apk-update — скачать последние версии APK в контейнер
   router.post('/apk-update', requireAdmin, async (req, res) => {
     try {
-      const response = await fetch('https://api.github.com/repos/ya-k0v/MMRC-android-player/releases/latest', {
-        headers: { 'Accept': 'application/vnd.github.v3+json' }
-      });
-
-      if (!response.ok) {
-        return res.status(500).json({ ok: false, error: `GitHub API ${response.status}` });
+      let releases;
+      try {
+        releases = await fetchApkReleases(APK_MAX_VERSIONS);
+      } catch (error) {
+        return res.status(500).json({ ok: false, error: error.message });
       }
 
-      const release = await response.json();
-      const apkAsset = (release.assets || []).find(a => a.name?.endsWith('.apk'));
-
-      if (!apkAsset?.browser_download_url) {
-        return res.status(404).json({ ok: false, error: 'APK not found in release' });
+      if (!releases.length) {
+        return res.status(404).json({ ok: false, error: 'APK not found in releases' });
       }
 
-      const apkDir = path.resolve(PROJECT_ROOT, 'clients', 'android-mediaplayer');
-      if (!fs.existsSync(apkDir)) {
-        fs.mkdirSync(apkDir, { recursive: true });
+      const downloaded = [];
+      const errors = [];
+      for (const release of releases) {
+        try {
+          const result = await downloadApkRelease(release);
+          downloaded.push({ version: release.version, tag: release.tag, size: result.size });
+        } catch (error) {
+          errors.push({ version: release.version, error: error.message });
+        }
       }
 
-      const apkPath = path.join(apkDir, 'app-release.apk');
-      const apkResponse = await fetch(apkAsset.browser_download_url);
-
-      if (!apkResponse.ok) {
-        return res.status(500).json({ ok: false, error: `Download failed: ${apkResponse.status}` });
+      if (!downloaded.length) {
+        return res.status(500).json({ ok: false, error: errors[0]?.error || 'Не удалось скачать APK' });
       }
 
-      const buffer = Buffer.from(await apkResponse.arrayBuffer());
-      fs.writeFileSync(apkPath, buffer);
+      const latest = downloaded[0];
+      syncLegacyApkAlias(latest.version, latest.tag);
 
-      // Сохраняем установленную версию
-      const versionFile = path.join(apkDir, 'version.txt');
-      fs.writeFileSync(versionFile, release.tag_name || '');
+      if (!getApkVersion()) {
+        try { setApkVersion(latest.version); } catch {}
+      }
 
-      logger.info('[Admin] APK updated', { version: release.tag_name, size: buffer.length });
+      logger.info('[Admin] APK updated', { versions: downloaded.map((d) => d.tag), size: latest.size });
 
       res.json({
         ok: true,
-        version: release.tag_name,
-        size: buffer.length,
-        path: apkPath
+        versions: downloaded.map((d) => d.version),
+        downloaded,
+        errors,
+        // Обратная совместимость со старым UI.
+        version: latest.tag,
+        size: latest.size,
+        path: getVersionApkPath(latest.version)
       });
     } catch (error) {
       logger.error('[Admin] APK update failed:', error);
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  // POST /api/admin/apk-version/select — запомнить версию APK для проекта
+  router.post('/apk-version/select', requireAdmin, async (req, res) => {
+    try {
+      const version = sanitizeApkVersion(req.body?.version);
+      if (!version) {
+        return res.status(400).json({ ok: false, error: 'Некорректная версия APK' });
+      }
+
+      let apkPath = getVersionApkPath(version);
+      let tag = `v${version}`;
+      if (!apkPath || !fs.existsSync(apkPath)) {
+        let releases;
+        try {
+          releases = await fetchApkReleases(APK_MAX_VERSIONS);
+        } catch (error) {
+          return res.status(500).json({ ok: false, error: error.message });
+        }
+        const release = releases.find((item) => item.version === version);
+        if (!release) {
+          return res.status(404).json({ ok: false, error: 'Версия не найдена в релизах' });
+        }
+        await downloadApkRelease(release);
+        apkPath = getVersionApkPath(version);
+        tag = release.tag;
+      }
+
+      setApkVersion(version);
+      syncLegacyApkAlias(version, tag);
+
+      res.json({ ok: true, selectedVersion: version });
+    } catch (error) {
+      logger.error('[Admin] Failed to select APK version:', error);
       res.status(500).json({ ok: false, error: error.message });
     }
   });

@@ -239,7 +239,8 @@ function normalizeLdapAuthSettings(raw = {}, current = LDAP_DEFAULTS) {
 // КРИТИЧНО: Инициализируем settings сразу, чтобы избежать ошибки "Cannot access 'settings' before initialization"
 // Это важно, так как logger.js может использовать getLogsDir() до полной инициализации модуля
 let settings = {
-  contentRoot: process.env.CONTENT_ROOT || DEFAULT_DATA_ROOT
+  contentRoot: process.env.CONTENT_ROOT || DEFAULT_DATA_ROOT,
+  apkVersion: null
 };
 
 // КРИТИЧНО: Загружаем настройки из файла синхронно при загрузке модуля
@@ -582,6 +583,28 @@ export function getSettings() {
       tempDir: getTempDir()
     }
   };
+}
+
+export function getApkVersion() {
+  const value = settings.apkVersion;
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+export function setApkVersion(version) {
+  if (version === null || version === undefined || version === '') {
+    settings.apkVersion = null;
+    safeWriteSettings({ throwOnError: true });
+    return null;
+  }
+
+  const normalized = String(version).trim().replace(/^v/i, '');
+  if (!/^[0-9A-Za-z._-]+$/.test(normalized)) {
+    throw new Error('Некорректная версия APK');
+  }
+
+  settings.apkVersion = normalized;
+  safeWriteSettings({ throwOnError: true });
+  return normalized;
 }
 
 export function getLdapAuthSettings(options = {}) {

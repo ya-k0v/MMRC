@@ -75,7 +75,7 @@ export function renderPowerControlsHtml(devices) {
     <div class="st-card">
       <div class="st-card-h">
         ${getPowerIcon(16)}
-        <span>Управление устройствами</span>
+        <span>Управление Android устройствами</span>
       </div>
       <div class="st-power-body">
         <div class="st-actions">

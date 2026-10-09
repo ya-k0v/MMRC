@@ -54,12 +54,12 @@ beforeEach(() => {
   document.body.innerHTML = '';
 });
 
-describe('карточка «Управление устройствами»', () => {
+describe('карточка «Управление Android устройствами»', () => {
   test('показывает только устройства, которыми можно управлять по ADB', () => {
     const html = renderPowerControlsHtml(DEVICES);
     document.body.innerHTML = html;
 
-    expect(html).toContain('Управление устройствами');
+    expect(html).toContain('Управление Android устройствами');
     expect(row('tv1')).not.toBeNull();
     expect(row('tv2')).not.toBeNull();
     expect(row('native1')).not.toBeNull();
