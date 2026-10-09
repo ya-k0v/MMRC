@@ -17,6 +17,7 @@ import { validatePath } from '../utils/path-validator.js';
 import {
   closeDatabase,
   getDatabase,
+  getDatabaseStats,
   performWalCheckpoint,
   startWalCheckpointInterval,
   stopWalCheckpointInterval
@@ -606,27 +607,36 @@ export function createAdminRouter(deps = {}) {
   });
 
   // GET /api/admin/export-database
-  router.get('/export-database', requireAdmin, (req, res) => {
+  router.get('/export-database', requireAdmin, async (req, res) => {
     if (process.env.DB_TYPE === 'postgres') {
       return res.status(400).json({ error: 'Export is not available in PostgreSQL mode. Use pg_dump instead.' });
     }
     try {
-      const dbFilePath = DB_PATH;
-      
-      if (!fs.existsSync(dbFilePath)) {
+      const stats = await getDatabaseStats();
+      const dbFilePath = stats.dbPath;
+
+      if (!dbFilePath || dbFilePath === 'postgresql' || !fs.existsSync(dbFilePath)) {
         return res.status(404).json({ error: 'Database file not found' });
       }
-      
-      const stats = fs.statSync(dbFilePath);
+
+      const fileStats = fs.statSync(dbFilePath);
       const filename = `main_${new Date().toISOString().split('T')[0]}.db`;
-      
+
       res.setHeader('Content-Type', 'application/octet-stream');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.setHeader('Content-Length', stats.size);
-      
+      res.setHeader('Content-Length', fileStats.size);
+
       const fileStream = fs.createReadStream(dbFilePath);
+      fileStream.on('error', (error) => {
+        logger.error('[Admin] Error streaming database file:', error);
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Failed to export database' });
+        } else {
+          res.destroy(error);
+        }
+      });
       fileStream.pipe(res);
-      
+
       logger.info(`[Admin] Database exported by user: ${req.user?.username || 'unknown'}`);
     } catch (error) {
       logger.error('[Admin] Error exporting database:', error);
