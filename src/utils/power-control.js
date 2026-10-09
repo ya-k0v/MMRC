@@ -8,7 +8,7 @@
  */
 
 import { sleepDevice, wakeDevice, getDeviceMac, launchAndroidApp, isAndroidDevice } from './adb.js';
-import { sendWakeOnLan, readArpMac, normalizeMac } from './wol.js';
+import { sendWakeOnLanAuto, readHostArpMac, normalizeMac } from './wol.js';
 import { ANDROID_PACKAGE_NAME, ANDROID_MAIN_ACTIVITY } from '../config/android.js';
 import { isReservedObjectKey } from './sanitize.js';
 import { createModuleLogger } from './logger.js';
@@ -137,8 +137,8 @@ export const DEFAULT_POWER_COMMANDS = {
   sleepDevice,
   wakeDevice,
   getDeviceMac,
-  sendWakeOnLan,
-  readArpMac,
+  sendWakeOnLan: sendWakeOnLanAuto,
+  readArpMac: readHostArpMac,
   delay: (ms) => new Promise(resolve => setTimeout(resolve, ms)),
   launchApp: async (ip, port) => launchAndroidApp(ip, ANDROID_PACKAGE_NAME, ANDROID_MAIN_ACTIVITY, port)
 };
@@ -230,7 +230,7 @@ async function runForTarget(target, action, options) {
     let wake = await commands.wakeDevice(ip, port, adbTimeoutMs);
 
     if (!wake.ok) {
-      const mac = target.mac || commands.readArpMac(ip);
+      const mac = target.mac || await commands.readArpMac(ip);
       if (mac) {
         try {
           await commands.sendWakeOnLan(mac);

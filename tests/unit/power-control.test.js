@@ -9,7 +9,7 @@ import { jest } from '@jest/globals';
 
 const { planPowerTargets, runPowerAction, isAndroidDevice } = await import('../../src/utils/power-control.js');
 const { parsePowerState, parseMacAddress } = await import('../../src/utils/adb.js');
-const { buildMagicPacket, normalizeMac, readArpMac } = await import('../../src/utils/wol.js');
+const { buildMagicPacket, normalizeMac, parseArpTable, readArpMac } = await import('../../src/utils/wol.js');
 
 const DEVICES = {
   tv1: { deviceType: 'android', ipAddress: '192.168.1.10', adbPort: '5555' },
@@ -369,5 +369,17 @@ describe('Wake-on-LAN пакет', () => {
   test('ARP-таблица: неизвестный адрес и пустой ip дают null', () => {
     expect(readArpMac('')).toBeNull();
     expect(readArpMac('203.0.113.77')).toBeNull();
+  });
+
+  test('parseArpTable берёт MAC из правильной колонки', () => {
+    const table = [
+      'IP address       HW type     Flags       HW address            Mask     Device',
+      '10.172.1.94      0x1         0x2         00:ef:00:1b:08:5f     *        eth2',
+      '10.172.1.95      0x1         0x0         00:00:00:00:00:00     *        eth2'
+    ].join('\n');
+
+    expect(parseArpTable(table, '10.172.1.94')).toBe('00:ef:00:1b:08:5f');
+    expect(parseArpTable(table, '10.172.1.95')).toBeNull();
+    expect(parseArpTable(table, '10.0.0.9')).toBeNull();
   });
 });
