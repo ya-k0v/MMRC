@@ -362,6 +362,9 @@ body.admin-page .sidebar-logout {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
   /* overflow: hidden в базовом правиле, а не в .collapsed: иначе он
      включается мгновенно и иконка обрезается в первом кадре анимации
      вместо плавного затухания. */
@@ -492,6 +495,13 @@ body.admin-page #grid button.lg-btn-icon {
   height: 32px;
   padding: 6px 12px;
   font-size: var(--font-size-sm);
+}
+
+/* Поля ввода идут в одной строке с кнопками 36px, поэтому держим ту же
+   ступень. Компактные поля тулбара логов (.lg-field, 32px) исключаем. */
+body.admin-page #grid .input:not(.lg-field) {
+  min-height: 36px;
+  height: 36px;
 }
 
 /* Admin sections for sidebar navigation */
@@ -1224,11 +1234,66 @@ button.lg-btn-icon {
   outline-offset: 2px;
 }
 
+/* ===== Модальные окна: та же шкала высот, что у #grid =====
+   #modalOverlay — сосед #grid, правила body.admin-page #grid до него
+   не достают, из-за чего кнопки и поля падали на базовые 40px и
+   расходились с инлайновыми иконочными 36px. Поднимаем слой. */
+body.admin-page #modalOverlay button {
+  min-height: 36px;
+  height: 36px;
+  padding: 6px 14px;
+  font-size: var(--font-size-sm);
+}
+
+body.admin-page #modalOverlay button.meta,
+body.admin-page #modalOverlay button.meta-lg,
+body.admin-page #modalOverlay button.lg-btn,
+body.admin-page #modalOverlay button.lg-btn-icon {
+  min-height: 32px;
+  height: 32px;
+  padding: 6px 12px;
+  font-size: var(--font-size-sm);
+}
+
+body.admin-page #modalOverlay .input:not(.lg-field) {
+  min-height: 36px;
+  height: 36px;
+}
+
+/* Кнопка закрытия тоста — плотный иконочный уровень. */
+body.admin-page .notification-toast__close {
+  min-width: 28px;
+  width: 28px;
+  min-height: 28px;
+  height: 28px;
+}
+
 /* На тач-устройствах поднимаем тап-таргеты: основные — 40px,
    плотные «таблетки» — 36px. Значения подняты поверх
    #grid button:not(.tvTile) за счёт класса body и специфичности. */
 @media (pointer: coarse) {
   body.admin-page #grid button {
+    min-height: 40px;
+    height: 40px;
+  }
+
+  body.admin-page #grid .input:not(.lg-field) {
+    min-height: 40px;
+    height: 40px;
+  }
+
+  body.admin-page #modalOverlay button {
+    min-height: 40px;
+    height: 40px;
+  }
+
+  body.admin-page #modalOverlay button.meta,
+  body.admin-page #modalOverlay button.meta-lg {
+    min-height: 40px;
+    height: 40px;
+  }
+
+  body.admin-page #modalOverlay .input:not(.lg-field) {
     min-height: 40px;
     height: 40px;
   }
