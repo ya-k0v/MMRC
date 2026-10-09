@@ -596,21 +596,17 @@ function renderHeroDetail(hero, previousHeroId = null) {
           }
         }
       } else {
-        // Иначе берем текущее значение из DOM, если оно отличается от state.active
-        if (fieldName === 'biography') {
-          // Для биографии нужно извлечь текст из HTML
-          const text = fieldNode.textContent || fieldNode.innerText || '';
-          const domValue = text.trim();
-          // Сохраняем только если значение в DOM отличается от state.active
-          if (domValue && domValue !== (state.active[fieldName] || '')) {
-            savedFieldValues[fieldName] = domValue;
-          }
-        } else {
-          const domValue = fieldNode.textContent?.trim() || '';
-          // Сохраняем только если значение в DOM отличается от state.active
-          if (domValue && domValue !== (state.active[fieldName] || '')) {
-            savedFieldValues[fieldName] = domValue;
-          }
+        // Иначе берем текущее значение из DOM, если оно отличается от state.active.
+        // Заглушки (data-placeholder) и пустое представление не считаем вводом пользователя,
+        // иначе тексты «Дата рождения» / «Без звания» / «Информация отсутствует» утекут в state.active.
+        const placeholder = fieldNode.dataset.placeholder || '';
+        const domValue = (fieldNode.textContent || fieldNode.innerText || '').trim();
+        const isPlaceholderView = fieldNode.classList.contains('hero-field-placeholder')
+          || (placeholder && domValue === placeholder)
+          || (fieldName === 'biography' && domValue === 'Информация отсутствует');
+
+        if (domValue && !isPlaceholderView && domValue !== (state.active[fieldName] || '')) {
+          savedFieldValues[fieldName] = domValue;
         }
       }
     });
@@ -1575,19 +1571,34 @@ function normalizeFieldValue(field, value) {
   return trimmed || null;
 }
 
+// Тексты-заглушки, которые не должны попадать в сохраняемые данные.
+const HERO_FIELD_PLACEHOLDERS = {
+  birth_year: ['Дата рождения', '?'],
+  death_year: ['н.в.'],
+  rank: ['Без звания', '—'],
+  biography: ['Информация отсутствует']
+};
+
+function stripFieldPlaceholder(field, value) {
+  if (typeof value !== 'string') return value;
+  const placeholders = HERO_FIELD_PLACEHOLDERS[field];
+  if (placeholders && placeholders.includes(value.trim())) return null;
+  return value;
+}
+
 function buildPayload(hero, overrides = {}, changedField) {
   const payload = {
     id: hero.id,
     full_name: overrides.hasOwnProperty('full_name') ? (overrides.full_name || '') : (hero.full_name ?? ''),
-    birth_year: overrides.hasOwnProperty('birth_year') ? overrides.birth_year : (hero.birth_year ?? null),
-    death_year: overrides.hasOwnProperty('death_year') ? overrides.death_year : (hero.death_year ?? null),
-    rank: overrides.hasOwnProperty('rank') ? overrides.rank : (hero.rank ?? null),
+    birth_year: stripFieldPlaceholder('birth_year', overrides.hasOwnProperty('birth_year') ? overrides.birth_year : (hero.birth_year ?? null)),
+    death_year: stripFieldPlaceholder('death_year', overrides.hasOwnProperty('death_year') ? overrides.death_year : (hero.death_year ?? null)),
+    rank: stripFieldPlaceholder('rank', overrides.hasOwnProperty('rank') ? overrides.rank : (hero.rank ?? null)),
     photo_base64: overrides.hasOwnProperty('photo_base64') ? overrides.photo_base64 : (hero.photo_base64 ?? null),
     photo_key: hero.photo_key ?? null,
     photo_offset_x: overrides.hasOwnProperty('photo_offset_x') ? overrides.photo_offset_x : (hero.photo_offset_x ?? 0),
     photo_offset_y: overrides.hasOwnProperty('photo_offset_y') ? overrides.photo_offset_y : (hero.photo_offset_y ?? 0),
     photo_scale: overrides.hasOwnProperty('photo_scale') ? overrides.photo_scale : (hero.photo_scale ?? 1),
-    biography: overrides.hasOwnProperty('biography') ? overrides.biography : (hero.biography ?? null),
+    biography: stripFieldPlaceholder('biography', overrides.hasOwnProperty('biography') ? overrides.biography : (hero.biography ?? null)),
   };
 
   if (Array.isArray(hero.media) && hero.media.length > 0 && changedField !== 'media') {
