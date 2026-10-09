@@ -24,6 +24,8 @@ import {
   getHourglassIcon,
   getChevronLeftIcon,
   getChevronRightIcon,
+  getChevronDownIcon,
+  getChevronUpIcon,
   getRestartIcon
 } from '../shared/svg-icons.js';
 import { escapeHtml } from '../shared/utils.js';
@@ -2343,7 +2345,7 @@ async function loadSettingsContent(adminFetch) {
   apkInstallBtn.type = 'submit';
   apkInstallBtn.className = 'primary';
   apkInstallBtn.style.cssText = 'min-width:120px;';
-  apkInstallBtn.textContent = 'Установить APK';
+  apkInstallBtn.innerHTML = `${getDownloadIcon(14)} Установить APK`;
   const apkActionsWrap = document.createElement('div');
   apkActionsWrap.style.cssText = 'margin-left:auto; display:flex; align-items:center; gap:6px; position:relative;';
   const apkMenuToggleBtn = document.createElement('button');
@@ -2352,14 +2354,14 @@ async function loadSettingsContent(adminFetch) {
   apkMenuToggleBtn.style.cssText = 'min-width:36px; width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center; border-radius:10px;';
   apkMenuToggleBtn.title = 'Дополнительные действия APK';
   apkMenuToggleBtn.setAttribute('aria-expanded', 'false');
-  apkMenuToggleBtn.textContent = '';
+  apkMenuToggleBtn.innerHTML = getChevronDownIcon(16);
   const apkMenu = document.createElement('div');
   apkMenu.style.cssText = 'display:none; position:absolute; top:calc(100% + 6px); right:0; min-width:180px; background:var(--panel); border:1px solid var(--border); border-radius:12px; box-shadow:0 12px 24px rgba(0,0,0,0.35); padding:8px; z-index:30;';
   const apkBatchUpdateBtn = document.createElement('button');
   apkBatchUpdateBtn.type = 'button';
   apkBatchUpdateBtn.className = 'secondary';
   apkBatchUpdateBtn.style.cssText = 'width:100%; text-align:left; justify-content:flex-start; display:flex; align-items:center; gap:8px; border-radius:10px;';
-  apkBatchUpdateBtn.textContent = 'Обновить';
+  apkBatchUpdateBtn.innerHTML = `${getRestartIcon(14)} Обновить`;
   apkMenu.appendChild(apkBatchUpdateBtn);
   const apkStatus = document.createElement('div');
   apkStatus.className = 'meta';
@@ -2380,6 +2382,7 @@ async function loadSettingsContent(adminFetch) {
   const closeApkMenu = () => {
     apkMenu.style.display = 'none';
     apkMenuToggleBtn.setAttribute('aria-expanded', 'false');
+    apkMenuToggleBtn.innerHTML = getChevronDownIcon(16);
   };
 
   apkMenuToggleBtn.onclick = (event) => {
@@ -2388,6 +2391,7 @@ async function loadSettingsContent(adminFetch) {
     const isOpen = apkMenu.style.display === 'block';
     apkMenu.style.display = isOpen ? 'none' : 'block';
     apkMenuToggleBtn.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+    apkMenuToggleBtn.innerHTML = isOpen ? getChevronDownIcon(16) : getChevronUpIcon(16);
   };
 
   mainDiv.addEventListener('click', (event) => {

@@ -758,13 +758,16 @@ body.admin-page .sidebar-menu-btn {
 /* Ряд версий APK — плотный: подписи той же высоты, что и чипы (16px) */
 #stApkVersion,
 #stApkVersion .meta {
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   line-height: 16px;
 }
 
 /* Чипы выбора версии APK — маленькие «таблетки», как бейджи питания/модулей.
-   Селектор с двумя классами нужен, чтобы перебить button.meta (32px). */
-button.meta.st-apk-chip {
+   Селектор с #grid нужен, чтобы перебить:
+   - button.meta (32px) из app.css,
+   - #grid button:not(.tvTile) (40px) на десктопе ≥1024px — оно на (1,1,1)
+     сильнее любого классового селектора, поэтому без id чипы «раздувались». */
+#grid button.meta.st-apk-chip {
   min-width: auto;
   min-height: 0;
   height: 16px;
@@ -777,20 +780,22 @@ button.meta.st-apk-chip {
   color: var(--text-2);
 }
 
-button.meta.st-apk-chip:hover:not(:disabled) {
+#grid button.meta.st-apk-chip:hover:not(:disabled) {
   background: rgba(148, 163, 184, 0.2);
   border-color: transparent;
   transform: none;
   box-shadow: none;
 }
 
-button.meta.st-apk-chip.is-selected {
+#grid button.meta.st-apk-chip.is-selected {
   background: rgba(34, 197, 94, 0.14);
   color: var(--success);
+  border-color: rgba(34, 197, 94, 0.55);
+  font-weight: var(--font-weight-semibold);
 }
 
 /* Действие «Обновить» рядом с чипами — такая же небольшая «таблетка» */
-button.meta.st-apk-action {
+#grid button.meta.st-apk-action {
   min-width: auto;
   min-height: 0;
   height: 16px;
@@ -821,8 +826,9 @@ button.meta.st-apk-action {
   min-height: 1.2em;
 }
 
-/* Кнопка «Перезапустить» — компактная опасная */
-button.st-btn-danger {
+/* Кнопка «Перезапустить» — компактная опасная.
+   #grid перебивает #grid button:not(.tvTile) (40px) на десктопе. */
+#grid button.st-btn-danger {
   margin-left: auto;
   background: var(--danger);
   color: #fff;
@@ -834,7 +840,7 @@ button.st-btn-danger {
   height: auto;
 }
 
-button.st-btn-danger:hover:not(:disabled) {
+#grid button.st-btn-danger:hover:not(:disabled) {
   background: var(--danger-2);
   border-color: var(--danger-2);
 }
@@ -897,7 +903,7 @@ button.st-btn-danger:hover:not(:disabled) {
 }
 
 .st-power-badge {
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   padding: 1px 8px;
   border-radius: 999px;
   flex: none;
@@ -916,7 +922,7 @@ button.st-btn-danger:hover:not(:disabled) {
   flex: none;
 }
 
-button.st-power-btn {
+#grid button.st-power-btn {
   font-size: 0.75rem;
   padding: 3px 6px;
   min-width: auto;
@@ -935,7 +941,7 @@ button.st-power-btn {
 }
 
 /* Кнопки пагинации питания */
-button.st-pager-btn {
+#grid button.st-pager-btn {
   min-width: auto;
   padding: 2px 12px;
   min-height: auto;
@@ -955,7 +961,7 @@ button.st-pager-btn {
   display: none;
 }
 
-@media (min-width: 1280px) {
+@media (min-width: 1024px) {
   .settings-columns {
     flex-direction: row;
   }
@@ -965,7 +971,7 @@ button.st-pager-btn {
   }
 }
 
-@media (max-width: 1279.98px) {
+@media (max-width: 1023.98px) {
   /* В стопке колонки живут обычным потоком: секция скроллится целиком,
      а список устройств ограничен по высоте, чтобы работала пагинация. */
   .settings-columns {
@@ -1187,4 +1193,31 @@ button.lg-btn-icon {
   .admin-section .admin-section-body {
     overflow-x: hidden;
   }
+}
+
+/* Видимая рамка фокуса для клавиатурной навигации внутри админ-сетки */
+#grid button:focus-visible,
+#grid a:focus-visible,
+#grid [role="button"]:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+/* На тач-устройствах компактные «таблетки» доводим до удобного тап-таргета.
+   Значения поднимаются поверх #grid button:not(.tvTile) за счёт более позднего
+   и специфичного селектора. */
+@media (pointer: coarse) {
+  #grid button.meta.st-apk-chip,
+  #grid button.meta.st-apk-action,
+  #grid button.st-power-btn,
+  #grid button.st-pager-btn {
+    height: auto;
+    min-height: 36px;
+    padding-top: 0;
+    padding-bottom: 0;
+    font-size: 0.8rem;
+  }
+
+  #grid button.meta.st-apk-chip { padding-left: 12px; padding-right: 12px; }
+  #grid button.st-power-btn { min-width: 36px; }
 }

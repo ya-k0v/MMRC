@@ -12,7 +12,7 @@
  */
 
 import { escapeHtml } from '../shared/utils.js';
-import { getPowerIcon, getSunIcon, getMoonIcon, getPlayIcon } from '../shared/svg-icons.js';
+import { getPowerIcon, getSunIcon, getMoonIcon, getPlayIcon, getChevronLeftIcon, getChevronRightIcon } from '../shared/svg-icons.js';
 
 const POWER_ENDPOINT = '/api/devices/power';
 const STATE_ENDPOINT = '/api/devices/power-state';
@@ -79,17 +79,17 @@ export function renderPowerControlsHtml(devices) {
       </div>
       <div class="st-power-body">
         <div class="st-actions">
-          <button type="button" id="stPowerSleepAll" class="secondary">Усыпить все</button>
-          <button type="button" id="stPowerWakeAll" class="primary">Разбудить все</button>
-          <button type="button" id="stPowerWakeLaunch" class="secondary">Разбудить и запустить плеер</button>
-          <button type="button" id="stPowerLaunchAll" class="primary">Запустить плеер везде</button>
+          <button type="button" id="stPowerSleepAll" class="secondary">${getMoonIcon(14)} Усыпить все</button>
+          <button type="button" id="stPowerWakeAll" class="primary">${getSunIcon(14)} Разбудить все</button>
+          <button type="button" id="stPowerWakeLaunch" class="secondary">${getSunIcon(14)} Разбудить и запустить плеер</button>
+          <button type="button" id="stPowerLaunchAll" class="primary">${getPlayIcon(14)} Запустить плеер везде</button>
           <span id="stPowerStatus" class="st-status"></span>
         </div>
         <div id="stPowerList" class="st-power-list">${powerTargets.length ? powerTargets.map(rowHtml).join('') : '<div class="st-power-empty">Нет Android-устройств</div>'}</div>
         <div id="stPowerPager" class="st-power-pager" hidden>
-          <button type="button" id="stPowerPrev" class="secondary meta st-pager-btn" title="Предыдущая страница">‹</button>
+          <button type="button" id="stPowerPrev" class="secondary meta st-pager-btn" title="Предыдущая страница" aria-label="Предыдущая страница">${getChevronLeftIcon(14)}</button>
           <span id="stPowerPagerInfo"></span>
-          <button type="button" id="stPowerNext" class="secondary meta st-pager-btn" title="Следующая страница">›</button>
+          <button type="button" id="stPowerNext" class="secondary meta st-pager-btn" title="Следующая страница" aria-label="Следующая страница">${getChevronRightIcon(14)}</button>
         </div>
       </div>
     </div>`;

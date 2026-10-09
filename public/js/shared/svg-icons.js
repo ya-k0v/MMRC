@@ -592,3 +592,41 @@ export function getHourglassIcon(size = 16, color = 'currentColor') {
   </svg>`;
 }
 
+/**
+ * Получить SVG иконку стрелки вниз
+ */
+export function getChevronDownIcon(size = 16, color = 'currentColor') {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+    <polyline points="6 9 12 15 18 9"></polyline>
+  </svg>`;
+}
+
+/**
+ * Получить SVG иконку стрелки вверх
+ */
+export function getChevronUpIcon(size = 16, color = 'currentColor') {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+    <polyline points="18 15 12 9 6 15"></polyline>
+  </svg>`;
+}
+
+/**
+ * Получить SVG иконку плюса
+ */
+export function getPlusIcon(size = 16, color = 'currentColor') {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+    <line x1="12" y1="5" x2="12" y2="19"></line>
+    <line x1="5" y1="12" x2="19" y2="12"></line>
+  </svg>`;
+}
+
+/**
+ * Получить SVG иконку глаза (превью)
+ */
+export function getEyeIcon(size = 16, color = 'currentColor') {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+    <circle cx="12" cy="12" r="3"></circle>
+  </svg>`;
+}
+

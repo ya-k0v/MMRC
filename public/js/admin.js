@@ -15,7 +15,7 @@ import { renderDeviceCard as renderDeviceCardModule, deviceCardSignature, buildD
 import { setupUploadUI as setupUploadUIModule } from './admin/upload-ui.js';
 import { showDevicesModal, showUsersModal, showSettingsModal } from './admin/modal.js';
 import { initSystemMonitor, stopSystemMonitor } from './admin/system-monitor.js';
-import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon, getCloseIcon, getCheckIcon, getWarningIcon, getUnlockIcon, getLockIcon, getDeviceIcon, getKeyIcon, getTrashIcon, getPauseIcon, getPlayIcon, getCopyIcon, getDownloadIcon, getBellIcon, getStorageIcon, getCpuIcon, getSlidersIcon, getDatabaseIcon, getMobileIcon, getMonitorIcon, getBrowserIcon, getTVIcon, getChevronLeftIcon, getChevronRightIcon, getPowerIcon } from './shared/svg-icons.js';
+import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon, getCloseIcon, getCheckIcon, getWarningIcon, getUnlockIcon, getLockIcon, getDeviceIcon, getKeyIcon, getTrashIcon, getPauseIcon, getPlayIcon, getCopyIcon, getDownloadIcon, getBellIcon, getStorageIcon, getCpuIcon, getSlidersIcon, getDatabaseIcon, getMobileIcon, getMonitorIcon, getBrowserIcon, getTVIcon, getChevronLeftIcon, getChevronRightIcon, getPowerIcon, getSearchIcon, getUpDownloadIcon, getRestartIcon, getUsersIcon, getPlusIcon } from './shared/svg-icons.js';
 import { escapeHtml } from './shared/utils.js';
 import { initNotifications } from './admin/notifications.js';
 import { mountNotificationsSection } from './admin/notifications-modal.js';
@@ -327,7 +327,7 @@ function createSettingsSection() {
               <span class="st-sep">·</span>
               <span>Uptime: <strong id="stSysUptime">—</strong></span>
               ${docker && docker.enabled ? `<span class="st-sep">·</span><span>Docker: <strong>${escapeHtml(docker.mainImage || '')}:${escapeHtml(docker.mainTag || '')}</strong></span>` : ''}
-              <button id="stRestart" class="secondary meta st-btn-danger">Перезапустить</button>
+              <button id="stRestart" class="secondary meta st-btn-danger">${getRestartIcon(14)} Перезапустить</button>
             </div>
 
             <div id="stSysMonitorBody">
@@ -446,8 +446,8 @@ function createSettingsSection() {
               <input id="stApkPort" class="input st-input-xs" placeholder="Порт" value="5555" />
               <input id="stApkId" class="input st-input-md" placeholder="ID устройства" />
               <input id="stApkName" class="input st-input-sm" placeholder="Имя" />
-              <button id="stApkInstall" class="primary">Установить</button>
-              <button id="stApkBatch" class="secondary st-ml-auto">Обновить все</button>
+              <button id="stApkInstall" class="primary">${getDownloadIcon(14)} Установить</button>
+              <button id="stApkBatch" class="secondary st-ml-auto">${getRestartIcon(14)} Обновить все</button>
             </div>
             <div class="st-actions">
               <span id="stApkStatus" class="st-status"></span>
@@ -465,17 +465,17 @@ function createSettingsSection() {
           </div>
           <div class="st-card-b">
             <div class="st-actions">
-              <button id="stDbExport" class="primary">Экспорт</button>
-              <button id="stDbImport" class="secondary">Импорт</button>
+              <button id="stDbExport" class="primary">${getDownloadIcon(14)} Экспорт</button>
+              <button id="stDbImport" class="secondary">${getUpDownloadIcon(14)} Импорт</button>
               <input type="file" id="stDbImportInput" accept=".db" style="display:none;" />
             </div>
             <details>
               <summary class="meta st-details-summary">Обслуживание</summary>
               <div class="st-actions st-maintenance">
-                <button id="stDbCheckFiles" class="secondary meta">Проверить файлы</button>
-                <button id="stDbWalCheckpoint" class="secondary meta">Чекпоинт WAL</button>
-                <button id="stDbCleanupMissing" class="secondary meta">Очистить отсутствующие</button>
-                <button id="stDbCleanupOrphaned" class="secondary meta">Очистить осиротевшие</button>
+                <button id="stDbCheckFiles" class="secondary meta">${getSearchIcon(14)} Проверить файлы</button>
+                <button id="stDbWalCheckpoint" class="secondary meta">${getDatabaseIcon(14)} Чекпоинт WAL</button>
+                <button id="stDbCleanupMissing" class="secondary meta">${getTrashIcon(14)} Очистить отсутствующие</button>
+                <button id="stDbCleanupOrphaned" class="secondary meta">${getTrashIcon(14)} Очистить осиротевшие</button>
                 <div id="stDbMaintStatus" class="st-status"></div>
               </div>
             </details>
@@ -699,6 +699,7 @@ function createSettingsSection() {
           chip.type = 'button';
           chip.className = 'meta st-apk-chip' + (v.version === selected ? ' is-selected' : '');
           chip.textContent = v.version;
+          chip.setAttribute('aria-pressed', v.version === selected ? 'true' : 'false');
           chip.title = v.downloaded ? `Выбрать версию ${v.version}` : `Скачать и выбрать версию ${v.version}`;
           chip.disabled = busy;
           chip.onclick = () => selectVersion(v.version);
@@ -715,7 +716,7 @@ function createSettingsSection() {
         const upd = document.createElement('button');
         upd.type = 'button';
         upd.className = 'meta st-apk-action';
-        upd.textContent = 'Обновить';
+        upd.innerHTML = `${getRestartIcon(14)} Обновить`;
         upd.disabled = busy;
         upd.onclick = downloadAll;
         el.appendChild(upd);
@@ -859,7 +860,7 @@ function createUsersSection() {
       </div>
       <input id="usSearch" class="input" placeholder="Поиск по логину или ФИО..." style="flex:1; min-width:160px; height:32px; min-height:32px; padding:4px 10px; font-size:0.85rem;" />
       <div class="meta" id="usTotalCount" style="white-space:nowrap; color:var(--muted);"></div>
-      <button id="usCreateBtn" class="primary meta" style="white-space:nowrap;">+ Новый пользователь</button>
+      <button id="usCreateBtn" class="primary meta" style="white-space:nowrap;">${getPlusIcon(14)} Новый пользователь</button>
     </div>
 
     <div id="usTableWrap" style="flex:1; min-height:0; overflow-y:auto; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--panel-2);">
@@ -1581,8 +1582,8 @@ function createLogsSection() {
         </label>
         <div class="lg-spacer"></div>
         <button id="lgPause" type="button" class="secondary lg-btn-icon" title="Пауза" aria-label="Пауза">${getPauseIcon(14)}</button>
-        <button id="lgRefresh" type="button" class="secondary lg-btn">Обновить</button>
-        <button id="lgClear" type="button" class="secondary lg-btn">Очистить</button>
+        <button id="lgRefresh" type="button" class="secondary lg-btn">${getRestartIcon(14)} Обновить</button>
+        <button id="lgClear" type="button" class="secondary lg-btn">${getTrashIcon(14)} Очистить</button>
         <button id="lgCopy" type="button" class="secondary lg-btn-icon" title="Копировать" aria-label="Копировать">${getCopyIcon(14)}</button>
         <button id="lgDownload" type="button" class="secondary lg-btn-icon" title="Скачать" aria-label="Скачать">${getDownloadIcon(14)}</button>
       </div>

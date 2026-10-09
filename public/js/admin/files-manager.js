@@ -8,7 +8,12 @@ import {
   getFilmIcon,
   getTrashIcon,
   getSettingsIcon,
-  getCloseIcon
+  getCloseIcon,
+  getEyeIcon,
+  getSlidersIcon,
+  getMoonIcon,
+  getChevronLeftIcon,
+  getChevronRightIcon
 } from '../shared/svg-icons.js';
 import { formatTime } from '../shared/formatters.js';
 import { escapeHtml } from '../shared/utils.js';
@@ -161,7 +166,7 @@ function appendOptimizeMenuOptions(optimizeMenu, { safeName, originalName, isPro
   optimizeBtn.setAttribute('data-safe', encodeURIComponent(safeName));
   optimizeBtn.setAttribute('data-original', encodeURIComponent(originalName));
   optimizeBtn.title = 'Запустить обработку сейчас';
-  optimizeBtn.textContent = 'Обработать';
+  optimizeBtn.innerHTML = `${getSlidersIcon(14)} Обработать`;
   optimizeBtn.disabled = isProcessing;
   optimizeMenu.appendChild(optimizeBtn);
 
@@ -183,7 +188,7 @@ function appendOptimizeMenuOptions(optimizeMenu, { safeName, originalName, isPro
   optimizeNightBtn.setAttribute('data-safe', encodeURIComponent(safeName));
   optimizeNightBtn.setAttribute('data-original', encodeURIComponent(originalName));
   optimizeNightBtn.title = 'Запланировать обработку на ночь';
-  optimizeNightBtn.textContent = 'Обработать ночью';
+  optimizeNightBtn.innerHTML = `${getMoonIcon(14)} Обработать ночью`;
   optimizeNightBtn.disabled = isProcessing;
   optimizeMenu.appendChild(optimizeNightBtn);
 }
@@ -803,9 +808,9 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           header.appendChild(headerRight);
 
           const actions = document.createElement('div'); actions.className = 'file-item-actions'; actions.style.cssText = 'display:flex; gap:6px; flex-wrap:wrap;';
-          const btnPreview = document.createElement('button'); btnPreview.className = 'meta-lg previewFileBtn'; btnPreview.textContent = 'Превью'; actions.appendChild(btnPreview);
+          const btnPreview = document.createElement('button'); btnPreview.className = 'meta-lg previewFileBtn'; btnPreview.innerHTML = `${getEyeIcon(14)} Превью`; actions.appendChild(btnPreview);
           const btnDefault = document.createElement('button'); btnDefault.className = 'meta-lg makeDefaultBtn'; btnDefault.textContent = 'Заглушка'; actions.appendChild(btnDefault);
-          const btnDel = document.createElement('button'); btnDel.className = 'danger meta-lg delFileBtn'; btnDel.textContent = 'Удалить'; actions.appendChild(btnDel);
+          const btnDel = document.createElement('button'); btnDel.className = 'danger meta-lg delFileBtn'; btnDel.innerHTML = `${getTrashIcon(14)} Удалить`; actions.appendChild(btnDel);
 
           li.appendChild(header);
           li.appendChild(actions);
@@ -1419,7 +1424,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
     prevBtn.id = 'filePrevAdmin';
     prevBtn.disabled = currentPage <= 0;
     prevBtn.style.cssText = 'min-width:80px';
-    prevBtn.textContent = 'Назад';
+    prevBtn.innerHTML = `${getChevronLeftIcon(14)} Назад`;
     filePagerAdmin.appendChild(prevBtn);
 
     const pageSpan = document.createElement('span');
@@ -1432,7 +1437,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
     nextBtn.id = 'fileNextAdmin';
     nextBtn.disabled = currentPage >= totalPages - 1;
     nextBtn.style.cssText = 'min-width:80px';
-    nextBtn.textContent = 'Вперед';
+    nextBtn.innerHTML = `Вперед ${getChevronRightIcon(14)}`;
     filePagerAdmin.appendChild(nextBtn);
 
     const prev = filePagerAdmin.querySelector('#filePrevAdmin');
