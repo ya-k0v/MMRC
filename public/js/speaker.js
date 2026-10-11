@@ -865,7 +865,8 @@ function getSpeakerAutoFilePageSize() {
   const rowPitch = Math.max(1, rowHeight + rowGap);
   const estimated = Math.floor((availableHeight + rowGap) / rowPitch);
 
-  return Math.max(1, Math.min(200, estimated || 1));
+  const minPage = window.innerWidth <= 767 ? 5 : 1;
+  return Math.max(minPage, Math.min(200, estimated || 1));
 }
 
 function sortSpeakerFilesLikeAdmin(files) {

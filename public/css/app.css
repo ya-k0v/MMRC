@@ -1500,10 +1500,6 @@ body.light .queue li {
     grid-row: 2;
   }
   
-  #grid .preview {
-    min-height: 200px;
-    max-height: 320px;
-  }
 }
 
 /* Широкий экран (≥1024px): горизонтальный layout - Стандартизировано */
@@ -1545,11 +1541,6 @@ body.light .queue li {
   
   #grid .card .panel {
     padding: var(--space-sm);
-  }
-  
-  #grid .preview {
-    min-height: 250px;
-    max-height: 380px;
   }
   
   #grid .card .header {
@@ -1603,17 +1594,17 @@ body.light .queue li {
   align-items: start;
 }
 
-/* Компактное превью */
+/* Компактное превью. Соотношение 16:9 держим всегда, без ограничения высоты:
+   иначе max-height сплющивал блок и контент в него не «вписывался» по центру. */
 .preview-compact {
   aspect-ratio: 16 / 9 !important;
-  max-height: 120px !important;
   width: 100%;
 }
 
 .preview-expanded {
   display: none;
   aspect-ratio: 16 / 9;
-  max-height: 380px;
+  width: 100%;
 }
 
 /* При разворачивании превью занимает обе колонки */
@@ -1663,10 +1654,6 @@ body.light .queue li {
   .preview-container {
     grid-column: 1 !important;
   }
-  
-  .preview-expanded {
-    max-height: 280px;
-  }
 }
 
 /* На очень маленьких экранах - еще более компактно */
@@ -1677,7 +1664,6 @@ body.light .queue li {
   
   .preview-compact {
     aspect-ratio: 16 / 9 !important;
-    max-height: 100px !important;
   }
   
   .uploadBox .dropZone {
@@ -2407,10 +2393,13 @@ body.admin-page a.device-meta-chip.is-link:hover {
   background: rgba(59, 130, 246, 0.18);
 }
 
-/* Убираем пустые поля по бокам на широких экранах */
-@media (min-width: 1024px) {
+/* Убираем пустые поля по бокам на широких экранах.
+   Порог поднят до 1280px: с сайдбаром (240px) + 450px панелью деталей
+   средней колонке (файлам) при 1024px оставалось ~90px, из-за чего она
+   схлопывалась почти в ноль. minmax(240px…) гарантирует ей минимальную ширину. */
+@media (min-width: 1280px) {
   body.admin-page #grid {
-    grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) 450px;
+    grid-template-columns: minmax(240px, 300px) minmax(240px, 1fr) 450px;
     grid-template-rows: minmax(0, 1fr);
     max-width: none;
     margin: 0;
@@ -2439,7 +2428,7 @@ body.admin-page a.device-meta-chip.is-link:hover {
 }
 
 /* Планшет: стабильные панели без перекрытий */
-@media (min-width: 768px) and (max-width: 1023px) {
+@media (min-width: 768px) and (max-width: 1279px) {
   body.admin-page {
     height: auto;
     min-height: 100dvh;
@@ -2454,7 +2443,7 @@ body.admin-page a.device-meta-chip.is-link:hover {
   body.admin-page #grid {
     height: auto;
     min-height: 0;
-    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+    grid-template-columns: minmax(220px, 280px) minmax(240px, 1fr);
     grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   }
 
@@ -2510,6 +2499,10 @@ body.admin-page a.device-meta-chip.is-link:hover {
   body.admin-page #tvList,
   body.admin-page #filesPanel {
     overflow-y: visible !important;
+  }
+
+  body.admin-page #filesPanel {
+    min-height: 380px !important;
   }
 
   body.admin-page .file-item {

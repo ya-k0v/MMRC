@@ -872,6 +872,10 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       pageSize = getPageSize('file');
     }
   }
+  if (savedPerPage === 'auto' && window.innerWidth < 768) {
+    pageSize = Math.max(pageSize, 5);
+  }
+
   let totalPages = Math.max(1, Math.ceil(allFiles.length / pageSize));
   // ИСПРАВЛЕНО: Корректируем страницу если она выходит за пределы
   let currentPage = filePage;
@@ -1367,8 +1371,9 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       return scrollOverflow || (lastRect.bottom > panelRect.bottom - 1);
     };
 
+    const minFinalPageSize = (savedPerPage === 'auto' && window.innerWidth < 768) ? 5 : 1;
     let guard = 0;
-    while (finalPageSize > 1 && hasOverflow() && guard < 20) {
+    while (finalPageSize > minFinalPageSize && hasOverflow() && guard < 20) {
       finalPageSize -= 1;
       totalPages = Math.max(1, Math.ceil(allFiles.length / finalPageSize));
       if (currentPage >= totalPages) currentPage = Math.max(0, totalPages - 1);

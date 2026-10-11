@@ -171,7 +171,12 @@
       min-height: var(--speaker-tile-min-height) !important;
     }
     
-    /* КРИТИЧНО: Ограничиваем ширину панели файлов */
+    @media (max-width: 1023px) {
+      .speaker-main > .panel:first-child #fileList {
+        min-height: 300px !important;
+      }
+    }
+
     .files-panel {
       max-width: 100%;
       overflow: hidden;
@@ -217,7 +222,7 @@
       }
       
       .speaker-main {
-        grid-template-columns: minmax(0, 1fr) 360px;
+        grid-template-columns: minmax(240px, 1fr) 360px;
       }
       
       /* На десктопе также ограничиваем */
@@ -331,37 +336,15 @@
         min-height: 90px !important;
       }
       
-      /* Скрываем видео превью на мобильных */
-      .speaker-layout .preview-panel #filePreview > iframe,
-      .speaker-layout .preview-panel #filePreview > video {
-        display: none !important;
-      }
-      
-      /* Отключаем клики по превью на мобильных (кроме папок/PPTX/PDF) */
-      /* Миниатюры (thumbnail-preview) остаются кликабельными */
-      .speaker-layout .preview-panel #filePreview:has(> iframe) {
-        pointer-events: none !important;
-      }
-      
+
+      .speaker-layout .preview-panel #filePreview:has(> iframe),
       .speaker-layout .preview-panel #filePreview:has(> video) {
         pointer-events: none !important;
       }
-      
-      /* Разрешаем клики по миниатюрам папок/PPTX/PDF */
+
       .speaker-layout .preview-panel #filePreview:has(.thumbnail-preview),
       .speaker-layout .preview-panel #filePreview:has(.static-preview-layout) {
         pointer-events: auto !important;
-      }
-      
-      /* Скрываем весь контейнер превью, если внутри только iframe (видео превью) */
-      .speaker-layout .preview-panel #filePreview:has(> iframe:only-child),
-      .speaker-layout .preview-panel #filePreview:has(> video:only-child) {
-        display: none !important;
-      }
-      
-      /* Показываем превью папок (миниатюры) */
-      .speaker-layout .preview-panel #filePreview:has(.thumbnail-preview),
-      .speaker-layout .preview-panel #filePreview:has(.static-preview-layout) {
         display: flex !important;
       }
       

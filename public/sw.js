@@ -1,7 +1,7 @@
 // Service Worker для MMRC - Production Ready
 // Версия 22 - принудительное обновление статики после правки прогресса загрузки
 
-const VERSION = 'v22';
+const VERSION = 'v29';
 const CACHE_NAME = `mmrc-static-${VERSION}`;
 const CONTENT_CACHE_NAME = `mmrc-content-${VERSION}`;
 

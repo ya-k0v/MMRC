@@ -231,19 +231,29 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
 
   function updateLayout() {
     const mainContent = document.querySelector('.admin-main');
-    if (mainContent) {
-      const width = state.collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED;
-      mainContent.style.marginLeft = `${width}px`;
+    if (!mainContent) return;
+
+    // На мобильных сайдбар — выезжающая панель поверх контента, поэтому
+    // основной блок занимает всю ширину. Инлайновый margin-left перебивал
+    // правило медиазапроса и оставлял пустую полосу шириной сайдбара.
+    if (window.innerWidth < 768) {
+      mainContent.style.marginLeft = '';
+      return;
     }
+
+    const width = state.collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED;
+    mainContent.style.marginLeft = `${width}px`;
   }
 
   function openMobile() {
     sidebar.classList.add('mobile-open');
+    document.body.classList.add('sidebar-mobile-open');
     updateLayout();
   }
 
   function closeMobile() {
     sidebar.classList.remove('mobile-open');
+    document.body.classList.remove('sidebar-mobile-open');
     const mainContent = document.querySelector('.admin-main');
     if (mainContent) {
       mainContent.style.marginLeft = '';
@@ -276,6 +286,16 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
     updateLayout();
     await loadModules();
     render();
+
+    // При переходе через границу 768px пересчитываем отступ: убираем
+    // «залипший» сдвиг контента при уходе в мобильный режим и закрываем
+    // выехавшее меню при возврате на широкий экран.
+    window.addEventListener('resize', () => {
+      if (window.innerWidth >= 768 && sidebar.classList.contains('mobile-open')) {
+        closeMobile();
+      }
+      updateLayout();
+    });
   }
 
   return {
