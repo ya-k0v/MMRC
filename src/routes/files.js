@@ -1470,13 +1470,15 @@ export function createFilesRouter(deps) {
 
     const status = String(job.status || 'queued');
     const progress = Math.max(0, Math.min(100, Math.round(Number(job.progress) || 0)));
-    const progressStep = Math.floor(progress / 10) * 10;
     const now = Date.now();
     const snapshot = ytDlpNotificationSnapshot.get(job.id);
 
     let shouldPublish = force || !snapshot || snapshot.status !== status;
-    if (!shouldPublish && status === 'downloading' && progressStep > (snapshot.progressStep ?? -10)) {
-      shouldPublish = true;
+    if (!shouldPublish && status === 'downloading') {
+      const progressChanged = progress !== (snapshot.progress ?? -1);
+      if (progressChanged || (now - (snapshot.lastPublishedAt || 0)) >= 1000) {
+        shouldPublish = true;
+      }
     }
     if (!shouldPublish && status === 'waiting_resources' && (now - (snapshot.lastPublishedAt || 0)) >= 15000) {
       shouldPublish = true;
@@ -1511,7 +1513,7 @@ export function createFilesRouter(deps) {
 
     ytDlpNotificationSnapshot.set(job.id, {
       status,
-      progressStep,
+      progress,
       error: job.error || null,
       lastPublishedAt: now
     });
@@ -2916,7 +2918,7 @@ export function createFilesRouter(deps) {
           '--progress',
           '--progress-delta', '1',
           '--restrict-filenames',
-          '--merge-output-format', 'mp4',
+          '-f', 'b[ext=mp4]/b',
           '--print', `before_dl:${YTDLP_TITLE_MARKER}%(title)s`,
           '--print', `after_move:${YTDLP_FINAL_PATH_MARKER}%(filepath)s`,
           '--no-write-thumbnail',
