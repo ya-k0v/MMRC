@@ -306,6 +306,43 @@ function extractYtDlpPathCandidate(line = '') {
   return null;
 }
 
+function findNewlyDownloadedYtDlpFile(devicesPath, candidate, filesBefore = null) {
+  if (candidate && fs.existsSync(candidate)) return candidate;
+
+  let entries;
+  try {
+    entries = fs.readdirSync(path.resolve(devicesPath), { withFileTypes: true });
+  } catch {
+    return candidate || null;
+  }
+
+  let best = null;
+  let bestMtime = 0;
+
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    if (filesBefore && filesBefore.has(entry.name)) continue;
+
+    const ext = path.extname(entry.name).toLowerCase().replace('.', '');
+    if (!VIDEO_EXTENSIONS.includes(ext)) continue;
+
+    const fullPath = path.join(path.resolve(devicesPath), entry.name);
+    let stat;
+    try {
+      stat = fs.statSync(fullPath);
+    } catch {
+      continue;
+    }
+
+    if (stat.mtimeMs > bestMtime) {
+      bestMtime = stat.mtimeMs;
+      best = fullPath;
+    }
+  }
+
+  return best || candidate || null;
+}
+
 function parseYtDlpProgress(line = '') {
   if (!line) return null;
 
@@ -1815,8 +1852,12 @@ export function createFilesRouter(deps) {
     const resolvedDevicesPath = path.resolve(devicesPath);
     let finalPath = path.resolve(downloadedPath);
 
+    for (let attempt = 0; attempt < 10 && !fs.existsSync(finalPath); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+
     if (!fs.existsSync(finalPath)) {
-      throw new Error('Загруженный файл отсутствует на диске');
+      throw new Error(`Загруженный файл отсутствует на диске: ${finalPath}`);
     }
 
     let safeName = makeSafeFilename(path.basename(finalPath));
@@ -2856,6 +2897,13 @@ export function createFilesRouter(deps) {
         const binaryPath = await ensureLocalYtDlpBinary({ logger });
         const devicesPath = getDevicesPath();
 
+        let filesBeforeDownload = null;
+        try {
+          filesBeforeDownload = new Set(fs.readdirSync(path.resolve(devicesPath)));
+        } catch {
+          filesBeforeDownload = null;
+        }
+
         updateYtDlpJob(job.id, {
           status: 'downloading',
           progress: 0,
@@ -2971,11 +3019,32 @@ export function createFilesRouter(deps) {
             : path.resolve(path.join(devicesPath, finalPathCandidate)))
           : null;
 
+        for (let attempt = 0; attempt < 10 && !(resolvedCandidate && fs.existsSync(resolvedCandidate)); attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+
+        const downloadedFile = findNewlyDownloadedYtDlpFile(devicesPath, resolvedCandidate, filesBeforeDownload);
+
+        if (resolvedCandidate && downloadedFile && path.resolve(downloadedFile) !== path.resolve(resolvedCandidate)) {
+          logger.warn('[yt-dlp] Reported path not found, using newest downloaded file', {
+            deviceId: id,
+            jobId: job.id,
+            reportedPath: resolvedCandidate,
+            resolvedPath: downloadedFile
+          });
+        } else if (!downloadedFile || !fs.existsSync(downloadedFile)) {
+          logger.warn('[yt-dlp] Downloaded file not found on disk', {
+            deviceId: id,
+            jobId: job.id,
+            reportedPath: resolvedCandidate
+          });
+        }
+
         const preferredName = titleCandidate
-          ? `${titleCandidate}${resolvedCandidate ? path.extname(resolvedCandidate) : ''}`
+          ? `${titleCandidate}${downloadedFile ? path.extname(downloadedFile) : (resolvedCandidate ? path.extname(resolvedCandidate) : '')}`
           : null;
 
-        const uploadedFile = await registerYtDlpDownloadedFile(id, resolvedCandidate, preferredName);
+        const uploadedFile = await registerYtDlpDownloadedFile(id, downloadedFile, preferredName);
 
         await auditLog({
           userId: req.user?.userId || null,
