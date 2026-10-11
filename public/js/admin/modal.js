@@ -2814,13 +2814,21 @@ async function loadSettingsContent(adminFetch) {
         // 4. Выполняем импорт с CSRF токеном и паролем
         importBtn.textContent = 'Импорт...';
 
+        // CSRF токен одноразовый, а dry-run выше уже израсходовал предыдущий — берём новый
+        const importTokenResp = await adminFetch('/api/auth/csrf-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        if (!importTokenResp.ok) throw new Error('Не удалось получить CSRF токен');
+        const { csrfToken: importCsrfToken } = await importTokenResp.json();
+
         const importForm = new FormData();
         importForm.append('file', file);
         importForm.append('confirmPassword', confirmPassword);
 
         const importResp = await adminFetch('/api/admin/import-database', {
           method: 'POST',
-          headers: { 'X-CSRF-Token': csrfToken },
+          headers: { 'X-CSRF-Token': importCsrfToken },
           body: importForm
         });
 

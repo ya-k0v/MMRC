@@ -24,7 +24,7 @@ import {
   stopWalCheckpointInterval
 } from '../database/database.js';
 import { getCurrentStorage } from '../storage/current.js';
-import { runMigrations } from '../database/migrate.js';
+import { runMigrations, MIGRATIONS } from '../database/migrate.js';
 import { loadDevicesFromDB, loadFileNamesFromDB, saveDevicesToDB } from '../storage/devices-storage-sqlite.js';
 import { updateDeviceFilesFromDB } from './files.js';
 import { resolveDeviceAdbPort } from './devices.js';
@@ -1615,7 +1615,7 @@ export function createAdminEndpoints({
           ).all();
           uploadedTableCount = tables.length;
 
-          if (tmpDb.tableExists('schema_migrations')) {
+          if (tmpDb.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'").get()) {
             uploadedMigrationIds = tmpDb.prepare(
               'SELECT id FROM schema_migrations ORDER BY executed_at'
             ).all().map(r => r.id);
@@ -1627,30 +1627,40 @@ export function createAdminEndpoints({
           return res.status(400).json({ error: `Failed to read SQLite schema: ${schemaErr.message}` });
         }
 
-        // Проверка: импортируемая БД не должна быть старше текущей (по миграциям)
+        // Проверка совместимости схемы.
+        // Импортируемая БД может быть СТАРЕЕ текущей: недостающие миграции будут
+        // применены автоматически через runMigrations() после подмены файла.
+        // Опасно только если файл содержит неизвестные (более новые) миграции —
+        // тогда схема новее кода сервиса и работать с ней нельзя.
         try {
-          const { default: betterSqlite3 } = await import('better-sqlite3');
+          const knownMigrationIds = new Set(MIGRATIONS.map(m => m.id));
+          const unknownMigrations = uploadedMigrationIds.filter(id => !knownMigrationIds.has(id));
+          if (unknownMigrations.length > 0) {
+            try { fs.unlinkSync(uploadedPath); } catch (_) {}
+            return res.status(400).json({
+              error: 'Импортируемая БД новее текущей версии сервиса. Обновите сервис перед импортом. Неизвестные миграции: ' + unknownMigrations.join(', ')
+            });
+          }
+
           if (fs.existsSync(DB_PATH)) {
+            const { default: betterSqlite3 } = await import('better-sqlite3');
             const currentDb = new betterSqlite3(DB_PATH, { readonly: true, fileMustExist: true });
             let currentMigrationIds = [];
-            if (currentDb.tableExists('schema_migrations')) {
+            if (currentDb.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'").get()) {
               currentMigrationIds = currentDb.prepare(
                 'SELECT id FROM schema_migrations ORDER BY executed_at'
               ).all().map(r => r.id);
             }
             currentDb.close();
 
-            // Проверяем что каждая миграция текущей БД присутствует в импортируемой
             const missingMigrations = currentMigrationIds.filter(id => !uploadedMigrationIds.includes(id));
             if (missingMigrations.length > 0) {
-              try { fs.unlinkSync(uploadedPath); } catch (_) {}
-              return res.status(400).json({
-                error: 'Импортируемая БД содержит устаревшую схему. Отсутствуют миграции: ' + missingMigrations.join(', ')
+              logger.info('[Admin] Imported DB is older, migrations will be applied', {
+                missing: missingMigrations
               });
             }
           }
         } catch (schemaCheckErr) {
-          // Если не можем прочитать текущую БД, пропускаем проверку (возможно первый запуск)
           logger.warn('[Admin] Could not compare schema versions', { error: schemaCheckErr.message });
         }
 
@@ -1796,6 +1806,7 @@ export function createAdminEndpoints({
           // Попытка восстановления из бэкапа
           try {
             if (backupCreated && fs.existsSync(backupPath)) {
+              try { await closeDatabase(); } catch (_) {}
               removeWalShmFiles();
               fs.copyFileSync(backupPath, DB_PATH);
               await runMigrations(DB_PATH);

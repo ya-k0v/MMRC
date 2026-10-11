@@ -623,12 +623,23 @@ function createSettingsSection() {
         const file = dbImportInput.files[0];
         if (!file) return;
         if (!confirm('Импорт заменит текущую базу данных. Продолжить?')) return;
-        const fd = new FormData();
-        fd.append('file', file);
         const pwd = prompt('Введите пароль для подтверждения:');
-        if (pwd) fd.append('confirmPassword', pwd);
+        if (!pwd) return;
         try {
-          const r = await adminFetch('/api/admin/import-database', { method: 'POST', body: fd });
+          const tokenResp = await adminFetch('/api/auth/csrf-token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+          });
+          if (!tokenResp.ok) { alert('Не удалось получить CSRF токен'); return; }
+          const { csrfToken } = await tokenResp.json();
+          const fd = new FormData();
+          fd.append('file', file);
+          fd.append('confirmPassword', pwd);
+          const r = await adminFetch('/api/admin/import-database', {
+            method: 'POST',
+            headers: { 'X-CSRF-Token': csrfToken },
+            body: fd
+          });
           if (r.ok) { const result = await r.json(); alert(result.message || 'Импорт завершён.'); }
           else { const e = await r.json().catch(() => ({})); alert(e.error || 'Ошибка импорта'); }
         } catch { alert('Ошибка соединения'); }

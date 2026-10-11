@@ -247,32 +247,41 @@ async function ensureHeroAdminMigration() {
       );
       if (tableDef && tableDef.sql && !tableDef.sql.includes("'hero_admin'")) {
         logger.info('[DB] Migrating users table to support hero_admin role...');
-        const usersData = await driver.query('SELECT * FROM users');
-        await driver.exec('ALTER TABLE users RENAME TO users_old');
-        await driver.exec(`
-          CREATE TABLE users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            full_name TEXT NOT NULL,
-            password_hash TEXT NOT NULL,
-            auth_source TEXT NOT NULL DEFAULT 'local' CHECK(auth_source IN ('local', 'ldap')),
-            ldap_dn TEXT,
-            role TEXT DEFAULT 'speaker' CHECK(role IN ('admin', 'speaker', 'hero_admin')),
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            last_login DATETIME,
-            is_active INTEGER DEFAULT 1
-          )
-        `);
-        for (const u of usersData) {
-          await driver.run(
-            `INSERT INTO users (id, username, full_name, password_hash, auth_source, ldap_dn, role, created_at, updated_at, last_login, is_active)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [u.id, u.username, u.full_name, u.password_hash, u.auth_source || 'local',
-             u.ldap_dn || null, u.role, u.created_at, u.updated_at, u.last_login, u.is_active]
-          );
+        // SQLite (3.25+) rewrites REFERENCES users(id) in other tables to users_old on
+        // RENAME, leaving dangling FKs after DROP users_old. legacy_alter_table stops it.
+        await driver.exec('PRAGMA legacy_alter_table = ON');
+        await driver.exec('PRAGMA foreign_keys = OFF');
+        try {
+          const usersData = await driver.query('SELECT * FROM users');
+          await driver.exec('ALTER TABLE users RENAME TO users_old');
+          await driver.exec(`
+            CREATE TABLE users (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              username TEXT UNIQUE NOT NULL,
+              full_name TEXT NOT NULL,
+              password_hash TEXT NOT NULL,
+              auth_source TEXT NOT NULL DEFAULT 'local' CHECK(auth_source IN ('local', 'ldap')),
+              ldap_dn TEXT,
+              role TEXT DEFAULT 'speaker' CHECK(role IN ('admin', 'speaker', 'hero_admin')),
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              last_login DATETIME,
+              is_active INTEGER DEFAULT 1
+            )
+          `);
+          for (const u of usersData) {
+            await driver.run(
+              `INSERT INTO users (id, username, full_name, password_hash, auth_source, ldap_dn, role, created_at, updated_at, last_login, is_active)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [u.id, u.username, u.full_name, u.password_hash, u.auth_source || 'local',
+               u.ldap_dn || null, u.role, u.created_at, u.updated_at, u.last_login, u.is_active]
+            );
+          }
+          await driver.exec('DROP TABLE users_old');
+        } finally {
+          await driver.exec('PRAGMA foreign_keys = ON');
+          await driver.exec('PRAGMA legacy_alter_table = OFF');
         }
-        await driver.exec('DROP TABLE users_old');
         logger.info('[DB] Hero_admin migration completed');
       }
     }
@@ -291,32 +300,41 @@ async function ensureManagerRoleMigration() {
       );
       if (tableDef && tableDef.sql && !tableDef.sql.includes("'manager'")) {
         logger.info('[DB] Migrating users table to support manager role...');
-        const usersData = await driver.query('SELECT * FROM users');
-        await driver.exec('ALTER TABLE users RENAME TO users_old');
-        await driver.exec(`
-          CREATE TABLE users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            full_name TEXT NOT NULL,
-            password_hash TEXT NOT NULL,
-            auth_source TEXT NOT NULL DEFAULT 'local' CHECK(auth_source IN ('local', 'ldap')),
-            ldap_dn TEXT,
-            role TEXT DEFAULT 'speaker' CHECK(role IN ('admin', 'speaker', 'hero_admin', 'manager')),
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            last_login DATETIME,
-            is_active INTEGER DEFAULT 1
-          )
-        `);
-        for (const u of usersData) {
-          await driver.run(
-            `INSERT INTO users (id, username, full_name, password_hash, auth_source, ldap_dn, role, created_at, updated_at, last_login, is_active)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [u.id, u.username, u.full_name, u.password_hash, u.auth_source || 'local',
-             u.ldap_dn || null, u.role, u.created_at, u.updated_at, u.last_login, u.is_active]
-          );
+        // SQLite (3.25+) rewrites REFERENCES users(id) in other tables to users_old on
+        // RENAME (3.25+), leaving dangling FKs after DROP users_old. Disable rewrite + FK.
+        await driver.exec('PRAGMA legacy_alter_table = ON');
+        await driver.exec('PRAGMA foreign_keys = OFF');
+        try {
+          const usersData = await driver.query('SELECT * FROM users');
+          await driver.exec('ALTER TABLE users RENAME TO users_old');
+          await driver.exec(`
+            CREATE TABLE users (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              username TEXT UNIQUE NOT NULL,
+              full_name TEXT NOT NULL,
+              password_hash TEXT NOT NULL,
+              auth_source TEXT NOT NULL DEFAULT 'local' CHECK(auth_source IN ('local', 'ldap')),
+              ldap_dn TEXT,
+              role TEXT DEFAULT 'speaker' CHECK(role IN ('admin', 'speaker', 'hero_admin', 'manager')),
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              last_login DATETIME,
+              is_active INTEGER DEFAULT 1
+            )
+          `);
+          for (const u of usersData) {
+            await driver.run(
+              `INSERT INTO users (id, username, full_name, password_hash, auth_source, ldap_dn, role, created_at, updated_at, last_login, is_active)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [u.id, u.username, u.full_name, u.password_hash, u.auth_source || 'local',
+               u.ldap_dn || null, u.role, u.created_at, u.updated_at, u.last_login, u.is_active]
+            );
+          }
+          await driver.exec('DROP TABLE users_old');
+        } finally {
+          await driver.exec('PRAGMA foreign_keys = ON');
+          await driver.exec('PRAGMA legacy_alter_table = OFF');
         }
-        await driver.exec('DROP TABLE users_old');
         logger.info('[DB] Manager role migration completed');
       }
     } else if (driverType === 'postgres') {

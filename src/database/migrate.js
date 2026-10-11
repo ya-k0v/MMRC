@@ -24,7 +24,7 @@ async function ensureSchemaMigrationsTable(driver) {
   }
 }
 
-const MIGRATIONS = [
+export const MIGRATIONS = [
   {
     id: '2026-04-07-users-auth-columns',
     description: 'Ensure users.auth_source/users.ldap_dn and index',
