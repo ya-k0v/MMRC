@@ -443,6 +443,62 @@ export function createDevicesRouter(deps) {
     }
   });
 
+  // POST /api/devices/:id/wake — разбудить приставку и перезапустить плеер.
+  //
+  // Спикеру доступен только для назначенных ему устройств. Будим тем же
+  // путём, что и админ: сначала ADB-команда KEYCODE_WAKEUP, а если устройство
+  // в сне выпало из сети — Wake-on-LAN пакет. Затем поднимаем плеер, чтобы
+  // экран не остался с чужим приложением.
+  router.post('/:id/wake', requireSpeaker, async (req, res) => {
+    const entry = resolveDeviceEntry(req.params.id, devices);
+    if (!entry) {
+      return res.status(404).json({ ok: false, error: 'Устройство не найдено' });
+    }
+
+    const { deviceId: id } = entry;
+
+    if (!hasDeviceAccess(req.user.userId, id, req.user.role)) {
+      return res.status(403).json({ ok: false, error: 'Доступ к устройству запрещен' });
+    }
+
+    const plan = planPowerTargets(devices, [id]);
+    if (!plan.targets.length) {
+      const reason = plan.rejected[0]?.error || 'Устройство недоступно';
+      return res.status(400).json({ ok: false, error: reason });
+    }
+
+    for (const target of plan.targets) {
+      target.port = await resolveDeviceAdbPort(target.deviceId, devices[target.deviceId]);
+    }
+
+    let outcome;
+    try {
+      outcome = await runPowerAction(plan.targets, 'wake', {
+        relaunch: true,
+        storeMac: (deviceId, mac) => updateDeviceMacAddress(deviceId, mac)
+      });
+    } catch (e) {
+      logger.error('[Power] Ошибка пробуждения устройства:', e);
+      return res.status(500).json({ ok: false, error: e.message });
+    }
+
+    const result = outcome.results[0];
+
+    // Пробуждение могло состояться даже при неудачном перезапуске плеера
+    // (ok:false, awake:true) — состояние «активен» сохраняем в любом случае,
+    // иначе плитка зависнет в «спит» до перезагрузки страницы.
+    if (result && result.awake !== undefined) {
+      setStoredPowerState(result.deviceId, result.awake);
+      io.emit('devices/power', { deviceId: result.deviceId, awake: result.awake });
+    }
+
+    if (!result || !result.ok) {
+      return res.status(502).json({ ok: false, error: result?.error || 'ADB не отвечает' });
+    }
+
+    res.json({ ok: true });
+  });
+
   /**
    * Список id из запроса: null означает «все Android-устройства».
    * Пустой массив приравниваем к null, чтобы не получить пустую операцию.

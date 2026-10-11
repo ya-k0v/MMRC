@@ -712,32 +712,44 @@ function updateLaunchAndroidBtn() {
   // Пока не прошла первичная задержка после загрузки — не показываем кнопку
   if (!speakerInitialChecked) return;
 
-  let show = false;
-  let disabled = true;
-  let device = null;
-  if (currentDevice && devices && Array.isArray(devices)) {
-    device = devices.find(d => d.device_id === currentDevice);
-    if (device && device.platform && device.platform.toLowerCase().includes('android')) {
-      // offline = не в readyDevices
-      if (!readyDevices.has(currentDevice)) {
-        show = true;
-        disabled = false;
-      }
-    }
+  const device = currentDevice && Array.isArray(devices)
+    ? devices.find(d => d.device_id === currentDevice)
+    : null;
+  const isAndroid = !!device && String(device.platform || '').toLowerCase().includes('android');
+  const isReady = !!currentDevice && readyDevices.has(currentDevice);
+  const isSleeping = !!device && device.powerState === 'sleep';
+
+  // Спящее устройство будим (оранжевый), оффлайн — запускаем приложение
+  // (зелёный). Активное Android-устройство кнопку не показывает.
+  let mode = null;
+  if (isAndroid) {
+    if (isSleeping) mode = 'wake';
+    else if (!isReady) mode = 'launch';
   }
-  launchAndroidBtn.style.display = show ? '' : 'none';
-  launchAndroidBtn.disabled = disabled;
-  launchAndroidBtn.title = disabled ? 'Доступно только для оффлайн Android-устройств' : 'Запустить Android-приложение';
+
+  launchAndroidBtn.dataset.mode = mode || '';
+  launchAndroidBtn.style.display = mode ? '' : 'none';
+  launchAndroidBtn.disabled = !mode;
+  if (mode === 'wake') {
+    launchAndroidBtn.style.background = 'var(--warning)';
+    launchAndroidBtn.title = 'Разбудить устройство и перезапустить плеер';
+  } else if (mode === 'launch') {
+    launchAndroidBtn.style.background = '#4caf50';
+    launchAndroidBtn.title = 'Запустить Android-приложение';
+  }
 }
 
 if (launchAndroidBtn) {
   launchAndroidBtn.addEventListener('click', async () => {
     if (launchAndroidBtn.disabled) return;
+    const mode = launchAndroidBtn.dataset.mode === 'wake' ? 'wake' : 'launch';
     launchAndroidBtn.disabled = true;
-    launchAndroidBtn.title = 'Запуск...';
-    let device = devices.find(d => d.device_id === currentDevice);
+    launchAndroidBtn.title = mode === 'wake' ? 'Пробуждение...' : 'Запуск...';
     try {
-      const resp = await speakerFetch(`/api/devices/${encodeURIComponent(currentDevice)}/launch-app`, { method: 'POST' });
+      const endpoint = mode === 'wake'
+        ? `/api/devices/${encodeURIComponent(currentDevice)}/wake`
+        : `/api/devices/${encodeURIComponent(currentDevice)}/launch-app`;
+      const resp = await speakerFetch(endpoint, { method: 'POST' });
       const result = await resp.json();
       if (result.ok) {
         // Успех: сразу скрываем кнопку
@@ -745,8 +757,8 @@ if (launchAndroidBtn) {
         return;
       } else {
         await reportSpeakerNotification({
-          type: 'speaker_launch_app_error',
-          title: 'Ошибка запуска Android-приложения',
+          type: mode === 'wake' ? 'speaker_wake_device_error' : 'speaker_launch_app_error',
+          title: mode === 'wake' ? 'Ошибка пробуждения устройства' : 'Ошибка запуска Android-приложения',
           message: result.error || 'Неизвестная ошибка',
           details: {
             deviceId: currentDevice
@@ -4977,6 +4989,7 @@ socket.on('devices/power', ({ deviceId, awake }) => {
   if (!device) return;
   device.powerState = awake == null ? null : (awake ? 'awake' : 'sleep');
   renderTVList();
+  if (deviceId === currentDevice) updateLaunchAndroidBtn();
 });
 
 // Синхронизация состояния плейлиста между панелями
