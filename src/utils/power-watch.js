@@ -19,6 +19,12 @@ import {
   setStoredPowerState,
   isPowerCommandRecent
 } from './power-control.js';
+import {
+  shouldProbe,
+  markOnline,
+  markOffline
+} from './device-reachability.js';
+import { checkReachable } from './tcp-probe.js';
 import { createModuleLogger } from './logger.js';
 import { timerRegistry } from './timer-registry.js';
 
@@ -76,6 +82,7 @@ export async function pollPowerStates(targets, options = {}) {
     resolvePort = null,
     io = null,
     commands = {},
+    probe = checkReachable,
     respectCommandGuard = false,
     concurrency = DEFAULT_CONCURRENCY,
     adbTimeoutMs = DEFAULT_ADB_TIMEOUT_MS
@@ -92,20 +99,68 @@ export async function pollPowerStates(targets, options = {}) {
   }));
 
   const states = await mapWithConcurrency(withPorts, concurrency, async (target) => {
-    const state = await getPowerStateFn(target.ip, target.port || null, adbTimeoutMs);
+    const { deviceId, ip, port } = target;
+
+    // Офлайн-устройства в backoff не трогаем вовсе — ни ADB, ни пробы.
+    if (!shouldProbe(deviceId)) {
+      return {
+        deviceId,
+        ok: false,
+        online: false,
+        awake: getStoredPowerAwake(deviceId),
+        screenOn: null,
+        error: 'Устройство недоступно'
+      };
+    }
+
+    const reachable = await probe(ip, port);
+    if (!reachable) {
+      markOffline(deviceId);
+      // Сразу после команды питания не сбрасываем статус: устройство могло
+      // ещё не успеть подняться (Wake-on-LAN), пусть доживёт «тихую зону».
+      if (respectCommandGuard && isPowerCommandRecent(deviceId)) {
+        return {
+          deviceId,
+          ok: false,
+          online: false,
+          awake: getStoredPowerAwake(deviceId),
+          screenOn: null,
+          error: 'Устройство недоступно'
+        };
+      }
+      const previousAwake = getStoredPowerAwake(deviceId);
+      setStoredPowerState(deviceId, null);
+      if (previousAwake !== null && io && typeof io.emit === 'function') {
+        io.emit('devices/power', { deviceId, awake: null });
+      }
+      return {
+        deviceId,
+        ok: false,
+        online: false,
+        awake: null,
+        screenOn: null,
+        error: 'Устройство недоступно'
+      };
+    }
+
+    markOnline(deviceId);
+    const state = await getPowerStateFn(ip, port, adbTimeoutMs);
     if (!state || !state.ok) {
       return {
-        deviceId: target.deviceId,
+        deviceId,
         ok: false,
+        online: true,
         awake: null,
         screenOn: null,
         error: (state && state.error) || 'ADB не отвечает'
       };
     }
-    return { deviceId: target.deviceId, ok: true, awake: state.awake, screenOn: state.screenOn };
+    return { deviceId, ok: true, online: true, awake: state.awake, screenOn: state.screenOn };
   });
 
   for (const state of states) {
+    // Офлайн — ожидаемая ситуация при выключенном питании, не засоряем лог.
+    if (state.online === false) continue;
     if (!state.ok) {
       watchLog.warn('Не удалось получить состояние питания', {
         deviceId: state.deviceId,
@@ -149,6 +204,7 @@ export function startPowerWatchdog(deps = {}) {
     devices,
     io = null,
     resolvePort = null,
+    probe = checkReachable,
     intervalMs = POWER_WATCH_DEFAULT_INTERVAL_MS,
     initialDelayMs = POWER_WATCH_DEFAULT_INITIAL_DELAY_MS,
     commands = {},
@@ -191,6 +247,7 @@ export function startPowerWatchdog(deps = {}) {
       await pollPowerStates(plan.targets, {
         resolvePort,
         io,
+        probe,
         commands,
         respectCommandGuard: true
       });

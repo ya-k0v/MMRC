@@ -71,14 +71,21 @@ export async function runAdb(args, timeoutMs = DEFAULT_TIMEOUT_MS) {
 function execAdb(args, timeoutMs) {
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
-    const timer = setTimeout(() => {
-      reject(new Error(`adb timeout: ${args.join(' ')}`));
-    }, timeoutMs);
-    execFile('adb', args, (err, stdout, stderr) => {
-      clearTimeout(timer);
+    let killed = false;
+    let timer;
+    const child = execFile('adb', args, (err, stdout, stderr) => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
       const durationMs = Date.now() - startedAt;
       if (err) {
         const message = stderr || err.message;
+        if (killed) {
+          adbLog.warn('adb процесс убит по таймауту', { args, durationMs });
+          reject(new Error(`adb timeout: ${args.join(' ')}`));
+          return;
+        }
         adbLog.error('adb команда упала', { args, durationMs, error: message });
         reject(new Error(message));
         return;
@@ -86,6 +93,18 @@ function execAdb(args, timeoutMs) {
       adbLog.debug('adb команда выполнена', { args, durationMs });
       resolve(stdout || '');
     });
+
+    timer = setTimeout(() => {
+      killed = true;
+      try {
+        if (child && !child.killed) {
+          child.kill('SIGKILL');
+        }
+      } catch (_) {
+        // ignore
+      }
+      reject(new Error(`adb timeout: ${args.join(' ')}`));
+    }, timeoutMs);
   });
 }
 

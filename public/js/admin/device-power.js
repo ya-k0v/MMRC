@@ -211,7 +211,13 @@ async function reportPowerResult(adminFetch, { ok, message }) {
 /** Состояние, пришедшее по сокету после команды питания в другой вкладке. */
 export function applyPowerState(payload) {
   if (!payload || !payload.deviceId) return;
-  powerStates.set(payload.deviceId, { ok: true, awake: !!payload.awake });
+  const awake = payload.awake;
+  if (awake === null || awake === undefined) {
+    // Устройство ушло в офлайн: состояние неизвестно, показываем «нет ответа».
+    powerStates.set(payload.deviceId, { ok: false, awake: null });
+  } else {
+    powerStates.set(payload.deviceId, { ok: true, awake: !!awake });
+  }
   updateBadges();
 }
 

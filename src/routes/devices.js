@@ -20,6 +20,8 @@ import { getUserDevices, hasDeviceAccess } from '../middleware/device-access.js'
 import { launchAndroidApp, getDeviceMac } from '../utils/adb.js';
 import { POWER_ACTIONS, planPowerTargets, runPowerAction, getStoredPowerAwake, setStoredPowerState } from '../utils/power-control.js';
 import { pollPowerStates } from '../utils/power-watch.js';
+import { checkReachable } from '../utils/tcp-probe.js';
+import { getReachability, forgetDevice } from '../utils/device-reachability.js';
 import { ANDROID_PACKAGE_NAME, ANDROID_MAIN_ACTIVITY, DEFAULT_ADB_PORT } from '../config/android.js';
 import { validatePath } from '../utils/path-validator.js';
 
@@ -97,6 +99,36 @@ export async function resolveDeviceAdbPort(deviceId, device) {
   }
 
   return String(DEFAULT_ADB_PORT);
+}
+
+/**
+ * Фоновое обновление состояний питания после ответа /power-state.
+ *
+ * MAC узнаём заодно — он нужен для Wake-on-LAN, когда устройство уснёт и
+ * ADB-будильник перестанет работать; но только если IP:PORT вообще отвечает.
+ */
+async function refreshPowerInBackground(targets, io) {
+  if (!Array.isArray(targets) || targets.length === 0) return;
+
+  await Promise.all(targets.map(async (target) => {
+    if (target.mac) return;
+    try {
+      if (!await checkReachable(target.ip, target.port || null)) return;
+      const discovered = await getDeviceMac(target.ip, target.port, 8000);
+      if (discovered.ok && discovered.mac) {
+        target.mac = discovered.mac;
+        await updateDeviceMacAddress(target.deviceId, discovered.mac);
+      }
+    } catch (_) {
+      // MAC — приятный бонус, без него обойдёмся
+    }
+  }));
+
+  try {
+    await pollPowerStates(targets, { io, concurrency: 3, adbTimeoutMs: 8000 });
+  } catch (error) {
+    logger.warn('[PowerState] Фоновое обновление не удалось', { error: error.message });
+  }
 }
 
 /**
@@ -314,6 +346,8 @@ export function createDevicesRouter(deps) {
 
     // 1. Удаляем из БД
     deleteDeviceFromDB(id);
+    setStoredPowerState(id, null);
+    forgetDevice(id);
     logDevice('info', `Device deleted from DB`, { deviceId: id });
     
     // 1.5. Удаляем метаданные файлов устройства
@@ -581,8 +615,9 @@ export function createDevicesRouter(deps) {
 
   // POST /api/devices/power-state — состояние питания для бейджа «спит».
   //
-  // Опрос по ADB стоит дорого (connect на каждое устройство), поэтому клиент
-  // вызывает его точечно, а не на каждый рендер списка.
+  // Сам ADB-опрос дорогой, поэтому ответ отдаём сразу из кэша, а обновление
+  // запускаем в фоне: другие панели получают актуальные статусы через
+  // devices/power. Так запрос не упирается в 30-секундный таймаут.
   router.post('/power-state', requireAuth, async (req, res) => {
     const requested = readRequestedDeviceIds(req.body?.deviceIds);
     if (!requested.ok) {
@@ -602,31 +637,21 @@ export function createDevicesRouter(deps) {
       target.port = await resolveDeviceAdbPort(target.deviceId, devices[target.deviceId]);
     }
 
-    // MAC узнаём заодно: он нужен для Wake-on-LAN, когда устройство уже
-    // уснёт и ADB-будильник больше не сработает.
-    await Promise.all(plan.targets.map(async (target) => {
-      if (target.mac) return;
-      try {
-        const discovered = await getDeviceMac(target.ip, target.port, 8000);
-        if (discovered.ok && discovered.mac) {
-          target.mac = discovered.mac;
-          await updateDeviceMacAddress(target.deviceId, discovered.mac);
-        }
-      } catch (_) {
-        // MAC — приятный бонус, без него обойдёмся
-      }
-    }));
-
-    // Опрос обновляет хранимое состояние и рассылает его остальным панелям,
-    // только если оно реально изменилось — команды «спит/активен» от других
-    // вкладок доходят через devices/power и без этого.
-    const states = await pollPowerStates(plan.targets, {
-      io,
-      concurrency: 3,
-      adbTimeoutMs: 8000
+    const states = plan.targets.map(target => {
+      const awake = getStoredPowerAwake(target.deviceId);
+      return {
+        deviceId: target.deviceId,
+        ok: awake !== null,
+        awake,
+        online: getReachability(target.deviceId).online
+      };
     });
 
-    res.json({ ok: true, states });
+    if (!res.headersSent) {
+      res.json({ ok: true, states });
+    }
+
+    void refreshPowerInBackground(plan.targets, io);
   });
 
   return router;
