@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getDevicesPath, getDataRoot } from '../config/settings-manager.js';
 import { sanitizeDeviceId, isReservedObjectKey } from '../utils/sanitize.js';
-import { deleteDevice as deleteDeviceFromDB, deleteDeviceFileNames, getDatabase, updateDeviceMacAddress } from '../database/database.js';
+import { deleteDevice as deleteDeviceFromDB, deleteDeviceFileNames, getDatabase, updateDeviceMacAddress, updateDeviceModel } from '../database/database.js';
 import { createLimiter, deleteLimiter } from '../middleware/rate-limit.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import { createModuleLogger, logDevice } from '../utils/logger.js';
@@ -17,7 +17,7 @@ import { deleteDeviceFilesMetadata, getDeviceFilesMetadata } from '../database/f
 import { removeStreamJob } from '../streams/stream-manager.js';
 import { requireAuth } from '../middleware/auth.js';
 import { getUserDevices, hasDeviceAccess } from '../middleware/device-access.js';
-import { launchAndroidApp, getDeviceMac } from '../utils/adb.js';
+import { launchAndroidApp, getDeviceMac, getDeviceModel } from '../utils/adb.js';
 import { POWER_ACTIONS, planPowerTargets, runPowerAction, getStoredPowerAwake, setStoredPowerState } from '../utils/power-control.js';
 import { pollPowerStates } from '../utils/power-watch.js';
 import { checkReachable } from '../utils/tcp-probe.js';
@@ -104,23 +104,33 @@ export async function resolveDeviceAdbPort(deviceId, device) {
 /**
  * Фоновое обновление состояний питания после ответа /power-state.
  *
- * MAC узнаём заодно — он нужен для Wake-on-LAN, когда устройство уснёт и
- * ADB-будильник перестанет работать; но только если IP:PORT вообще отвечает.
+ * MAC и модель узнаём заодно — они нужны для питания, когда устройство уснёт
+ * и ADB-будильник перестанет работать: MAC для Wake-on-LAN, модель для выбора
+ * набора команд питания под конкретный ТВ. Пишем только если IP:PORT отвечает.
  */
 async function refreshPowerInBackground(targets, io) {
   if (!Array.isArray(targets) || targets.length === 0) return;
 
   await Promise.all(targets.map(async (target) => {
-    if (target.mac) return;
+    if (target.mac && target.model) return;
     try {
       if (!await checkReachable(target.ip, target.port || null)) return;
-      const discovered = await getDeviceMac(target.ip, target.port, 8000);
-      if (discovered.ok && discovered.mac) {
-        target.mac = discovered.mac;
-        await updateDeviceMacAddress(target.deviceId, discovered.mac);
+      if (!target.mac) {
+        const discovered = await getDeviceMac(target.ip, target.port, 8000);
+        if (discovered.ok && discovered.mac) {
+          target.mac = discovered.mac;
+          await updateDeviceMacAddress(target.deviceId, discovered.mac);
+        }
+      }
+      if (!target.model) {
+        const discovered = await getDeviceModel(target.ip, target.port, 8000);
+        if (discovered.ok && discovered.model) {
+          target.model = discovered.model;
+          await updateDeviceModel(target.deviceId, discovered.model);
+        }
       }
     } catch (_) {
-      // MAC — приятный бонус, без него обойдёмся
+      // MAC и модель — приятный бонус, без них обойдёмся
     }
   }));
 
@@ -181,6 +191,9 @@ export function createDevicesRouter(deps) {
         lastSeen: d.lastSeen || null,
         ipAddress: d.ipAddress || null,
         adbPort: d.adbPort || '5555',
+        // Модель устройства: определяем автоматически по ADB (ro.product.model),
+        // по ней подбирается набор команд питания (см. power-control).
+        model: d.model || null,
         // Последний известный режим питания: «спит» показывается на плитках
         // вместо «не готов»/«готов», хранится на сервере, ADB не опрашивается.
         powerState: powerAwake === null ? null : (powerAwake ? 'awake' : 'sleep')

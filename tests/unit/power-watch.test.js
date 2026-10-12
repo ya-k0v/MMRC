@@ -50,6 +50,20 @@ describe('pollPowerStates', () => {
     expect(io.emit).toHaveBeenCalledWith('devices/power', { deviceId: 'tv1', awake: true });
   });
 
+  test('«Fake Standby»: экран выключен, хотя OS бодрствует — бейдж «спит»', async () => {
+    const io = emptyIo();
+    await pollPowerStates([{ ...TARGET, deviceId: 'tv1' }], {
+      io,
+      probe: reachable,
+      commands: {
+        getPowerState: jest.fn(async () => ({ ok: true, awake: true, screenOn: false }))
+      }
+    });
+
+    expect(getStoredPowerAwake('tv1')).toBe(false);
+    expect(io.emit).toHaveBeenCalledWith('devices/power', { deviceId: 'tv1', awake: false });
+  });
+
   test('не рассылает, если состояние не изменилось', async () => {
     setStoredPowerState('tv2', true);
     const io = emptyIo();

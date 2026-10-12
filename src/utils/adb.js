@@ -220,7 +220,8 @@ export async function launchAndroidApp(ip, packageName = ANDROID_PACKAGE_NAME, a
  * Формат меняется между версиями Android, поэтому проверяем несколько
  * каноничных маркеров: mWakefulness есть на всех современных сборках,
  * а состояние экрана встречается как `Display Power: state=`,
- * `mScreenOn=` и старое `mScreenState=`.
+ * `mScreenOn=`, у коммерческих панелей `mHoldingDisplay=` и старое
+ * `mScreenState=`.
  *
  * @param {string} text
  * @returns {{awake: boolean|null, screenOn: boolean|null, wakefulness: string|null}}
@@ -245,9 +246,16 @@ export function parsePowerState(text) {
     if (screenFlag) {
       screenOn = screenFlag[1].toLowerCase() === 'true';
     } else {
-      const legacyState = /mScreenState=(ON|OFF)/i.exec(source);
-      if (legacyState) {
-        screenOn = legacyState[1].toUpperCase() === 'ON';
+      // Коммерческие панели (Lumien и т.п.) в «Fake Standby» держат OS
+      // бодрствующей и гасят только подсветку — у них это mHoldingDisplay.
+      const holdingDisplay = /mHoldingDisplay[\s:=]+(true|false)/i.exec(source);
+      if (holdingDisplay) {
+        screenOn = holdingDisplay[1].toLowerCase() === 'true';
+      } else {
+        const legacyState = /mScreenState=(ON|OFF)/i.exec(source);
+        if (legacyState) {
+          screenOn = legacyState[1].toUpperCase() === 'ON';
+        }
       }
     }
   }
@@ -285,13 +293,22 @@ export async function wakeDevice(ip, port = DEFAULT_ADB_PORT, timeoutMs = DEFAUL
 }
 
 /**
- * Клавиша пробуждения вручную (любой KEYCODE).
+ * Клавиша пробуждения вручную (любой KEYCODE или системный вызов).
  *
  * Нужна для универсальной лестницы пробуждения: часть ТВ (включая LUMEN)
  * игнорирует KEYCODE_WAKEUP, но просыпается от KEYCODE_POWER/KEYCODE_TV_POWER.
+ * Для моделей, где эмуляция нажатий опасна либо нужен принудительный режим,
+ * шаг задаётся строкой `svc:...`/`cmd:...` — выполнится `svc power ...` или
+ * `cmd power ...` без keyevent. Примеры: `cmd:power set-screen-state on`.
  */
-export async function wakeKey(ip, port = DEFAULT_ADB_PORT, keycode, timeoutMs = DEFAULT_TIMEOUT_MS) {
-  return adbShell(ip, port, ['input', 'keyevent', String(keycode)], timeoutMs);
+export async function wakeKey(ip, port = DEFAULT_ADB_PORT, step, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  if (typeof step === 'string' && /^(svc|cmd|settings|am|input):/.test(step)) {
+    const idx = step.indexOf(':');
+    const bin = step.slice(0, idx);
+    const args = step.slice(idx + 1).trim().split(/\s+/).filter(Boolean);
+    if (args.length) return adbShell(ip, port, [bin, ...args], timeoutMs);
+  }
+  return adbShell(ip, port, ['input', 'keyevent', String(step)], timeoutMs);
 }
 
 /**
@@ -304,6 +321,18 @@ export async function wakeKey(ip, port = DEFAULT_ADB_PORT, keycode, timeoutMs = 
  */
 export async function setWifiSleepPolicy(ip, port = DEFAULT_ADB_PORT, policy = '2', timeoutMs = DEFAULT_TIMEOUT_MS) {
   return adbShell(ip, port, ['settings', 'put', 'global', 'wifi_sleep_policy', String(policy)], timeoutMs);
+}
+
+/**
+ * Разрешить Android-устройству уходить в сон при подключённом питании.
+ *
+ * Рекламные панели (Lumien Basic/Standard и т.п.) по умолчанию держат экран
+ * включённым (`stay_on_while_plugged_in=1`) — из-за этого `KEYCODE_SLEEP` не
+ * гасит подсветку. Перед сном ставим `0`, чтобы экран реально выключался.
+ * Флаг действует только на выключение экрана: пробуждение его не трогает.
+ */
+export async function setStayAwakeWhilePluggedIn(ip, port = DEFAULT_ADB_PORT, enabled = '0', timeoutMs = DEFAULT_TIMEOUT_MS) {
+  return adbShell(ip, port, ['settings', 'put', 'global', 'stay_on_while_plugged_in', String(enabled)], timeoutMs);
 }
 
 /**
@@ -321,6 +350,25 @@ export async function getDeviceMac(ip, port = DEFAULT_ADB_PORT, timeoutMs = DEFA
     return { ok: false, error: result.error };
   }
   return { ok: true, mac: parseMacAddress(result.output) };
+}
+
+/**
+ * Модель устройства из системных пропертей.
+ *
+ * Нужна для выбора набора команд питания под конкретную модель: например,
+ * Lumien Basic G2 (Android 13) будим через `svc power wake`, а KEYCODE_POWER(26)
+ * на ней запрещён. Значение берём из `ro.product.model` — оно совпадает с
+ * маркировкой панели (LS5550SD, LB3235SDG2 и т.д.).
+ *
+ * @returns {Promise<{ok: boolean, model?: string|null, error?: string}>}
+ */
+export async function getDeviceModel(ip, port = DEFAULT_ADB_PORT, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  const result = await adbShell(ip, port, ['getprop', 'ro.product.model'], timeoutMs);
+  if (!result.ok) {
+    return { ok: false, error: result.error };
+  }
+  const model = String(result.output || '').trim();
+  return { ok: true, model: model || null };
 }
 
 /** Разобрать вывод `ip -o link`: предпочитаем eth*, затем wlan*. */

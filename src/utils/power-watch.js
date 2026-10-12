@@ -169,10 +169,15 @@ export async function pollPowerStates(targets, options = {}) {
       continue;
     }
     if (respectCommandGuard && isPowerCommandRecent(state.deviceId)) continue;
+    // «Спит» = экран погашен: у панелей с «Fake Standby» OS бодрствует, но
+    // подсветка выключена, так что по mWakefulness бейдж оказался бы неверным.
+    const screenAwake = state.screenOn !== null && state.screenOn !== undefined
+      ? state.screenOn
+      : state.awake;
     const prev = getStoredPowerAwake(state.deviceId);
-    setStoredPowerState(state.deviceId, state.awake);
-    if (prev !== state.awake && io && typeof io.emit === 'function') {
-      io.emit('devices/power', { deviceId: state.deviceId, awake: state.awake });
+    setStoredPowerState(state.deviceId, screenAwake);
+    if (prev !== screenAwake && io && typeof io.emit === 'function') {
+      io.emit('devices/power', { deviceId: state.deviceId, awake: screenAwake });
     }
   }
 

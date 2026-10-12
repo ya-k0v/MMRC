@@ -464,7 +464,7 @@ export async function getAllDevices() {
   try {
     return await withRetrySync(async () => {
       const rows = await driver.query(
-        `SELECT device_id, name, folder, device_type, platform, ip_address, mac_address, adb_port, capabilities,
+        `SELECT device_id, name, folder, device_type, platform, ip_address, mac_address, adb_port, model, capabilities,
                 last_seen, current_state, created_at, updated_at
          FROM devices ORDER BY device_id`
       );
@@ -482,6 +482,7 @@ export async function getAllDevices() {
             // при следующем saveDevice затёр бы порт, заданный при установке APK.
             adbPort: row.adb_port || null,
             macAddress: row.mac_address || null,
+            model: row.model || null,
             capabilities: row.capabilities ? JSON.parse(row.capabilities) : null,
             lastSeen: row.last_seen,
             current: row.current_state ? JSON.parse(row.current_state) : { type: 'idle', file: null, state: 'idle' },
@@ -494,6 +495,7 @@ export async function getAllDevices() {
             deviceType: row.device_type || 'browser', platform: row.platform || null,
             ipAddress: row.ip_address || null, capabilities: null,
             macAddress: row.mac_address || null,
+            model: row.model || null,
             lastSeen: row.last_seen,
             current: { type: 'idle', file: null, state: 'idle' },
             files: [], fileNames: []
@@ -616,6 +618,29 @@ export async function updateDeviceMacAddress(deviceId, mac) {
   await circuitBreakers.database.execute(() => {
     return withRetrySync(async () => {
       await driver.run('UPDATE devices SET mac_address = ? WHERE device_id = ?', [normalized, deviceId]);
+    }, { maxRetries: 3, delay: 500, shouldRetry: isRetryableDatabaseError });
+  });
+
+  return true;
+}
+
+/**
+ * Запомнить модель устройства для выбора набора команд питания.
+ *
+ * Пишем только реально известную модель: пустое значение не должно затирать
+ * уже выученную, если устройство сейчас недоступно.
+ *
+ * @param {string} deviceId
+ * @param {string|null} model
+ * @returns {Promise<boolean>} true, если модель записана
+ */
+export async function updateDeviceModel(deviceId, model) {
+  const normalized = typeof model === 'string' ? model.trim() : '';
+  if (!deviceId || !normalized) return false;
+
+  await circuitBreakers.database.execute(() => {
+    return withRetrySync(async () => {
+      await driver.run('UPDATE devices SET model = ? WHERE device_id = ?', [normalized, deviceId]);
     }, { maxRetries: 3, delay: 500, shouldRetry: isRetryableDatabaseError });
   });
 

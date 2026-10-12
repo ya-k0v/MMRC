@@ -14,6 +14,7 @@ const { buildMagicPacket, normalizeMac, parseArpTable, readArpMac } = await impo
 const DEVICES = {
   tv1: { deviceType: 'android', ipAddress: '192.168.1.10', adbPort: '5555' },
   tv2: { deviceType: 'android', ipAddress: '192.168.1.11', macAddress: 'AA-BB-CC-DD-EE-FF' },
+  lumien: { deviceType: 'android', ipAddress: '192.168.1.12', adbPort: '5555', model: 'LB3235SDG2' },
   tvNoIp: { deviceType: 'android' },
   browser: { deviceType: 'browser', ipAddress: '192.168.1.99' }
 };
@@ -38,8 +39,14 @@ describe('planPowerTargets', () => {
   test('без списка id берёт только Android-устройства с IP', () => {
     const { targets, rejected } = planPowerTargets(DEVICES, null);
 
-    expect(targets.map(t => t.deviceId)).toEqual(['tv1', 'tv2']);
+    expect(targets.map(t => t.deviceId)).toEqual(['tv1', 'tv2', 'lumien']);
     expect(rejected).toEqual([]);
+  });
+
+  test('в цель попадает модель устройства для выбора команд питания', () => {
+    const { targets } = planPowerTargets(DEVICES, null);
+    expect(targets.find(t => t.deviceId === 'lumien').model).toBe('LB3235SDG2');
+    expect(targets.find(t => t.deviceId === 'tv1').model).toBeNull();
   });
 
   test('MAC нормализуется к нижнему hex', () => {
@@ -152,6 +159,55 @@ describe('runPowerAction: сон', () => {
     expect(outcome.results[0]).toEqual({ deviceId: 'tv1', ok: false, error: 'adb connect error: timeout' });
   });
 
+  test('Lumien Basic G2: SLEEP не погасил экран — добивает cmd power set-screen-state off', async () => {
+    const commands = fakeCommands({
+      getPowerState: jest.fn()
+        .mockResolvedValueOnce({ ok: true, awake: true, screenOn: true })
+        .mockResolvedValueOnce({ ok: true, awake: false, screenOn: false })
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'lumien', ip: '192.168.1.12', port: '5555', mac: null, model: 'LB3235SDG2' }],
+      'sleep',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(outcome.results[0]).toEqual({ deviceId: 'lumien', ok: true, awake: false });
+    expect(commands.sleepDevice).toHaveBeenCalledTimes(1);
+    expect(commands.wakeKey).toHaveBeenCalledTimes(1);
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.12', '5555', 'cmd:power set-screen-state off', expect.any(Number));
+  });
+
+  test('Lumien Basic G2: SLEEP сработал сразу — принудительный off не шлём', async () => {
+    const commands = fakeCommands({
+      getPowerState: jest.fn(async () => ({ ok: true, awake: false, screenOn: false }))
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'lumien', ip: '192.168.1.12', port: '5555', mac: null, model: 'LB3235SDG2' }],
+      'sleep',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(commands.sleepDevice).toHaveBeenCalledTimes(1);
+    expect(commands.wakeKey).not.toHaveBeenCalled();
+  });
+
+  test('простой сон дефолтного устройства не отправляет svc-шаги', async () => {
+    const commands = fakeCommands();
+
+    await runPowerAction(
+      [{ deviceId: 'tv1', ip: '192.168.1.10', port: '5555', mac: null }],
+      'sleep',
+      { commands }
+    );
+
+    expect(commands.sleepDevice).toHaveBeenCalledTimes(1);
+    expect(commands.wakeKey).not.toHaveBeenCalled();
+  });
+
   test('без IP цель отклоняется до любых внешних вызовов', async () => {
     const commands = fakeCommands();
 
@@ -233,6 +289,48 @@ describe('runPowerAction: пробуждение', () => {
     expect(commands.wakeKey).toHaveBeenCalledTimes(2);
     expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.11', '5555', 26, expect.any(Number));
     expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.11', '5555', 170, expect.any(Number));
+    expect(commands.sendWakeOnLan).not.toHaveBeenCalled();
+  });
+
+  test('«Fake Standby»: OS бодрствует, но экран выключен — POWER его поднимает', async () => {
+    const commands = fakeCommands({
+      getPowerState: jest.fn()
+        .mockResolvedValueOnce({ ok: true, awake: true, screenOn: false })
+        .mockResolvedValueOnce({ ok: true, awake: true, screenOn: true })
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'tv2', ip: '192.168.1.11', port: '5555', mac: 'aabbccddeeff' }],
+      'wake',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(outcome.results[0]).toEqual({ deviceId: 'tv2', ok: true, awake: true });
+    expect(commands.wakeKey).toHaveBeenCalledTimes(1);
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.11', '5555', 26, expect.any(Number));
+    expect(commands.sendWakeOnLan).not.toHaveBeenCalled();
+  });
+
+  test('Lumien Basic G2: WAKEUP не поднял — добивает cmd power set-screen-state on', async () => {
+    const commands = fakeCommands({
+      getPowerState: jest.fn()
+        .mockResolvedValueOnce({ ok: true, awake: true, screenOn: false })
+        .mockResolvedValueOnce({ ok: true, awake: true, screenOn: true })
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'lumien', ip: '192.168.1.12', port: '5555', mac: null, model: 'LB3235SDG2' }],
+      'wake',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(outcome.results[0]).toEqual({ deviceId: 'lumien', ok: true, awake: true });
+    expect(commands.wakeDevice).toHaveBeenCalledTimes(1);
+    expect(commands.wakeKey).toHaveBeenCalledTimes(1);
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.12', '5555', 'cmd:power set-screen-state on', expect.any(Number));
+    expect(commands.wakeKey).not.toHaveBeenCalledWith('192.168.1.12', '5555', 26, expect.any(Number));
     expect(commands.sendWakeOnLan).not.toHaveBeenCalled();
   });
 
@@ -402,6 +500,12 @@ describe('parsePowerState', () => {
   test('старые сборки: только mScreenState', () => {
     const state = parsePowerState('mScreenState=ON');
     expect(state).toEqual({ awake: null, screenOn: true, wakefulness: null });
+  });
+
+  test('коммерческие панели: mHoldingDisplay=False при «Fake Standby»', () => {
+    const state = parsePowerState('mWakefulness=Awake\nmHoldingDisplay=false');
+    expect(state).toEqual({ awake: true, screenOn: false, wakefulness: 'awake' });
+    expect(parsePowerState('mHoldingDisplay=true').screenOn).toBe(true);
   });
 
   test('мусорный вывод даёт null, а не ложный Awake', () => {

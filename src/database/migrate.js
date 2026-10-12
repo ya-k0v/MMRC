@@ -207,6 +207,17 @@ export const MIGRATIONS = [
         await driver.exec('ALTER TABLE devices ADD COLUMN mac_address TEXT');
       }
     }
+  },
+  {
+    id: '2026-10-12-devices-model',
+    description: 'Add model column to devices for per-model power control',
+    async up(driver) {
+      if (!(await driver.tableExists('devices'))) return;
+      const cols = await driver.columns('devices');
+      if (!cols.some(c => c.name === 'model')) {
+        await driver.exec('ALTER TABLE devices ADD COLUMN model TEXT');
+      }
+    }
   }
 ];
 

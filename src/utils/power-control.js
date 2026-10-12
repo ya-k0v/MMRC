@@ -16,7 +16,10 @@ import {
   launchAndroidApp,
   isAndroidDevice,
   setWifiSleepPolicy,
-  KEYCODE_WAKEUP
+  setStayAwakeWhilePluggedIn,
+  KEYCODE_SLEEP,
+  KEYCODE_WAKEUP,
+  KEYCODE_POWER
 } from './adb.js';
 import { sendWakeOnLanAuto, readHostArpMac, normalizeMac } from './wol.js';
 import { ANDROID_PACKAGE_NAME, ANDROID_MAIN_ACTIVITY } from '../config/android.js';
@@ -91,7 +94,7 @@ export function isPowerCommandRecent(deviceId, windowMs = POWER_COMMAND_QUIET_MS
  *
  * @param {Object} devicesMap
  * @param {string[]|null} requestedIds
- * @returns {{targets: Array<{deviceId: string, ip: string, port: string|null, mac: string|null}>, rejected: Array<{deviceId: string, error: string}>}}
+ * @returns {{targets: Array<{deviceId: string, ip: string, port: string|null, mac: string|null, model: string|null}>, rejected: Array<{deviceId: string, error: string}>}}
  */
 export function planPowerTargets(devicesMap, requestedIds) {
   const targets = [];
@@ -138,7 +141,8 @@ function toTarget(deviceId, device) {
     deviceId,
     ip: device.ipAddress,
     port: device.adbPort || null,
-    mac: normalizeMac(device.macAddress) || null
+    mac: normalizeMac(device.macAddress) || null,
+    model: device.model || null
   };
 }
 
@@ -177,6 +181,46 @@ const WAKE_KEYCODES = envList('POWER_WAKE_KEYCODES', ['224', '26', '170']).map(N
 const WOL_PORTS = envList('POWER_WOL_PORTS', ['9', '7']).map(Number).filter(Number.isFinite);
 
 /**
+ * Наборы команд питания под конкретные модели.
+ *
+ * Ступень пробуждения — либо KEYCODE (число), либо системный вызов строкой
+ * `svc:...`/`cmd:...` (например, `cmd:power set-screen-state on` — выполнится
+ * `cmd power set-screen-state on`). Ступень сна — KEYCODE_SLEEP или строка.
+ *
+ * Профиль выбирается по вхождению подстроки `key` в записанную модель
+ * устройства (devices.model, определяемую автоматически через ADB). Если
+ * модель не подходит ни под один профиль — дефолт для приставок и прочих.
+ *
+ * Lumien Basic G2 (Android 13): keyevent 26 на этой прошивке не рекомендован
+ * (может дать «чёрный экран» вместо глубокого сна), поэтому пробуждаем
+ * KEYCODE_WAKEUP, а принудительно — `cmd power set-screen-state on/off`.
+ * Lumien Standard (LS5550SD, Android 11) живёт на дефолтном профиле: будится
+ * лестницей 224 → 26 → 170, где 26 на этой прошивке — безопасный toggle.
+ */
+const POWER_PROFILES = [
+  {
+    key: 'lb3235sdg2',
+    label: 'Lumien Basic G2 (Android 13)',
+    wake: [KEYCODE_WAKEUP, 'cmd:power set-screen-state on'],
+    sleep: [KEYCODE_SLEEP, 'cmd:power set-screen-state off']
+  }
+];
+
+const DEFAULT_POWER_PROFILE = {
+  key: null,
+  label: 'приставки и прочие устройства',
+  wake: WAKE_KEYCODES.length ? WAKE_KEYCODES : [KEYCODE_WAKEUP],
+  sleep: [KEYCODE_SLEEP]
+};
+
+/** Профиль питания под модель устройства (неизвестная — дефолт). */
+function resolvePowerProfile(model) {
+  const needle = String(model || '').toLowerCase();
+  const found = POWER_PROFILES.find(profile => needle.includes(profile.key));
+  return found || DEFAULT_POWER_PROFILE;
+}
+
+/**
  * Выполнить команду питания на всех целях параллельно.
  *
  * Сон: сначала включается «Wi-Fi во сне не отключать» (`wifi_sleep_policy=2`),
@@ -192,7 +236,7 @@ const WOL_PORTS = envList('POWER_WOL_PORTS', ['9', '7']).map(Number).filter(Numb
  * старый процесс приложения и запускает новый (см. adb.launchAndroidApp).
  * Режим питания при этом не меняется, поэтому в результате нет поля `awake`.
  *
- * @param {Array<{deviceId: string, ip: string, port?: string|null, mac?: string|null}>} targets
+ * @param {Array<{deviceId: string, ip: string, port?: string|null, mac?: string|null, model?: string|null}>} targets
  * @param {'sleep'|'wake'|'launch'} action
  * @param {{commands?: Object, relaunch?: boolean, adbTimeoutMs?: number, wolWaitMs?: number, storeMac?: (deviceId: string, mac: string) => Promise<any>}} [options]
  * @returns {Promise<{results: Array<{deviceId: string, ok: boolean, awake?: boolean, error?: string}>, succeeded: number, failed: number}>}
@@ -267,9 +311,37 @@ async function runForTarget(target, action, options) {
         }
       }
 
-      const result = await commands.sleepDevice(ip, port, adbTimeoutMs);
-      if (!result.ok) {
-        return { deviceId, ok: false, error: result.error || 'ADB не отвечает' };
+      // Ступени сна берём из профиля модели. Дефолт — один KEYCODE_SLEEP
+      // (как раньше, без лишних проверок). У моделей с несколькими ступенями
+      // проверяем экран после каждой: если уже погас — дальше не шлём.
+      const profile = resolvePowerProfile(target.model);
+      const steps = profile.sleep;
+      let slept = false;
+      let lastError = null;
+      for (let index = 0; index < steps.length; index++) {
+        const step = steps[index];
+        const result = step === KEYCODE_SLEEP
+          ? await commands.sleepDevice(ip, port, adbTimeoutMs)
+          : await commands.wakeKey(ip, port, step, adbTimeoutMs);
+        if (!result.ok) {
+          return { deviceId, ok: false, error: result.error || 'ADB не отвечает' };
+        }
+        lastError = null;
+
+        if (steps.length > 1) {
+          // Даём экрану погаснуть и проверяем реальный результат; если state
+          // разобрать не вышло (null) — считаем сон успешным.
+          await commands.delay(WOL_RETRY_DELAY_MS);
+          const awake = await isReallyAwake(commands, ip, port, adbTimeoutMs);
+          if (awake !== true) {
+            slept = true;
+            break;
+          }
+          lastError = 'экран не погас';
+        }
+      }
+      if (steps.length > 1 && !slept) {
+        powerLog.warn('Сон: экран так и не погас', { deviceId, error: lastError });
       }
       await rememberMac(target, commands, adbTimeoutMs, storeMac);
       return { deviceId, ok: true, awake: false };
@@ -319,15 +391,16 @@ async function wakeTarget(target, options) {
   const { deviceId, ip } = target;
   const port = target.port || null;
 
-  const keycodes = (options.keycodes && options.keycodes.length) ? options.keycodes
-    : (WAKE_KEYCODES.length ? WAKE_KEYCODES : [KEYCODE_WAKEUP]);
+  // Ступени пробуждения из профиля модели: дефолт — лестница клавиш
+  // (WAKEUP → POWER → TV_POWER), Lumien Basic G2 — безопасный svc power wake.
+  const steps = resolvePowerProfile(target.model).wake;
 
   const ladder = async () => {
     let lastError = null;
-    for (const keycode of keycodes) {
-      const send = keycode === KEYCODE_WAKEUP
+    for (const step of steps) {
+      const send = step === KEYCODE_WAKEUP
         ? commands.wakeDevice(ip, port, adbTimeoutMs)
-        : commands.wakeKey(ip, port, keycode, adbTimeoutMs);
+        : commands.wakeKey(ip, port, step, adbTimeoutMs);
       const result = await send;
 
       if (!result.ok) {
@@ -336,17 +409,20 @@ async function wakeTarget(target, options) {
       }
 
       lastError = null;
+      // Даём экрану реально загореться, прежде чем проверять: в «Fake Standby»
+      // панелей OS уже бодрствует, а подсветка поднимается не мгновенно, иначе
+      // быстрая проверка ошиблась бы и мы отправили POWER в живой экран.
+      await commands.delay(WOL_RETRY_DELAY_MS);
       const awake = await isReallyAwake(commands, ip, port, adbTimeoutMs);
       if (awake !== false) {
         // awake === true — экран поднялся. awake === null — разобрать состояние
-        // не вышло, считаем клавишу сработавшей (как раньше), но POWER дальше
-        // не шлём: на уже бодрствующем устройстве он экран просто потушит.
-        powerLog.info('Пробуждение сработало клавишей', { deviceId, keycode, via: 'keyevent' });
+        // не вышло, считаем шаг сработавшим (как раньше), но дальше не шлём:
+        // на уже бодрствующем устройстве POWER просто потушит экран.
+        powerLog.info('Пробуждение сработало', { deviceId, step, via: typeof step === 'string' ? 'svc' : 'keyevent' });
         return { ok: true, awake: true };
       }
-      // Клавиша выполнилась, но экран не поднялся — пробуем следующую.
+      // Ступень выполнилась, но экран не поднялся — пробуем следующую.
       lastError = 'клавиши не подняли экран';
-      await commands.delay(WOL_RETRY_DELAY_MS);
     }
     return { ok: false, awake: false, error: lastError || 'ADB не отвечает' };
   };
@@ -372,12 +448,23 @@ async function wakeTarget(target, options) {
   return after.ok ? after : { ok: false, awake: after.awake, error: after.error || first.error || 'ADB не отвечает' };
 }
 
-/** Реально ли устройство проснулось: true/false, или null, если проверить нельзя. */
+/**
+ * Реально ли устройство проснулось: true/false, или null, если проверить нельзя.
+ *
+ * Смотрим на состояние экрана (screenOn / mHoldingDisplay), а не только на
+ * mWakefulness: у панелей с «Fake Standby» OS остаётся бодрствующей, а подсветка
+ * выключена — по одному mWakefulness такой экран выглядел бы включённым.
+ * Где экранного маркера нет — откатываемся на mWakefulness (обычные приставки).
+ */
 async function isReallyAwake(commands, ip, port, adbTimeoutMs) {
   if (!commands.getPowerState) return null;
   try {
     const state = await commands.getPowerState(ip, port || null, adbTimeoutMs);
-    if (!state.ok || state.awake === null) return null;
+    if (!state || !state.ok) return null;
+    if (state.screenOn !== null && state.screenOn !== undefined) {
+      return !!state.screenOn;
+    }
+    if (state.awake === null) return null;
     return state.awake;
   } catch (_) {
     return null;
