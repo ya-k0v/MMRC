@@ -145,7 +145,7 @@ function getChevronIcon(direction = 'left', size = 20, color = 'currentColor') {
 
 function applySquareActionButtonStyle(button) {
   if (!button) return;
-  button.style.cssText = 'min-width:36px; width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center; line-height:1; border-radius:var(--radius-sm);';
+  button.style.cssText = 'min-width:28px; width:28px; height:28px; padding:0; display:flex; align-items:center; justify-content:center; line-height:1; border-radius:var(--radius-sm);';
 }
 
 function createProcessingCancelButton(safeName, originalName) {
@@ -983,7 +983,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       nameSpan.style.cssText = 'cursor:pointer; padding:8px var(--space-sm); min-height:36px; line-height:20px; border-radius:var(--radius-sm); transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s; flex:1; min-width:0;';
       nameSpan.contentEditable = 'false';
       nameSpan.textContent = displayName;
-      const saveBtn = document.createElement('button'); saveBtn.className = 'primary fileRenameSaveBtn'; saveBtn.style.cssText = 'display:none; min-width:36px; width:36px; height:36px; padding:0; border-radius:var(--radius-sm); flex-shrink:0; align-items:center; justify-content:center; line-height:1'; saveBtn.title = 'Сохранить';
+      const saveBtn = document.createElement('button'); saveBtn.className = 'primary fileRenameSaveBtn'; saveBtn.style.cssText = 'display:none; min-width:28px; min-height:28px; width:28px; height:28px; padding:0; border-radius:var(--radius-sm); flex-shrink:0; align-items:center; justify-content:center; line-height:1'; saveBtn.title = 'Сохранить';
       const saveSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); saveSvg.setAttribute('width', '14'); saveSvg.setAttribute('height', '14'); saveSvg.setAttribute('viewBox', '0 0 24 24'); saveSvg.setAttribute('fill', 'none'); saveSvg.setAttribute('stroke', 'currentColor'); saveSvg.setAttribute('stroke-width', '2.5'); saveSvg.setAttribute('stroke-linecap', 'round'); saveSvg.setAttribute('stroke-linejoin', 'round'); saveSvg.style.display = 'block';
       const savePolyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline'); savePolyline.setAttribute('points', '20 6 9 17 4 12'); saveSvg.appendChild(savePolyline); saveBtn.appendChild(saveSvg);
       headerLeft.appendChild(nameSpan); headerLeft.appendChild(saveBtn);
@@ -1203,7 +1203,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         
         const saveBtn = document.createElement('button');
         saveBtn.className = 'primary fileRenameSaveBtn';
-        saveBtn.style.cssText = 'display:none; min-width:36px; width:36px; height:36px; padding:0; border-radius:var(--radius-sm); flex-shrink:0; align-items:center; justify-content:center; line-height:1';
+        saveBtn.style.cssText = 'display:none; min-width:28px; min-height:28px; width:28px; height:28px; padding:0; border-radius:var(--radius-sm); flex-shrink:0; align-items:center; justify-content:center; line-height:1';
         saveBtn.title = 'Сохранить';
         const saveSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         saveSvg.setAttribute('width', '14');

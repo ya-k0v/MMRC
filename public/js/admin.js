@@ -1574,11 +1574,11 @@ function createLogsSection() {
           <input type="checkbox" id="lgAutoscroll" checked /> Авто
         </label>
         <div class="lg-spacer"></div>
-        <button id="lgPause" type="button" class="secondary lg-btn-icon" title="Пауза" aria-label="Пауза">${getPauseIcon(14)}</button>
+        <button id="lgPause" type="button" class="secondary lg-btn-icon" title="Пауза" aria-label="Пауза">${getPauseIcon(18)}</button>
         <button id="lgRefresh" type="button" class="secondary lg-btn">${getRestartIcon(14)} Обновить</button>
         <button id="lgClear" type="button" class="secondary lg-btn">${getTrashIcon(14)} Очистить</button>
-        <button id="lgCopy" type="button" class="secondary lg-btn-icon" title="Копировать" aria-label="Копировать">${getCopyIcon(14)}</button>
-        <button id="lgDownload" type="button" class="secondary lg-btn-icon" title="Скачать" aria-label="Скачать">${getDownloadIcon(14)}</button>
+        <button id="lgCopy" type="button" class="secondary lg-btn-icon" title="Копировать" aria-label="Копировать">${getCopyIcon(18)}</button>
+        <button id="lgDownload" type="button" class="secondary lg-btn-icon" title="Скачать" aria-label="Скачать">${getDownloadIcon(18)}</button>
       </div>
 
       <!-- Info bar -->
@@ -1761,7 +1761,7 @@ function createLogsSection() {
   };
   ql('#lgPause').onclick = () => {
     paused = !paused;
-    ql('#lgPause').innerHTML = paused ? getPlayIcon(14) : getPauseIcon(14);
+    ql('#lgPause').innerHTML = paused ? getPlayIcon(18) : getPauseIcon(18);
     ql('#lgPause').title = paused ? 'Возобновить' : 'Пауза';
   };
 
