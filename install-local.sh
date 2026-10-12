@@ -49,7 +49,7 @@ box_line() {
     local box_width=100
     local clean=$(printf '%s' "$content" | tr -d '\357\270\217')
     local char_count=${#clean}
-    local byte_count=$(printf '%s' "$clean" | wc -c)
+    local byte_count=$(printf '%s' "$clean" | wc -c | tr -d '[:space:]')
     local four_byte=$(( (byte_count - char_count) / 3 ))
     local display_width=$(( char_count + four_byte ))
     local pad=$((box_width - display_width))
@@ -71,7 +71,7 @@ read_from_tty() {
     local reply=""
     if [ -r /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
         read -r -p "$prompt" reply < /dev/tty || reply=""
-        echo ""
+        echo "" >&2
     else
         error "Interactive input required (no TTY available)."
         printf '  Set the corresponding environment variables (DB_TYPE, STORAGE_BACKEND, NGINX_HTTP_PORT, NGINX_HTTPS_PORT, CONTENT_DIR) and re-run.\n' >&2
@@ -85,7 +85,7 @@ read_secret_from_tty() {
     local reply=""
     if [ -r /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
         read -r -s -p "$prompt" reply < /dev/tty || reply=""
-        echo ""
+        echo "" >&2
     else
         error "Interactive input required (no TTY available)."
         return 1
@@ -98,7 +98,7 @@ ask_yes_no() {
     local reply="n"
     if [ -r /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
         read -r -p "$prompt" reply < /dev/tty || reply="n"
-        echo ""
+        echo "" >&2
     fi
     printf '%s' "$reply"
 }
@@ -279,7 +279,7 @@ select_storage() {
             echo "  [1] Local filesystem (built-in, no setup required)"
             echo "  [2] S3/MinIO (via Docker, separate container)"
             read -r -p "  Choose [1-2]: " s3_choice < /dev/tty || s3_choice=""
-            echo ""
+            echo "" >&2
         fi
         case "$s3_choice" in
             2) STORAGE_BACKEND="s3" ;;
@@ -629,7 +629,7 @@ ENVEOF3
     fi
 
     # Ask for content directory
-    content_dir="${CONTENT_DIR:-}"
+    content_dir="${content_dir:-${CONTENT_DIR:-}}"
     if [ -z "$content_dir" ]; then
         echo ""
         colorized_echo yellow "Where do you want to store media content?"
@@ -648,8 +648,8 @@ ENVEOF3
         success "Content directory: $content_dir"
     fi
 
-    sed -i "s|^CONTENT_DIR=.*|CONTENT_DIR=${content_dir}|" "$ENV_FILE"
-    sed -i "s|^HOST_DATA_DIR=.*|HOST_DATA_DIR=${content_dir}|" "$ENV_FILE"
+    replace_or_append_env "CONTENT_DIR" "$content_dir"
+    replace_or_append_env "HOST_DATA_DIR" "$content_dir"
     mkdir -p "$content_dir"/{db,content,streams,converted/trailers,logs,temp,hero}
     if [ "$STORAGE_BACKEND" = "s3" ]; then
         mkdir -p "$content_dir/minio"
@@ -664,7 +664,7 @@ ENVEOF3
     if [ "$REINSTALL" = "1" ]; then
         if [ -f "$INSTALL_DIR/docker-compose.ha.yml" ] && [ "$DB_TYPE" = "postgres" ]; then
             COMPOSE_HA="-f docker-compose.yml -f docker-compose.ha.yml"
-            HA_REPLICAS=$(docker ps --filter "name=mmrc-replica" --format "{{.Names}}" 2>/dev/null | wc -l)
+            HA_REPLICAS=$(docker ps --filter "name=mmrc-replica" --format "{{.Names}}" 2>/dev/null | wc -l) || true
             if ! [[ "$HA_REPLICAS" =~ ^[0-9]+$ ]] || [ "$HA_REPLICAS" -lt 1 ]; then
                 HA_REPLICAS=1
             fi
