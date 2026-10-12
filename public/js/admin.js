@@ -2104,7 +2104,7 @@ async function ensureSelectedDevice(preferredId = null) {
     console.warn('[Admin] Не удалось загрузить список файлов для выбранного устройства', targetDeviceId, err?.message || err);
     clearFilesPane('Ошибка загрузки файлов', 'Повторите попытку позже или проверьте подключение к серверу.');
   }
-  renderTVList();
+  focusDeviceInList(targetDeviceId);
   return true;
 }
 

@@ -1901,6 +1901,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const qid = url.searchParams.get('device_id');
     if (qid && devices.find(d => d.device_id === qid)) {
       await selectDevice(qid);
+      focusDeviceInTvList(qid);
     } else if (devices[0]) {
       await selectDevice(devices[0].device_id);
     }
@@ -2210,6 +2211,16 @@ function renderTvTile(device, { suppressPlayback = false } = {}) {
 // тик слайдшоу, и innerHTML-перерисовка всех плиток даёт видимое мигание.
 let lastTvListHtml = null;
 let lastTvListStructureHtml = null;
+
+function focusDeviceInTvList(deviceId) {
+  if (!deviceId) return;
+  const sortedDevices = sortDevices(devices);
+  const index = sortedDevices.findIndex(d => d.device_id === deviceId);
+  if (index < 0) return;
+  const pageSize = Math.max(1, getMobilePageSize());
+  tvPage = Math.floor(index / pageSize);
+  renderTVList();
+}
 
 function renderTVList() {
   // Сортируем устройства перед отображением (на случай если список обновился)
