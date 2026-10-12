@@ -53,6 +53,58 @@ function buildDashManifestRelayUrl(deviceId, safeName) {
 const DEFAULT_FOLDER_PLAYLIST_INTERVAL_SECONDS = 10;
 const serverPlaylistLoops = new Map();
 
+const SEEK_MIN_INTERVAL_MS = 3000;
+const seekThrottleState = new Map();
+
+function emitSeekToDevice(io, deviceId, position) {
+  io.to(`device:${deviceId}`).emit('player/seek', { position });
+  logger.info(`[Control] Seek: ${deviceId} -> ${position}s`, { deviceId, position });
+}
+
+function scheduleDeviceSeek(io, devices, deviceId, position, file) {
+  const now = Date.now();
+  let entry = seekThrottleState.get(deviceId);
+  if (!entry) {
+    entry = { lastSentAt: 0, timer: null, pending: null };
+    seekThrottleState.set(deviceId, entry);
+  }
+
+  if (entry.timer) {
+    entry.pending = { position, file: file || null };
+    return;
+  }
+
+  const elapsed = now - entry.lastSentAt;
+  if (elapsed >= SEEK_MIN_INTERVAL_MS) {
+    entry.lastSentAt = now;
+    entry.pending = null;
+    emitSeekToDevice(io, deviceId, position);
+    return;
+  }
+
+  entry.pending = { position, file: file || null };
+  entry.timer = setTimeout(() => {
+    const state = seekThrottleState.get(deviceId);
+    if (!state) return;
+    state.timer = null;
+    const pending = state.pending;
+    state.pending = null;
+    if (!pending) return;
+
+    const d = devices[deviceId];
+    const sameContent = Boolean(
+      d && d.current
+        && (d.current.type === 'video' || d.current.type === 'audio')
+        && (!pending.file || d.current.file === pending.file)
+    );
+    if (!sameContent) return;
+
+    state.lastSentAt = Date.now();
+    emitSeekToDevice(io, deviceId, pending.position);
+  }, SEEK_MIN_INTERVAL_MS - elapsed);
+  if (typeof entry.timer.unref === 'function') entry.timer.unref();
+}
+
 export async function restoreDevicePlaylistLoop(deviceId, devices, io, storage) {
   const d = devices?.[deviceId];
   if (!d?.current?.playlistActive || !d.current?.playlistFile) return;
@@ -1033,8 +1085,7 @@ export function setupControlHandlers(socket, deps) {
       // Проверяем, что файл совпадает (если указан)
       if (!file || d.current.file === file) {
         const targetPosition = typeof position === 'number' && position >= 0 ? position : 0;
-        io.to(`device:${device_id}`).emit('player/seek', { position: targetPosition });
-        logger.info(`[Control] Seek: ${device_id} -> ${targetPosition}s`, { deviceId: device_id, position: targetPosition });
+        scheduleDeviceSeek(io, devices, device_id, targetPosition, file);
       }
     }
   });
