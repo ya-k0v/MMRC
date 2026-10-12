@@ -146,6 +146,22 @@ function toTarget(deviceId, device) {
   };
 }
 
+/**
+ * Подготовить Android-устройство ко сну:
+ *  - Wi-Fi не отключать, чтобы adbd по сети дожил до пробуждения;
+ *  - снять `stay_on_while_plugged_in` — рекламные панели (Lumien и т.п.)
+ *    держат экран включённым на питании, и `KEYCODE_SLEEP` тогда не гасит
+ *    подсветку вовсе.
+ *
+ * Лучшие усилия: если одна команда упала, вторую всё равно шлём, а сон затем
+ * выполняется как обычно.
+ */
+async function prepareForSleep(ip, port) {
+  const policy = await setWifiSleepPolicy(ip, port || null, '2');
+  const stayOn = await setStayAwakeWhilePluggedIn(ip, port || null, '0');
+  return policy && policy.ok === false ? policy : stayOn;
+}
+
 /** Внешние команды: подменяются в тестах. */
 export const DEFAULT_POWER_COMMANDS = {
   sleepDevice,
@@ -157,7 +173,7 @@ export const DEFAULT_POWER_COMMANDS = {
   readArpMac: readHostArpMac,
   delay: (ms) => new Promise(resolve => setTimeout(resolve, ms)),
   launchApp: async (ip, port) => launchAndroidApp(ip, ANDROID_PACKAGE_NAME, ANDROID_MAIN_ACTIVITY, port),
-  prepareForSleep: (ip, port) => setWifiSleepPolicy(ip, port || null, '2')
+  prepareForSleep
 };
 
 function envList(name, fallback) {

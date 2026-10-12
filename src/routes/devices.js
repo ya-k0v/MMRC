@@ -108,17 +108,22 @@ export async function resolveDeviceAdbPort(deviceId, device) {
  * и ADB-будильник перестанет работать: MAC для Wake-on-LAN, модель для выбора
  * набора команд питания под конкретный ТВ. Пишем только если IP:PORT отвечает.
  */
-async function refreshPowerInBackground(targets, io) {
+async function refreshPowerInBackground(targets, io, devices) {
   if (!Array.isArray(targets) || targets.length === 0) return;
 
   await Promise.all(targets.map(async (target) => {
     if (target.mac && target.model) return;
     try {
       if (!await checkReachable(target.ip, target.port || null)) return;
+      // Пишем и в БД (переживёт перезапуск), и в живую карту устройств:
+      // команда питания строится из неё, поэтому без записи в память модель
+      // и MAC не дошли бы до выбора профиля и Wake-on-LAN до рестарта.
+      const live = devices && devices[target.deviceId];
       if (!target.mac) {
         const discovered = await getDeviceMac(target.ip, target.port, 8000);
         if (discovered.ok && discovered.mac) {
           target.mac = discovered.mac;
+          if (live) live.macAddress = discovered.mac;
           await updateDeviceMacAddress(target.deviceId, discovered.mac);
         }
       }
@@ -126,6 +131,7 @@ async function refreshPowerInBackground(targets, io) {
         const discovered = await getDeviceModel(target.ip, target.port, 8000);
         if (discovered.ok && discovered.model) {
           target.model = discovered.model;
+          if (live) live.model = discovered.model;
           await updateDeviceModel(target.deviceId, discovered.model);
         }
       }
@@ -664,7 +670,7 @@ export function createDevicesRouter(deps) {
       res.json({ ok: true, states });
     }
 
-    void refreshPowerInBackground(plan.targets, io);
+    void refreshPowerInBackground(plan.targets, io, devices);
   });
 
   return router;

@@ -921,6 +921,12 @@ body.admin-page #grid button.st-btn-danger {
   word-break: break-word;
 }
 
+.st-power-model {
+  color: var(--muted);
+  font-weight: var(--font-weight-normal);
+  font-size: 0.78rem;
+}
+
 .st-power-ip {
   font-size: 0.75rem;
   flex: 0 1 auto;

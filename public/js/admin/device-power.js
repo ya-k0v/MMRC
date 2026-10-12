@@ -49,12 +49,13 @@ function badgeView(state) {
 function rowHtml(device) {
   const id = device.device_id;
   const name = device.name || id;
+  const model = device.model ? String(device.model) : '';
   const ip = device.ipAddress || '';
   const badge = badgeView(null);
 
   return `
     <div data-power-row="${escapeHtml(id)}" class="st-power-row">
-      <span class="st-power-name">${escapeHtml(name)}</span>
+      <span class="st-power-name">${escapeHtml(name)}${model ? ` <span class="st-power-model">(${escapeHtml(model)})</span>` : ''}</span>
       <span class="meta st-power-ip">${escapeHtml(ip || 'IP не задан')}</span>
       <span data-power-badge="${escapeHtml(id)}" class="meta st-power-badge ${badge.cls}">${badge.text}</span>
       <span class="st-power-actions">
