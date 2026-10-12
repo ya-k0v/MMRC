@@ -2611,14 +2611,14 @@ button.meta-lg.android-pastel {
 .notification-toast__container {
   display: flex;
   align-items: flex-start;
-  gap: var(--space-sm);
-  padding: var(--space-sm) var(--space-sm) var(--space-sm) var(--space-md);
+  gap: var(--space-xs);
+  padding: 8px 8px 8px 10px;
 }
 
 .notification-toast__icon {
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2640,16 +2640,20 @@ button.meta-lg.android-pastel {
   font-weight: 600;
   font-size: var(--font-size-sm);
   color: var(--text);
-  margin-bottom: 2px;
+  margin-bottom: 1px;
   padding-right: 8px;
 }
 
 .notification-toast__message {
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
-  line-height: 1.45;
-  margin-bottom: var(--space-xs);
+  line-height: 1.4;
+  margin-bottom: 4px;
   overflow-wrap: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .notification-toast__meta {
@@ -2664,6 +2668,14 @@ button.meta-lg.android-pastel {
 .notification-toast.is-warning .notification-toast__severity { color: var(--warning); }
 .notification-toast.is-info .notification-toast__severity { color: var(--brand); }
 .notification-toast.is-default .notification-toast__severity { color: var(--muted); }
+
+.notification-toast__author {
+  color: var(--muted);
+}
+.notification-toast__author::before {
+  content: '·';
+  margin-right: 4px;
+}
 
 .notification-toast__time {
   color: var(--muted);
@@ -2701,7 +2713,7 @@ button.meta-lg.android-pastel {
 .notification-list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  gap: var(--space-xs);
   overflow-y: auto;
   min-height: 0;
   flex: 1;
@@ -2743,8 +2755,8 @@ button.meta-lg.android-pastel {
 .notification-item {
   display: flex;
   align-items: flex-start;
-  gap: var(--space-sm);
-  padding: var(--space-sm) var(--space-sm) var(--space-sm) var(--space-md);
+  gap: var(--space-xs);
+  padding: 6px 8px 6px 10px;
   border: var(--border);
   border-left: 3px solid var(--muted);
   border-radius: var(--radius-sm);
@@ -2763,8 +2775,8 @@ button.meta-lg.android-pastel {
 
 .notification-item__icon {
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2782,7 +2794,7 @@ button.meta-lg.android-pastel {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .notification-item__head {
@@ -2813,6 +2825,16 @@ button.meta-lg.android-pastel {
 .notification-item.is-info .notification-item__severity { color: var(--brand); }
 .notification-item.is-default .notification-item__severity { color: var(--muted); }
 
+.notification-item__author {
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.notification-item__author::before {
+  content: '\00b7';
+  margin-right: 4px;
+}
+
 .notification-item__time {
   margin-left: auto;
   font-size: var(--font-size-xs);
@@ -2823,10 +2845,10 @@ button.meta-lg.android-pastel {
 .notification-item__message {
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
-  line-height: 1.45;
+  line-height: 1.4;
   overflow-wrap: break-word;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -2834,7 +2856,7 @@ button.meta-lg.android-pastel {
 .notification-item__tools {
   display: flex;
   align-items: center;
-  gap: var(--space-sm);
+  gap: var(--space-xs);
 }
 
 .notification-item__actions {
@@ -2861,8 +2883,8 @@ button.meta-lg.android-pastel {
 
 .notification-btn-icon {
   min-width: auto;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   display: inline-flex;
   align-items: center;

@@ -249,6 +249,15 @@ function showToastNotification(notification) {
   timeDiv.className = 'notification-toast__time';
   timeDiv.textContent = timeAgo;
   metaDiv.appendChild(severityLabel);
+  const reportedBy = notification.details && typeof notification.details === 'object'
+    ? notification.details.reportedBy
+    : null;
+  if (reportedBy) {
+    const authorSpan = document.createElement('span');
+    authorSpan.className = 'notification-toast__author';
+    authorSpan.textContent = String(reportedBy);
+    metaDiv.appendChild(authorSpan);
+  }
   metaDiv.appendChild(timeDiv);
 
   contentDiv.appendChild(titleDiv);

@@ -269,6 +269,10 @@ function renderNotification(notification) {
   const actions = Array.isArray(notification.actions) ? notification.actions : [];
   const title = String(notification.title || 'Уведомление');
   const message = String(notification.message || '');
+  const reportedBy = notification.details && typeof notification.details === 'object'
+    ? notification.details.reportedBy
+    : null;
+  const author = reportedBy ? String(reportedBy) : '';
 
   const actionsHtml = actions.length > 0
     ? `
@@ -309,6 +313,7 @@ function renderNotification(notification) {
         <div class="notification-item__head">
           <span class="notification-item__title">${escapeHtml(title)}</span>
           <span class="notification-item__severity">${escapeHtml(severity.label)}</span>
+          ${author ? `<span class="notification-item__author">${escapeHtml(author)}</span>` : ''}
           <span class="notification-item__time">${timeAgo}</span>
         </div>
         ${message ? `<p class="notification-item__message">${escapeHtml(message)}</p>` : ''}
