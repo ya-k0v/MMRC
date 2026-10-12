@@ -307,6 +307,8 @@ export function getVideoOptConfig() {
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.webm', '.ogg', '.mkv', '.mov', '.avi']);
 const MP4_LIKE_EXTENSIONS = new Set(['.mp4', '.m4v']);
 const UNSUPPORTED_PROFILES = new Set(['High 10', 'High 4:2:2', 'High 4:4:4 Predictive']);
+const FOUR_K_WIDTH = 3840;
+const FOUR_K_HEIGHT = 2160;
 const SUPPORTED_AUDIO_CODECS = new Set(['aac', 'mp3']);
 const SUPPORTED_PIXEL_FORMATS = new Set(['yuv420p', 'yuvj420p']);
 
@@ -326,7 +328,8 @@ function getThresholds() {
     maxWidth: Number(thresholds.maxWidth) || 3840,
     maxHeight: Number(thresholds.maxHeight) || 2160,
     maxFps: Number(thresholds.maxFps) || 60,
-    maxBitrate: Number(thresholds.maxBitrate) || 25000000
+    maxBitrate: Number(thresholds.maxBitrate) || 25000000,
+    reencode4k: thresholds.reencode4k !== false
   };
 }
 
@@ -560,6 +563,7 @@ export function needsOptimization(params) {
   return (
     width > thresholds.maxWidth ||
     height > thresholds.maxHeight ||
+    (thresholds.reencode4k && (width >= FOUR_K_WIDTH || height >= FOUR_K_HEIGHT)) ||
     fps > thresholds.maxFps ||
     (bitrate > 0 && bitrate > thresholds.maxBitrate) ||
     UNSUPPORTED_PROFILES.has(profile) ||
