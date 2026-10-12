@@ -27,7 +27,8 @@ jest.unstable_mockModule('node:child_process', () => ({
 const {
   adbShell,
   wakeKey,
-  getDeviceModel
+  getDeviceModel,
+  getDeviceInfo
 } = await import('../../src/utils/adb.js');
 
 const IP = '10.172.1.94';
@@ -82,4 +83,13 @@ test('getDeviceModel читает ro.product.model и тримит вывод', 
 
   expect(result).toEqual({ ok: true, model: 'LB3235SDG2' });
   expect(events).toContain(`-s ${IP}:${PORT} shell getprop ro.product.model`);
+});
+
+test('getDeviceInfo читает модель и версию Android', async () => {
+  shellOutput = 'Smart AIO TV\n';
+  const result = await getDeviceInfo(IP, PORT, 2000);
+
+  expect(result).toEqual({ ok: true, model: 'Smart AIO TV', android: 'Smart AIO TV' });
+  expect(events).toContain(`-s ${IP}:${PORT} shell getprop ro.product.model`);
+  expect(events).toContain(`-s ${IP}:${PORT} shell getprop ro.build.version.release`);
 });

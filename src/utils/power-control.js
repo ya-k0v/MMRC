@@ -17,6 +17,7 @@ import {
   isAndroidDevice,
   setWifiSleepPolicy,
   setStayAwakeWhilePluggedIn,
+  getDeviceInfo,
   KEYCODE_SLEEP,
   KEYCODE_WAKEUP,
   KEYCODE_POWER
@@ -142,7 +143,8 @@ function toTarget(deviceId, device) {
     ip: device.ipAddress,
     port: device.adbPort || null,
     mac: normalizeMac(device.macAddress) || null,
-    model: device.model || null
+    model: device.model || null,
+    android: device.android || null
   };
 }
 
@@ -169,6 +171,7 @@ export const DEFAULT_POWER_COMMANDS = {
   wakeKey,
   getDeviceMac,
   getPowerState,
+  getDeviceInfo,
   sendWakeOnLan: sendWakeOnLanAuto,
   readArpMac: readHostArpMac,
   delay: (ms) => new Promise(resolve => setTimeout(resolve, ms)),
@@ -197,28 +200,51 @@ const WAKE_KEYCODES = envList('POWER_WAKE_KEYCODES', ['224', '26', '170']).map(N
 const WOL_PORTS = envList('POWER_WOL_PORTS', ['9', '7']).map(Number).filter(Number.isFinite);
 
 /**
- * Наборы команд питания под конкретные модели.
+ * Наборы команд питания под конкретные прошивки.
  *
- * Ступень пробуждения — либо KEYCODE (число), либо системный вызов строкой
- * `svc:...`/`cmd:...` (например, `cmd:power set-screen-state on` — выполнится
- * `cmd power set-screen-state on`). Ступень сна — KEYCODE_SLEEP или строка.
+ * Профиль выбирается по `match(model, androidVersion)`:
+ *  - приоритет — версия Android: маркетинговое имя модели ненадёжно (часть
+ *    32" панелей отдаёт «Smart AIO TV» вместо LB3235SDG2), версия прошивки
+ *    различает панели точно;
+ *  - запасной путь — подстрока в `devices.model`.
  *
- * Профиль выбирается по вхождению подстроки `key` в записанную модель
- * устройства (devices.model, определяемую автоматически через ADB). Если
- * модель не подходит ни под один профиль — дефолт для приставок и прочих.
+ * Ступень — либо KEYCODE (число), либо системный вызов строкой
+ * `svc:...`/`cmd:...`/`settings:...` (выполняется как `adb shell ...`).
+ * Строковые ступени — «лучшие усилия»: если команда не поддержана прошивкой,
+ * шаг пропускается, а не рвёт сон/пробуждение; решают реальные проверки экрана.
  *
- * Lumien Basic G2 (Android 13): keyevent 26 на этой прошивке не рекомендован
- * (может дать «чёрный экран» вместо глубокого сна), поэтому пробуждаем
- * KEYCODE_WAKEUP, а принудительно — `cmd power set-screen-state on/off`.
- * Lumien Standard (LS5550SD, Android 11) живёт на дефолтном профиле: будится
- * лестницей 224 → 26 → 170, где 26 на этой прошивке — безопасный toggle.
+ * Android 13 (Lumien Basic G2 и аналоги, включая панели «Smart AIO TV»):
+ * keyevent 26 на этой прошивке не рекомендован (может дать «чёрный экран»
+ * вместо глубокого сна), поэтому будим KEYCODE_WAKEUP, принудительно экран —
+ * `cmd power set-screen-state on/off`, а перед сном снимаем stay-on.
+ *
+ * приставки iconBIT: полноценный сон их выключает (сеть падает, а Wake-on-LAN
+ * поддерживается не всегда), поэтому НЕ спим вовсе — держим включёнными и гасим
+ * только дисплей (короткий таймаут + принудительное гашение, где поддержано).
+ *
+ * Android 11 (Lumien Standard LS5550SD) и прочие — дефолт: лестница
+ * 224 → 26 → 170, где 26 на этой прошивке — безопасный toggle.
  */
 const POWER_PROFILES = [
   {
-    key: 'lb3235sdg2',
-    label: 'Lumien Basic G2 (Android 13)',
+    key: 'android-13',
+    label: 'Android 13 (Lumien Basic G2 и аналоги)',
+    match(model, android) {
+      const version = String(android || '').trim();
+      const needle = String(model || '').toLowerCase();
+      return version.startsWith('13') || needle.includes('lb3235sdg2');
+    },
     wake: [KEYCODE_WAKEUP, 'cmd:power set-screen-state on'],
-    sleep: [KEYCODE_SLEEP, 'cmd:power set-screen-state off']
+    sleep: ['svc:power stayon false', KEYCODE_SLEEP, 'cmd:power set-screen-state off']
+  },
+  {
+    key: 'iconbit',
+    label: 'iconBIT приставки (не спим, гасим дисплей)',
+    match(model) {
+      return String(model || '').toLowerCase().includes('iconbit');
+    },
+    wake: ['cmd:power set-screen-state on', KEYCODE_WAKEUP],
+    sleep: ['svc:power stayon false', 'settings:system put screen_off_timeout 1000', 'cmd:power set-screen-state off']
   }
 ];
 
@@ -229,11 +255,38 @@ const DEFAULT_POWER_PROFILE = {
   sleep: [KEYCODE_SLEEP]
 };
 
-/** Профиль питания под модель устройства (неизвестная — дефолт). */
-function resolvePowerProfile(model) {
-  const needle = String(model || '').toLowerCase();
-  const found = POWER_PROFILES.find(profile => needle.includes(profile.key));
+/** Профиль питания под устройство (неизвестное — дефолт). */
+function resolvePowerProfile(target) {
+  const { model, android } = target || {};
+  const found = POWER_PROFILES.find(profile => profile.match(model, android));
   return found || DEFAULT_POWER_PROFILE;
+}
+
+/**
+ * Человекочитаемый вид ступени: KEYCODE как `keyevent N`, строковые шаги как есть.
+ */
+function stepLabel(step) {
+  return typeof step === 'number' ? `keyevent ${Number(step)}` : String(step);
+}
+
+/**
+ * Если о модели/версии Android ничего не известно (свежий старт, панель ещё
+ * не открывали), доопределяем их одним дозвоном по ADB, чтобы выбрать
+ * правильный профиль питания. Лучшие усилия: команда недоступна или упала —
+ * работаем по дефолту.
+ */
+async function ensurePowerBasis(target, commands, adbTimeoutMs) {
+  if (target.model || target.android) return;
+  if (typeof commands.getDeviceInfo !== 'function') return;
+  try {
+    const info = await commands.getDeviceInfo(target.ip, target.port || null, adbTimeoutMs);
+    if (info && info.ok) {
+      target.model = info.model || null;
+      target.android = info.android || null;
+    }
+  } catch (error) {
+    powerLog.warn('Не удалось определить модель/версию Android', { deviceId: target.deviceId, error: error.message });
+  }
 }
 
 /**
@@ -302,6 +355,12 @@ async function runForTarget(target, action, options) {
     }
     const port = target.port || null;
 
+    // Для сна/пробуждения важно знать профиль заранее: если модель и версия
+    // Android неизвестны (свежий старт), доопределяем их одним дозвоном.
+    if (action !== 'launch') {
+      await ensurePowerBasis(target, commands, adbTimeoutMs);
+    }
+
     if (action === 'launch') {
       // Перезапуск плеера: старый процесс гасится и поднимается новый.
       // Спящее/бодрствующее состояние не трогаем.
@@ -327,20 +386,30 @@ async function runForTarget(target, action, options) {
         }
       }
 
-      // Ступени сна берём из профиля модели. Дефолт — один KEYCODE_SLEEP
-      // (как раньше, без лишних проверок). У моделей с несколькими ступенями
-      // проверяем экран после каждой: если уже погас — дальше не шлём.
-      const profile = resolvePowerProfile(target.model);
+      // Ступени сна из профиля устройства (по версии Android/модели).
+      // Дефолт — один KEYCODE_SLEEP (как раньше, без лишних проверок).
+      // У профилей с несколькими ступенями проверяем экран после каждой:
+      // если уже погас — дальше не шлём.
+      const profile = resolvePowerProfile(target);
       const steps = profile.sleep;
       let slept = false;
       let lastError = null;
+      powerLog.info(`Сон: профиль «${profile.label}», ступени ${steps.map(stepLabel).join(' → ')}`, { deviceId, model: target.model, android: target.android });
       for (let index = 0; index < steps.length; index++) {
         const step = steps[index];
+        powerLog.info('Сон: отправляю шаг', { deviceId, step: stepLabel(step) });
         const result = step === KEYCODE_SLEEP
           ? await commands.sleepDevice(ip, port, adbTimeoutMs)
           : await commands.wakeKey(ip, port, step, adbTimeoutMs);
         if (!result.ok) {
-          return { deviceId, ok: false, error: result.error || 'ADB не отвечает' };
+          if (typeof step === 'number') {
+            // KEYCODE упал — устройство потеряно, дальше шлём что-либо бессмысленно.
+            return { deviceId, ok: false, error: result.error || 'ADB не отвечает' };
+          }
+          // Строковые шаги (svc/cmd/settings) — «лучшие усилия»: не поддержаны
+          // прошивкой? Пропускаем, надёжность даёт следующая ступень или проверка.
+          powerLog.warn('Сон: шаг не поддержан — пропускаем', { deviceId, step: stepLabel(step), error: result.error });
+          continue;
         }
         lastError = null;
 
@@ -349,6 +418,7 @@ async function runForTarget(target, action, options) {
           // разобрать не вышло (null) — считаем сон успешным.
           await commands.delay(WOL_RETRY_DELAY_MS);
           const awake = await isReallyAwake(commands, ip, port, adbTimeoutMs);
+          powerLog.debug('Сон: проверка экрана после шага', { deviceId, step: stepLabel(step), awake });
           if (awake !== true) {
             slept = true;
             break;
@@ -407,21 +477,30 @@ async function wakeTarget(target, options) {
   const { deviceId, ip } = target;
   const port = target.port || null;
 
-  // Ступени пробуждения из профиля модели: дефолт — лестница клавиш
-  // (WAKEUP → POWER → TV_POWER), Lumien Basic G2 — безопасный svc power wake.
-  const steps = resolvePowerProfile(target.model).wake;
+  // Ступени пробуждения из профиля устройства: дефолт — лестница клавиш
+  // (WAKEUP → POWER → TV_POWER), Android 13 — экран через set-screen-state,
+  // iconBIT — тоже (устройство не спит, достаточно поднять дисплей).
+  const profile = resolvePowerProfile(target);
+  const steps = profile.wake;
+  powerLog.info(`Пробуждение: профиль «${profile.label}», ступени ${steps.map(stepLabel).join(' → ')}`, { deviceId, model: target.model, android: target.android });
 
   const ladder = async () => {
     let lastError = null;
     for (const step of steps) {
+      powerLog.info('Пробуждение: отправляю шаг', { deviceId, step: stepLabel(step) });
       const send = step === KEYCODE_WAKEUP
         ? commands.wakeDevice(ip, port, adbTimeoutMs)
         : commands.wakeKey(ip, port, step, adbTimeoutMs);
       const result = await send;
 
       if (!result.ok) {
-        // ADB потерял устройство — дальше клавиши бессмысленны, только WoL.
-        return { ok: false, awake: null, error: result.error || 'ADB не отвечает' };
+        if (typeof step === 'number') {
+          // ADB потерял устройство — дальше клавиши бессмысленны, только WoL.
+          return { ok: false, awake: null, error: result.error || 'ADB не отвечает' };
+        }
+        // Строковый шаг не поддержан прошивкой — пробуем следующую ступень.
+        powerLog.warn('Пробуждение: шаг не поддержан — пропускаем', { deviceId, step: stepLabel(step), error: result.error });
+        continue;
       }
 
       lastError = null;
@@ -430,6 +509,7 @@ async function wakeTarget(target, options) {
       // быстрая проверка ошиблась бы и мы отправили POWER в живой экран.
       await commands.delay(WOL_RETRY_DELAY_MS);
       const awake = await isReallyAwake(commands, ip, port, adbTimeoutMs);
+      powerLog.debug('Пробуждение: проверка экрана после шага', { deviceId, step: stepLabel(step), awake });
       if (awake !== false) {
         // awake === true — экран поднялся. awake === null — разобрать состояние
         // не вышло, считаем шаг сработавшим (как раньше), но дальше не шлём:

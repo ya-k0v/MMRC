@@ -219,9 +219,13 @@ export async function launchAndroidApp(ip, packageName = ANDROID_PACKAGE_NAME, a
  *
  * Формат меняется между версиями Android, поэтому проверяем несколько
  * каноничных маркеров: mWakefulness есть на всех современных сборках,
- * а состояние экрана встречается как `Display Power: state=`,
- * `mScreenOn=`, у коммерческих панелей `mHoldingDisplay=` и старое
- * `mScreenState=`.
+ * а состояние экрана встречается как `mHoldingDisplay=`,
+ * `Display Power: state=`, `mScreenOn=` и старое `mScreenState=`.
+ *
+ * Иерархия экранных маркеров важна: коммерческие панели (Lumien и т.п.) в
+ * «Fake Standby» держат OS бодрствующей (mWakefulness=Awake) и даже
+ * `Display Power: state=ON`, а гаснут только подсветкой — единственный
+ * достоверный признак там `mHoldingDisplay`. Поэтому он проверяется первым.
  *
  * @param {string} text
  * @returns {{awake: boolean|null, screenOn: boolean|null, wakefulness: string|null}}
@@ -238,19 +242,18 @@ export function parsePowerState(text) {
   }
 
   let screenOn = null;
-  const displayState = /Display Power:\s*state=(ON|OFF)/i.exec(source);
-  if (displayState) {
-    screenOn = displayState[1].toUpperCase() === 'ON';
+  // Fake Standby панелей Lumien: OS бодрствует, а подсветка погашена.
+  const holdingDisplay = /mHoldingDisplay[\s:=]+(true|false)/i.exec(source);
+  if (holdingDisplay) {
+    screenOn = holdingDisplay[1].toLowerCase() === 'true';
   } else {
-    const screenFlag = /mScreenOn=(true|false)/i.exec(source);
-    if (screenFlag) {
-      screenOn = screenFlag[1].toLowerCase() === 'true';
+    const displayState = /Display Power:\s*state=(ON|OFF)/i.exec(source);
+    if (displayState) {
+      screenOn = displayState[1].toUpperCase() === 'ON';
     } else {
-      // Коммерческие панели (Lumien и т.п.) в «Fake Standby» держат OS
-      // бодрствующей и гасят только подсветку — у них это mHoldingDisplay.
-      const holdingDisplay = /mHoldingDisplay[\s:=]+(true|false)/i.exec(source);
-      if (holdingDisplay) {
-        screenOn = holdingDisplay[1].toLowerCase() === 'true';
+      const screenFlag = /mScreenOn=(true|false)/i.exec(source);
+      if (screenFlag) {
+        screenOn = screenFlag[1].toLowerCase() === 'true';
       } else {
         const legacyState = /mScreenState=(ON|OFF)/i.exec(source);
         if (legacyState) {
@@ -274,7 +277,23 @@ export async function getPowerState(ip, port = DEFAULT_ADB_PORT, timeoutMs = DEF
   if (state.awake === null && state.screenOn === null) {
     return { ok: false, error: 'Не удалось разобрать состояние питания' };
   }
+  adbLog.debug('Состояние питания', {
+    target: `${ip}:${port}`,
+    awake: state.awake,
+    screenOn: state.screenOn,
+    wakefulness: state.wakefulness,
+    markers: powerMarkers(result.output)
+  });
   return { ok: true, ...state };
+}
+
+/** Строки `dumpsys power`, по которым судим про питание (для дебаг-логов). */
+function powerMarkers(text) {
+  return String(text || '')
+    .split('\n')
+    .filter(line => /mHoldingDisplay|Display Power|mScreenOn|mScreenState|mWakefulness/i.test(line))
+    .map(line => line.trim())
+    .slice(0, 30);
 }
 
 /**
@@ -369,6 +388,31 @@ export async function getDeviceModel(ip, port = DEFAULT_ADB_PORT, timeoutMs = DE
   }
   const model = String(result.output || '').trim();
   return { ok: true, model: model || null };
+}
+
+/**
+ * Модель и версия Android за один раз (`ro.product.model`, `ro.build.version.release`).
+ *
+ * Маркетинговое имя модели ненадёжно («Smart AIO TV» у части 32" панелей вместо
+ * LB3235SDG2), поэтому набор команд питания выбирается по версии Android:
+ * панели на Android 13 будим без KEYCODE_POWER(26), а дефолтная лестница
+ * с 26/170 — только для Android 11 и приставок.
+ *
+ * @returns {Promise<{ok: boolean, model?: string|null, android?: string|null, error?: string}>}
+ */
+export async function getDeviceInfo(ip, port = DEFAULT_ADB_PORT, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  const [modelResult, versionResult] = await Promise.all([
+    adbShell(ip, port, ['getprop', 'ro.product.model'], timeoutMs),
+    adbShell(ip, port, ['getprop', 'ro.build.version.release'], timeoutMs)
+  ]);
+  if (!modelResult.ok && !versionResult.ok) {
+    return { ok: false, error: modelResult.error || versionResult.error };
+  }
+  return {
+    ok: true,
+    model: modelResult.ok ? String(modelResult.output || '').trim() || null : null,
+    android: versionResult.ok ? String(versionResult.output || '').trim() || null : null
+  };
 }
 
 /** Разобрать вывод `ip -o link`: предпочитаем eth*, затем wlan*. */

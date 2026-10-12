@@ -50,12 +50,13 @@ function rowHtml(device) {
   const id = device.device_id;
   const name = device.name || id;
   const model = device.model ? String(device.model) : '';
+  const android = device.android ? ` / Android ${escapeHtml(String(device.android))}` : '';
   const ip = device.ipAddress || '';
   const badge = badgeView(null);
 
   return `
     <div data-power-row="${escapeHtml(id)}" class="st-power-row">
-      <span class="st-power-name">${escapeHtml(name)}${model ? ` <span class="st-power-model">(${escapeHtml(model)})</span>` : ''}</span>
+      <span class="st-power-name">${escapeHtml(name)}${model ? ` <span class="st-power-model">(${escapeHtml(model)}${android})</span>` : ''}</span>
       <span class="meta st-power-ip">${escapeHtml(ip || 'IP не задан')}</span>
       <span data-power-badge="${escapeHtml(id)}" class="meta st-power-badge ${badge.cls}">${badge.text}</span>
       <span class="st-power-actions">
@@ -77,6 +78,7 @@ export function renderPowerControlsHtml(devices) {
       <div class="st-card-h">
         ${getPowerIcon(16)}
         <span>Управление Android устройствами</span>
+        <span id="stPowerStatus" class="st-status st-card-h-status"></span>
       </div>
       <div class="st-power-body">
         <div class="st-actions">
@@ -84,7 +86,6 @@ export function renderPowerControlsHtml(devices) {
           <button type="button" id="stPowerWakeAll" class="primary">${getSunIcon(14)} Разбудить все</button>
           <button type="button" id="stPowerWakeLaunch" class="secondary">${getSunIcon(14)} Разбудить и запустить плеер</button>
           <button type="button" id="stPowerLaunchAll" class="primary">${getPlayIcon(14)} Запустить плеер везде</button>
-          <span id="stPowerStatus" class="st-status"></span>
         </div>
         <div id="stPowerList" class="st-power-list">${powerTargets.length ? powerTargets.map(rowHtml).join('') : '<div class="st-power-empty">Нет Android-устройств</div>'}</div>
         <div id="stPowerPager" class="st-power-pager" hidden>

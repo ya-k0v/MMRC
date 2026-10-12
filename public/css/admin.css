@@ -565,6 +565,16 @@ body.admin-page #grid .input:not(.lg-field) {
   font-size: 0.9rem;
 }
 
+/* Статус команд питания в шапке карточки: прижат вправо, не ломает раскладку */
+.st-card-h-status {
+  margin-left: auto;
+  text-align: right;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .st-card-h svg {
   flex: none;
   color: var(--muted);

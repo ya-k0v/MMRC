@@ -17,7 +17,7 @@ import { deleteDeviceFilesMetadata, getDeviceFilesMetadata } from '../database/f
 import { removeStreamJob } from '../streams/stream-manager.js';
 import { requireAuth } from '../middleware/auth.js';
 import { getUserDevices, hasDeviceAccess } from '../middleware/device-access.js';
-import { launchAndroidApp, getDeviceMac, getDeviceModel } from '../utils/adb.js';
+import { launchAndroidApp, getDeviceMac, getDeviceInfo } from '../utils/adb.js';
 import { POWER_ACTIONS, planPowerTargets, runPowerAction, getStoredPowerAwake, setStoredPowerState } from '../utils/power-control.js';
 import { pollPowerStates } from '../utils/power-watch.js';
 import { checkReachable } from '../utils/tcp-probe.js';
@@ -112,7 +112,7 @@ async function refreshPowerInBackground(targets, io, devices) {
   if (!Array.isArray(targets) || targets.length === 0) return;
 
   await Promise.all(targets.map(async (target) => {
-    if (target.mac && target.model) return;
+    if (target.mac && target.model && target.android) return;
     try {
       if (!await checkReachable(target.ip, target.port || null)) return;
       // Пишем и в БД (переживёт перезапуск), и в живую карту устройств:
@@ -127,12 +127,19 @@ async function refreshPowerInBackground(targets, io, devices) {
           await updateDeviceMacAddress(target.deviceId, discovered.mac);
         }
       }
-      if (!target.model) {
-        const discovered = await getDeviceModel(target.ip, target.port, 8000);
-        if (discovered.ok && discovered.model) {
-          target.model = discovered.model;
-          if (live) live.model = discovered.model;
-          await updateDeviceModel(target.deviceId, discovered.model);
+      // Модель и версия Android определяем одним дозвоном.
+      if (!target.model || !target.android) {
+        const info = await getDeviceInfo(target.ip, target.port, 8000);
+        if (info.ok) {
+          if (info.model && !target.model) {
+            target.model = info.model;
+            if (live) live.model = info.model;
+            await updateDeviceModel(target.deviceId, info.model);
+          }
+          if (info.android) {
+            target.android = info.android;
+            if (live) live.android = info.android;
+          }
         }
       }
     } catch (_) {
@@ -200,6 +207,9 @@ export function createDevicesRouter(deps) {
         // Модель устройства: определяем автоматически по ADB (ro.product.model),
         // по ней подбирается набор команд питания (см. power-control).
         model: d.model || null,
+        // Версия Android (ro.build.version.release): по ней выбирается профиль
+        // питания точнее, чем по маркетинговому имени модели.
+        android: d.android || null,
         // Последний известный режим питания: «спит» показывается на плитках
         // вместо «не готов»/«готов», хранится на сервере, ADB не опрашивается.
         powerState: powerAwake === null ? null : (powerAwake ? 'awake' : 'sleep')

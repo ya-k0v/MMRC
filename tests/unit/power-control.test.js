@@ -49,6 +49,14 @@ describe('planPowerTargets', () => {
     expect(targets.find(t => t.deviceId === 'tv1').model).toBeNull();
   });
 
+  test('в цель попадает версия Android для выбора команд питания', () => {
+    const { targets } = planPowerTargets(
+      { panel: { deviceType: 'android', ipAddress: '192.168.1.13', model: 'Smart AIO TV', android: '13' } },
+      null
+    );
+    expect(targets.find(t => t.deviceId === 'panel').android).toBe('13');
+  });
+
   test('MAC нормализуется к нижнему hex', () => {
     const { targets } = planPowerTargets(DEVICES, null);
     expect(targets.find(t => t.deviceId === 'tv2').mac).toBe('aabbccddeeff');
@@ -163,6 +171,7 @@ describe('runPowerAction: сон', () => {
     const commands = fakeCommands({
       getPowerState: jest.fn()
         .mockResolvedValueOnce({ ok: true, awake: true, screenOn: true })
+        .mockResolvedValueOnce({ ok: true, awake: true, screenOn: true })
         .mockResolvedValueOnce({ ok: true, awake: false, screenOn: false })
     });
 
@@ -175,11 +184,11 @@ describe('runPowerAction: сон', () => {
     expect(outcome.succeeded).toBe(1);
     expect(outcome.results[0]).toEqual({ deviceId: 'lumien', ok: true, awake: false });
     expect(commands.sleepDevice).toHaveBeenCalledTimes(1);
-    expect(commands.wakeKey).toHaveBeenCalledTimes(1);
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.12', '5555', 'svc:power stayon false', expect.any(Number));
     expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.12', '5555', 'cmd:power set-screen-state off', expect.any(Number));
   });
 
-  test('Lumien Basic G2: SLEEP сработал сразу — принудительный off не шлём', async () => {
+  test('Lumien Basic G2: экран погас сразу — принудительный off не шлём', async () => {
     const commands = fakeCommands({
       getPowerState: jest.fn(async () => ({ ok: true, awake: false, screenOn: false }))
     });
@@ -191,8 +200,10 @@ describe('runPowerAction: сон', () => {
     );
 
     expect(outcome.succeeded).toBe(1);
-    expect(commands.sleepDevice).toHaveBeenCalledTimes(1);
-    expect(commands.wakeKey).not.toHaveBeenCalled();
+    expect(commands.wakeKey).toHaveBeenCalledTimes(1);
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.12', '5555', 'svc:power stayon false', expect.any(Number));
+    expect(commands.sleepDevice).not.toHaveBeenCalled();
+    expect(commands.wakeKey).not.toHaveBeenCalledWith('192.168.1.12', '5555', 'cmd:power set-screen-state off', expect.any(Number));
   });
 
   test('простой сон дефолтного устройства не отправляет svc-шаги', async () => {
@@ -206,6 +217,65 @@ describe('runPowerAction: сон', () => {
 
     expect(commands.sleepDevice).toHaveBeenCalledTimes(1);
     expect(commands.wakeKey).not.toHaveBeenCalled();
+  });
+
+  test('Android 13 с немаркетинговым именем («Smart AIO TV»): сон гасит экран cmd off', async () => {
+    const commands = fakeCommands({
+      getPowerState: jest.fn()
+        .mockResolvedValueOnce({ ok: true, awake: true, screenOn: true })
+        .mockResolvedValueOnce({ ok: true, awake: true, screenOn: true })
+        .mockResolvedValueOnce({ ok: true, awake: false, screenOn: false })
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'tv3', ip: '192.168.1.13', port: '5555', mac: null, model: 'Smart AIO TV', android: '13' }],
+      'sleep',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(outcome.results[0]).toEqual({ deviceId: 'tv3', ok: true, awake: false });
+    expect(commands.sleepDevice).toHaveBeenCalledTimes(1);
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.13', '5555', 'svc:power stayon false', expect.any(Number));
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.13', '5555', 'cmd:power set-screen-state off', expect.any(Number));
+    expect(commands.wakeKey).not.toHaveBeenCalledWith('192.168.1.13', '5555', 26, expect.any(Number));
+  });
+
+  test('iconBIT: НЕ спит, а гасит дисплей — KEYCODE_SLEEP не шлётся', async () => {
+    const commands = fakeCommands({
+      getPowerState: jest.fn()
+        .mockResolvedValueOnce({ ok: true, awake: true, screenOn: true })
+        .mockResolvedValueOnce({ ok: true, awake: true, screenOn: true })
+        .mockResolvedValueOnce({ ok: true, awake: false, screenOn: false })
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'box', ip: '192.168.1.20', port: '5555', mac: null, model: 'iconBIT TRS2045' }],
+      'sleep',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(commands.sleepDevice).not.toHaveBeenCalled();
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.20', '5555', 'svc:power stayon false', expect.any(Number));
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.20', '5555', 'settings:system put screen_off_timeout 1000', expect.any(Number));
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.20', '5555', 'cmd:power set-screen-state off', expect.any(Number));
+  });
+
+  test('iconBIT: неподдержанная cmd-ступень не рвёт сон (лучшие усилия)', async () => {
+    const commands = fakeCommands({
+      wakeKey: jest.fn(async () => ({ ok: false, error: 'adb shell error: cmd: unknown command' }))
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'box', ip: '192.168.1.20', port: '5555', mac: null, model: 'iconBIT TRS2045' }],
+      'sleep',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(outcome.results[0].ok).toBe(true);
+    expect(commands.sleepDevice).not.toHaveBeenCalled();
   });
 
   test('без IP цель отклоняется до любых внешних вызовов', async () => {
@@ -332,6 +402,78 @@ describe('runPowerAction: пробуждение', () => {
     expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.12', '5555', 'cmd:power set-screen-state on', expect.any(Number));
     expect(commands.wakeKey).not.toHaveBeenCalledWith('192.168.1.12', '5555', 26, expect.any(Number));
     expect(commands.sendWakeOnLan).not.toHaveBeenCalled();
+  });
+
+  test('Android 13 с немаркетинговым именем: будим set-screen-state on, без keyevent 26', async () => {
+    const commands = fakeCommands({
+      getPowerState: jest.fn()
+        .mockResolvedValueOnce({ ok: true, awake: true, screenOn: false })
+        .mockResolvedValueOnce({ ok: true, awake: true, screenOn: true })
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'tv3', ip: '192.168.1.13', port: '5555', mac: null, model: 'Smart AIO TV', android: '13' }],
+      'wake',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(commands.wakeDevice).toHaveBeenCalledTimes(1);
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.13', '5555', 'cmd:power set-screen-state on', expect.any(Number));
+    expect(commands.wakeKey).not.toHaveBeenCalledWith('192.168.1.13', '5555', 26, expect.any(Number));
+    expect(commands.sendWakeOnLan).not.toHaveBeenCalled();
+  });
+
+  test('iconBIT: разбудить = поднять дисплей (cmd on), клавиши не нужны', async () => {
+    const commands = fakeCommands({
+      getPowerState: jest.fn(async () => ({ ok: true, awake: true, screenOn: true }))
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'box', ip: '192.168.1.20', port: '5555', mac: null, model: 'iconBIT TRS2045' }],
+      'wake',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.20', '5555', 'cmd:power set-screen-state on', expect.any(Number));
+    expect(commands.wakeDevice).not.toHaveBeenCalled();
+    expect(commands.sendWakeOnLan).not.toHaveBeenCalled();
+  });
+
+  test('модель и версия неизвестны — дозваниваемся и выбираем профиль по Android 13', async () => {
+    const commands = fakeCommands({
+      getDeviceInfo: jest.fn(async () => ({ ok: true, model: 'Smart AIO TV', android: '13' })),
+      getPowerState: jest.fn()
+        .mockResolvedValueOnce({ ok: true, awake: true, screenOn: false })
+        .mockResolvedValueOnce({ ok: true, awake: true, screenOn: true })
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'tv3', ip: '192.168.1.13', port: '5555', mac: null }],
+      'wake',
+      { commands }
+    );
+
+    expect(commands.getDeviceInfo).toHaveBeenCalledWith('192.168.1.13', '5555', expect.any(Number));
+    expect(outcome.succeeded).toBe(1);
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.13', '5555', 'cmd:power set-screen-state on', expect.any(Number));
+  });
+
+  test('iconBIT: неподдержанная cmd-ступень пробуждения не рвёт лестницу', async () => {
+    const commands = fakeCommands({
+      wakeKey: jest.fn(async () => ({ ok: false, error: 'adb shell error: cmd: unknown command' })),
+      getPowerState: jest.fn(async () => ({ ok: true, awake: true, screenOn: true }))
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'box', ip: '192.168.1.20', port: '5555', mac: null, model: 'iconBIT TRS2045' }],
+      'wake',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(outcome.results[0].ok).toBe(true);
   });
 
   test('POWER не навредит бодрствующему устройству: проверка состояния не даёт null', async () => {
@@ -506,6 +648,12 @@ describe('parsePowerState', () => {
     const state = parsePowerState('mWakefulness=Awake\nmHoldingDisplay=false');
     expect(state).toEqual({ awake: true, screenOn: false, wakefulness: 'awake' });
     expect(parsePowerState('mHoldingDisplay=true').screenOn).toBe(true);
+  });
+
+  test('Fake Standby: Display Power=ON не перебивает mHoldingDisplay=false', () => {
+    const state = parsePowerState('mWakefulness=Awake\nDisplay Power: state=ON\nmHoldingDisplay=false');
+    expect(state.screenOn).toBe(false);
+    expect(state.awake).toBe(true);
   });
 
   test('мусорный вывод даёт null, а не ложный Awake', () => {

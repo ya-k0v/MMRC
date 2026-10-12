@@ -1304,7 +1304,11 @@ export function createAdminRouter(deps = {}) {
 // Inline admin endpoints (moved from server.js)
 // ========================================
 
-const SERVICE_LOG_MODULES = ['auth', 'device', 'file', 'socket', 'security', 'api', 'stream', 'system', 'db'];
+const SERVICE_LOG_MODULES = [
+  'auth', 'device', 'file', 'socket', 'security', 'api', 'stream', 'streamer-client',
+  'system', 'db', 'adb', 'power', 'power-watch', 'video', 'queue', 'storage',
+  'exec-guard', 'hero', 'convert', 'http', 'validate', 'trailer', 'resolver'
+];
 const ADMIN_DB_IMPORT_DIR = path.join(ROOT, '.tmp', 'db-import');
 const WAL_CHECKPOINT_INTERVAL_MS = parseInt(process.env.WAL_CHECKPOINT_INTERVAL_MS || '60000', 10);
 
