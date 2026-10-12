@@ -18,6 +18,8 @@ const DEFAULT_TIMEOUT_MS = 15000;
 
 export const KEYCODE_SLEEP = 223;
 export const KEYCODE_WAKEUP = 224;
+export const KEYCODE_POWER = 26;
+export const KEYCODE_TV_POWER = 170;
 
 /**
  * Устройство, которым можно управлять по ADB.
@@ -280,6 +282,28 @@ export async function sleepDevice(ip, port = DEFAULT_ADB_PORT, timeoutMs = DEFAU
 /** Разбудить. Идемпотентно: на уже будущем устройстве ничего не меняется. */
 export async function wakeDevice(ip, port = DEFAULT_ADB_PORT, timeoutMs = DEFAULT_TIMEOUT_MS) {
   return adbShell(ip, port, ['input', 'keyevent', String(KEYCODE_WAKEUP)], timeoutMs);
+}
+
+/**
+ * Клавиша пробуждения вручную (любой KEYCODE).
+ *
+ * Нужна для универсальной лестницы пробуждения: часть ТВ (включая LUMEN)
+ * игнорирует KEYCODE_WAKEUP, но просыпается от KEYCODE_POWER/KEYCODE_TV_POWER.
+ */
+export async function wakeKey(ip, port = DEFAULT_ADB_PORT, keycode, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  return adbShell(ip, port, ['input', 'keyevent', String(keycode)], timeoutMs);
+}
+
+/**
+ * Держать Wi-Fi включённым во время сна (`wifi_sleep_policy`).
+ *
+ * На полноценных ТВ сон гасит экран, и по умолчанию Android ещё и отключает
+ * Wi-Fi — adbd по сети пропадает, и будить такого ТВ по ADB уже нельзя. Политика
+ * `2` (always) оставляет Wi-Fi поднятым, и `input keyevent` доходит до устройства
+ * даже в спящем состоянии. Значения: 0 — выключать, 1 — только при зарядке, 2 — всегда.
+ */
+export async function setWifiSleepPolicy(ip, port = DEFAULT_ADB_PORT, policy = '2', timeoutMs = DEFAULT_TIMEOUT_MS) {
+  return adbShell(ip, port, ['settings', 'put', 'global', 'wifi_sleep_policy', String(policy)], timeoutMs);
 }
 
 /**

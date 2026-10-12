@@ -22,11 +22,14 @@ function fakeCommands(overrides = {}) {
   return {
     sleepDevice: jest.fn(async () => ({ ok: true, output: '' })),
     wakeDevice: jest.fn(async () => ({ ok: true, output: '' })),
+    wakeKey: jest.fn(async () => ({ ok: true, output: '' })),
     getDeviceMac: jest.fn(async () => ({ ok: true, mac: 'b8:27:eb:12:34:56' })),
+    getPowerState: jest.fn(async () => ({ ok: true, awake: true, screenOn: true })),
     sendWakeOnLan: jest.fn(async () => ({ ok: true })),
     readArpMac: jest.fn(() => null),
     delay: jest.fn(async () => {}),
     launchApp: jest.fn(async () => ({ ok: true })),
+    prepareForSleep: jest.fn(async () => ({ ok: true })),
     ...overrides
   };
 }
@@ -90,6 +93,34 @@ describe('runPowerAction: сон', () => {
     expect(commands.sleepDevice).toHaveBeenCalledWith('192.168.1.10', '5555', expect.any(Number));
     expect(commands.launchApp).not.toHaveBeenCalled();
     expect(storeMac).toHaveBeenCalledWith('tv1', 'b8:27:eb:12:34:56');
+  });
+
+  test('перед сном включает «Wi-Fi во сне не отключать»', async () => {
+    const commands = fakeCommands();
+
+    await runPowerAction(
+      [{ deviceId: 'tv1', ip: '192.168.1.10', port: '5555', mac: null }],
+      'sleep',
+      { commands }
+    );
+
+    expect(commands.prepareForSleep).toHaveBeenCalledWith('192.168.1.10', '5555');
+    expect(commands.sleepDevice).toHaveBeenCalledTimes(1);
+  });
+
+  test('настройка сети упала — сон всё равно пробуем', async () => {
+    const commands = fakeCommands({
+      prepareForSleep: jest.fn(async () => ({ ok: false, error: 'No route to host' }))
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'tv1', ip: '192.168.1.10', port: '5555', mac: null }],
+      'sleep',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(commands.sleepDevice).toHaveBeenCalledTimes(1);
   });
 
   test('MAC уже известен — лишний ADB-запрос не шлём', async () => {
@@ -162,7 +193,7 @@ describe('runPowerAction: пробуждение', () => {
     expect(commands.launchApp).not.toHaveBeenCalled();
   });
 
-  test('ADB не ответил — шлём Wake-on-LAN и повторяем команду', async () => {
+  test('ADB не ответил — шлём Wake-on-LAN на оба порта и повторяем', async () => {
     const commands = fakeCommands({
       wakeDevice: jest.fn()
         .mockResolvedValueOnce({ ok: false, error: 'adb connect error: timeout' })
@@ -176,8 +207,68 @@ describe('runPowerAction: пробуждение', () => {
     );
 
     expect(outcome.succeeded).toBe(1);
-    expect(commands.sendWakeOnLan).toHaveBeenCalledWith('aabbccddeeff');
+    expect(commands.sendWakeOnLan).toHaveBeenCalledTimes(2);
+    expect(commands.sendWakeOnLan).toHaveBeenCalledWith('aabbccddeeff', { port: 9 });
+    expect(commands.sendWakeOnLan).toHaveBeenCalledWith('aabbccddeeff', { port: 7 });
     expect(commands.delay).toHaveBeenCalledWith(10);
+    expect(commands.wakeDevice).toHaveBeenCalledTimes(2);
+  });
+
+  test('лестница: WAKEUP не поднял экран — идём дальше по POWER/TV_POWER', async () => {
+    const commands = fakeCommands({
+      getPowerState: jest.fn()
+        .mockResolvedValueOnce({ ok: true, awake: false })
+        .mockResolvedValueOnce({ ok: true, awake: false })
+        .mockResolvedValueOnce({ ok: true, awake: true })
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'tv2', ip: '192.168.1.11', port: '5555', mac: 'aabbccddeeff' }],
+      'wake',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(outcome.results[0]).toEqual({ deviceId: 'tv2', ok: true, awake: true });
+    expect(commands.wakeKey).toHaveBeenCalledTimes(2);
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.11', '5555', 26, expect.any(Number));
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.11', '5555', 170, expect.any(Number));
+    expect(commands.sendWakeOnLan).not.toHaveBeenCalled();
+  });
+
+  test('POWER не навредит бодрствующему устройству: проверка состояния не даёт null', async () => {
+    const commands = fakeCommands({
+      getPowerState: jest.fn(async () => ({ ok: true, awake: null }))
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'tv2', ip: '192.168.1.11', port: '5555', mac: 'aabbccddeeff' }],
+      'wake',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(commands.wakeKey).not.toHaveBeenCalled();
+    expect(commands.sendWakeOnLan).not.toHaveBeenCalled();
+  });
+
+  test('все клавиши ок, но экран не поднялся — Wake-on-LAN как подстраховка', async () => {
+    const commands = fakeCommands({
+      getPowerState: jest.fn(async () => ({ ok: true, awake: false })),
+      wakeDevice: jest.fn()
+        .mockResolvedValueOnce({ ok: true })
+        .mockResolvedValueOnce({ ok: true })
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'tv2', ip: '192.168.1.11', port: '5555', mac: 'aabbccddeeff' }],
+      'wake',
+      { commands, wolWaitMs: 5 }
+    );
+
+    expect(outcome.failed).toBe(1);
+    expect(outcome.results[0].error).toContain('клавиши');
+    expect(commands.sendWakeOnLan).toHaveBeenCalledTimes(2);
     expect(commands.wakeDevice).toHaveBeenCalledTimes(2);
   });
 
