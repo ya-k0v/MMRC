@@ -4,29 +4,21 @@
  */
 
 /**
- * Получить SVG иконку Android устройства
+ * Получить SVG иконку Android устройства (Tabler brand-android)
  * @param {number} size - Размер иконки (по умолчанию 20)
- * @param {string} color - Цвет заливки (по умолчанию #A4C639)
+ * @param {string} color - Цвет обводки (по умолчанию currentColor)
  * @returns {string} SVG код
  */
-export function getAndroidIcon(size = 20, color = '#A4C639') {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 1024 1024" style="display:inline-block;vertical-align:middle;">
-  <g fill="${color}">
-    <rect x="408" y="78" width="26" height="120" rx="13" transform="rotate(-25 421 138)"/>
-    <rect x="590" y="78" width="26" height="120" rx="13" transform="rotate(25 603 138)"/>
-    <path
-      fill="${color}"
-      fill-rule="evenodd"
-      d="M256 386 A256 256 0 0 1 768 386 L256 386 Z M400 250 m -40 0 a 40 40 0 1 0 80 0 a 40 40 0 1 0 -80 0 M624 250 m -40 0 a 40 40 0 1 0 80 0 a 40 40 0 1 0 -80 0"
-    />
-    <rect x="256" y="386" width="512" height="26" fill="none"/>
-    <rect x="224" y="412" width="576" height="456" rx="60"/>
-    <rect x="100" y="420" width="112" height="360" rx="56"/>
-    <rect x="812" y="420" width="112" height="360" rx="56"/>
-    <rect x="340" y="800" width="128" height="180" rx="64"/>
-    <rect x="556" y="800" width="128" height="180" rx="64"/>
-  </g>
-</svg>`;
+export function getAndroidIcon(size = 20, color = 'currentColor') {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;">
+    <path d="M4 10l0 6"/>
+    <path d="M20 10l0 6"/>
+    <path d="M7 9h10v8a1 1 0 0 1 -1 1h-8a1 1 0 0 1 -1 -1v-8a5 5 0 0 1 10 0"/>
+    <path d="M8 3l1 2"/>
+    <path d="M16 3l-1 2"/>
+    <path d="M9 18l0 3"/>
+    <path d="M15 18l0 3"/>
+  </svg>`;
 }
 
 export function getVolumeMutedIcon(size = 18, color = 'currentColor') {

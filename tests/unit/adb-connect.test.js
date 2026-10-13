@@ -71,6 +71,13 @@ test('wakeKey c cmd-шагом выполняет cmd-вызов вместо ke
   expect(events).toContain(`-s ${IP}:${PORT} shell cmd power set-screen-state on`);
 });
 
+test('wakeKey c dumpsys-шагом выполняет dumpsys-вызов', async () => {
+  const result = await wakeKey(IP, PORT, 'dumpsys:deviceidle disable', 2000);
+
+  expect(result.ok).toBe(true);
+  expect(events).toContain(`-s ${IP}:${PORT} shell dumpsys deviceidle disable`);
+});
+
 test('wakeKey с ключом по-прежнему шлёт input keyevent', async () => {
   await wakeKey(IP, PORT, 26, 2000);
 

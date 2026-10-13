@@ -5,6 +5,7 @@ import { ensureAuth, adminFetch, setXhrAuth, logout } from './admin/auth.js';
 import { setupSocketListeners } from './admin/socket-listeners.js';
 import { showCopyProgress, updateCopyProgress, finishCopyProgress } from './admin/copy-progress.js';
 import { renderPowerControlsHtml, initPowerControls, applyPowerState, stopPowerControls } from './admin/device-power.js';
+import { initPowerConstructor, stopPowerConstructor } from './admin/power-constructor.js';
 import { loadDevices as loadDevicesModule, renderTVList as renderTVListModule, syncDeviceStatuses, updateDeviceTile, focusDeviceInList as focusDeviceInListModule } from './admin/devices-manager.js';
 import { createDevice, renameDevice, deleteDevice } from './admin/device-crud.js';
 import { loadFilesWithStatus, refreshFilesPanel as refreshFilesPanelModule, describeProcessing } from './admin/files-manager.js';
@@ -813,6 +814,7 @@ function createSettingsSection() {
 
     // Управление питанием Android-приставок
     initPowerControls({ devices: devicesCache, adminFetch });
+    initPowerConstructor({ devices: devicesCache, adminFetch });
 
     // System monitor (CPU, RAM, Disk bars)
     const monitorBody = document.getElementById('stSysMonitorBody');
@@ -830,6 +832,7 @@ function createSettingsSection() {
     if (!document.body.contains(el)) {
       stopSystemMonitor();
       stopPowerControls();
+      stopPowerConstructor();
       obs.disconnect();
     }
   });

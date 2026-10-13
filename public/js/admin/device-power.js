@@ -12,7 +12,7 @@
  */
 
 import { escapeHtml } from '../shared/utils.js';
-import { getPowerIcon, getSunIcon, getMoonIcon, getPlayIcon, getChevronLeftIcon, getChevronRightIcon } from '../shared/svg-icons.js';
+import { getPowerIcon, getSunIcon, getMoonIcon, getPlayIcon, getRestartIcon, getChevronLeftIcon, getChevronRightIcon, getSlidersIcon } from '../shared/svg-icons.js';
 
 const POWER_ENDPOINT = '/api/devices/power';
 const STATE_ENDPOINT = '/api/devices/power-state';
@@ -63,6 +63,7 @@ function rowHtml(device) {
         <button type="button" class="secondary meta st-power-btn" data-power-action="sleep" data-power-id="${escapeHtml(id)}" title="Усыпить устройство" aria-label="Усыпить ${escapeHtml(name)}">${getMoonIcon(14)}</button>
         <button type="button" class="secondary meta st-power-btn" data-power-action="wake" data-power-id="${escapeHtml(id)}" title="Разбудить и запустить плеер" aria-label="Разбудить ${escapeHtml(name)}">${getSunIcon(14)}</button>
         <button type="button" class="secondary meta st-power-btn" data-power-action="launch" data-power-id="${escapeHtml(id)}" title="Завершить процесс плеера и открыть заново" aria-label="Запустить плеер на ${escapeHtml(name)}">${getPlayIcon(14)}</button>
+        <button type="button" class="secondary meta st-power-btn" data-power-action="reboot" data-power-id="${escapeHtml(id)}" title="Перезагрузить устройство" aria-label="Перезагрузить ${escapeHtml(name)}">${getRestartIcon(14)}</button>
       </span>
     </div>`;
 }
@@ -82,12 +83,14 @@ export function renderPowerControlsHtml(devices) {
       </div>
       <div class="st-power-body">
         <div class="st-actions">
-          <button type="button" id="stPowerSleepAll" class="secondary">${getMoonIcon(14)} Усыпить все</button>
-          <button type="button" id="stPowerWakeAll" class="primary">${getSunIcon(14)} Разбудить все</button>
-          <button type="button" id="stPowerWakeLaunch" class="secondary">${getSunIcon(14)} Разбудить и запустить плеер</button>
-          <button type="button" id="stPowerLaunchAll" class="primary">${getPlayIcon(14)} Запустить плеер везде</button>
+          <button type="button" id="stPowerSleepAll" class="secondary st-power-btn" title="Усыпить все" aria-label="Усыпить все">${getMoonIcon(14)}</button>
+          <button type="button" id="stPowerWakeAll" class="primary st-power-btn" title="Разбудить все" aria-label="Разбудить все">${getSunIcon(14)}</button>
+          <button type="button" id="stPowerWakeLaunch" class="secondary st-power-btn" title="Разбудить и запустить плеер" aria-label="Разбудить и запустить плеер">${getSunIcon(14)}</button>
+          <button type="button" id="stPowerLaunchAll" class="primary st-power-btn" title="Запустить плеер везде" aria-label="Запустить плеер везде">${getPlayIcon(14)}</button>
+          <button type="button" id="stPowerRebootAll" class="secondary st-power-btn" title="Перезагрузить все устройства" aria-label="Перезагрузить все устройства">${getRestartIcon(14)}</button>
+          <button type="button" id="stPowerConstructor" class="secondary st-power-btn" title="Профили питания" aria-label="Профили питания">${getSlidersIcon(14)}</button>
         </div>
-        <div id="stPowerList" class="st-power-list">${powerTargets.length ? powerTargets.map(rowHtml).join('') : '<div class="st-power-empty">Нет Android-устройств</div>'}</div>
+        <div id="stPowerList" class="st-power-list">${powerTargets.map(rowHtml).join('')}</div>
         <div id="stPowerPager" class="st-power-pager" hidden>
           <button type="button" id="stPowerPrev" class="secondary meta st-pager-btn" title="Предыдущая страница" aria-label="Предыдущая страница">${getChevronLeftIcon(14)}</button>
           <span id="stPowerPagerInfo"></span>
@@ -111,7 +114,7 @@ function fitPowerList() {
   if (!list || !pager) return;
 
   if (!powerTargets.length) {
-    list.innerHTML = '<div class="st-power-empty">Нет Android-устройств</div>';
+    list.innerHTML = '';
     pager.hidden = true;
     return;
   }
@@ -178,7 +181,7 @@ function updateBadges() {
 }
 
 function setBusy(busy) {
-  const buttons = document.querySelectorAll('#stPowerList [data-power-action], #stPowerSleepAll, #stPowerWakeAll, #stPowerWakeLaunch, #stPowerLaunchAll, #stPowerPrev, #stPowerNext');
+  const buttons = document.querySelectorAll('#stPowerList [data-power-action], #stPowerSleepAll, #stPowerWakeAll, #stPowerWakeLaunch, #stPowerLaunchAll, #stPowerRebootAll, #stPowerPrev, #stPowerNext');
   buttons.forEach((button) => { button.disabled = busy; });
 }
 
@@ -244,6 +247,7 @@ async function refreshStates(adminFetch, deviceIds) {
 function summarize(action, results, summary) {
   const verb = action === 'sleep' ? 'Усыплено'
     : action === 'launch' ? 'Плеер запущен'
+    : action === 'reboot' ? 'Перезагружено'
     : 'Пробуждено';
   const failed = results.filter(result => !result.ok);
 
@@ -282,9 +286,9 @@ async function runPower(adminFetch, action, options = {}) {
 
     for (const result of data.results || []) {
       if (result.ok) {
-        // Перезапуск плеера (launch) режим питания не меняет — спит/активен
-        // оставляем как было, бейдж не трогаем.
-        if (action !== 'launch') {
+        // Перезапуск плеера (launch) и перезагрузка (reboot) режим питания не
+        // меняют — спит/активен оставляем как было, бейдж не трогаем.
+        if (action !== 'launch' && action !== 'reboot') {
           powerStates.set(result.deviceId, { ok: true, awake: result.awake !== undefined ? result.awake : action === 'wake' });
         }
       } else {
@@ -327,6 +331,9 @@ export function initPowerControls({ devices, adminFetch }) {
   });
   document.getElementById('stPowerLaunchAll')?.addEventListener('click', () => {
     runPower(adminFetch, 'launch');
+  });
+  document.getElementById('stPowerRebootAll')?.addEventListener('click', () => {
+    runPower(adminFetch, 'reboot', { relaunch: false });
   });
 
   // Строки перерисовываются при пагинации, поэтому вешаемся на список,

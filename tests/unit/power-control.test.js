@@ -8,6 +8,7 @@
 import { jest } from '@jest/globals';
 
 const { planPowerTargets, runPowerAction, isAndroidDevice } = await import('../../src/utils/power-control.js');
+const { configurePowerProfileStore, loadPowerProfiles, resetPowerProfileStore } = await import('../../src/utils/power-profiles.js');
 const { parsePowerState, parseMacAddress } = await import('../../src/utils/adb.js');
 const { buildMagicPacket, normalizeMac, parseArpTable, readArpMac } = await import('../../src/utils/wol.js');
 
@@ -23,6 +24,7 @@ function fakeCommands(overrides = {}) {
   return {
     sleepDevice: jest.fn(async () => ({ ok: true, output: '' })),
     wakeDevice: jest.fn(async () => ({ ok: true, output: '' })),
+    rebootDevice: jest.fn(async () => ({ ok: true, output: '' })),
     wakeKey: jest.fn(async () => ({ ok: true, output: '' })),
     getDeviceMac: jest.fn(async () => ({ ok: true, mac: 'b8:27:eb:12:34:56' })),
     getPowerState: jest.fn(async () => ({ ok: true, awake: true, screenOn: true })),
@@ -34,6 +36,33 @@ function fakeCommands(overrides = {}) {
     ...overrides
   };
 }
+
+/**
+ * Профили как после сидовых миграций (2026-10-13…15): обычные строки БД.
+ * Тесты питания выбирают их по модели/версии через configurePowerProfileStore.
+ */
+const SEEDED_PROFILES = [
+  { key: 'default', label: 'приставки и прочие устройства', model: null, androidFrom: null, androidTo: null, sleepSteps: [223], wakeSteps: [224, 26, 170], priority: 0, source: 'seed' },
+  { key: 'iconbit', label: 'iconBIT приставки', model: 'iconbit', androidFrom: null, androidTo: null, sleepSteps: ['svc:power stayon false', 'settings:system put screen_off_timeout 1000', 'cmd:power set-screen-state off'], wakeSteps: ['cmd:power set-screen-state on', 224], keepAwakeSteps: ['svc:power stayon true', 'settings:secure put screensaver_enabled 0'], priority: 0, source: 'seed' },
+  { key: 'android-13', label: 'Android 13 (Lumien Basic G2 и аналоги)', model: null, androidFrom: '13', androidTo: '13', sleepSteps: ['svc:power stayon false', 223, 'cmd:power set-screen-state off'], wakeSteps: [224, 'cmd:power set-screen-state on'], keepAwakeSteps: ['svc:power stayon true', 'settings:secure put screensaver_enabled 0'], priority: 0, source: 'seed' },
+  { key: 'lumien-lb3235sdg2', label: 'Lumien LB3235SDG2', model: 'lb3235sdg2', androidFrom: null, androidTo: null, sleepSteps: ['svc:power stayon false', 223, 'cmd:power set-screen-state off'], wakeSteps: [224, 'cmd:power set-screen-state on'], keepAwakeSteps: ['svc:power stayon true', 'settings:secure put screensaver_enabled 0'], priority: 0, source: 'seed' },
+  { key: 'model-smart-aio-tv', label: 'Smart AIO TV (Lumien, Android 13)', model: 'smart aio tv', androidFrom: null, androidTo: null, sleepSteps: ['svc:power stayon false', 223, 'cmd:power set-screen-state off'], wakeSteps: [224, 'cmd:power set-screen-state on'], keepAwakeSteps: ['svc:power stayon true', 'settings:secure put screensaver_enabled 0'], priority: 1, source: 'seed' },
+  { key: 'model-iconbit-trs2045', label: 'iconBIT TRS2045 (Android 10)', model: 'iconbit trs2045', androidFrom: null, androidTo: null, sleepSteps: ['svc:power stayon false', 'settings:system put screen_off_timeout 1000', 'cmd:power set-screen-state off'], wakeSteps: ['cmd:power set-screen-state on', 224], keepAwakeSteps: ['svc:power stayon true', 'settings:secure put screensaver_enabled 0'], priority: 1, source: 'seed' }
+];
+
+beforeEach(async () => {
+  resetPowerProfileStore();
+  configurePowerProfileStore({
+    load: async () => SEEDED_PROFILES.map(profile => ({ ...profile })),
+    save: async () => {},
+    remove: async () => {}
+  });
+  await loadPowerProfiles();
+});
+
+afterEach(() => {
+  resetPowerProfileStore();
+});
 
 describe('planPowerTargets', () => {
   test('без списка id берёт только Android-устройства с IP', () => {
@@ -333,9 +362,10 @@ describe('runPowerAction: пробуждение', () => {
     );
 
     expect(outcome.succeeded).toBe(1);
-    expect(commands.sendWakeOnLan).toHaveBeenCalledTimes(2);
-    expect(commands.sendWakeOnLan).toHaveBeenCalledWith('aabbccddeeff', { port: 9 });
-    expect(commands.sendWakeOnLan).toHaveBeenCalledWith('aabbccddeeff', { port: 7 });
+    // Два порта (9 и 7) × два broadcast-адреса (подсетевой 192.168.1.255 и глобальный).
+    expect(commands.sendWakeOnLan).toHaveBeenCalledTimes(4);
+    expect(commands.sendWakeOnLan).toHaveBeenCalledWith('aabbccddeeff', expect.objectContaining({ port: 9, broadcast: '192.168.1.255' }));
+    expect(commands.sendWakeOnLan).toHaveBeenCalledWith('aabbccddeeff', expect.objectContaining({ port: 7, broadcast: '255.255.255.255' }));
     expect(commands.delay).toHaveBeenCalledWith(10);
     expect(commands.wakeDevice).toHaveBeenCalledTimes(2);
   });
@@ -398,9 +428,10 @@ describe('runPowerAction: пробуждение', () => {
     expect(outcome.succeeded).toBe(1);
     expect(outcome.results[0]).toEqual({ deviceId: 'lumien', ok: true, awake: true });
     expect(commands.wakeDevice).toHaveBeenCalledTimes(1);
-    expect(commands.wakeKey).toHaveBeenCalledTimes(1);
     expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.12', '5555', 'cmd:power set-screen-state on', expect.any(Number));
     expect(commands.wakeKey).not.toHaveBeenCalledWith('192.168.1.12', '5555', 26, expect.any(Number));
+    // Удержание экрана (keepAwake профиля Android 13) выполняется после пробуждения.
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.12', '5555', 'svc:power stayon true', expect.any(Number));
     expect(commands.sendWakeOnLan).not.toHaveBeenCalled();
   });
 
@@ -492,6 +523,34 @@ describe('runPowerAction: пробуждение', () => {
     expect(commands.sendWakeOnLan).not.toHaveBeenCalled();
   });
 
+  test('keepAwake: удержание экрана выполняется после пробуждения панели', async () => {
+    const commands = fakeCommands();
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'panel', ip: '192.168.1.13', port: '5555', mac: null, model: 'Smart AIO TV', android: '13' }],
+      'wake',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.13', '5555', 'svc:power stayon true', expect.any(Number));
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.13', '5555', 'settings:secure put screensaver_enabled 0', expect.any(Number));
+  });
+
+  test('keepAwake: дефолтный профиль приставок удержание не шлёт', async () => {
+    const commands = fakeCommands();
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'tv2', ip: '192.168.1.11', port: '5555', mac: 'aabbccddeeff' }],
+      'wake',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(commands.wakeKey).not.toHaveBeenCalledWith('192.168.1.11', '5555', 'svc:power stayon true', expect.any(Number));
+    expect(commands.wakeKey).not.toHaveBeenCalledWith('192.168.1.11', '5555', 'settings:secure put screensaver_enabled 0', expect.any(Number));
+  });
+
   test('все клавиши ок, но экран не поднялся — Wake-on-LAN как подстраховка', async () => {
     const commands = fakeCommands({
       getPowerState: jest.fn(async () => ({ ok: true, awake: false })),
@@ -508,7 +567,7 @@ describe('runPowerAction: пробуждение', () => {
 
     expect(outcome.failed).toBe(1);
     expect(outcome.results[0].error).toContain('клавиши');
-    expect(commands.sendWakeOnLan).toHaveBeenCalledTimes(2);
+    expect(commands.sendWakeOnLan).toHaveBeenCalledTimes(4);
     expect(commands.wakeDevice).toHaveBeenCalledTimes(2);
   });
 
@@ -570,7 +629,44 @@ describe('runPowerAction: пробуждение', () => {
 
   test('неизвестная команда отклоняется до любых вызовов', async () => {
     const commands = fakeCommands();
-    await expect(runPowerAction([], 'reboot', { commands })).rejects.toThrow('Неизвестная команда');
+    await expect(runPowerAction([], 'detonate', { commands })).rejects.toThrow('Неизвестная команда');
+  });
+});
+
+describe('runPowerAction: перезагрузка', () => {
+  test('reboot шлёт reboot на устройство и не трогает режим питания', async () => {
+    const commands = fakeCommands();
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'tv1', ip: '192.168.1.10', port: '5555', mac: null }],
+      'reboot',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(outcome.results[0]).toEqual({ deviceId: 'tv1', ok: true });
+    expect(outcome.results[0].awake).toBeUndefined();
+    expect(commands.rebootDevice).toHaveBeenCalledWith('192.168.1.10', '5555', expect.any(Number));
+    expect(commands.wakeDevice).not.toHaveBeenCalled();
+    expect(commands.sleepDevice).not.toHaveBeenCalled();
+    // Профиль питания для перезагрузки не нужен — лишних дозвонов нет.
+    expect(commands.getDeviceMac).not.toHaveBeenCalled();
+  });
+
+  test('ADB не ответил — результат в failed с текстом ошибки', async () => {
+    const commands = fakeCommands({
+      rebootDevice: jest.fn(async () => ({ ok: false, error: 'adb shell error: timeout' }))
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'tv1', ip: '192.168.1.10', port: '5555', mac: null }],
+      'reboot',
+      { commands }
+    );
+
+    expect(outcome.failed).toBe(1);
+    expect(outcome.results[0].error).toBe('adb shell error: timeout');
+    expect(outcome.results[0].awake).toBeUndefined();
   });
 });
 
@@ -724,5 +820,101 @@ describe('Wake-on-LAN пакет', () => {
     expect(parseArpTable(table, '10.172.1.94')).toBe('00:ef:00:1b:08:5f');
     expect(parseArpTable(table, '10.172.1.95')).toBeNull();
     expect(parseArpTable(table, '10.0.0.9')).toBeNull();
+  });
+});
+
+describe('LAN-шаги панелей Lumien (порт 4664)', () => {
+  /** Хранилище с профилем под модель Lumien на LAN-командах. */
+  async function storeWithLanProfile({ sleepSteps = ['lan::01SE0000'], wakeSteps = ['lan::01SE0001'] } = {}) {
+    resetPowerProfileStore();
+    configurePowerProfileStore({
+      load: async () => [{
+        key: 'lumien-lan',
+        label: 'Lumien LAN',
+        model: 'lb3235sdg2',
+        sleepSteps,
+        wakeSteps,
+        keepAwakeSteps: [],
+        priority: 10
+      }],
+      save: async () => {},
+      remove: async () => {}
+    });
+    await loadPowerProfiles();
+  }
+
+  afterEach(() => resetPowerProfileStore());
+
+  test('пробуждение шлёт вендор-команду по LAN, а не ADB', async () => {
+    await storeWithLanProfile();
+    const commands = fakeCommands({ sendLanCommand: jest.fn(async () => ({ ok: true })) });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'lumien', ip: '192.168.1.12', port: '5555', mac: null, model: 'LB3235SDG2' }],
+      'wake',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(commands.sendLanCommand).toHaveBeenCalledWith('192.168.1.12', ':01SE0001', { port: 4664 });
+    expect(commands.wakeKey).not.toHaveBeenCalled();
+    expect(commands.wakeDevice).not.toHaveBeenCalled();
+  });
+
+  test('сон шлёт вендор-команду по LAN', async () => {
+    await storeWithLanProfile();
+    const commands = fakeCommands({ sendLanCommand: jest.fn(async () => ({ ok: true })) });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'lumien', ip: '192.168.1.12', port: '5555', mac: null, model: 'LB3235SDG2' }],
+      'sleep',
+      { commands }
+    );
+
+    expect(outcome.results[0].ok).toBe(true);
+    expect(commands.sendLanCommand).toHaveBeenCalledWith('192.168.1.12', ':01SE0000', { port: 4664 });
+  });
+
+  test('явный порт в шаге передаётся транспорту', async () => {
+    await storeWithLanProfile({ wakeSteps: ['lan:5000::01S0001'] });
+    const commands = fakeCommands({ sendLanCommand: jest.fn(async () => ({ ok: true })) });
+
+    await runPowerAction(
+      [{ deviceId: 'lumien', ip: '192.168.1.12', port: '5555', mac: null, model: 'LB3235SDG2' }],
+      'wake',
+      { commands }
+    );
+
+    expect(commands.sendLanCommand).toHaveBeenCalledWith('192.168.1.12', ':01S0001', { port: 5000 });
+  });
+
+  test('неудачная LAN-ступень не рвёт лестницу (лучшие усилия)', async () => {
+    await storeWithLanProfile({ wakeSteps: ['lan::01SE0001', 'cmd:power set-screen-state on'] });
+    const commands = fakeCommands({
+      sendLanCommand: jest.fn(async () => ({ ok: false, error: 'таймаут панели Lumien' }))
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'lumien', ip: '192.168.1.12', port: '5555', mac: null, model: 'LB3235SDG2' }],
+      'wake',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.12', '5555', 'cmd:power set-screen-state on', expect.any(Number));
+  });
+
+  test('LAN-транспорт недоступен — действие завершается без исключения', async () => {
+    await storeWithLanProfile();
+    const commands = fakeCommands({ sendLanCommand: undefined });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'lumien', ip: '192.168.1.12', port: '5555', mac: null, model: 'LB3235SDG2' }],
+      'wake',
+      { commands }
+    );
+
+    expect(outcome.failed).toBe(1);
+    expect(outcome.results[0].error).toBeTruthy();
   });
 });

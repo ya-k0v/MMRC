@@ -10,6 +10,7 @@
 import {
   sleepDevice,
   wakeDevice,
+  rebootDevice,
   wakeKey,
   getDeviceMac,
   getPowerState,
@@ -19,17 +20,18 @@ import {
   setStayAwakeWhilePluggedIn,
   getDeviceInfo,
   KEYCODE_SLEEP,
-  KEYCODE_WAKEUP,
-  KEYCODE_POWER
+  KEYCODE_WAKEUP
 } from './adb.js';
-import { sendWakeOnLanAuto, readHostArpMac, normalizeMac } from './wol.js';
+import { sendWakeOnLanAuto, readHostArpMac, normalizeMac, wolBroadcastAddresses } from './wol.js';
+import { parseLanStep, sendLumienCommand } from './lumien-lan.js';
 import { ANDROID_PACKAGE_NAME, ANDROID_MAIN_ACTIVITY } from '../config/android.js';
 import { isReservedObjectKey } from './sanitize.js';
 import { createModuleLogger } from './logger.js';
+import { resolvePowerProfile } from './power-profiles.js';
 
 const powerLog = createModuleLogger('power');
 
-export const POWER_ACTIONS = ['sleep', 'wake', 'launch'];
+export const POWER_ACTIONS = ['sleep', 'wake', 'launch', 'reboot'];
 
 export { isAndroidDevice };
 
@@ -174,8 +176,10 @@ export const DEFAULT_POWER_COMMANDS = {
   getDeviceInfo,
   sendWakeOnLan: sendWakeOnLanAuto,
   readArpMac: readHostArpMac,
+  sendLanCommand: sendLumienCommand,
   delay: (ms) => new Promise(resolve => setTimeout(resolve, ms)),
   launchApp: async (ip, port) => launchAndroidApp(ip, ANDROID_PACKAGE_NAME, ANDROID_MAIN_ACTIVITY, port),
+  rebootDevice,
   prepareForSleep
 };
 
@@ -193,80 +197,29 @@ const WOL_RETRY_DELAY_MS = 400;
 /** Перед сном включать «Wi-Fi не отключать» (`POWER_PREPARE_NETWORK=0` отключает). */
 const PREPARE_NETWORK_BEFORE_SLEEP = process.env.POWER_PREPARE_NETWORK !== '0';
 
-/** Клавиши пробуждения по порядку (`POWER_WAKE_KEYCODES="224,26,170"`). */
-const WAKE_KEYCODES = envList('POWER_WAKE_KEYCODES', ['224', '26', '170']).map(Number).filter(Number.isFinite);
-
 /** Порты WoL: шлём на все (`POWER_WOL_PORTS="9,7"`). */
 const WOL_PORTS = envList('POWER_WOL_PORTS', ['9', '7']).map(Number).filter(Number.isFinite);
 
-/**
- * Наборы команд питания под конкретные прошивки.
- *
- * Профиль выбирается по `match(model, androidVersion)`:
- *  - приоритет — версия Android: маркетинговое имя модели ненадёжно (часть
- *    32" панелей отдаёт «Smart AIO TV» вместо LB3235SDG2), версия прошивки
- *    различает панели точно;
- *  - запасной путь — подстрока в `devices.model`.
- *
- * Ступень — либо KEYCODE (число), либо системный вызов строкой
- * `svc:...`/`cmd:...`/`settings:...` (выполняется как `adb shell ...`).
- * Строковые ступени — «лучшие усилия»: если команда не поддержана прошивкой,
- * шаг пропускается, а не рвёт сон/пробуждение; решают реальные проверки экрана.
- *
- * Android 13 (Lumien Basic G2 и аналоги, включая панели «Smart AIO TV»):
- * keyevent 26 на этой прошивке не рекомендован (может дать «чёрный экран»
- * вместо глубокого сна), поэтому будим KEYCODE_WAKEUP, принудительно экран —
- * `cmd power set-screen-state on/off`, а перед сном снимаем stay-on.
- *
- * приставки iconBIT: полноценный сон их выключает (сеть падает, а Wake-on-LAN
- * поддерживается не всегда), поэтому НЕ спим вовсе — держим включёнными и гасим
- * только дисплей (короткий таймаут + принудительное гашение, где поддержано).
- *
- * Android 11 (Lumien Standard LS5550SD) и прочие — дефолт: лестница
- * 224 → 26 → 170, где 26 на этой прошивке — безопасный toggle.
- */
-const POWER_PROFILES = [
-  {
-    key: 'android-13',
-    label: 'Android 13 (Lumien Basic G2 и аналоги)',
-    match(model, android) {
-      const version = String(android || '').trim();
-      const needle = String(model || '').toLowerCase();
-      return version.startsWith('13') || needle.includes('lb3235sdg2');
-    },
-    wake: [KEYCODE_WAKEUP, 'cmd:power set-screen-state on'],
-    sleep: ['svc:power stayon false', KEYCODE_SLEEP, 'cmd:power set-screen-state off']
-  },
-  {
-    key: 'iconbit',
-    label: 'iconBIT приставки (не спим, гасим дисплей)',
-    match(model) {
-      return String(model || '').toLowerCase().includes('iconbit');
-    },
-    wake: ['cmd:power set-screen-state on', KEYCODE_WAKEUP],
-    sleep: ['svc:power stayon false', 'settings:system put screen_off_timeout 1000', 'cmd:power set-screen-state off']
-  }
-];
-
-const DEFAULT_POWER_PROFILE = {
-  key: null,
-  label: 'приставки и прочие устройства',
-  wake: WAKE_KEYCODES.length ? WAKE_KEYCODES : [KEYCODE_WAKEUP],
-  sleep: [KEYCODE_SLEEP]
-};
-
-/** Профиль питания под устройство (неизвестное — дефолт). */
-function resolvePowerProfile(target) {
-  const { model, android } = target || {};
-  const found = POWER_PROFILES.find(profile => profile.match(model, android));
-  return found || DEFAULT_POWER_PROFILE;
+/** Человекочитаемый вид ступени: KEYCODE как `keyevent N`, строковые шаги как есть. */
+function stepLabel(step) {
+  return typeof step === 'number' ? `keyevent ${Number(step)}` : String(step);
 }
 
 /**
- * Человекочитаемый вид ступени: KEYCODE как `keyevent N`, строковые шаги как есть.
+ * Выполнить одну ступень профиля: обычные шаги идут по ADB, а `lan:`-шаги —
+ * напрямую в панель Lumien по TCP (см. lumien-lan). Вендор-команда не зависит
+ * от Android и работает, пока панель в сети (в т.ч. в «Fake Standby»).
  */
-function stepLabel(step) {
-  return typeof step === 'number' ? `keyevent ${Number(step)}` : String(step);
+async function sendPowerStep(commands, ip, port, step, adbTimeoutMs) {
+  if (typeof step === 'string' && step.startsWith('lan:')) {
+    const parsed = parseLanStep(step);
+    if (!parsed) return { ok: false, error: 'Некорректный LAN-шаг панели' };
+    if (typeof commands.sendLanCommand !== 'function') {
+      return { ok: false, error: 'LAN-транспорт недоступен' };
+    }
+    return commands.sendLanCommand(ip, parsed.command, { port: parsed.port });
+  }
+  return commands.wakeKey(ip, port, step, adbTimeoutMs);
 }
 
 /**
@@ -297,16 +250,18 @@ async function ensurePowerBasis(target, commands, adbTimeoutMs) {
  * лестница: пробуем клавиши (`WAKEUP → POWER → TV_POWER`, последовательность
  * настраивается через `POWER_WAKE_KEYCODES`), каждую проверяя по `dumpsys
  * power`; если ADB в сне потерялся либо клавиши не подняли экран — шлём
- * Wake-on-LAN (на порты из `POWER_WOL_PORTS`, по умолчанию 9 и 7) и повторяем
- * клавиши. И только после успешного пробуждения (если `relaunch`) поднимаем
- * плеер, чтобы экран не остался с чужим приложением.
+ * Wake-on-LAN (порты из `POWER_WOL_PORTS`, по умолчанию 9 и 7; адрес —
+ * подсетевой broadcast и глобальный) и повторяем клавиши. И только после
+ * успешного пробуждения (если `relaunch`) поднимаем плеер, чтобы экран не
+ * остался с чужим приложением, а затем (лучшие усилия) удерживаем экран
+ * бодрствующим (`keepAwake` профиля).
  *
  * Акция `launch` — перезапуск плеера без сна/пробуждения: провайдер убивает
  * старый процесс приложения и запускает новый (см. adb.launchAndroidApp).
  * Режим питания при этом не меняется, поэтому в результате нет поля `awake`.
  *
  * @param {Array<{deviceId: string, ip: string, port?: string|null, mac?: string|null, model?: string|null}>} targets
- * @param {'sleep'|'wake'|'launch'} action
+ * @param {'sleep'|'wake'|'launch'|'reboot'} action
  * @param {{commands?: Object, relaunch?: boolean, adbTimeoutMs?: number, wolWaitMs?: number, storeMac?: (deviceId: string, mac: string) => Promise<any>}} [options]
  * @returns {Promise<{results: Array<{deviceId: string, ok: boolean, awake?: boolean, error?: string}>, succeeded: number, failed: number}>}
  */
@@ -357,7 +312,8 @@ async function runForTarget(target, action, options) {
 
     // Для сна/пробуждения важно знать профиль заранее: если модель и версия
     // Android неизвестны (свежий старт), доопределяем их одним дозвоном.
-    if (action !== 'launch') {
+    // Для перезагрузки/перезапуска плеера профиль не нужен.
+    if (action !== 'launch' && action !== 'reboot') {
       await ensurePowerBasis(target, commands, adbTimeoutMs);
     }
 
@@ -367,6 +323,16 @@ async function runForTarget(target, action, options) {
       const launch = await commands.launchApp(ip, port);
       if (!launch.ok) {
         return { deviceId, ok: false, error: launch.error || 'ADB не отвечает' };
+      }
+      return { deviceId, ok: true };
+    }
+
+    if (action === 'reboot') {
+      // Перезагрузка: устройство уйдёт в офлайн и вернётся само. Режим
+      // питания не трогаем — кэш обновится при следующем опросе состояния.
+      const reboot = await commands.rebootDevice(ip, port, adbTimeoutMs);
+      if (!reboot.ok) {
+        return { deviceId, ok: false, error: reboot.error || 'ADB не отвечает' };
       }
       return { deviceId, ok: true };
     }
@@ -400,7 +366,7 @@ async function runForTarget(target, action, options) {
         powerLog.info('Сон: отправляю шаг', { deviceId, step: stepLabel(step) });
         const result = step === KEYCODE_SLEEP
           ? await commands.sleepDevice(ip, port, adbTimeoutMs)
-          : await commands.wakeKey(ip, port, step, adbTimeoutMs);
+          : await sendPowerStep(commands, ip, port, step, adbTimeoutMs);
         if (!result.ok) {
           if (typeof step === 'number') {
             // KEYCODE упал — устройство потеряно, дальше шлём что-либо бессмысленно.
@@ -439,6 +405,11 @@ async function runForTarget(target, action, options) {
       return { deviceId, ok: false, error: wake.error || 'ADB не отвечает' };
     }
 
+    // Удержание экрана после пробуждения: скринсейвер/таймаут гасят подсветку
+    // отдельно от сна и сбрасываются перезагрузкой. Лучшие усилия — не влияет
+    // на результат пробуждения.
+    await applyKeepAwake(target, { commands, adbTimeoutMs, deviceId, port });
+
     await rememberMac(target, commands, adbTimeoutMs, storeMac);
 
     if (relaunch) {
@@ -466,7 +437,8 @@ async function runForTarget(target, action, options) {
  * (тогда нужен магический пакет), либо экран не поднимается от WAKEUP и
  * требуется KEYCODE_POWER/KEYCODE_TV_POWER. Поэтому пробуем клавиши по
  * очереди, проверяя реальный результат по `dumpsys power`, и если ADB в сне
- * потерялся — шлём WoL на все порты и повторяем клавиши.
+ * потерялся — шлём WoL на все порты и подсетевой/глобальный broadcast, затем
+ * повторяем клавиши.
  *
  * @param {{deviceId: string, ip: string, port: string|null, mac: string|null}} target
  * @param {{commands: Object, adbTimeoutMs: number, wolWaitMs: number}} options
@@ -490,7 +462,7 @@ async function wakeTarget(target, options) {
       powerLog.info('Пробуждение: отправляю шаг', { deviceId, step: stepLabel(step) });
       const send = step === KEYCODE_WAKEUP
         ? commands.wakeDevice(ip, port, adbTimeoutMs)
-        : commands.wakeKey(ip, port, step, adbTimeoutMs);
+        : sendPowerStep(commands, ip, port, step, adbTimeoutMs);
       const result = await send;
 
       if (!result.ok) {
@@ -532,8 +504,11 @@ async function wakeTarget(target, options) {
   if (!mac) return first;
 
   try {
+    const addresses = wolBroadcastAddresses(ip);
     for (const wolPort of WOL_PORTS) {
-      await commands.sendWakeOnLan(mac, { port: wolPort });
+      for (const broadcast of addresses) {
+        await commands.sendWakeOnLan(mac, { port: wolPort, broadcast });
+      }
       await commands.delay(wolWaitMs);
     }
   } catch (error) {
@@ -542,6 +517,31 @@ async function wakeTarget(target, options) {
 
   const after = await ladder();
   return after.ok ? after : { ok: false, awake: after.awake, error: after.error || first.error || 'ADB не отвечает' };
+}
+
+/**
+ * Удержать экран бодрствующим после успешного пробуждения (лучшие усилия).
+ *
+ * Скринсейвер (Daydream/Ambient Mode) и таймаут экрана — отдельные от сна
+ * подсистемы: панель может «заснуть» даже на бодрствующем устройстве. Команды
+ * удержания профиля выполняем по порядку, ошибки глотаем: они не должны ломать
+ * уже состоявшееся пробуждение.
+ */
+async function applyKeepAwake(target, { commands, adbTimeoutMs, deviceId, port }) {
+  const profile = resolvePowerProfile(target);
+  const steps = profile.keepAwake || [];
+  if (!steps.length) return;
+  powerLog.info(`Удержание экрана: профиль «${profile.label}», ступени ${steps.map(stepLabel).join(' → ')}`, { deviceId });
+  for (const step of steps) {
+    try {
+      const result = await sendPowerStep(commands, target.ip, port, step, adbTimeoutMs);
+      if (result && result.ok === false) {
+        powerLog.warn('Удержание: шаг не выполнен', { deviceId, step: stepLabel(step), error: result.error });
+      }
+    } catch (error) {
+      powerLog.warn('Удержание: ошибка шага', { deviceId, step: stepLabel(step), error: error.message });
+    }
+  }
 }
 
 /**
@@ -579,5 +579,55 @@ async function rememberMac(target, commands, adbTimeoutMs, storeMac) {
     }
   } catch (_) {
     // MAC — приятный бонус, без него обойдёмся
+  }
+}
+
+/**
+ * Проверка одного шага конструктора профилей на живом устройстве.
+ *
+ * Отправляет шаг как есть (keyevent для чисел, `adb shell …` для строк),
+ * даёт экрану отреагировать и смотрит реальный результат по `dumpsys power`.
+ * Для фазы `sleep` шаг считается удачным, если экран не горит (`awake !== true`,
+ * неизвестное состояние тоже засчитывается — как в обычном сне); для `wake`,
+ * наоборот, удачен, если экран поднялся (`awake !== false`).
+ *
+ * Против «чуда» KEYCODE_POWER на уже бодрствующем устройстве (он усыпит монитор
+ * вместо теста) предупреждает интерфейс, здесь это чистое выполнение шага.
+ *
+ * @param {Object} params
+ * @param {{deviceId: string, ip: string, port?: string|null}} params.target
+ * @param {number|string} params.step
+ * @param {'sleep'|'wake'} [params.phase]
+ * @param {Object} [params.commands]
+ * @param {number} [params.adbTimeoutMs]
+ * @param {number} [params.waitMs]
+ * @returns {Promise<{ok: boolean, awake?: boolean|null, step: string, phase: string, error?: string}>}
+ */
+export async function testPowerStep({
+  target,
+  step,
+  phase = 'wake',
+  commands = DEFAULT_POWER_COMMANDS,
+  adbTimeoutMs = ADB_TIMEOUT_MS,
+  waitMs = WOL_RETRY_DELAY_MS
+}) {
+  const { deviceId, ip } = target || {};
+  if (!ip) {
+    return { ok: false, step: stepLabel(step), phase, error: 'IP адрес устройства не задан' };
+  }
+  const port = target.port || null;
+  const phaseSlug = phase === 'sleep' ? 'sleep' : 'wake';
+
+  try {
+    const result = await sendPowerStep(commands, ip, port, step, adbTimeoutMs);
+    if (!result.ok) {
+      return { ok: false, step: stepLabel(step), phase: phaseSlug, error: result.error || 'ADB не отвечает' };
+    }
+    await commands.delay(waitMs);
+    const awake = await isReallyAwake(commands, ip, port, adbTimeoutMs);
+    const good = phaseSlug === 'sleep' ? awake !== true : awake !== false;
+    return { ok: good, awake, step: stepLabel(step), phase: phaseSlug };
+  } catch (error) {
+    return { ok: false, step: stepLabel(step), phase: phaseSlug, error: error.message };
   }
 }

@@ -69,6 +69,7 @@ describe('карточка «Управление Android устройствам
     expect(html).toContain('Запустить плеер везде');
     expect(html).toContain('Запустить плеер');
     expect(document.querySelector('[data-power-action="launch"][data-power-id="tv1"]')).not.toBeNull();
+    expect(document.querySelector('[data-power-action="reboot"][data-power-id="tv1"]')).not.toBeNull();
   });
 
   test('isPowerControllable принимает тип, платформу и нативный плеер', () => {
@@ -116,14 +117,14 @@ describe('карточка «Управление Android устройствам
     }
   });
 
-  test('без Android-устройств в списке показывается подсказка', async () => {
+  test('без Android-устройств список пуст, в статусе подсказка', async () => {
     document.body.innerHTML = renderPowerControlsHtml([
       { device_id: 'browser', deviceType: 'browser' }
     ]);
     initPowerControls({ devices: [{ device_id: 'browser', deviceType: 'browser' }], adminFetch: jsonFetch({}) });
     await flush();
 
-    expect(document.getElementById('stPowerList').textContent).toContain('Нет Android-устройств');
+    expect(document.getElementById('stPowerList').textContent).toBe('');
     expect(document.getElementById('stPowerStatus').textContent).toContain('Нет Android-устройств');
   });
 });
@@ -309,5 +310,48 @@ describe('команды питания', () => {
 
     expect(badge('tv1').textContent).toBe('спит');
     expect(badge('tv2').textContent).toBe('нет ответа');
+  });
+
+  test('«Перезагрузить все устройства» шлёт reboot без deviceIds', async () => {
+    document.body.innerHTML = renderPowerControlsHtml(DEVICES);
+    const adminFetch = jsonFetch({
+      ok: true,
+      results: [{ deviceId: 'tv1', ok: true }],
+      summary: { total: 1, succeeded: 1, failed: 0 }
+    });
+    initPowerControls({ devices: DEVICES, adminFetch });
+    await flush();
+
+    document.getElementById('stPowerRebootAll').click();
+    await flush();
+
+    const call = findCall(adminFetch, '/api/devices/power');
+    expect(call).toBeDefined();
+    expect(bodyOf(call)).toEqual({ action: 'reboot', relaunch: false });
+    expect(reportedNotification(adminFetch)).toMatchObject({
+      severity: 'info',
+      message: 'Перезагружено 1 из 1'
+    });
+  });
+
+  test('кнопка на строке перезагружает конкретное устройство', async () => {
+    document.body.innerHTML = renderPowerControlsHtml(DEVICES);
+    applyPowerState({ deviceId: 'tv1', awake: false });
+    const adminFetch = jsonFetch({
+      ok: true,
+      results: [{ deviceId: 'tv1', ok: true }],
+      summary: { total: 1, succeeded: 1, failed: 0 }
+    });
+    initPowerControls({ devices: DEVICES, adminFetch });
+    await flush();
+
+    document.querySelector('[data-power-action="reboot"][data-power-id="tv1"]').click();
+    await flush();
+
+    const call = findCall(adminFetch, '/api/devices/power');
+    expect(call).toBeDefined();
+    expect(bodyOf(call)).toEqual({ action: 'reboot', deviceIds: ['tv1'], relaunch: false });
+    // Перезагрузка режим питания не меняет — бейдж остаётся прежним.
+    expect(badge('tv1').textContent).toBe('спит');
   });
 });

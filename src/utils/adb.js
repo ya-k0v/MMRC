@@ -18,8 +18,12 @@ const DEFAULT_TIMEOUT_MS = 15000;
 
 export const KEYCODE_SLEEP = 223;
 export const KEYCODE_WAKEUP = 224;
+export const KEYCODE_SOFT_SLEEP = 276;
 export const KEYCODE_POWER = 26;
-export const KEYCODE_TV_POWER = 170;
+export const KEYCODE_TV = 170;
+export const KEYCODE_TV_POWER = 177;
+export const KEYCODE_STB_POWER = 179;
+export const KEYCODE_AVR_POWER = 181;
 
 /**
  * Устройство, которым можно управлять по ADB.
@@ -312,6 +316,17 @@ export async function wakeDevice(ip, port = DEFAULT_ADB_PORT, timeoutMs = DEFAUL
 }
 
 /**
+ * Перезагрузить устройство (`reboot`).
+ *
+ * Сеть во время перезагрузки пропадает, а через минуту-две устройство
+ * возвращается уже включённым. Режим «спит/активен» здесь не меняем: кэш
+ * обновится штатным опросом состояния, когда adbd поднимется снова.
+ */
+export async function rebootDevice(ip, port = DEFAULT_ADB_PORT, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  return adbShell(ip, port, ['reboot'], timeoutMs);
+}
+
+/**
  * Клавиша пробуждения вручную (любой KEYCODE или системный вызов).
  *
  * Нужна для универсальной лестницы пробуждения: часть ТВ (включая LUMEN)
@@ -321,7 +336,7 @@ export async function wakeDevice(ip, port = DEFAULT_ADB_PORT, timeoutMs = DEFAUL
  * `cmd power ...` без keyevent. Примеры: `cmd:power set-screen-state on`.
  */
 export async function wakeKey(ip, port = DEFAULT_ADB_PORT, step, timeoutMs = DEFAULT_TIMEOUT_MS) {
-  if (typeof step === 'string' && /^(svc|cmd|settings|am|input):/.test(step)) {
+  if (typeof step === 'string' && /^(svc|cmd|settings|am|input|dumpsys|wm):/.test(step)) {
     const idx = step.indexOf(':');
     const bin = step.slice(0, idx);
     const args = step.slice(idx + 1).trim().split(/\s+/).filter(Boolean);
@@ -396,7 +411,7 @@ export async function getDeviceModel(ip, port = DEFAULT_ADB_PORT, timeoutMs = DE
  * Маркетинговое имя модели ненадёжно («Smart AIO TV» у части 32" панелей вместо
  * LB3235SDG2), поэтому набор команд питания выбирается по версии Android:
  * панели на Android 13 будим без KEYCODE_POWER(26), а дефолтная лестница
- * с 26/170 — только для Android 11 и приставок.
+ * с 26/170 (KEYCODE_TV) — только для Android 11 и приставок.
  *
  * @returns {Promise<{ok: boolean, model?: string|null, android?: string|null, error?: string}>}
  */

@@ -218,6 +218,191 @@ export const MIGRATIONS = [
         await driver.exec('ALTER TABLE devices ADD COLUMN model TEXT');
       }
     }
+  },
+  {
+    id: '2026-10-12-power-profiles',
+    description: 'Create power_profiles table for admin-configured sleep/wake command sets',
+    async up(driver) {
+      if (await driver.tableExists('power_profiles')) return;
+      const isPg = driver.dialect === 'postgres';
+      await driver.exec(`
+        CREATE TABLE power_profiles (
+          id ${isPg ? 'SERIAL' : 'INTEGER'} PRIMARY KEY${isPg ? '' : ' AUTOINCREMENT'},
+          profile_key TEXT NOT NULL UNIQUE,
+          label TEXT NOT NULL,
+          device_id TEXT,
+          model TEXT,
+          android_from TEXT,
+          android_to TEXT,
+          sleep_steps TEXT NOT NULL DEFAULT '[]',
+          wake_steps TEXT NOT NULL DEFAULT '[]',
+          priority INTEGER NOT NULL DEFAULT 0,
+          source TEXT,
+          notes TEXT,
+          created_at ${isPg ? 'TIMESTAMP' : 'DATETIME'} DEFAULT CURRENT_TIMESTAMP,
+          updated_at ${isPg ? 'TIMESTAMP' : 'DATETIME'} DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await driver.exec('CREATE INDEX IF NOT EXISTS idx_power_profiles_device ON power_profiles(device_id)');
+      await driver.exec('CREATE INDEX IF NOT EXISTS idx_power_profiles_model ON power_profiles(model)');
+      await driver.exec('CREATE INDEX IF NOT EXISTS idx_power_profiles_android_from ON power_profiles(android_from)');
+    }
+  },
+  {
+    id: '2026-10-13-power-profiles-seed',
+    description: 'Seed starter power profiles as ordinary editable rows (once)',
+    async up(driver) {
+      if (!(await driver.tableExists('power_profiles'))) return;
+      const seeds = [
+        {
+          key: 'default',
+          label: 'приставки и прочие устройства',
+          model: null,
+          androidFrom: null,
+          androidTo: null,
+          wake: [224, 26, 170],
+          sleep: [223],
+          priority: 0
+        },
+        {
+          key: 'iconbit',
+          label: 'iconBIT приставки (не спим, гасим дисплей)',
+          model: 'iconbit',
+          androidFrom: null,
+          androidTo: null,
+          wake: ['cmd:power set-screen-state on', 224],
+          sleep: ['svc:power stayon false', 'settings:system put screen_off_timeout 1000', 'cmd:power set-screen-state off'],
+          priority: 0
+        },
+        {
+          key: 'android-13',
+          label: 'Android 13 (Lumien Basic G2 и аналоги)',
+          model: null,
+          androidFrom: '13',
+          androidTo: '13',
+          wake: [224, 'cmd:power set-screen-state on'],
+          sleep: ['svc:power stayon false', 223, 'cmd:power set-screen-state off'],
+          priority: 0
+        },
+        {
+          key: 'lumien-lb3235sdg2',
+          label: 'Lumien LB3235SDG2',
+          model: 'lb3235sdg2',
+          androidFrom: null,
+          androidTo: null,
+          wake: [224, 'cmd:power set-screen-state on'],
+          sleep: ['svc:power stayon false', 223, 'cmd:power set-screen-state off'],
+          priority: 0
+        }
+      ];
+      const existingRows = await driver.query('SELECT profile_key FROM power_profiles');
+      const existing = new Set(existingRows.map((row) => row.profile_key));
+      for (const seed of seeds) {
+        if (existing.has(seed.key)) continue;
+        await driver.run(
+          `INSERT INTO power_profiles (profile_key, label, device_id, model, android_from, android_to, sleep_steps, wake_steps, priority, source, notes)
+           VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'seed', NULL)`,
+          [seed.key, seed.label, seed.model, seed.androidFrom, seed.androidTo, JSON.stringify(seed.sleep), JSON.stringify(seed.wake), seed.priority]
+        );
+      }
+    }
+  },
+
+  {
+    id: '2026-10-14-power-profiles-device-models',
+    description: 'Seed explicit power profiles for production device models (Lumien LS5550SD, Smart AIO TV, iconBIT TRS2045)',
+    async up(driver) {
+      if (!(await driver.tableExists('power_profiles'))) return;
+      // Ступени взяты из набора семейства (см. ADB-POWER.md и power-control):
+      //   • Lumien (Android 11/13): не спится KEYCODE_POWER — сон «не держать экран» + SLEEP,
+      //     потом принудительный set-screen-state off; пробуждение WAKEUP + set-screen-state on.
+      //   • iconBIT TRS2045 (Android 10): во сне умирает сеть — не усыпляем, а гасим дисплей
+      //     по таймауту; пробуждение подъёмом дисплея.
+      // Привязка только по модели (android_from/to = NULL): уникальной строки модели достаточно,
+      // а версия Android не персистится и на «холодном» старте может отсутствовать.
+      const seeds = [
+        {
+          key: 'model-ls5550sduhd-cs1382d-g',
+          label: 'LS5550SDUHD-CS1382D-G (Lumien, Android 11)',
+          model: 'ls5550sduhd-cs1382d-g',
+          sleep: ['svc:power stayon false', 223, 'cmd:power set-screen-state off'],
+          wake: [224, 'cmd:power set-screen-state on'],
+          priority: 1
+        },
+        {
+          key: 'model-ls5550sd-bo1082d-g',
+          label: 'LS5550SD-BO1082D-G (Lumien, Android 11)',
+          model: 'ls5550sd-bo1082d-g',
+          sleep: ['svc:power stayon false', 223, 'cmd:power set-screen-state off'],
+          wake: [224, 'cmd:power set-screen-state on'],
+          priority: 1
+        },
+        {
+          key: 'model-smart-aio-tv',
+          label: 'Smart AIO TV (Lumien, Android 13)',
+          model: 'smart aio tv',
+          sleep: ['svc:power stayon false', 223, 'cmd:power set-screen-state off'],
+          wake: [224, 'cmd:power set-screen-state on'],
+          priority: 1
+        },
+        {
+          key: 'model-iconbit-trs2045',
+          label: 'iconBIT TRS2045 (Android 10)',
+          model: 'iconbit trs2045',
+          sleep: ['svc:power stayon false', 'settings:system put screen_off_timeout 1000', 'cmd:power set-screen-state off'],
+          wake: ['cmd:power set-screen-state on', 224],
+          priority: 1
+        }
+      ];
+      const existingRows = await driver.query('SELECT profile_key FROM power_profiles');
+      const existing = new Set(existingRows.map((row) => row.profile_key));
+      for (const seed of seeds) {
+        if (existing.has(seed.key)) continue;
+        await driver.run(
+          `INSERT INTO power_profiles (profile_key, label, device_id, model, android_from, android_to, sleep_steps, wake_steps, priority, source, notes)
+           VALUES (?, ?, NULL, ?, NULL, NULL, ?, ?, ?, 'seed', NULL)`,
+          [seed.key, seed.label, seed.model, JSON.stringify(seed.sleep), JSON.stringify(seed.wake), seed.priority]
+        );
+      }
+    }
+  },
+
+  {
+    id: '2026-10-15-power-profiles-keep-awake',
+    description: 'Add keep_awake_steps to power_profiles and seed screen-keepalive for panel profiles',
+    async up(driver) {
+      if (!(await driver.tableExists('power_profiles'))) return;
+      const cols = await driver.columns('power_profiles');
+      if (!cols.some(c => c.name === 'keep_awake_steps')) {
+        await driver.exec("ALTER TABLE power_profiles ADD COLUMN keep_awake_steps TEXT NOT NULL DEFAULT '[]'");
+      }
+
+      // Скринсейвер (Ambient Mode) и таймаут экрана гасят подсветку отдельно от
+      // сна и не переживают перезагрузку — поэтому удерживаем экран после
+      // каждого пробуждения. Панели и приставки-«панели» (iconBIT) обновляем,
+      // дефолтную лестницу приставок не трогаем.
+      const keepAwake = JSON.stringify([
+        'svc:power stayon true',
+        'settings:secure put screensaver_enabled 0',
+        'settings:secure put screensaver_activate_on_sleep 0',
+        'settings:secure put screensaver_activate_on_dock 0'
+      ]);
+      const keys = [
+        'iconbit',
+        'android-13',
+        'lumien-lb3235sdg2',
+        'model-ls5550sduhd-cs1382d-g',
+        'model-ls5550sd-bo1082d-g',
+        'model-smart-aio-tv',
+        'model-iconbit-trs2045'
+      ];
+      for (const key of keys) {
+        await driver.run(
+          "UPDATE power_profiles SET keep_awake_steps = ?, updated_at = CURRENT_TIMESTAMP WHERE profile_key = ? AND (keep_awake_steps IS NULL OR keep_awake_steps = '[]')",
+          [keepAwake, key]
+        );
+      }
+    }
   }
 ];
 

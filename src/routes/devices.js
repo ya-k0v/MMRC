@@ -579,18 +579,19 @@ export function createDevicesRouter(deps) {
     return { ok: true, ids: rawIds.length > 0 ? rawIds : null };
   }
 
-  // POST /api/devices/power — усыпить, разбудить или перезапустить плеер.
+  // POST /api/devices/power — усыпить, разбудить, перезапустить плеер или перезагрузить.
   //
-  // Устройства стоят в стене, их нельзя обесточить, поэтому здесь только сон,
-  // пробуждение и перезапуск плеера (см. utils/adb и utils/power-control).
-  // «Запустить плеер» на живом плеере дублировал окно, поэтому сначала старый
-  // процесс убивается (am force-stop) и только потом поднимается новый.
-  // Одна кнопка на весь зал: если часть приставок не отвечает по ADB,
-  // остальные всё равно выполняют команду, а тост покажет, кто не сработал.
+  // Устройства стоят в стене, их нельзя обесточить, поэтому здесь сон,
+  // пробуждение, перезапуск плеера и перезагрузка (см. utils/adb и
+  // utils/power-control). «Запустить плеер» на живом плеере дублировал окно,
+  // поэтому сначала старый процесс убивается (am force-stop) и только потом
+  // поднимается новый. Одна кнопка на весь зал: если часть приставок не
+  // отвечает по ADB, остальные всё равно выполняют команду, а тост покажет,
+  // кто не сработал.
   router.post('/power', requireAdmin, async (req, res) => {
     const action = String(req.body?.action || '').trim();
     if (!POWER_ACTIONS.includes(action)) {
-      return res.status(400).json({ ok: false, error: 'Укажите action: sleep или wake' });
+      return res.status(400).json({ ok: false, error: 'Укажите action: sleep, wake, launch или reboot' });
     }
 
     const requested = readRequestedDeviceIds(req.body?.deviceIds);

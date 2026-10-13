@@ -82,6 +82,9 @@ import { createModulesRouter } from './src/routes/modules.js';
 import { initEnabledModules, getEnabledModules } from './src/modules/index.js';
 import { createStorage } from './src/storage/factory.js';
 import { createVolumeService } from './src/services/volume.js';
+import { createPowerProfilesRouter } from './src/routes/power-profiles.js';
+import { configurePowerProfileStore, loadPowerProfiles } from './src/utils/power-profiles.js';
+import { loadPowerProfilesFromDb, savePowerProfileToDb, deletePowerProfileFromDb } from './src/database/power-profiles-db.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -157,6 +160,20 @@ try {
 }
 
 const WAL_CHECKPOINT_INTERVAL_MS = parseInt(process.env.WAL_CHECKPOINT_INTERVAL_MS || '60000', 10);
+
+// Профили питания (конструктор в админке): подключаем хранилище к БД и
+// загружаем в кэш, чтобы сон/пробуждение выбирали команды из конструктора.
+try {
+  configurePowerProfileStore({
+    load: loadPowerProfilesFromDb,
+    save: savePowerProfileToDb,
+    remove: deletePowerProfileFromDb
+  });
+  await loadPowerProfiles();
+} catch (err) {
+  logger.error('[Server] Не удалось загрузить профили питания', { error: err?.message || String(err) });
+}
+
 if (!isPostgres) {
   startWalCheckpointInterval(WAL_CHECKPOINT_INTERVAL_MS);
   logger.info('[Server] WAL checkpoint interval started', {
@@ -337,6 +354,8 @@ const volumeRouter = createVolumeRouter({
 
 const notificationsRouter = createNotificationsRouter();
 
+const powerProfilesRouter = createPowerProfilesRouter({ devices, requireAdmin });
+
 // Роутеры с избирательной защитой (применяют requireAuth внутри себя)
 app.use('/api/devices', conversionRouter);  
 app.use('/api/devices', foldersRouter);
@@ -346,6 +365,7 @@ if (heroRouter) {
   app.use('/api/hero', heroRouter);
 }
 app.use('/api/notifications', notificationsRouter);  // Роутер уведомлений
+app.use('/api/power-profiles', powerProfilesRouter);  // Профили питания (конструктор админки)
 
 // ВАЖНО: devicesRouter, placeholderRouter, filesRouter, videoInfoRouter
 // используются устройствами (плеерами) БЕЗ JWT токенов!

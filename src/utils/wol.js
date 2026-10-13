@@ -14,6 +14,38 @@ import { execFile } from 'node:child_process';
 export const WOL_BROADCAST = '255.255.255.255';
 export const WOL_PORT = 9;
 
+/**
+ * Подсетевой broadcast для IPv4: `192.168.1.50` → `192.168.1.255`.
+ *
+ * Роутеры часто не пропускают глобальный `255.255.255.255`, поэтому пакет
+ * надёжнее слать на широковещательный адрес конкретной подсети устройства.
+ *
+ * @param {string} ip
+ * @returns {string|null}
+ */
+export function subnetBroadcast(ip) {
+  const match = String(ip || '').trim().match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.\d{1,3}$/);
+  if (!match) return null;
+  const octets = [match[1], match[2], match[3]].map(Number);
+  if (octets.some((value) => value < 0 || value > 255)) return null;
+  return `${octets[0]}.${octets[1]}.${octets[2]}.255`;
+}
+
+/**
+ * Адреса для широковещательной отправки: подсетевой (если вычисляется) и
+ * глобальный, без дублей.
+ *
+ * @param {string} ip
+ * @returns {string[]}
+ */
+export function wolBroadcastAddresses(ip) {
+  const addresses = [];
+  const subnet = subnetBroadcast(ip);
+  if (subnet) addresses.push(subnet);
+  if (!addresses.includes(WOL_BROADCAST)) addresses.push(WOL_BROADCAST);
+  return addresses;
+}
+
 /** `AA-BB-CC`, `AA.BB.CC`, `aabbcc` → `aabbcc`, либо null. */
 export function normalizeMac(mac) {
   const hex = String(mac || '').replace(/[^0-9a-fA-F]/g, '');

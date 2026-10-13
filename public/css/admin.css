@@ -975,11 +975,6 @@ body.admin-page #grid button.st-power-btn {
   display: block;
 }
 
-.st-power-empty {
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-
 /* Кнопки пагинации питания */
 body.admin-page #grid button.st-pager-btn {
   min-width: 28px;
@@ -999,6 +994,290 @@ body.admin-page #grid button.st-pager-btn {
 
 .st-power-pager[hidden] {
   display: none;
+}
+
+/* Конструктор профилей питания.
+   Модалка профилей — фиксированная flex-колонка: шапка окна остаётся на
+   месте, каждая панель скроллится сама. Поэтому внешнему #modalContent
+   запрещаем собственный скролл — иначе появляется вторая полоса прокрутки. */
+.pc-modal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  height: min(78vh, 900px);
+  min-height: 0;
+}
+
+#modalContent:has(.pc-modal) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#modalContent:has(.pc-modal) > div:last-child {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: 0;
+  display: flex;
+}
+
+#modalContent:has(.pc-modal) .pc-modal {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+
+.pc-status {
+  flex: 0 0 auto;
+  min-height: 18px;
+  font-size: 0.85rem;
+}
+
+.pc-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: var(--space-md);
+  align-items: stretch;
+}
+
+@media (max-width: 900px) {
+  .pc-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 38%) minmax(0, 62%);
+  }
+}
+
+.pc-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+
+.pc-panel--nav {
+  overflow-y: auto;
+}
+
+.pc-panel--editor {
+  overflow: hidden;
+}
+
+.pc-panel-h {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: var(--space-sm);
+}
+
+.pc-panel--editor .pc-panel-h {
+  margin-bottom: 0;
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--border);
+}
+
+.pc-panel--editor .pc-panel-h strong {
+  min-width: 0;
+  color: var(--brand);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pc-panel-h--sub {
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.pc-profiles-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.pc-profile-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  background: var(--panel-hover);
+}
+
+.pc-profile-row.selected {
+  border-color: var(--brand);
+  background: var(--brand-light);
+}
+
+.pc-profile-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pc-profile-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pc-profile-binding {
+  font-size: 0.75rem;
+}
+
+.pc-badge {
+  align-self: flex-start;
+  font-size: 0.68rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.pc-badge.is-custom {
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
+}
+
+.pc-badge.is-default {
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+  color: var(--muted);
+}
+
+.pc-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding-top: var(--space-md);
+  padding-right: var(--space-2xs);
+}
+
+.pc-fields {
+  display: flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.pc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  flex: 0 0 auto;
+}
+
+.pc-field--wide {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.pc-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+
+.pc-toolbar-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pc-device-select {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.pc-warn {
+  flex: 1 1 100%;
+}
+
+.pc-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.pc-steps .pc-panel-h {
+  justify-content: flex-start;
+  margin-bottom: 0;
+}
+
+.pc-slots {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.pc-slot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.pc-slot-num {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--panel-hover);
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.pc-slot-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pc-slot-test {
+  flex: 0 0 auto;
+}
+
+.pc-hint {
+  line-height: 1.4;
+}
+
+.pc-empty-steps {
+  font-size: 0.8rem;
+  font-style: italic;
+}
+
+.pc-actions {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 @media (min-width: 1024px) {
@@ -1269,6 +1548,14 @@ body.admin-page #modalOverlay .input:not(.lg-field) {
   height: 36px;
 }
 
+/* В #grid/#modalOverlay общие блоки задают кнопкам padding 6px 12px —
+   иконочные кнопки оставляем квадратом без отступов (идёт после обоих). */
+body.admin-page #grid button.lg-btn-icon,
+body.admin-page #modalOverlay button.lg-btn-icon {
+  width: 32px;
+  padding: 0;
+}
+
 /* Кнопка закрытия тоста — плотный иконочный уровень. */
 body.admin-page .notification-toast__close {
   min-width: 28px;
@@ -1325,6 +1612,12 @@ body.admin-page .notification-toast__close {
     padding-top: 0;
     padding-bottom: 0;
     font-size: 0.8rem;
+  }
+
+  body.admin-page #grid button.lg-btn-icon,
+  body.admin-page #modalOverlay button.lg-btn-icon {
+    width: 40px;
+    padding: 0;
   }
 
   body.admin-page #grid button.meta.st-apk-chip { padding-left: 12px; padding-right: 12px; }
