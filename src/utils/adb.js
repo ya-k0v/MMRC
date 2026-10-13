@@ -11,6 +11,7 @@
 import { execFile } from 'node:child_process';
 import { ANDROID_PACKAGE_NAME, ANDROID_MAIN_ACTIVITY, DEFAULT_ADB_PORT } from '../config/android.js';
 import { createModuleLogger } from './logger.js';
+import { matchesSleepOutput } from './power-state.js';
 
 const adbLog = createModuleLogger('adb');
 
@@ -301,6 +302,36 @@ function powerMarkers(text) {
 }
 
 /**
+ * Состояние питания по пользовательской команде профиля.
+ *
+ * Нужно для устройств, где `dumpsys power` не отражает их «сон»: например,
+ * панель гасит экран своим OffScreenActivity, а фактическое состояние лежит в
+ * системном свойстве `sys.power.screen_off`. Команда профиля выполняется как
+ * обычный ADB-shell (без `sh -c`/пайпов), вывод сравнивается с подстрокой:
+ * есть совпадение — «спит».
+ *
+ * @param {string} ip
+ * @param {string|number} port
+ * @param {string} command ADB-shell команда, напр. `getprop sys.power.screen_off`
+ * @param {string} match Подстрока вывода, означающая «спит», напр. `true`
+ * @param {number} [timeoutMs]
+ * @returns {Promise<{ok: boolean, awake?: boolean|null, output?: string, error?: string}>}
+ */
+export async function getCustomPowerState(ip, port = DEFAULT_ADB_PORT, command, match, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  const args = String(command || '').trim().split(/\s+/).filter(Boolean);
+  if (!args.length) {
+    return { ok: false, error: 'Команда определения состояния не задана' };
+  }
+  const result = await adbShell(ip, port, args, timeoutMs);
+  if (!result.ok) {
+    return { ok: false, error: result.error };
+  }
+  const output = String(result.output || '');
+  const asleep = matchesSleepOutput(output, match);
+  return { ok: true, output: output.trim(), awake: !asleep };
+}
+
+/**
  * Усыпить: гасит экран, приложение уходит на паузу, сеть остаётся.
  *
  * Именно KEYCODE_SLEEP, а не POWER: 26 на части ТВ — полноценное выключение,
@@ -332,11 +363,20 @@ export async function rebootDevice(ip, port = DEFAULT_ADB_PORT, timeoutMs = DEFA
  * Нужна для универсальной лестницы пробуждения: часть ТВ (включая LUMEN)
  * игнорирует KEYCODE_WAKEUP, но просыпается от KEYCODE_POWER/KEYCODE_TV_POWER.
  * Для моделей, где эмуляция нажатий опасна либо нужен принудительный режим,
- * шаг задаётся строкой `svc:...`/`cmd:...` — выполнится `svc power ...` или
- * `cmd power ...` без keyevent. Примеры: `cmd:power set-screen-state on`.
+ * шаг задаётся строкой `svc:...`/`cmd:...`/`setprop:...` — выполнится `svc power ...`,
+ * `cmd power ...` или `setprop ...` без keyevent. Примеры: `cmd:power
+ * set-screen-state on`, `setprop:persist.sys.standbymode.enable 1`.
+ *
+ * Шаг `shell:...` — произвольная shell-команда устройства целиком (одним
+ * аргументом). Нужна для редиректов и кавычек, которые обычное разбиение по
+ * пробелам ломает: `shell:su 0 sh -c 'echo mmrc_keepalive > /sys/power/wake_lock'`.
  */
 export async function wakeKey(ip, port = DEFAULT_ADB_PORT, step, timeoutMs = DEFAULT_TIMEOUT_MS) {
-  if (typeof step === 'string' && /^(svc|cmd|settings|am|input|dumpsys|wm):/.test(step)) {
+  if (typeof step === 'string' && step.startsWith('shell:')) {
+    const raw = step.slice('shell:'.length).trim();
+    if (raw) return adbShell(ip, port, [raw], timeoutMs);
+  }
+  if (typeof step === 'string' && /^(svc|cmd|settings|am|input|dumpsys|wm|setprop|getprop):/.test(step)) {
     const idx = step.indexOf(':');
     const bin = step.slice(0, idx);
     const args = step.slice(idx + 1).trim().split(/\s+/).filter(Boolean);

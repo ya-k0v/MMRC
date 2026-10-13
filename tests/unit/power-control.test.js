@@ -918,3 +918,65 @@ describe('LAN-шаги панелей Lumien (порт 4664)', () => {
     expect(outcome.results[0].error).toBeTruthy();
   });
 });
+
+describe('своя команда проверки состояния (sleepDetect custom)', () => {
+  const CUSTOM = {
+    key: 'model-smart-aio-tv',
+    label: 'Smart AIO TV',
+    model: 'smart aio tv',
+    sleepSteps: ['am:start -n com.cultraview.litemeet.launcher/com.cultraview.litemeet.launcher.main.OffScreenActivity'],
+    wakeSteps: ['setprop:persist.sys.standbymode.enable 1', 26],
+    sleepDetect: 'custom',
+    detectCommand: 'getprop sys.power.screen_off',
+    detectSleepMatch: 'true',
+    priority: 1,
+    source: 'admin-ui'
+  };
+
+  async function useCustom(overrides = {}) {
+    resetPowerProfileStore();
+    configurePowerProfileStore({
+      load: async () => [{ ...CUSTOM, ...overrides }],
+      save: async () => {},
+      remove: async () => {}
+    });
+    await loadPowerProfiles();
+  }
+
+  afterEach(() => resetPowerProfileStore());
+
+  test('сон: экран считается погасшим по своей команде, dumpsys не читается', async () => {
+    await useCustom({ sleepSteps: ['svc:power stayon false', 'am:start -n launcher/.OffScreenActivity'] });
+    const commands = fakeCommands({
+      getCustomState: jest.fn(async () => ({ ok: true, awake: false, output: 'true' }))
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'panel', ip: '192.168.1.10', port: '5555', mac: null, model: 'Smart AIO TV' }],
+      'sleep',
+      { commands }
+    );
+
+    expect(outcome.results[0].ok).toBe(true);
+    expect(commands.getCustomState).toHaveBeenCalledWith('192.168.1.10', '5555', 'getprop sys.power.screen_off', 'true', expect.any(Number));
+    expect(commands.getPowerState).not.toHaveBeenCalled();
+  });
+
+  test('пробуждение: ступень standbymode, затем keyevent 26; проверка по своей команде', async () => {
+    await useCustom();
+    const commands = fakeCommands({
+      getCustomState: jest.fn(async () => ({ ok: true, awake: true, output: 'false' }))
+    });
+
+    const outcome = await runPowerAction(
+      [{ deviceId: 'panel', ip: '192.168.1.10', port: '5555', mac: null, model: 'Smart AIO TV' }],
+      'wake',
+      { commands }
+    );
+
+    expect(outcome.succeeded).toBe(1);
+    expect(commands.wakeKey).toHaveBeenCalledWith('192.168.1.10', '5555', 'setprop:persist.sys.standbymode.enable 1', expect.any(Number));
+    expect(commands.getCustomState).toHaveBeenCalled();
+    expect(commands.getPowerState).not.toHaveBeenCalled();
+  });
+});

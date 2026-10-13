@@ -17,6 +17,7 @@
 
 import { createModuleLogger } from './logger.js';
 import { KEYCODE_SLEEP, KEYCODE_WAKEUP } from './adb.js';
+import { normalizeSleepDetect, DEFAULT_SLEEP_DETECT } from './power-state.js';
 import { parseLanStep } from './lumien-lan.js';
 import { ANDROID_PACKAGE_NAME } from '../config/android.js';
 
@@ -32,26 +33,46 @@ function envList(name, fallback) {
 /** Лестница клавиш пробуждения по умолчанию (`POWER_WAKE_KEYCODES="224,26,170"`; 170 = KEYCODE_TV). */
 const WAKE_KEYCODES = envList('POWER_WAKE_KEYCODES', ['224', '26', '170']).map(Number).filter(Number.isFinite);
 
+/** Ключ профиля по умолчанию: его создаёт миграция, применяется как catch-all и не удаляется. */
+export const DEFAULT_POWER_PROFILE_KEY = 'default';
+
 /**
  * Резервный набор на случай, когда в БД нет ни одного подходящего профиля.
  * В админке не отображается и не хранится — это последний рубеж, чтобы
  * сон/пробуждение работали на чистой базе.
  */
 const FALLBACK_POWER_PROFILE = {
-  key: 'default',
+  key: DEFAULT_POWER_PROFILE_KEY,
   label: 'приставки и прочие устройства',
   wake: WAKE_KEYCODES.length ? WAKE_KEYCODES : [KEYCODE_WAKEUP],
   sleep: [KEYCODE_SLEEP],
-  keepAwake: []
+  keepAwake: [],
+  sleepDetect: DEFAULT_SLEEP_DETECT,
+  detectCommand: null,
+  detectSleepMatch: null
 };
 
 // ========================================
 // Валидация шагов и профилей
 // ========================================
 
-const STEP_BINARY_PREFIX = /^(svc|cmd|settings|am|input|dumpsys|wm|lan):/;
+const STEP_BINARY_PREFIX = /^(svc|cmd|settings|am|input|dumpsys|wm|setprop|getprop|shell|lan):/;
 
-/** Шаг как число (KEYCODE) либо строка `svc:/cmd:/settings:/am:/input:/dumpsys:/wm:/lan:`. */
+/** Команда определения состояния (стратегия custom): ADB-shell без пайпов. */
+function normalizeDetectCommand(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const text = String(value).trim();
+  return text ? text.slice(0, 300) : null;
+}
+
+/** Подстрока вывода команды, означающая «спит» (стратегия custom). */
+function normalizeDetectMatch(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const text = String(value).trim();
+  return text ? text.slice(0, 120) : null;
+}
+
+/** Шаг как число (KEYCODE) либо строка `svc:/cmd:/settings:/am:/input:/dumpsys:/wm:/setprop:/getprop:/shell:/lan:`. */
 export function normalizePowerStep(value) {
   if (typeof value === 'number') {
     return Number.isInteger(value) && value >= 0 && value <= 65535 ? value : null;
@@ -59,6 +80,8 @@ export function normalizePowerStep(value) {
   if (typeof value === 'string') {
     const trimmed = value.trim();
     if (trimmed.length >= 2 && trimmed.length <= 255 && STEP_BINARY_PREFIX.test(trimmed)) {
+      const rest = trimmed.slice(trimmed.indexOf(':') + 1).trim();
+      if (!rest) return null;
       if (trimmed.startsWith('lan:') && !parseLanStep(trimmed)) return null;
       return trimmed;
     }
@@ -129,10 +152,13 @@ export function validatePowerProfile(input = {}) {
 
   const notes = input.notes ? String(input.notes).slice(0, 500) : null;
   const source = input.source ? String(input.source).slice(0, 32) : 'admin-ui';
+  const sleepDetect = normalizeSleepDetect(input.sleepDetect);
+  const detectCommand = normalizeDetectCommand(input.detectCommand);
+  const detectSleepMatch = normalizeDetectMatch(input.detectSleepMatch);
 
   return {
     ok: true,
-    profile: { key, label, deviceId, model, androidFrom, androidTo, sleepSteps: sleep.steps, wakeSteps: wake.steps, keepAwakeSteps: keepAwake.steps, priority, notes, source }
+    profile: { key, label, deviceId, model, androidFrom, androidTo, sleepSteps: sleep.steps, wakeSteps: wake.steps, keepAwakeSteps: keepAwake.steps, sleepDetect, detectCommand, detectSleepMatch, priority, notes, source }
   };
 }
 
@@ -156,6 +182,9 @@ function sanitizeProfileRow(profile) {
     sleepSteps: sleep.steps,
     wakeSteps: wake.steps,
     keepAwakeSteps: keepAwake.steps,
+    sleepDetect: normalizeSleepDetect(profile.sleepDetect),
+    detectCommand: normalizeDetectCommand(profile.detectCommand),
+    detectSleepMatch: normalizeDetectMatch(profile.detectSleepMatch),
     priority: Number(profile.priority) || 0,
     source: profile.source || 'db',
     notes: profile.notes || null
@@ -231,10 +260,13 @@ export async function savePowerProfile(input) {
   return { ok: true, profile: validated.profile };
 }
 
-/** Удалить профиль по ключу. */
+/** Удалить профиль по ключу. Профиль по умолчанию удалить нельзя — он нужен всегда. */
 export async function deletePowerProfile(key) {
   const normalized = String(key || '').trim();
   if (!normalized) return { ok: false, error: 'Не указан ключ профиля' };
+  if (normalized === DEFAULT_POWER_PROFILE_KEY) {
+    return { ok: false, error: 'Профиль по умолчанию удалить нельзя — его можно только изменить' };
+  }
   if (typeof dbStore.remove !== 'function') {
     return { ok: false, error: 'Хранилище профилей не настроено' };
   }
@@ -292,7 +324,7 @@ export function resolveStoredPowerProfile(target) {
 export function resolvePowerProfile(target) {
   const stored = resolveStoredPowerProfile(target);
   if (stored) {
-    return { key: stored.key, label: stored.label, wake: stored.wakeSteps, sleep: stored.sleepSteps, keepAwake: stored.keepAwakeSteps || [] };
+    return { key: stored.key, label: stored.label, wake: stored.wakeSteps, sleep: stored.sleepSteps, keepAwake: stored.keepAwakeSteps || [], sleepDetect: normalizeSleepDetect(stored.sleepDetect), detectCommand: stored.detectCommand || null, detectSleepMatch: stored.detectSleepMatch || null };
   }
   return FALLBACK_POWER_PROFILE;
 }

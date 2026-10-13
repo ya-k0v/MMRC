@@ -13,12 +13,15 @@
  */
 
 import { getPowerState } from './adb.js';
+import { queryCustomPowerState } from './power-control.js';
 import {
   planPowerTargets,
   getStoredPowerAwake,
   setStoredPowerState,
   isPowerCommandRecent
 } from './power-control.js';
+import { resolvePowerProfile } from './power-profiles.js';
+import { resolveAwakeState } from './power-state.js';
 import {
   shouldProbe,
   markOnline,
@@ -89,6 +92,7 @@ export async function pollPowerStates(targets, options = {}) {
   } = options;
 
   const getPowerStateFn = commands.getPowerState || getPowerState;
+  const getCustomStateFn = commands.getCustomState || queryCustomPowerState;
 
   const withPorts = await Promise.all(list.map(async (target) => {
     let port = target.port;
@@ -144,6 +148,25 @@ export async function pollPowerStates(targets, options = {}) {
     }
 
     markOnline(deviceId);
+
+    // «Спит» определяем по стратегии профиля этого устройства: у панелей с
+    // «Fake Standby» OS бодрствует, а подсветка погашена — по mWakefulness бейдж
+    // был бы неверным. Единая логика — utils/power-state. Стратегия `custom`
+    // читает состояние командой профиля (там, где dumpsys power бессилен).
+    const profile = resolvePowerProfile(target);
+
+    if (profile.sleepDetect === 'custom') {
+      if (!profile.detectCommand) {
+        return { deviceId, ok: false, online: true, awake: null, screenOn: null, error: 'Не задана команда определения состояния' };
+      }
+      const custom = await getCustomStateFn(ip, port, profile.detectCommand, profile.detectSleepMatch, adbTimeoutMs);
+      if (!custom || !custom.ok) {
+        return { deviceId, ok: false, online: true, awake: null, screenOn: null, error: (custom && custom.error) || 'ADB не отвечает' };
+      }
+      const awake = custom.awake === null || custom.awake === undefined ? null : Boolean(custom.awake);
+      return { deviceId, ok: true, online: true, awake, screenOn: null };
+    }
+
     const state = await getPowerStateFn(ip, port, adbTimeoutMs);
     if (!state || !state.ok) {
       return {
@@ -155,7 +178,7 @@ export async function pollPowerStates(targets, options = {}) {
         error: (state && state.error) || 'ADB не отвечает'
       };
     }
-    return { deviceId, ok: true, online: true, awake: state.awake, screenOn: state.screenOn };
+    return { deviceId, ok: true, online: true, awake: resolveAwakeState(state, profile.sleepDetect), screenOn: state.screenOn };
   });
 
   for (const state of states) {
@@ -169,11 +192,8 @@ export async function pollPowerStates(targets, options = {}) {
       continue;
     }
     if (respectCommandGuard && isPowerCommandRecent(state.deviceId)) continue;
-    // «Спит» = экран погашен: у панелей с «Fake Standby» OS бодрствует, но
-    // подсветка выключена, так что по mWakefulness бейдж оказался бы неверным.
-    const screenAwake = state.screenOn !== null && state.screenOn !== undefined
-      ? state.screenOn
-      : state.awake;
+    // `state.awake` уже сведён к решению по стратегии профиля (см. worker выше).
+    const screenAwake = state.awake;
     const prev = getStoredPowerAwake(state.deviceId);
     setStoredPowerState(state.deviceId, screenAwake);
     if (prev !== screenAwake && io && typeof io.emit === 'function') {

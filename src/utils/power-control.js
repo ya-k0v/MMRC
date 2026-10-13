@@ -14,6 +14,7 @@ import {
   wakeKey,
   getDeviceMac,
   getPowerState,
+  getCustomPowerState,
   launchAndroidApp,
   isAndroidDevice,
   setWifiSleepPolicy,
@@ -28,6 +29,7 @@ import { ANDROID_PACKAGE_NAME, ANDROID_MAIN_ACTIVITY } from '../config/android.j
 import { isReservedObjectKey } from './sanitize.js';
 import { createModuleLogger } from './logger.js';
 import { resolvePowerProfile } from './power-profiles.js';
+import { resolveAwakeState, matchesSleepOutput } from './power-state.js';
 
 const powerLog = createModuleLogger('power');
 
@@ -173,6 +175,7 @@ export const DEFAULT_POWER_COMMANDS = {
   wakeKey,
   getDeviceMac,
   getPowerState,
+  getCustomState: queryCustomPowerState,
   getDeviceInfo,
   sendWakeOnLan: sendWakeOnLanAuto,
   readArpMac: readHostArpMac,
@@ -220,6 +223,35 @@ async function sendPowerStep(commands, ip, port, step, adbTimeoutMs) {
     return commands.sendLanCommand(ip, parsed.command, { port: parsed.port });
   }
   return commands.wakeKey(ip, port, step, adbTimeoutMs);
+}
+
+/**
+ * Определить состояние устройства командой профиля (`sleepDetect: 'custom'`).
+ *
+ * Поддерживаются оба транспорта:
+ * - `lan:...` — запрос к панели Lumien Standard (TCP 4664). Ждём ответ (команда
+ *   `G`) и сравниваем его с образцом: так состояние читается у панелей, где
+ *   `dumpsys power` не отражает гашение подсветки;
+ * - иначе — обычная ADB-shell команда (например `getprop sys.power.screen_off`).
+ *
+ * @returns {Promise<{ok: boolean, awake?: boolean|null, output?: string, error?: string}>}
+ */
+export async function queryCustomPowerState(ip, port, command, match, adbTimeoutMs) {
+  const text = String(command || '').trim();
+  if (!text) {
+    return { ok: false, error: 'Команда определения состояния не задана' };
+  }
+
+  if (text.startsWith('lan:')) {
+    const parsed = parseLanStep(text);
+    if (!parsed) return { ok: false, error: 'Некорректный LAN-шаг проверки состояния' };
+    const result = await sendLumienCommand(ip, parsed.command, { port: parsed.port });
+    if (!result.ok) return { ok: false, error: result.error };
+    const reply = String(result.reply || '');
+    return { ok: true, output: reply.trim(), awake: !matchesSleepOutput(reply, match) };
+  }
+
+  return getCustomPowerState(ip, port, text, match, adbTimeoutMs);
 }
 
 /**
@@ -383,7 +415,7 @@ async function runForTarget(target, action, options) {
           // Даём экрану погаснуть и проверяем реальный результат; если state
           // разобрать не вышло (null) — считаем сон успешным.
           await commands.delay(WOL_RETRY_DELAY_MS);
-          const awake = await isReallyAwake(commands, ip, port, adbTimeoutMs);
+          const awake = await isReallyAwake(commands, ip, port, adbTimeoutMs, profile);
           powerLog.debug('Сон: проверка экрана после шага', { deviceId, step: stepLabel(step), awake });
           if (awake !== true) {
             slept = true;
@@ -480,7 +512,7 @@ async function wakeTarget(target, options) {
       // панелей OS уже бодрствует, а подсветка поднимается не мгновенно, иначе
       // быстрая проверка ошиблась бы и мы отправили POWER в живой экран.
       await commands.delay(WOL_RETRY_DELAY_MS);
-      const awake = await isReallyAwake(commands, ip, port, adbTimeoutMs);
+      const awake = await isReallyAwake(commands, ip, port, adbTimeoutMs, profile);
       powerLog.debug('Пробуждение: проверка экрана после шага', { deviceId, step: stepLabel(step), awake });
       if (awake !== false) {
         // awake === true — экран поднялся. awake === null — разобрать состояние
@@ -547,21 +579,35 @@ async function applyKeepAwake(target, { commands, adbTimeoutMs, deviceId, port }
 /**
  * Реально ли устройство проснулось: true/false, или null, если проверить нельзя.
  *
- * Смотрим на состояние экрана (screenOn / mHoldingDisplay), а не только на
- * mWakefulness: у панелей с «Fake Standby» OS остаётся бодрствующей, а подсветка
- * выключена — по одному mWakefulness такой экран выглядел бы включённым.
- * Где экранного маркера нет — откатываемся на mWakefulness (обычные приставки).
+ * Какой сигнал считать решающим, задаёт профиль (`sleepDetect`): `auto` берёт
+ * состояние экрана (screenOn / mHoldingDisplay) и только при его отсутствии —
+ * mWakefulness; `display`/`wakefulness` — строго одно из двух. Так «Fake
+ * Standby» (OS бодрствует, подсветка погашена) и просто гашение дисплея
+ * одинаково считаются сном. Единая логика живёт в utils/power-state.
+ *
+ * Стратегия `custom` — для устройств, где dumpsys power состояние не отражает:
+ * выполняется команда профиля (`detectCommand`), и если её вывод содержит
+ * подстроку `detectSleepMatch`, устройство считается спящим.
  */
-async function isReallyAwake(commands, ip, port, adbTimeoutMs) {
+async function isReallyAwake(commands, ip, port, adbTimeoutMs, profile) {
+  const strategy = profile && profile.sleepDetect;
+
+  if (strategy === 'custom') {
+    if (!commands.getCustomState || !profile.detectCommand) return null;
+    try {
+      const state = await commands.getCustomState(ip, port || null, profile.detectCommand, profile.detectSleepMatch, adbTimeoutMs);
+      if (!state || !state.ok) return null;
+      return state.awake === null || state.awake === undefined ? null : Boolean(state.awake);
+    } catch (_) {
+      return null;
+    }
+  }
+
   if (!commands.getPowerState) return null;
   try {
     const state = await commands.getPowerState(ip, port || null, adbTimeoutMs);
     if (!state || !state.ok) return null;
-    if (state.screenOn !== null && state.screenOn !== undefined) {
-      return !!state.screenOn;
-    }
-    if (state.awake === null) return null;
-    return state.awake;
+    return resolveAwakeState(state, strategy);
   } catch (_) {
     return null;
   }
@@ -624,7 +670,7 @@ export async function testPowerStep({
       return { ok: false, step: stepLabel(step), phase: phaseSlug, error: result.error || 'ADB не отвечает' };
     }
     await commands.delay(waitMs);
-    const awake = await isReallyAwake(commands, ip, port, adbTimeoutMs);
+    const awake = await isReallyAwake(commands, ip, port, adbTimeoutMs, resolvePowerProfile(target));
     const good = phaseSlug === 'sleep' ? awake !== true : awake !== false;
     return { ok: good, awake, step: stepLabel(step), phase: phaseSlug };
   } catch (error) {

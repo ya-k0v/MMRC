@@ -403,6 +403,154 @@ export const MIGRATIONS = [
         );
       }
     }
+  },
+
+  {
+    id: '2026-10-16-power-profiles-default',
+    description: 'Ensure the catch-all default power profile exists (always present)',
+    async up(driver) {
+      if (!(await driver.tableExists('power_profiles'))) return;
+      // Профиль по умолчанию — обязательная catch-all строка (без модели и версии):
+      // применяется к устройствам, для которых не задано своё правило. Создаём
+      // один раз, дальше админ его правит и сохраняет, но удалить нельзя.
+      const existing = await driver.query('SELECT profile_key FROM power_profiles');
+      if (existing.some((row) => row.profile_key === 'default')) return;
+      await driver.run(
+        `INSERT INTO power_profiles (profile_key, label, device_id, model, android_from, android_to, sleep_steps, wake_steps, priority, source, notes)
+         VALUES (?, ?, NULL, NULL, NULL, NULL, ?, ?, 0, 'seed', NULL)`,
+        ['default', 'приставки и прочие устройства', JSON.stringify([223]), JSON.stringify([224, 26, 170])]
+      );
+    }
+  },
+
+  {
+    id: '2026-10-17-power-profiles-sleep-detect',
+    description: 'Add sleep_detect column: unified strategy for reading awake/asleep state',
+    async up(driver) {
+      if (!(await driver.tableExists('power_profiles'))) return;
+      // Стратегия определения «спит» для каждого профиля:
+      //   auto — экран (если маркер есть), иначе mWakefulness;
+      //   display — только состояние дисплея (гашение дисплея = сон);
+      //   wakefulness — только mWakefulness.
+      if (!(await hasColumn(driver, 'power_profiles', 'sleep_detect'))) {
+        await driver.exec("ALTER TABLE power_profiles ADD COLUMN sleep_detect TEXT DEFAULT 'auto'");
+      }
+      await driver.run("UPDATE power_profiles SET sleep_detect = 'auto' WHERE sleep_detect IS NULL OR sleep_detect = ''");
+    }
+  },
+
+  {
+    id: '2026-10-18-power-profiles-detect-command',
+    description: 'Add custom state-detection columns; fix Smart AIO TV profile (Lumien, Android 13)',
+    async up(driver) {
+      if (!(await driver.tableExists('power_profiles'))) return;
+      if (!(await hasColumn(driver, 'power_profiles', 'detect_command'))) {
+        await driver.exec('ALTER TABLE power_profiles ADD COLUMN detect_command TEXT');
+      }
+      if (!(await hasColumn(driver, 'power_profiles', 'detect_sleep_match'))) {
+        await driver.exec('ALTER TABLE power_profiles ADD COLUMN detect_sleep_match TEXT');
+      }
+      // Smart AIO TV (Lumien, Android 13): штатный сон (keyevent 223/26) выключает
+      // панель вместе с сетью и ADB. Безопасный сон — скрытый OffScreenActivity
+      // лаунчера (идемпотентен, сеть жива), пробуждение — keyevent 26 (toggle,
+      // работает при persist.sys.standbymode.enable=1 — шаг выставляем в начале
+      // пробуждения, свойство persist переживает перезагрузку). Штатный
+      // `dumpsys power` сон НЕ отражает (mWakefulness=Awake), поэтому состояние
+      // читаем из свойства sys.power.screen_off: `true` — экран погашен.
+      await driver.run(
+        `UPDATE power_profiles SET
+           sleep_steps = ?,
+           wake_steps = ?,
+           sleep_detect = 'custom',
+           detect_command = 'getprop sys.power.screen_off',
+           detect_sleep_match = 'true',
+           notes = ?,
+           updated_at = CURRENT_TIMESTAMP
+         WHERE profile_key = 'model-smart-aio-tv'`,
+        [
+          JSON.stringify(['am:start -n com.cultraview.litemeet.launcher/com.cultraview.litemeet.launcher.main.OffScreenActivity']),
+          JSON.stringify(['setprop:persist.sys.standbymode.enable 1', 26]),
+          'Сон — скрытый OffScreenActivity лаунчера (сеть/ADB живы). Пробуждение — keyevent 26 (toggle), требует persist.sys.standbymode.enable=1. Статус — getprop sys.power.screen_off (true = экран погашен). Клавишу 26 слать с паузой ≥2 c.'
+        ]
+      );
+    }
+  },
+
+  {
+    id: '2026-10-19-power-profiles-iconbit-trs2045-wakelock',
+    description: 'iconBIT TRS2045 (Android 10): keep Ethernet alive with userspace wakelock; detect by Display Power',
+    async up(driver) {
+      if (!(await driver.tableExists('power_profiles'))) return;
+      // На TRS2045 (Android 10) после гашения экрана SoC уходит в suspend и
+      // обесточивает Ethernet — ADB/звонок пропадают. Держим userspace-wakelock:
+      // система засыпает (экран гаснет, mWakefulness=Asleep), но не
+      // приостанавливается, поэтому сеть и uptime живут. Разово после загрузки
+      // (root через `su 0`), затем удерживается сам — повтор идемпотентен.
+      // Сон — keyevent 223 (KEYCODE_SLEEP), пробуждение — 224 (KEYCODE_WAKEUP).
+      // Статус — `Display Power: state=` (OFF = спит), маркер есть, поэтому display.
+      await driver.run(
+        `UPDATE power_profiles SET
+           sleep_steps = ?,
+           wake_steps = ?,
+           keep_awake_steps = ?,
+           sleep_detect = 'display',
+           notes = ?,
+           updated_at = CURRENT_TIMESTAMP
+         WHERE profile_key = 'model-iconbit-trs2045'`,
+        [
+          JSON.stringify([223]),
+          JSON.stringify([224]),
+          JSON.stringify([
+            "shell:su 0 sh -c 'echo mmrc_keepalive > /sys/power/wake_lock'",
+            'settings:secure put screensaver_enabled 0'
+          ]),
+          'Сеть держит userspace-wakelock (иначе Ethernet пропадает в suspend): shell:su 0 sh -c ... Сон 223, пробуждение 224. Статус — Display Power: state (OFF = спит).'
+        ]
+      );
+    }
+  },
+
+  {
+    id: '2026-10-20-power-profiles-iconbit-trs2045-wakelock-sleep',
+    description: 'iconBIT TRS2045: hold wakelock before sleep too (first sleep after boot has no prior wake)',
+    async up(driver) {
+      if (!(await driver.tableExists('power_profiles'))) return;
+      // Wakelock в «удержании» ставится только после успешного пробуждения. Первый
+      // сон после загрузки (пробуждения через MMRC ещё не было) прошёл бы без него
+      // и обесточил Ethernet. Держим его и перед сном — первой ступенью, до 223.
+      await driver.run(
+        `UPDATE power_profiles SET
+           sleep_steps = ?,
+           updated_at = CURRENT_TIMESTAMP
+         WHERE profile_key = 'model-iconbit-trs2045'`,
+        [JSON.stringify(["shell:su 0 sh -c 'echo mmrc_keepalive > /sys/power/wake_lock'", 223])]
+      );
+    }
+  },
+
+  {
+    id: '2026-10-21-power-profiles-ls-lan-detect',
+    description: 'Lumien LS5550SD: detect sleep by LAN register E (Fake Standby keeps Android awake)',
+    async up(driver) {
+      if (!(await driver.tableExists('power_profiles'))) return;
+      // Панели Lumien Standard уходят в «Fake Standby»: Android не спит, но
+      // подсветка гаснет, поэтому dumpsys power всегда показывает «активен» и
+      // статус мигал. Спрашиваем саму панель по LAN: GET `:01GE000` отвечает
+      // `:01rE000` при погашенном экране и `:01rE001` — при включённом.
+      const notes = 'Статус — запрос по LAN :01GE000 (:01rE000 = экран погашен, :01rE001 = включён). Панель в Fake Standby, dumpsys состояния не отражает.';
+      for (const key of ['model-ls5550sd-bo1082d-g', 'model-ls5550sduhd-cs1382d-g']) {
+        await driver.run(
+          `UPDATE power_profiles SET
+             sleep_detect = 'custom',
+             detect_command = 'lan::01GE000',
+             detect_sleep_match = 'rE000',
+             notes = ?,
+             updated_at = CURRENT_TIMESTAMP
+           WHERE profile_key = ?`,
+          [notes, key]
+        );
+      }
+    }
   }
 ];
 

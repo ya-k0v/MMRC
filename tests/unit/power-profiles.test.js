@@ -18,6 +18,7 @@ const {
   deletePowerProfile,
   resolveStoredPowerProfile,
   resolvePowerProfile,
+  DEFAULT_POWER_PROFILE_KEY,
   POWER_STEP_CATALOG
 } = await import('../../src/utils/power-profiles.js');
 const { testPowerStep } = await import('../../src/utils/power-control.js');
@@ -116,6 +117,40 @@ describe('validatePowerProfile', () => {
     expect(validatePowerProfile({ ...CONSTRUCTOR_PROFILE, androidFrom: '13.3' }).ok).toBe(false);
     expect(validatePowerProfile({ ...CONSTRUCTOR_PROFILE, androidFrom: 'abc' }).ok).toBe(false);
     expect(validatePowerProfile({ ...CONSTRUCTOR_PROFILE, sleepSteps: ['svc:power stayon false', 'sudo reboot'] }).ok).toBe(false);
+  });
+
+  test('принимает shell-шаг целиком и отвергает пустой префикс', () => {
+    const wakelock = "shell:su 0 sh -c 'echo mmrc_keepalive > /sys/power/wake_lock'";
+    const good = validatePowerProfile({ ...CONSTRUCTOR_PROFILE, keepAwakeSteps: [wakelock] });
+    expect(good.ok).toBe(true);
+    expect(good.profile.keepAwakeSteps).toEqual([wakelock]);
+
+    expect(validatePowerProfile({ ...CONSTRUCTOR_PROFILE, sleepSteps: ['shell:'] }).ok).toBe(false);
+    expect(validatePowerProfile({ ...CONSTRUCTOR_PROFILE, sleepSteps: ['setprop:'] }).ok).toBe(false);
+  });
+
+  test('стратегия определения сна нормализуется', () => {
+    expect(validatePowerProfile({ ...CONSTRUCTOR_PROFILE, sleepDetect: 'display' }).profile.sleepDetect).toBe('display');
+    expect(validatePowerProfile({ ...CONSTRUCTOR_PROFILE, sleepDetect: 'wakefulness' }).profile.sleepDetect).toBe('wakefulness');
+    expect(validatePowerProfile({ ...CONSTRUCTOR_PROFILE, sleepDetect: 'custom' }).profile.sleepDetect).toBe('custom');
+    expect(validatePowerProfile({ ...CONSTRUCTOR_PROFILE, sleepDetect: 'nonsense' }).profile.sleepDetect).toBe('auto');
+    expect(validatePowerProfile(CONSTRUCTOR_PROFILE).profile.sleepDetect).toBe('auto');
+  });
+
+  test('своя команда проверки сохраняется и обрезается, пустая — null', () => {
+    const result = validatePowerProfile({
+      ...CONSTRUCTOR_PROFILE,
+      sleepDetect: 'custom',
+      detectCommand: '  getprop sys.power.screen_off  ',
+      detectSleepMatch: ' true '
+    });
+    expect(result.ok).toBe(true);
+    expect(result.profile.detectCommand).toBe('getprop sys.power.screen_off');
+    expect(result.profile.detectSleepMatch).toBe('true');
+
+    const empty = validatePowerProfile(CONSTRUCTOR_PROFILE);
+    expect(empty.profile.detectCommand).toBeNull();
+    expect(empty.profile.detectSleepMatch).toBeNull();
   });
 
   test('пустые привязки и шаги допустимы (catch-all)', () => {
@@ -325,6 +360,46 @@ describe('resolvePowerProfile: БД, иначе резервный набор', 
 
     const profile = resolvePowerProfile({ model: 'MiTV', android: '11' });
     expect(profile.keepAwake).toEqual(['svc:power stayon true', 'settings:secure put screensaver_enabled 0']);
+  });
+
+  test('стратегия определения сна берётся из профиля БД', async () => {
+    resetPowerProfileStore();
+    configurePowerProfileStore({
+      load: async () => [{ ...CONSTRUCTOR_PROFILE, sleepDetect: 'display' }],
+      save: async () => {},
+      remove: async () => {}
+    });
+    await loadPowerProfiles();
+
+    expect(resolvePowerProfile({ model: 'MiTV', android: '11' }).sleepDetect).toBe('display');
+    resetPowerProfileStore();
+    expect(resolvePowerProfile({ model: 'MiTV', android: '11' }).sleepDetect).toBe('auto');
+  });
+
+  test('своя команда проверки проходит из БД в выбор профиля', async () => {
+    resetPowerProfileStore();
+    configurePowerProfileStore({
+      load: async () => [{
+        ...CONSTRUCTOR_PROFILE,
+        sleepDetect: 'custom',
+        detectCommand: 'getprop sys.power.screen_off',
+        detectSleepMatch: 'true'
+      }],
+      save: async () => {},
+      remove: async () => {}
+    });
+    await loadPowerProfiles();
+
+    const profile = resolvePowerProfile({ model: 'MiTV', android: '11' });
+    expect(profile.sleepDetect).toBe('custom');
+    expect(profile.detectCommand).toBe('getprop sys.power.screen_off');
+    expect(profile.detectSleepMatch).toBe('true');
+
+    resetPowerProfileStore();
+    const fallback = resolvePowerProfile({ model: 'MiTV', android: '11' });
+    expect(fallback.sleepDetect).toBe('auto');
+    expect(fallback.detectCommand).toBeNull();
+    expect(fallback.detectSleepMatch).toBeNull();
   });
 });
 
@@ -581,5 +656,29 @@ describe('все профили — обычные строки из БД', () =
     const result = await deletePowerProfile('android-13');
     expect(result.ok).toBe(true);
     expect(removed).toEqual(['android-13']);
+  });
+
+  test('профиль по умолчанию удалить нельзя', async () => {
+    const removed = [];
+    configurePowerProfileStore({
+      load: async () => [{
+        key: DEFAULT_POWER_PROFILE_KEY,
+        label: 'приставки и прочие устройства',
+        model: null,
+        androidFrom: null,
+        androidTo: null,
+        sleepSteps: [223],
+        wakeSteps: [224],
+        priority: 0,
+        source: 'seed'
+      }],
+      save: async () => {},
+      remove: async (key) => { removed.push(key); }
+    });
+    await loadPowerProfiles();
+
+    const result = await deletePowerProfile(DEFAULT_POWER_PROFILE_KEY);
+    expect(result.ok).toBe(false);
+    expect(removed).toEqual([]);
   });
 });

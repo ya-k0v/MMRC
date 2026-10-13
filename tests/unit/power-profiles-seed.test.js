@@ -139,3 +139,170 @@ describe('migration: keep_awake_steps для профилей питания', (
     expect(driver.events.some(e => e.kind === 'exec' && /ADD COLUMN/.test(e.sql))).toBe(false);
   });
 });
+
+const DEFAULT_ID = '2026-10-16-power-profiles-default';
+
+function defaultMigration() {
+  const migration = MIGRATIONS.find(item => item.id === DEFAULT_ID);
+  expect(migration).toBeTruthy();
+  return migration;
+}
+
+describe('migration: профиль по умолчанию', () => {
+  test('вставляет catch-all профиль default, если его нет', async () => {
+    const driver = fakeDriver(['model-smart-aio-tv']);
+    await defaultMigration().up(driver);
+
+    expect(driver.inserted).toHaveLength(1);
+    const { params } = driver.inserted[0];
+    expect(params[0]).toBe('default');
+    expect(params[1]).toBeTruthy();
+    expect(JSON.parse(params[2])).toEqual([223]);
+    expect(JSON.parse(params[3])).toEqual([224, 26, 170]);
+  });
+
+  test('не дублирует профиль по умолчанию', async () => {
+    const driver = fakeDriver(['default']);
+    await defaultMigration().up(driver);
+    expect(driver.inserted).toHaveLength(0);
+  });
+});
+
+const SLEEP_DETECT_ID = '2026-10-17-power-profiles-sleep-detect';
+
+function sleepDetectMigration() {
+  const migration = MIGRATIONS.find(item => item.id === SLEEP_DETECT_ID);
+  expect(migration).toBeTruthy();
+  return migration;
+}
+
+function columnDriver(existingColumns = []) {
+  const events = [];
+  return {
+    dialect: 'sqlite',
+    columns: async () => existingColumns.map(name => ({ name })),
+    exec: async (sql) => { events.push({ kind: 'exec', sql }); },
+    run: async (sql, params) => { events.push({ kind: 'run', sql, params }); },
+    tableExists: async () => true,
+    events
+  };
+}
+
+describe('migration: колонка sleep_detect', () => {
+  test('добавляет колонку и проставляет auto, если её нет', async () => {
+    const driver = columnDriver(['profile_key']);
+    await sleepDetectMigration().up(driver);
+
+    expect(driver.events.some(e => e.kind === 'exec' && /ADD COLUMN sleep_detect/.test(e.sql))).toBe(true);
+    expect(driver.events.some(e => e.kind === 'run' && /UPDATE power_profiles SET sleep_detect = 'auto'/.test(e.sql))).toBe(true);
+  });
+
+  test('не добавляет колонку повторно', async () => {
+    const driver = columnDriver(['profile_key', 'sleep_detect']);
+    await sleepDetectMigration().up(driver);
+    expect(driver.events.some(e => e.kind === 'exec' && /ADD COLUMN/.test(e.sql))).toBe(false);
+  });
+});
+
+const DETECT_COMMAND_ID = '2026-10-18-power-profiles-detect-command';
+
+function detectCommandMigration() {
+  const migration = MIGRATIONS.find(item => item.id === DETECT_COMMAND_ID);
+  expect(migration).toBeTruthy();
+  return migration;
+}
+
+describe('migration: своя команда проверки состояния', () => {
+  test('добавляет обе колонки, если их нет', async () => {
+    const driver = columnDriver(['profile_key', 'sleep_detect']);
+    await detectCommandMigration().up(driver);
+
+    expect(driver.events.some(e => e.kind === 'exec' && /ADD COLUMN detect_command/.test(e.sql))).toBe(true);
+    expect(driver.events.some(e => e.kind === 'exec' && /ADD COLUMN detect_sleep_match/.test(e.sql))).toBe(true);
+  });
+
+  test('не добавляет колонки повторно', async () => {
+    const driver = columnDriver(['profile_key', 'sleep_detect', 'detect_command', 'detect_sleep_match']);
+    await detectCommandMigration().up(driver);
+    expect(driver.events.some(e => e.kind === 'exec' && /ADD COLUMN/.test(e.sql))).toBe(false);
+  });
+
+  test('переводит профиль Smart AIO TV на OffScreenActivity и чтение screen_off', async () => {
+    const driver = columnDriver(['profile_key']);
+    await detectCommandMigration().up(driver);
+
+    const update = driver.events.find(e => e.kind === 'run' && /UPDATE power_profiles SET/.test(e.sql));
+    expect(update).toBeTruthy();
+    expect(update.sql).toMatch(/WHERE profile_key = 'model-smart-aio-tv'/);
+    expect(update.sql).toMatch(/sleep_detect = 'custom'/);
+    expect(update.sql).toMatch(/detect_command = 'getprop sys.power.screen_off'/);
+    expect(update.sql).toMatch(/detect_sleep_match = 'true'/);
+    const lists = update.params.map(p => { try { return JSON.parse(p); } catch { return null; } }).filter(Array.isArray);
+    expect(lists[0]).toEqual(['am:start -n com.cultraview.litemeet.launcher/com.cultraview.litemeet.launcher.main.OffScreenActivity']);
+    expect(lists[1]).toEqual(['setprop:persist.sys.standbymode.enable 1', 26]);
+  });
+});
+
+const ICONBIT_WAKELOCK_ID = '2026-10-19-power-profiles-iconbit-trs2045-wakelock';
+
+function iconbitWakelockMigration() {
+  const migration = MIGRATIONS.find(item => item.id === ICONBIT_WAKELOCK_ID);
+  expect(migration).toBeTruthy();
+  return migration;
+}
+
+describe('migration: iconBIT TRS2045 держит сеть через wakelock', () => {
+  test('ставит sleep/wake 223/224, keep-awake с wakelock и detect=display', async () => {
+    const driver = columnDriver(['profile_key']);
+    await iconbitWakelockMigration().up(driver);
+
+    const update = driver.events.find(e => e.kind === 'run' && /UPDATE power_profiles SET/.test(e.sql));
+    expect(update).toBeTruthy();
+    expect(update.sql).toMatch(/WHERE profile_key = 'model-iconbit-trs2045'/);
+    expect(update.sql).toMatch(/sleep_detect = 'display'/);
+
+    const lists = update.params.map(p => { try { return JSON.parse(p); } catch { return null; } }).filter(Array.isArray);
+    expect(lists[0]).toEqual([223]);
+    expect(lists[1]).toEqual([224]);
+    expect(lists[2][0]).toContain('/sys/power/wake_lock');
+    expect(lists[2][0]).toContain('su 0 sh -c');
+  });
+});
+
+describe('миграция wakelock перед сном (iconBIT TRS2045)', () => {
+  test('ставит wakelock первой ступенью сна, перед 223', async () => {
+    const migration = MIGRATIONS.find(m => m.id === '2026-10-20-power-profiles-iconbit-trs2045-wakelock-sleep');
+    expect(migration).toBeTruthy();
+
+    const driver = columnDriver(['profile_key']);
+    await migration.up(driver);
+
+    const update = driver.events.find(e => e.kind === 'run' && /UPDATE power_profiles SET/.test(e.sql));
+    expect(update.sql).toMatch(/WHERE profile_key = 'model-iconbit-trs2045'/);
+    expect(JSON.parse(update.params[0])).toEqual([
+      "shell:su 0 sh -c 'echo mmrc_keepalive > /sys/power/wake_lock'",
+      223
+    ]);
+  });
+});
+
+describe('миграция LAN-детекции для панелей Lumien LS', () => {
+  test('переводит оба LS-профиля на custom-запрос :01GE000', async () => {
+    const migration = MIGRATIONS.find(m => m.id === '2026-10-21-power-profiles-ls-lan-detect');
+    expect(migration).toBeTruthy();
+
+    const driver = columnDriver(['profile_key']);
+    await migration.up(driver);
+
+    const updates = driver.events.filter(e => e.kind === 'run' && /UPDATE power_profiles SET/.test(e.sql));
+    expect(updates.map(u => u.params[1])).toEqual([
+      'model-ls5550sd-bo1082d-g',
+      'model-ls5550sduhd-cs1382d-g'
+    ]);
+    for (const update of updates) {
+      expect(update.sql).toMatch(/sleep_detect = 'custom'/);
+      expect(update.sql).toMatch(/detect_command = 'lan::01GE000'/);
+      expect(update.sql).toMatch(/detect_sleep_match = 'rE000'/);
+    }
+  });
+});

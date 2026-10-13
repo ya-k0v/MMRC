@@ -1100,6 +1100,11 @@ body.admin-page #grid button.st-pager-btn {
   color: var(--muted);
 }
 
+.pc-panel-h--sub .pc-add-btn {
+  flex: 0 0 auto;
+  color: var(--text);
+}
+
 .pc-profiles-list {
   display: flex;
   flex-direction: column;

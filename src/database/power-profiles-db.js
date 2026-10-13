@@ -10,6 +10,7 @@
 import { getDatabase } from './database.js';
 import { withRetrySync, isRetryableDatabaseError } from '../utils/retry.js';
 import { normalizePowerSteps, normalizeAndroidVersion } from '../utils/power-profiles.js';
+import { normalizeSleepDetect } from '../utils/power-state.js';
 
 function parseSteps(raw) {
   let value = [];
@@ -33,6 +34,9 @@ function mapRow(row) {
     sleepSteps: parseSteps(row.sleep_steps),
     wakeSteps: parseSteps(row.wake_steps),
     keepAwakeSteps: parseSteps(row.keep_awake_steps),
+    sleepDetect: normalizeSleepDetect(row.sleep_detect),
+    detectCommand: row.detect_command || null,
+    detectSleepMatch: row.detect_sleep_match || null,
     priority: Number(row.priority) || 0,
     source: row.source || 'db',
     notes: row.notes || null,
@@ -61,6 +65,9 @@ export async function savePowerProfileToDb(profile) {
     JSON.stringify(profile.sleepSteps || []),
     JSON.stringify(profile.wakeSteps || []),
     JSON.stringify(profile.keepAwakeSteps || []),
+    normalizeSleepDetect(profile.sleepDetect),
+    profile.detectCommand || null,
+    profile.detectSleepMatch || null,
     Math.max(0, Math.min(100, Number(profile.priority) || 0)),
     profile.source || 'admin-ui',
     profile.notes || null
@@ -68,8 +75,8 @@ export async function savePowerProfileToDb(profile) {
   await withRetrySync(async () => {
     await getDatabase().run(
       `INSERT INTO power_profiles
-         (profile_key, label, device_id, model, android_from, android_to, sleep_steps, wake_steps, keep_awake_steps, priority, source, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (profile_key, label, device_id, model, android_from, android_to, sleep_steps, wake_steps, keep_awake_steps, sleep_detect, detect_command, detect_sleep_match, priority, source, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(profile_key) DO UPDATE SET
          label = excluded.label,
          device_id = excluded.device_id,
@@ -79,6 +86,9 @@ export async function savePowerProfileToDb(profile) {
          sleep_steps = excluded.sleep_steps,
          wake_steps = excluded.wake_steps,
          keep_awake_steps = excluded.keep_awake_steps,
+         sleep_detect = excluded.sleep_detect,
+         detect_command = excluded.detect_command,
+         detect_sleep_match = excluded.detect_sleep_match,
          priority = excluded.priority,
          source = excluded.source,
          notes = excluded.notes,

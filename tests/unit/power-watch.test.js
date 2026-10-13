@@ -29,12 +29,19 @@ function emptyIo() {
   return { emit: jest.fn() };
 }
 
+import {
+  configurePowerProfileStore,
+  resetPowerProfileStore,
+  loadPowerProfiles
+} from '../../src/utils/power-profiles.js';
+
 afterEach(() => {
   setStoredPowerState('tv1', null);
   setStoredPowerState('tv2', null);
   setStoredPowerState('tv3', null);
   setStoredPowerState('tv4', null);
   resetReachability();
+  resetPowerProfileStore();
 });
 
 describe('pollPowerStates', () => {
@@ -62,6 +69,57 @@ describe('pollPowerStates', () => {
 
     expect(getStoredPowerAwake('tv1')).toBe(false);
     expect(io.emit).toHaveBeenCalledWith('devices/power', { deviceId: 'tv1', awake: false });
+  });
+
+  test('стратегия custom: состояние читается командой профиля, dumpsys не трогаем', async () => {
+    configurePowerProfileStore({
+      load: async () => [{
+        key: 'model-smart-aio-tv',
+        label: 'Smart AIO TV',
+        model: 'smart aio tv',
+        sleepSteps: ['am:start'],
+        wakeSteps: [26],
+        sleepDetect: 'custom',
+        detectCommand: 'getprop sys.power.screen_off',
+        detectSleepMatch: 'true',
+        priority: 1
+      }],
+      save: async () => {},
+      remove: async () => {}
+    });
+    await loadPowerProfiles();
+
+    const io = emptyIo();
+    const getPowerState = jest.fn();
+    const getCustomState = jest.fn(async () => ({ ok: true, awake: false, output: 'true' }));
+
+    await pollPowerStates([{ ...TARGET, model: 'Smart AIO TV' }], {
+      io,
+      probe: reachable,
+      commands: { getPowerState, getCustomState }
+    });
+
+    expect(getCustomState).toHaveBeenCalledWith('192.168.1.10', '5555', 'getprop sys.power.screen_off', 'true', 8000);
+    expect(getPowerState).not.toHaveBeenCalled();
+    expect(getStoredPowerAwake('tv1')).toBe(false);
+    expect(io.emit).toHaveBeenCalledWith('devices/power', { deviceId: 'tv1', awake: false });
+  });
+
+  test('custom без команды проверки — «не удалось определить»', async () => {
+    configurePowerProfileStore({
+      load: async () => [{ key: 'model-smart-aio-tv', label: 'Smart AIO TV', model: 'smart aio tv', sleepDetect: 'custom', sleepSteps: [223], wakeSteps: [224] }],
+      save: async () => {},
+      remove: async () => {}
+    });
+    await loadPowerProfiles();
+
+    const states = await pollPowerStates([{ ...TARGET, model: 'Smart AIO TV' }], {
+      probe: reachable,
+      commands: { getPowerState: jest.fn(), getCustomState: jest.fn() }
+    });
+
+    expect(states[0].ok).toBe(false);
+    expect(states[0].error).toMatch(/команда определения состояния/);
   });
 
   test('не рассылает, если состояние не изменилось', async () => {

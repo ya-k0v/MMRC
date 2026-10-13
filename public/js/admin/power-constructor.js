@@ -2,12 +2,15 @@
  * «Конструктор профилей питания»: кнопка в карточке «Управление Android
  * устройствами» и модалка, где админ настраивает команды сна/пробуждения.
  *
- * Слева: уникальные модели из списка устройств и общие правила (профили, не
- * привязанные к найденной модели). Справа: профиль — фиксированное число шагов
- * сна и пробуждения, каждый шаг выбирается из выпадающего списка (каталог с
- * сервера). Любой шаг можно проверить на живом устройстве.
+ * Слева: уникальные модели из списка устройств и профили (в т.ч. профиль по
+ * умолчанию, который есть всегда и удалить его нельзя, и общие правила).
+ * Кнопка «Добавить» создаёт новый профиль под модель и версию Android.
+ * Справа: профиль — фиксированное число шагов сна и пробуждения, каждый шаг
+ * выбирается из выпадающего списка (каталог с сервера). Любой шаг можно
+ * проверить на живом устройстве.
  *
- * Все профили — обычные строки в БД: создаются, правятся и удаляются одинаково.
+ * Все профили — обычные строки в БД: создаются, правятся и удаляются
+ * (кроме профиля по умолчанию).
  *
  * @module admin/power-constructor
  */
@@ -34,6 +37,35 @@ const DEVICES_ENDPOINT = '/api/devices';
 const SLOT_COUNT = 3;
 
 const ANDROID_VERSIONS = ['10', '11', '12', '13', '14'];
+
+/** Как профиль определяет состояние «спит» по данным dumpsys power. */
+const SLEEP_DETECT_OPTIONS = [
+  { value: 'auto', label: 'Авто (дисплей, при отсутствии — mWakefulness)' },
+  { value: 'display', label: 'Только дисплей (гашение экрана)' },
+  { value: 'wakefulness', label: 'Только mWakefulness (состояние системы)' },
+  { value: 'custom', label: 'Своя команда проверки' }
+];
+
+/** Показать/скрыть поля своей команды проверки под выбранную стратегию. */
+function syncDetectFields() {
+  const box = document.getElementById('pcDetectFields');
+  if (!box) return;
+  const isCustom = normalizeSleepDetect(document.getElementById('pcSleepDetect')?.value) === 'custom';
+  box.style.display = isCustom ? '' : 'none';
+}
+const SLEEP_DETECT_DEFAULT = 'auto';
+
+function normalizeSleepDetect(value) {
+  const v = String(value || '').toLowerCase();
+  return SLEEP_DETECT_OPTIONS.some(option => option.value === v) ? v : SLEEP_DETECT_DEFAULT;
+}
+
+/** Ключ профиля по умолчанию: есть всегда, применяется к устройствам без своего правила. */
+const DEFAULT_KEY = 'default';
+
+function isDefaultProfile(profile) {
+  return Boolean(profile) && profile.key === DEFAULT_KEY;
+}
 
 const state = {
   adminFetch: null,
@@ -91,23 +123,19 @@ function buildModels() {
   });
 }
 
-function foundModelSet() {
-  return new Set(state.models.filter(model => model.modelLower).map(model => model.modelLower));
-}
-
 function profileForModel(modelLower) {
   if (!modelLower) return null;
   return state.profiles.find(profile => String(profile.model || '').toLowerCase() === modelLower) || null;
 }
 
-function ruleProfiles() {
-  const found = foundModelSet();
+/** Все профили для списка: профиль по умолчанию — первым, дальше по названию. */
+function listedProfiles() {
   return state.profiles
-    .filter(profile => {
-      const model = String(profile.model || '').toLowerCase();
-      return !model || !found.has(model);
-    })
-    .sort((a, b) => String(a.label || a.key).localeCompare(String(b.label || b.key), 'ru'));
+    .slice()
+    .sort((a, b) => {
+      if (isDefaultProfile(a) !== isDefaultProfile(b)) return isDefaultProfile(a) ? -1 : 1;
+      return String(a.label || a.key).localeCompare(String(b.label || b.key), 'ru');
+    });
 }
 
 function matchesAndroid(android, from, to) {
@@ -160,9 +188,13 @@ function draftFromProfile(profile) {
     sleep: padSteps(profile.sleepSteps),
     wake: padSteps(profile.wakeSteps),
     keepAwake: padSteps(profile.keepAwakeSteps),
+    sleepDetect: normalizeSleepDetect(profile.sleepDetect),
+    detectCommand: profile.detectCommand || '',
+    detectSleepMatch: profile.detectSleepMatch || '',
     priority: profile.priority || 0,
     notes: profile.notes || '',
-    existing: true
+    existing: true,
+    isDefault: isDefaultProfile(profile)
   };
 }
 
@@ -177,12 +209,35 @@ function draftForModel(modelLower) {
     label: model ? model.title : modelLower,
     model: modelLower,
     android,
+    keepAwake: fallback ? padSteps(fallback.keepAwakeSteps) : padSteps([]),
+    sleepDetect: normalizeSleepDetect(fallback && fallback.sleepDetect),
+    detectCommand: (fallback && fallback.detectCommand) || '',
+    detectSleepMatch: (fallback && fallback.detectSleepMatch) || '',
+    priority: 0,
+    notes: '',
+    existing: false,
+    isDefault: false
+  };
+}
+
+/** Новый профиль: пустой черновик, шаги берём из профиля по умолчанию. */
+function newDraft() {
+  const fallback = resolveFallback('', '');
+  return {
+    key: '',
+    label: '',
+    model: '',
+    android: '',
     sleep: fallback ? padSteps(fallback.sleepSteps) : padSteps([]),
     wake: fallback ? padSteps(fallback.wakeSteps) : padSteps([]),
     keepAwake: fallback ? padSteps(fallback.keepAwakeSteps) : padSteps([]),
+    sleepDetect: normalizeSleepDetect(fallback && fallback.sleepDetect),
+    detectCommand: fallback && fallback.detectCommand ? fallback.detectCommand : '',
+    detectSleepMatch: fallback && fallback.detectSleepMatch ? fallback.detectSleepMatch : '',
     priority: 0,
     notes: '',
-    existing: false
+    existing: false,
+    isDefault: false
   };
 }
 
@@ -198,7 +253,7 @@ function modelsListHtml() {
     const android = model.android.size ? ` · Android ${Array.from(model.android).join(', ')}` : '';
     const badge = hasProfile
       ? '<span class="pc-badge is-custom">свой профиль</span>'
-      : '<span class="pc-badge is-default">по умолчанию</span>';
+      : '<span class="pc-badge is-default">без профиля</span>';
     return `
       <div data-pc-model="${escapeHtml(model.key)}" class="pc-profile-row${selected}">
         <div class="pc-profile-main">
@@ -221,14 +276,16 @@ function bindingLabel(profile) {
 }
 
 function rulesListHtml() {
-  const rules = ruleProfiles();
-  if (!rules.length) return '<div class="meta pc-empty-steps">Общих правил нет.</div>';
+  const rules = listedProfiles();
+  if (!rules.length) return '<div class="meta pc-empty-steps">Профилей нет. Добавьте профиль или выберите модель.</div>';
   return rules.map(profile => {
     const selected = state.selection?.kind === 'rule' && state.selection.key === profile.key ? ' selected' : '';
+    const badge = isDefaultProfile(profile) ? '<span class="pc-badge is-custom">по умолчанию</span>' : '';
     return `
       <div data-pc-rule="${escapeHtml(profile.key)}" class="pc-profile-row${selected}">
         <div class="pc-profile-main">
           <span class="pc-profile-label">${escapeHtml(profile.label || profile.key)}</span>
+          ${badge}
           <span class="meta pc-profile-binding">${escapeHtml(bindingLabel(profile))}</span>
         </div>
       </div>`;
@@ -306,10 +363,14 @@ function renderEditor() {
   const draft = state.draft;
   if (!editor || !draft) return;
 
-  document.getElementById('pcEditorTitle').textContent = draft.label || draft.model || 'Общее правило';
+  document.getElementById('pcEditorTitle').textContent = draft.isDefault ? 'Профиль по умолчанию' : (draft.label || draft.model || 'Общее правило');
   document.getElementById('pcLabel').value = draft.label || '';
-  document.getElementById('pcModelSelect').innerHTML = modelOptions(draft.model);
-  document.getElementById('pcAndroid').value = draft.android || '';
+  const modelSelect = document.getElementById('pcModelSelect');
+  const androidSelect = document.getElementById('pcAndroid');
+  modelSelect.innerHTML = draft.isDefault ? '<option value="">— любые устройства —</option>' : modelOptions(draft.model);
+  modelSelect.disabled = Boolean(draft.isDefault);
+  androidSelect.value = draft.android || '';
+  androidSelect.disabled = Boolean(draft.isDefault);
   document.getElementById('pcPriority').value = String(draft.priority || 0);
   document.getElementById('pcNotes').value = draft.notes || '';
 
@@ -318,7 +379,14 @@ function renderEditor() {
   document.getElementById('pcKeepSlots').innerHTML = (draft.keepAwake || []).map((value, index) => slotHtml('keep', index, value)).join('');
 
   const deleteBtn = document.getElementById('pcDelete');
-  deleteBtn.style.display = draft.existing ? '' : 'none';
+  deleteBtn.style.display = draft.existing && !draft.isDefault ? '' : 'none';
+  const sleepDetectEl = document.getElementById('pcSleepDetect');
+  if (sleepDetectEl) sleepDetectEl.value = normalizeSleepDetect(draft.sleepDetect);
+  const detectCommandEl = document.getElementById('pcDetectCommand');
+  if (detectCommandEl) detectCommandEl.value = draft.detectCommand || '';
+  const detectMatchEl = document.getElementById('pcDetectMatch');
+  if (detectMatchEl) detectMatchEl.value = draft.detectSleepMatch || '';
+  syncDetectFields();
   editor.style.display = '';
 
   renderRepDevices();
@@ -343,6 +411,15 @@ function selectRule(profileKey) {
   setTestStatus('');
 }
 
+function selectNewProfile() {
+  state.selection = { kind: 'new', key: null };
+  state.draft = newDraft();
+  renderLists();
+  renderEditor();
+  document.getElementById('pcLabel')?.focus();
+  setTestStatus('Новый профиль: выберите модель и версию Android, затем задайте команды.');
+}
+
 // ============================ Действия ============================
 
 function collectDraftFromForm() {
@@ -351,6 +428,9 @@ function collectDraftFromForm() {
   draft.label = document.getElementById('pcLabel')?.value.trim() || '';
   draft.model = (document.getElementById('pcModelSelect')?.value.trim() || '').toLowerCase();
   draft.android = document.getElementById('pcAndroid')?.value || '';
+  draft.sleepDetect = normalizeSleepDetect(document.getElementById('pcSleepDetect')?.value);
+  draft.detectCommand = document.getElementById('pcDetectCommand')?.value.trim() || '';
+  draft.detectSleepMatch = document.getElementById('pcDetectMatch')?.value.trim() || '';
   const priority = Number.parseInt(document.getElementById('pcPriority')?.value || '0', 10);
   draft.priority = Number.isFinite(priority) ? Math.max(0, Math.min(100, priority)) : 0;
   draft.notes = document.getElementById('pcNotes')?.value || '';
@@ -430,6 +510,22 @@ async function testSlot(phase, index, button) {
   }
 }
 
+/** Выбрать профиль по ключу: модельный — через строку модели, иначе как правило. */
+function focusProfileKey(key) {
+  const profile = profileByKey(key);
+  if (!profile) {
+    renderLists();
+    return;
+  }
+  const modelLower = String(profile.model || '').toLowerCase();
+  const entry = modelLower ? state.models.find(item => item.modelLower === modelLower) : null;
+  if (entry) {
+    selectModel(entry.key);
+    return;
+  }
+  selectRule(key);
+}
+
 function reselect() {
   if (state.selection?.kind === 'model') {
     const model = state.models.find(item => item.key === state.selection.key);
@@ -469,6 +565,9 @@ async function saveDraft() {
     sleepSteps,
     wakeSteps,
     keepAwakeSteps,
+    sleepDetect: normalizeSleepDetect(draft.sleepDetect),
+    detectCommand: draft.detectCommand || null,
+    detectSleepMatch: draft.detectSleepMatch || null,
     priority: draft.priority,
     notes: draft.notes,
     source: 'admin-ui'
@@ -488,7 +587,7 @@ async function saveDraft() {
       return;
     }
     await loadProfiles();
-    reselect();
+    focusProfileKey(key);
     setTestStatus('Профиль сохранён.', 'var(--success)');
   } catch (error) {
     setTestStatus(escapeHtml(error.message), 'var(--danger)');
@@ -541,6 +640,8 @@ async function loadDevices() {
 function bindHandlers() {
   document.getElementById('pcSave')?.addEventListener('click', saveDraft);
   document.getElementById('pcDelete')?.addEventListener('click', deleteProfile);
+  document.getElementById('pcAddProfile')?.addEventListener('click', selectNewProfile);
+  document.getElementById('pcSleepDetect')?.addEventListener('change', syncDetectFields);
   document.getElementById('pcModelSelect')?.addEventListener('change', () => {
     collectDraftFromForm();
     renderRepDevices();
@@ -578,7 +679,10 @@ async function openConstructorModal() {
         <section class="pc-panel pc-panel--nav">
           <div class="pc-panel-h"><span>Модели устройств</span></div>
           <div id="pcModelsList" class="pc-profiles-list"></div>
-          <div class="pc-panel-h pc-panel-h--sub"><span>Общие правила</span></div>
+          <div class="pc-panel-h pc-panel-h--sub">
+            <span>Профили</span>
+            <button type="button" id="pcAddProfile" class="secondary meta pc-add-btn" title="Добавить профиль">${getPlusIcon(14)} Добавить</button>
+          </div>
           <div id="pcRulesList" class="pc-profiles-list"></div>
         </section>
 
@@ -601,6 +705,28 @@ async function openConstructorModal() {
                 ${ANDROID_VERSIONS.map(v => `<option value="${v}">${v}</option>`).join('')}
               </select>
             </label>
+            <label class="pc-field pc-field--wide">
+              <span>Как определять «спит»</span>
+              <select id="pcSleepDetect" class="input">
+                ${SLEEP_DETECT_OPTIONS.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}
+              </select>
+            </label>
+            <div id="pcDetectFields" class="pc-fields pc-field--wide" style="display:none;">
+              <label class="pc-field pc-field--wide">
+                <span>Команда проверки (ADB-shell или lan:)</span>
+                <input id="pcDetectCommand" class="input" placeholder="getprop sys.power.screen_off" />
+              </label>
+              <label class="pc-field">
+                <span>Вывод «спит», если содержит</span>
+                <input id="pcDetectMatch" class="input" placeholder="true" />
+              </label>
+            </div>
+            <div class="meta pc-hint pc-field--wide">
+              «Авто» берёт состояние дисплея (mHoldingDisplay / Display Power / mScreenOn), а при его отсутствии — mWakefulness.
+              Режим «только дисплей» считает сном и просто гашение экрана — в т.ч. командой <code>cmd display power-off</code>.
+              «Своя команда проверки» — для панелей, где <code>dumpsys power</code> сон не отражает: состояние читается по выводу команды
+              (например, <code>getprop sys.power.screen_off</code> → <code>true</code>, или LAN-запрос <code>lan::01GE000</code> для панелей Lumien Standard).
+            </div>
           </div>
 
           <div class="pc-toolbar">
@@ -650,7 +776,7 @@ async function openConstructorModal() {
 
   bindHandlers();
 
-  const rules = ruleProfiles();
+  const rules = listedProfiles();
   if (state.models.length) {
     const keep = state.models.find(item => item.key === state.selection?.key);
     selectModel(keep ? keep.key : state.models[0].key);
