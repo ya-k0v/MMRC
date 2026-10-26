@@ -91,12 +91,20 @@ export async function syncFileToStorage(localPath, storage, options = {}) {
 
   // КРИТИЧНО: «успешная» загрузка без объекта в хранилище — это ошибка.
   // Без этой проверки файл молча оставался только на диске.
-  const stored = await storage.exists(key);
-  if (!stored) {
-    throw new Error(`Объект не появился в хранилище после загрузки: ${key}`);
+  //
+  // Проверка строгая: unknown (таймаут, 403, обрыв) — не доказательство
+  // записи. В этом случае бросаем ошибку и НЕ удаляем локальную копию.
+  const probe = typeof storage.checkExists === 'function'
+    ? await storage.checkExists(key)
+    : { state: (await storage.exists(key)) ? 'present' : 'missing' };
+  if (probe.state !== 'present') {
+    const reason = probe.state === 'unknown'
+      ? `не удалось проверить объект (${probe.error?.name || probe.error?.message || 'unknown error'})`
+      : 'объект отсутствует';
+    throw new Error(`Загрузка в хранилище не подтверждена для ${key}: ${reason}`);
   }
 
-  const stat = await storage.stat(key).catch(() => null);
+  const stat = probe.stat || await storage.stat(key).catch(() => null);
 
   // КРИТИЧНО: существование объекта не доказывает целостность. Обрыв
   // потока на середине (сеть, рестарт MinIO) оставляет в хранилище
@@ -193,9 +201,30 @@ export async function materializeToLocal(localPath, storage, options = {}) {
     return null;
   }
 
-  const expectedStat = await storage.stat(key).catch(() => null);
-  if (!expectedStat || !(await storage.exists(key).catch(() => false))) {
-    logger.error('[StorageSync] Файл не найден в хранилище', { deviceId, fileName, key });
+  const probe = typeof storage.checkExists === 'function'
+    ? await storage.checkExists(key).catch((error) => ({ state: 'unknown', error }))
+    : { state: (await storage.exists(key).catch(() => false)) ? 'present' : 'missing' };
+
+  if (probe.state !== 'present') {
+    logger.error(
+      probe.state === 'unknown'
+        ? '[StorageSync] Не удалось проверить файл в хранилище'
+        : '[StorageSync] Файл не найден в хранилище',
+      {
+        deviceId,
+        fileName,
+        key,
+        error: probe.error?.message || null
+      }
+    );
+    return null;
+  }
+
+  const expectedStat = probe.stat || await storage.stat(key).catch(() => null);
+  if (!expectedStat) {
+    logger.error('[StorageSync] Файл есть в хранилище, но размер получить не удалось', {
+      deviceId, fileName, key
+    });
     return null;
   }
 

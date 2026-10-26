@@ -145,17 +145,33 @@ export function createDeduplicationRouter(deps) {
       // по диску, поэтому мгновенное копирование было недоступно для любого
       // закоммиченного файла: возвращался 404 «Исходный файл не найден».
       const storage = getCurrentStorage();
-      let sourceAvailable = fs.existsSync(sourceMetadata.file_path);
+      let sourceState = fs.existsSync(sourceMetadata.file_path) ? 'present' : 'missing';
 
-      if (!sourceAvailable && storage && !isLocalStorage(storage)) {
+      if (sourceState === 'missing' && storage && !isLocalStorage(storage)) {
         try {
-          sourceAvailable = await storage.exists(toStorageKey(sourceMetadata.file_path));
+          const key = toStorageKey(sourceMetadata.file_path);
+          if (typeof storage.checkExists === 'function') {
+            const probe = await storage.checkExists(key);
+            sourceState = probe.state;
+          } else {
+            sourceState = (await storage.exists(key)) ? 'present' : 'missing';
+          }
         } catch {
-          sourceAvailable = false;
+          // Не смогли проверить — нельзя утверждать, что файла нет.
+          sourceState = 'unknown';
         }
       }
 
-      if (!sourceAvailable) {
+      if (sourceState === 'unknown') {
+        logFile('warn', 'Source file availability unknown', {
+          sourceDevice,
+          sourceFile,
+          expectedPath: sourceMetadata.file_path
+        });
+        return res.status(503).json({ error: 'Хранилище временно недоступно, повторите попытку' });
+      }
+
+      if (sourceState !== 'present') {
         logFile('error', 'Source file missing in disk or storage', {
           sourceDevice,
           sourceFile,

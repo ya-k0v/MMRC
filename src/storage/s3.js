@@ -1,6 +1,26 @@
 import { StorageProvider } from './provider.js';
 import { PassThrough } from 'node:stream';
 
+/**
+ * S3-совместимые хранилища по-разному называют «объекта нет»: AWS SDK v3
+ * отдаёт NoSuchKey/NotFound, MinIO может добавить код в `Code`, а HTTP-слой —
+ * только 404. Все остальные ошибки (403, таймаут, сеть, 5xx) означают
+ * «проверить не удалось», а не «объекта нет».
+ */
+function isNotFoundError(error) {
+  if (!error) return false;
+  const name = String(error.name || '');
+  const code = String(error.Code || error.code || '');
+  const status = Number(error.$metadata?.httpStatusCode || error.statusCode || 0);
+  return (
+    name === 'NotFound' ||
+    name === 'NoSuchKey' ||
+    code === 'NotFound' ||
+    code === 'NoSuchKey' ||
+    status === 404
+  );
+}
+
 let S3;
 let libStorage;
 try {
@@ -157,33 +177,67 @@ export class S3Storage extends StorageProvider {
     await this.#client.send(cmd);
   }
 
-  async exists(key) {
-    // exists() зовут из синхронных путей API (список файлов, заглушки,
-    // превью), поэтому зависшая проба не должна держать запрос. HEAD сам по
-    // себе мгновенный: превышение времени означает проблему со связью, а не
-    // отсутствие объекта, поэтому такой таймаут считаем «не знаю» (false).
+  /**
+   * HEAD с таймаутом и честным три-состоянием.
+   *
+   * `abortSignal` обязан идти вторым аргументом `send()`: AWS SDK v3 не
+   * читает `abortController` из input команды, поэтому прежний таймаут
+   * фактически не работал.
+   */
+  async #probe(key) {
     const controller = new AbortController();
-    const timeoutMs = Number(process.env.S3_HEAD_TIMEOUT_MS) || 4000;
+    const configured = Number(process.env.S3_HEAD_TIMEOUT_MS);
+    const timeoutMs = Number.isFinite(configured) && configured > 0 ? configured : 4000;
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
       const cmd = new S3.HeadObjectCommand({
         Bucket: this.#bucket,
-        Key: this._key(key),
-        ...(controller.signal ? { abortController: controller } : {})
+        Key: this._key(key)
       });
-      await this.#client.send(cmd);
-      return true;
-    } catch (err) {
-      if (err.name === 'NotFound' || err.name === 'NoSuchKey') return false;
-      if (err.name === 'AccessDenied') return false;
-      if (err.name === 'AbortError' || err.name === 'TimeoutError') {
-        console.warn('[S3Storage] exists() timeout', { key: String(key), timeoutMs });
-        return false;
+      const response = await this.#client.send(cmd, { abortSignal: controller.signal });
+      return {
+        state: 'present',
+        stat: {
+          size: response.ContentLength,
+          modifiedAt: response.LastModified,
+          createdAt: response.LastModified,
+          isDirectory: false,
+          isFile: true,
+          metadata: response.Metadata,
+          contentType: response.ContentType
+        }
+      };
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        return { state: 'missing', error };
       }
-      throw err;
+      return { state: 'unknown', error };
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  async checkExists(key) {
+    return this.#probe(key);
+  }
+
+  async exists(key) {
+    // exists() зовут из синхронных путей API (список файлов, заглушки,
+    // превью), поэтому зависшая проба не должна держать запрос. HEAD сам по
+    // себе мгновенный: превышение времени означает проблему со связью или
+    // правами, а не отсутствие объекта. Fail-safe: «не знаю» трактуем как
+    // «есть», иначе кратковременный сбой MinIO выглядит как пропажа файла
+    // и приводит к удалению метаданных/пропуску объекта при удалении.
+    const probe = await this.#probe(key);
+    if (probe.state === 'unknown') {
+      console.warn('[S3Storage] exists() не смог проверить объект, считаем существующим', {
+        key: String(key),
+        error: probe.error?.name || probe.error?.message || 'unknown'
+      });
+      return true;
+    }
+    return probe.state === 'present';
   }
 
   async list(prefix = '') {
@@ -253,17 +307,16 @@ export class S3Storage extends StorageProvider {
   }
 
   async stat(key) {
-    const cmd = new S3.HeadObjectCommand({ Bucket: this.#bucket, Key: this._key(key) });
-    const response = await this.#client.send(cmd);
-    return {
-      size: response.ContentLength,
-      modifiedAt: response.LastModified,
-      createdAt: response.LastModified,
-      isDirectory: false,
-      isFile: true,
-      metadata: response.Metadata,
-      contentType: response.ContentType
-    };
+    const probe = await this.#probe(key);
+    if (probe.state === 'present') return probe.stat;
+    if (probe.state === 'missing') {
+      const error = new Error(`S3 object not found: ${key}`);
+      error.name = 'NotFound';
+      error.code = 'NoSuchKey';
+      error.$metadata = { httpStatusCode: 404 };
+      throw error;
+    }
+    throw probe.error;
   }
 
   async createReadStream(key, range) {

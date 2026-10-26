@@ -573,6 +573,65 @@ export function needsOptimization(params) {
 }
 
 /**
+ * Гарантировать, что оригинал видео лежит в S3, даже если оптимизация не
+ * выполнялась (отключена, упала, отменена).
+ *
+ * Раньше видео коммитил только успешный оптимизатор. При выключенной
+ * оптимизации, ошибке ffmpeg или отмене файл оставался только на локальном
+ * диске — а диск в S3-режиме является временной рабочей областью.
+ *
+ * @returns {Promise<{committed: boolean, reason: string, key?: string, error?: Error}>}
+ */
+export async function ensureOriginalCommitted(filePath, storage, { deviceId, fileName } = {}) {
+  if (!storage || isLocalStorageBackend(storage)) {
+    return { committed: true, reason: 'local-storage' };
+  }
+  if (!filePath) {
+    return { committed: false, reason: 'no-path' };
+  }
+
+  if (fs.existsSync(filePath)) {
+    try {
+      const result = await syncFileToStorage(filePath, storage, {
+        deviceId,
+        fileName,
+        force: false,
+        removeLocal: true
+      });
+      return {
+        committed: result.synced === true,
+        reason: result.reason || (result.synced ? 'synced' : 'not-synced'),
+        key: result.key || null
+      };
+    } catch (error) {
+      logger.error('[VideoOpt] Не удалось закоммитить оригинал в S3', {
+        deviceId, fileName, error: error.message
+      });
+      return { committed: false, reason: 'sync-failed', error };
+    }
+  }
+
+  // Локальной копии нет — возможно, файл уже был закоммичен ранее.
+  try {
+    const key = toStorageKey(filePath);
+    const probe = typeof storage.checkExists === 'function'
+      ? await storage.checkExists(key)
+      : { state: (await storage.exists(key)) ? 'present' : 'missing' };
+    if (probe.state !== 'present') {
+      logger.warn('[VideoOpt] Оригинал не подтверждён в S3', {
+        deviceId, fileName, key, state: probe.state, error: probe.error?.message || null
+      });
+    }
+    return { committed: probe.state === 'present', reason: probe.state, key };
+  } catch (error) {
+    logger.warn('[VideoOpt] Не удалось проверить оригинал в S3', {
+      deviceId, fileName, error: error.message
+    });
+    return { committed: false, reason: 'check-failed', error };
+  }
+}
+
+/**
  * Автоматическая оптимизация видео для Android TV
  * @param {string} deviceId - ID устройства
  * @param {string} fileName - Имя файла
@@ -625,10 +684,6 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
   try {
     clearOptimizationCancelRequest(optimizationKey);
 
-    if (!videoOptConfig.enabled) {
-      return { success: false, message: 'Video optimization disabled' };
-    }
-
     // ИСПРАВЛЕНО: Получаем путь из БД для новой архитектуры storage
     const { getFileMetadata } = await import('../database/files-metadata.js');
     const metadata = await getFileMetadata(deviceId, fileName);
@@ -648,6 +703,21 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     const ext = path.extname(fileName).toLowerCase();
     if (!VIDEO_EXTENSIONS.has(ext)) {
       return { success: false, message: 'Not a video file' };
+    }
+
+    // Оптимизация выключена — это не повод оставлять видео только локально.
+    if (!videoOptConfig.enabled) {
+      const commit = await ensureOriginalCommitted(filePath, storage, { deviceId, fileName });
+      if (!commit.committed) {
+        logger.warn('[VideoOpt] Видео не закоммичено в S3 (оптимизация отключена)', {
+          deviceId, fileName, reason: commit.reason
+        });
+      }
+      return {
+        success: false,
+        message: 'Video optimization disabled',
+        committed: commit.committed
+      };
     }
 
     // S3 — основное хранилище, поэтому файла может не быть на диске.
@@ -710,8 +780,13 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
     throwIfOptimizationCancelled(optimizationKey);
 
     if (!params || !params.codec) {
+      const commit = await ensureOriginalCommitted(filePath, storage, { deviceId, fileName });
       deleteFileStatus(deviceId, fileName);
-      return { success: false, message: 'Cannot read video parameters' };
+      return {
+        success: false,
+        message: 'Cannot read video parameters',
+        committed: commit.committed
+      };
     }
 
     logger.info('[VideoOpt] Итоговые параметры файла', {
@@ -1103,6 +1178,14 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
         fs.unlinkSync(tempPath);
       }
 
+      // Отмена не должна оставлять оригинал только на локальном диске.
+      const commit = await ensureOriginalCommitted(filePath, storage, { deviceId, fileName });
+      if (!commit.committed) {
+        logger.warn('[VideoOpt] Оригинал не закоммичен в S3 после отмены', {
+          deviceId, fileName, reason: commit.reason
+        });
+      }
+
       setFileStatus(deviceId, fileName, {
         status: 'ready',
         progress: 100,
@@ -1124,6 +1207,15 @@ export async function autoOptimizeVideo(deviceId, fileName, devices, io, fileNam
       // Очищаем временный файл
       if (tempPath && fs.existsSync(tempPath)) {
         fs.unlinkSync(tempPath);
+      }
+
+      // Ошибка оптимизации не должна превращать видео в «локальное»:
+      // в S3-режиме оригинал обязан быть в хранилище.
+      const commit = await ensureOriginalCommitted(filePath, storage, { deviceId, fileName });
+      if (!commit.committed) {
+        logger.warn('[VideoOpt] Оригинал не закоммичен в S3 после ошибки', {
+          deviceId, fileName, reason: commit.reason
+        });
       }
 
       // Определяем причину ошибки для понятного сообщения

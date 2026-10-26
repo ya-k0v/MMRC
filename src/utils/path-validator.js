@@ -41,7 +41,11 @@ export function validatePath(userPath, baseDir) {
       ? fs.realpathSync.native(parent)
       : canonicalBase;
 
-    canonicalTarget = path.resolve(canonicalParent, path.basename(requestedPath));
+    // Сохраняем ВЕСЬ относительный хвост, а не только basename. Иначе для
+    // несуществующего вложенного пути (S3-only: data/content/<device>/file)
+    // результат схлопывался в data/content/file, и дальше строился неверный
+    // ключ хранилища. Проверка на выход за canonicalBase остаётся ниже.
+    canonicalTarget = path.resolve(canonicalParent, path.relative(parent, requestedPath));
   }
 
   if (!canonicalTarget.startsWith(canonicalBase + path.sep) && canonicalTarget !== canonicalBase) {

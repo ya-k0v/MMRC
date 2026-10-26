@@ -11,7 +11,7 @@
 // ========================================
 
 export const AUDIO_EXTENSIONS = ['mp3', 'aac', 'wav', 'flac', 'ogg', 'm4a', 'opus', 'weba'];
-export const VIDEO_EXTENSIONS = ['mp4', 'webm', 'ogg', 'mkv', 'mov', 'avi'];
+export const VIDEO_EXTENSIONS = ['mp4', 'm4v', 'webm', 'ogg', 'mkv', 'mov', 'avi'];
 export const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
 export const DOCUMENT_EXTENSIONS = ['pdf', 'pptx'];
 export const FOLDER_EXTENSIONS = ['zip'];
@@ -158,6 +158,7 @@ export function getMimeType(contentType, fileName = '') {
       weba: 'audio/webp',
       
       mp4: 'video/mp4',
+      m4v: 'video/mp4',
       webm: 'video/webm',
       mkv: 'video/x-matroska',
       mov: 'video/quicktime',

@@ -398,6 +398,7 @@ export async function deleteFileMetadata(deviceId, safeName) {
     });
     
     logFile('debug', 'File metadata deleted', { deviceId, safeName });
+    return true;
     
   } catch (error) {
     logger.error('Failed to delete file metadata after retries', { 
@@ -406,6 +407,7 @@ export async function deleteFileMetadata(deviceId, safeName) {
       deviceId, 
       safeName 
     });
+    return false;
   }
 }
 
@@ -493,8 +495,11 @@ export async function countFileReferences(filePath) {
     logFile('debug', 'File references counted', { filePath, count: Number(count) });
     return count;
   } catch (error) {
+    // null, а не 0: ноль означает «ссылок нет» и разрешает удалить объект.
+    // При ошибке БД мы этого не знаем, поэтому вызывающий код обязан
+    // сохранить файл.
     logger.error('Failed to count file references', { error: error.message, filePath });
-    return 0;
+    return null;
   }
 }
 
@@ -940,6 +945,7 @@ export async function cleanupMissingFiles({ deviceId = null, dryRun = false, sto
     let checked = 0;
     let missing = 0;
     let deleted = 0;
+    let unknown = 0;
     const errors = [];
     const missingFiles = [];
     
@@ -961,25 +967,46 @@ export async function cleanupMissingFiles({ deviceId = null, dryRun = false, sto
         // проверка только по диску считала бы КАЖДЫЙ успешно загруженный
         // файл отсутствующим и удаляла его метаданные: один клик в админке
         // очищал список всей библиотеки, хотя объекты лежали в бакете.
-        let exists = fs.existsSync(record.file_path);
+        //
+        // Удаляем только при доказанном missing. unknown (таймаут, 403,
+        // обрыв) — не повод стирать метаданные: объект может быть на месте.
+        let state = fs.existsSync(record.file_path) ? 'present' : 'missing';
 
-        if (!exists && activeStorage && !isLocalStorage(activeStorage)) {
+        if (state === 'missing' && activeStorage && !isLocalStorage(activeStorage)) {
           try {
-            if (await activeStorage.exists(toStorageKey(record.file_path))) {
-              exists = true;
+            const key = toStorageKey(record.file_path);
+            if (typeof activeStorage.checkExists === 'function') {
+              const probe = await activeStorage.checkExists(key);
+              state = probe.state;
+              if (state === 'unknown') {
+                logger.warn('[Cleanup] Storage check inconclusive, keeping metadata', {
+                  deviceId: record.device_id,
+                  safeName: record.safe_name,
+                  key,
+                  error: probe.error?.message || null
+                });
+              }
+            } else if (await activeStorage.exists(key)) {
+              state = 'present';
             }
-          } catch {
-            // Хранилище недоступно — считаем файл существующим.
-            // Иначе кратковременный обрыв сети удалил бы метаданные.
-            exists = true;
+          } catch (error) {
+            // Хранилище недоступно или путь вне data root — не доказательство
+            // отсутствия. Иначе кратковременный обрыв удалил бы метаданные.
+            state = 'unknown';
             logger.warn('[Cleanup] Storage unavailable, assuming file exists', {
               deviceId: record.device_id,
-              safeName: record.safe_name
+              safeName: record.safe_name,
+              error: error.message
             });
           }
         }
 
-        if (!exists) {
+        if (state === 'unknown') {
+          unknown++;
+          continue;
+        }
+
+        if (state === 'missing') {
           missing++;
           missingFiles.push({
             deviceId: record.device_id,
@@ -1000,7 +1027,10 @@ export async function cleanupMissingFiles({ deviceId = null, dryRun = false, sto
           // Удаляем запись из БД, если не dryRun
           if (!dryRun) {
             try {
-              await deleteFileMetadata(record.device_id, record.safe_name);
+              const removed = await deleteFileMetadata(record.device_id, record.safe_name);
+              if (!removed) {
+                throw new Error('deleteFileMetadata did not confirm deletion');
+              }
               deleted++;
               
               logger.info('[Cleanup] Deleted metadata for missing file', {
@@ -1041,6 +1071,7 @@ export async function cleanupMissingFiles({ deviceId = null, dryRun = false, sto
       checked,
       missing,
       deleted: dryRun ? 0 : deleted,
+      unknown,
       errors: errors.length,
       missingFiles: dryRun ? missingFiles : [],
       dryRun

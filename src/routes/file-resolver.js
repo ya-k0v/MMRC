@@ -6,6 +6,7 @@
 import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { getAnyFileMetadataBySafeName, getFileMetadata } from '../database/files-metadata.js';
 import { getDevicesPath } from '../config/settings-manager.js';
 import { sanitizeDeviceId } from '../utils/sanitize.js';
@@ -16,6 +17,7 @@ const logger = createModuleLogger('resolver');
 import { spawnFfmpeg } from '../utils/docker-ffmpeg.js';
 import { getCurrentStorage } from '../storage/current.js';
 import { isLocalStorage, toStorageKey } from '../storage/sync.js';
+import { getStorageErrorStatus, storageErrorBody } from '../storage/errors.js';
 import { getMimeType, resolveContentType } from '../config/file-types.js';
 
 const router = express.Router();
@@ -122,13 +124,19 @@ async function sendFileFromStorage(res, req, metadata, context = {}, storage) {
   // в БД не заполнен, поэтому берём его из самого объекта хранилища.
   let totalSize = Number(file_size) || 0;
   if (totalSize <= 0) {
-    const stat = await storage.stat(storageKey).catch((error) => {
+    try {
+      const stat = await storage.stat(storageKey);
+      totalSize = Number(stat?.size) || 0;
+    } catch (error) {
+      const status = getStorageErrorStatus(error);
       logger.warn('[Resolver] Не удалось получить размер объекта', {
-        ...context, storageKey, error: error.message
+        ...context, storageKey, status, error: error.message
       });
-      return null;
-    });
-    totalSize = Number(stat?.size) || 0;
+      if (!res.headersSent) {
+        return res.status(status).json(storageErrorBody(status));
+      }
+      return;
+    }
   }
 
   if (totalSize <= 0) {
@@ -194,6 +202,22 @@ async function sendFileFromStorage(res, req, metadata, context = {}, storage) {
     ? mime_type
     : getMimeType(resolveContentType({ contentType: content_type, fileName: safe_name }), safe_name);
 
+  // Сначала получаем поток, и только потом отправляем заголовки. Иначе
+  // NoSuchKey после res.set() уже нельзя превратить в честный 404.
+  let stream;
+  try {
+    stream = await storage.createReadStream(storageKey, { start, end });
+  } catch (error) {
+    const status = getStorageErrorStatus(error);
+    logger.warn('[Resolver] Storage stream failed', {
+      ...context, storageKey, status, error: error.message
+    });
+    if (!res.headersSent) {
+      return res.status(status).json(storageErrorBody(status));
+    }
+    return;
+  }
+
   res.status(statusCode);
   const headers = {
     'Content-Type': contentType,
@@ -211,18 +235,25 @@ async function sendFileFromStorage(res, req, metadata, context = {}, storage) {
   res.set(headers);
 
   try {
-    const stream = await storage.createReadStream(storageKey, { start, end });
-    stream.pipe(res);
-    stream.on('error', (streamErr) => {
-      logger.error('[Resolver] Storage stream error', { error: streamErr.message, ...context });
-      if (!res.headersSent) res.status(500).end();
+    await pipeline(stream, res);
+    logger.debug('[Resolver] Storage stream complete', { ...context, bytes: end - start + 1 });
+  } catch (error) {
+    if (isExpectedClientDisconnectError(error)) {
+      logger.debug('[Resolver] Client disconnected during storage send', {
+        ...context, error: error.message, code: error.code
+      });
+      return;
+    }
+
+    logger.error('[Resolver] Storage stream error', {
+      error: error.message, ...context
     });
-    stream.on('end', () => {
-      logger.debug('[Resolver] Storage stream complete', { ...context, bytes: end - start + 1 });
-    });
-  } catch (err) {
-    logger.error('[Resolver] Storage stream failed', { error: err.message, ...context });
-    if (!res.headersSent) res.status(500).send('Error streaming file');
+    // Заголовки уже ушли — JSON отправить нельзя, обрываем соединение.
+    if (!res.headersSent && !res.destroyed) {
+      res.status(500).end();
+    } else if (!res.destroyed && typeof res.destroy === 'function') {
+      res.destroy(error);
+    }
   }
 }
 

@@ -15,6 +15,24 @@ export class StorageProvider {
     throw new Error('not implemented');
   }
 
+  /**
+   * Проверка существования с тремя состояниями.
+   *
+   * `exists()` намеренно возвращает boolean и в спорных случаях (таймаут,
+   * нет прав, обрыв сети) отвечает true, чтобы не выдать рабочий файл за
+   * пропавший. Для решений, где ошибка «не знаю» недопустима (очистка
+   * метаданных, дедупликация, подтверждение загрузки), нужен явный state.
+   *
+   * @returns {Promise<{state: 'present'|'missing'|'unknown', error?: Error}>}
+   */
+  async checkExists(key) {
+    try {
+      return { state: (await this.exists(key)) ? 'present' : 'missing' };
+    } catch (error) {
+      return { state: 'unknown', error };
+    }
+  }
+
   async list(prefix = '') {
     throw new Error('not implemented');
   }

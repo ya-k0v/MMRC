@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
-import archiver from 'archiver';
+import { pipeline } from 'node:stream/promises';
 import sanitizeFilename from 'sanitize-filename';
 import { spawn } from 'node:child_process';
 import { getDevicesPath, getDataRoot } from '../config/settings-manager.js';
@@ -24,6 +24,8 @@ import { createModuleLogger, logFile, logSecurity } from '../utils/logger.js';
 const logger = createModuleLogger('file');
 import { setCurrentStorage, getCurrentStorage } from '../storage/current.js';
 import { commitFolderToStorage, copyFolderEverywhere, isLocalStorage, toStorageKey } from '../storage/sync.js';
+import { createZipArchiveFromFolder, downloadFolderFromStorage } from '../storage/folder-archive.js';
+import { getStorageErrorStatus, storageErrorBody, isClientDisconnectError } from '../storage/errors.js';
 import { LocalStorage } from '../storage/local.js';
 import { validatePath } from '../utils/path-validator.js';
 import { fetchPublicUrl, assertPublicHttpUrl } from '../utils/ssrf.js';
@@ -433,55 +435,6 @@ async function probeMediaInfo(filePath, timeoutMs = 30000) {
   });
 }
 
-async function createZipArchiveFromFolder(sourceFolderPath, outputZipPath) {
-  const folderPath = validatePath(path.resolve(sourceFolderPath), getDataRoot());
-  const safeOutputZipPath = validatePath(path.resolve(outputZipPath), os.tmpdir());
-
-  await new Promise((resolve, reject) => {
-    const output = fs.createWriteStream(safeOutputZipPath);
-    const archive = archiver('zip', { zlib: { level: 9 } });
-
-    output.on('close', resolve);
-    output.on('error', reject);
-    archive.on('error', reject);
-
-    archive.pipe(output);
-    archive.directory(folderPath, false);
-    archive.finalize();
-  });
-}
-
-/**
- * Скачать содержимое папки из хранилища во временный каталог.
- *
- * Нужно для скачивания PDF/PPTX/папки изображений: после перехода на
- * S3-primary на диске их нет, а archiver.directory() умеет работать только
- * с файловой системой. Раскладка вложенности сохраняется.
- */
-async function downloadFolderFromStorage(folderPath, targetDir, storage) {
-  const prefix = `${toStorageKey(folderPath).replace(/\\/g, '/')}/`;
-  const keys = (await storage.list(prefix)) || [];
-
-  for (const key of keys) {
-    if (!key.startsWith(prefix) || key.endsWith('/')) continue;
-
-    const relative = key.slice(prefix.length);
-    const destination = validatePath(path.join(targetDir, relative), targetDir);
-
-    fs.mkdirSync(path.dirname(destination), { recursive: true });
-    const readStream = await storage.createReadStream(key);
-    await new Promise((resolve, reject) => {
-      const out = fs.createWriteStream(destination);
-      out.on('close', resolve);
-      out.on('error', reject);
-      readStream.on('error', reject);
-      readStream.pipe(out);
-    });
-  }
-
-  return keys.length;
-}
-
 function safeDownloadFileName(fileName = '', fallback = 'download') {
   const normalized = String(fileName || '')
     .replace(/[\r\n]/g, '')
@@ -863,9 +816,30 @@ export async function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
     try {
       const key = path.relative(getDataRoot(), path.resolve(String(filePath)));
       if (key.startsWith('..')) return false;
+
+      if (typeof storage.checkExists === 'function') {
+        const probe = await storage.checkExists(key);
+        if (probe.state === 'present') return true;
+        if (probe.state === 'unknown') {
+          // Недоступное хранилище не должно скрывать файл из списка.
+          logger.warn('[updateDeviceFilesFromDB] Не удалось проверить файл в хранилище', {
+            filePath,
+            key,
+            error: probe.error?.message || null
+          });
+          return true;
+        }
+
+        // Папка в S3 — это префикс, а не объект.
+        const prefix = `${key.replace(/\\/g, '/')}/`;
+        const entries = await storage.list(prefix).catch(() => null);
+        return Array.isArray(entries) && entries.length > 0;
+      }
+
       return await storage.exists(key);
     } catch {
-      return false;
+      // Fail-open: ошибка проверки — не доказательство отсутствия.
+      return true;
     }
   }
   
@@ -4286,7 +4260,7 @@ export function createFilesRouter(deps) {
                 // Автоматическая оптимизация видео в фоне (после обработки метаданных)
           for (const fileName of uploaded) {
             const ext = path.extname(fileName).toLowerCase();
-            if (['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) {
+            if (VIDEO_PROCESSING_EXTENSIONS.has(ext)) {
                     autoOptimizeVideoWrapper(id, fileName)
                       .then(result => {
                 if (result.success) {
@@ -4845,14 +4819,23 @@ export function createFilesRouter(deps) {
 
         const metadataBaseName = sanitizeFilename(path.basename(resolvedTarget));
 
-        if (metadataBaseName && (metadataBaseName === name || metadataBaseName === folderCandidateName)) {
-          targetPath = resolvedTarget;
-          targetValidationRoot = safeDevicesPath;
+        // Не требуем совпадения basename с запрошенным именем. При
+        // дедупликации запись устройства-получателя имеет свой safe_name
+        // (например, new.mp4), а file_path указывает на физический файл
+        // устройства-источника (old.mp4). Воспроизведение при этом работало,
+        // а скачивание отдавало 404. Запись уже выбрана по (deviceId, name),
+        // а путь проверен через validatePath под devicesPath.
+        targetPath = resolvedTarget;
+        targetValidationRoot = safeDevicesPath;
 
-          logger.info('[download] Using metadata file_path fallback', {
-            deviceId: id, name, metadataPath: resolvedTarget, resolutionSource
-          });
-        }
+        logger.info('[download] Using metadata file_path fallback', {
+          deviceId: id,
+          name,
+          metadataPath: resolvedTarget,
+          metadataBaseName,
+          basenameMatches: metadataBaseName === name || metadataBaseName === folderCandidateName,
+          resolutionSource
+        });
       } catch (error) {
         logger.warn('[download] Metadata file_path fallback failed', {
           deviceId: id, name, metadataPath: metadata.file_path, error: error.message
@@ -4938,7 +4921,9 @@ export function createFilesRouter(deps) {
             cleanupTemp();
             return res.status(404).json({ error: 'Папка пуста или не найдена в хранилище' });
           }
-          await createZipArchiveFromFolder(stagedDir, zipPath);
+          // Источник теперь во временном каталоге, а не в data root —
+          // валидируем его относительно tempDirPath.
+          await createZipArchiveFromFolder(stagedDir, zipPath, { sourceRoot: tempDirPath });
         }
 
         setSafeDownloadFileNameHeader(res, zipName);
@@ -4980,43 +4965,70 @@ export function createFilesRouter(deps) {
 
     setSafeDownloadFileNameHeader(res, fileNameForDownload);
 
-    const storageKey = toStorageKey(downloadTargetPath);
+    let storageKey;
     try {
-      const readStream = await storage.createReadStream(storageKey);
-      const fileStat = await storage.stat(storageKey);
-      res.setHeader('Content-Length', fileStat.size);
-      readStream.pipe(res);
-      readStream.on('error', (error) => {
-        logger.error('[download] Failed to send file', {
-          deviceId: id, name, targetPath: downloadTargetPath, error: error.message
-        });
-        if (!res.headersSent) {
-          res.status(500).json({ error: 'Ошибка передачи файла' });
-        }
+      storageKey = toStorageKey(downloadTargetPath);
+    } catch (error) {
+      logger.error('[download] Не удалось построить ключ хранилища', {
+        deviceId: id, name, targetPath: downloadTargetPath, error: error.message
       });
-    } catch (storageErr) {
-      // Fallback only works for local filesystem storage (e.g. LocalStorage).
-      // S3Storage inherits resolve() from StorageProvider but throws.
-      if (typeof storage.resolve === 'function') {
-        try {
-          const localPath = storage.resolve(storageKey);
-          return res.download(localPath, fileNameForDownload, (error) => {
-            if (!error) return;
-            logger.error('[download] Failed to send file', {
-              deviceId: id, name, targetPath: downloadTargetPath, fileNameForDownload, error: error.message
-            });
-            if (!res.headersSent) {
-              res.status(500).json({ error: 'Ошибка передачи файла' });
-            }
-          });
-        } catch {
-          // resolve() not supported by this storage type (e.g. S3) — fall through
-        }
+      return res.status(400).json({ error: 'Неверный путь к файлу' });
+    }
+
+    // stat до заголовков: NoSuchKey/таймаут должны стать 404/503, а не 500
+    // после того, как ответ уже начал отправляться.
+    let fileStat;
+    try {
+      fileStat = await storage.stat(storageKey);
+    } catch (error) {
+      const status = getStorageErrorStatus(error);
+      logger.warn('[download] Не удалось получить файл из хранилища', {
+        deviceId: id, name, targetPath: downloadTargetPath, key: storageKey,
+        status, error: error.message
+      });
+      if (!res.headersSent) {
+        return res.status(status).json(storageErrorBody(status));
       }
-      logger.error('[download] Storage download failed', {
-        deviceId: id, name, targetPath: downloadTargetPath, error: storageErr.message
+      return;
+    }
+
+    let readStream;
+    try {
+      readStream = await storage.createReadStream(storageKey);
+    } catch (error) {
+      const status = getStorageErrorStatus(error);
+      logger.warn('[download] Не удалось открыть поток хранилища', {
+        deviceId: id, name, targetPath: downloadTargetPath, key: storageKey,
+        status, error: error.message
       });
-      return res.status(500).json({ error: 'Ошибка передачи файла' });
+      if (!res.headersSent) {
+        return res.status(status).json(storageErrorBody(status));
+      }
+      return;
+    }
+
+    const contentLength = Number(fileStat?.size);
+    if (Number.isFinite(contentLength) && contentLength >= 0) {
+      res.setHeader('Content-Length', contentLength);
+    }
+    try {
+      await pipeline(readStream, res);
+    } catch (error) {
+      if (isClientDisconnectError(error)) {
+        logger.debug('[download] Клиент прервал скачивание', {
+          deviceId: id, name, error: error.message
+        });
+        return;
+      }
+
+      logger.error('[download] Failed to send file', {
+        deviceId: id, name, targetPath: downloadTargetPath, error: error.message
+      });
+      if (!res.headersSent && !res.destroyed) {
+        res.status(500).json({ error: 'Ошибка передачи файла' });
+      } else if (!res.destroyed && typeof res.destroy === 'function') {
+        res.destroy(error);
+      }
     }
   });
   
@@ -5289,8 +5301,17 @@ export function createFilesRouter(deps) {
       if (metadata) {
         physicalPath = metadata.file_path;
         
-        // 2. Удаляем запись из БД
-        await deleteFileMetadata(id, name);
+        // 2. Удаляем запись из БД. Если это не удалось, не трогаем
+        // физический объект: иначе файл исчезнет, а запись останется.
+        const metadataRemoved = await deleteFileMetadata(id, name);
+        if (!metadataRemoved) {
+          logFile('error', 'Не удалось удалить метаданные файла', {
+            deviceId: id,
+            fileName: name,
+            physicalPath
+          });
+          return res.status(500).json({ error: 'Не удалось удалить метаданные файла' });
+        }
         
         // 3. Подсчитываем сколько еще устройств используют этот файл
         const refCount = await countFileReferences(physicalPath);
@@ -5309,7 +5330,16 @@ export function createFilesRouter(deps) {
         // ложным, и объект оставался в бакете навсегда — при том, что UI
         // рапортовал об успешном удалении. Раньше устаревший комментарий
         // делал вид, что удаление работает.
-        if (refCount === 0) {
+        //
+        // refCount === null означает ошибку БД: сколько ссылок осталось —
+        // неизвестно, поэтому физический файл не трогаем.
+        if (refCount === null) {
+          logFile('warn', 'Не удалось подсчитать ссылки, физический файл оставлен', {
+            deviceId: id,
+            fileName: name,
+            physicalPath
+          });
+        } else if (refCount === 0) {
           try {
             let deletedAnywhere = false;
 
@@ -5624,7 +5654,7 @@ for (let i = 0; i < files.length; i++) {
           durationSeconds = Math.round(metadata.video_duration);
         }
 
-        if (metadata.md5_hash && ['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) {
+        if (metadata.md5_hash && ['.mp4', '.m4v', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) {
           try {
             const trailerPath = getTrailerPath(metadata.md5_hash);
             // Трейлер коммитится в S3 и локальной копии не имеет, поэтому
@@ -5654,7 +5684,7 @@ for (let i = 0; i < files.length; i++) {
         }
         
         // Разрешение для видео файлов
-        if (['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) {
+        if (['.mp4', '.m4v', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) {
           if (metadata.video_width && metadata.video_height) {
             resolution = {
               width: metadata.video_width,
@@ -5665,7 +5695,7 @@ for (let i = 0; i < files.length; i++) {
       }
 
       // Дополнительный ffprobe fallback для старых файлов
-      if (['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) {
+      if (['.mp4', '.m4v', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) {
         const devicesPath = getDevicesPath();
         const deviceFolderPath = path.join(devicesPath, id);
         const filePath = (metadata && metadata.file_path) || path.join(deviceFolderPath, safeName);

@@ -64,6 +64,18 @@ export class LocalStorage extends StorageProvider {
     }
   }
 
+  async checkExists(key) {
+    try {
+      await fsp.access(this._resolve(key));
+      return { state: 'present' };
+    } catch (error) {
+      // ENOENT — доказанное отсутствие. EACCES, EIO, ENOTDIR и прочее —
+      // «проверить не удалось»; вызывающий код не должен удалять метаданные.
+      if (error.code === 'ENOENT') return { state: 'missing', error };
+      return { state: 'unknown', error };
+    }
+  }
+
   async list(prefix = '') {
     const dir = this._resolve(prefix);
     try {
