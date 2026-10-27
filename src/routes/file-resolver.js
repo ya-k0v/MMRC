@@ -17,7 +17,7 @@ const logger = createModuleLogger('resolver');
 import { spawnFfmpeg } from '../utils/docker-ffmpeg.js';
 import { getCurrentStorage } from '../storage/current.js';
 import { isLocalStorage, toStorageKey } from '../storage/sync.js';
-import { getStorageErrorStatus, storageErrorBody } from '../storage/errors.js';
+import { getStorageErrorStatus, storageErrorBody, isClientDisconnectError } from '../storage/errors.js';
 import { getMimeType, resolveContentType } from '../config/file-types.js';
 
 const router = express.Router();
@@ -27,26 +27,6 @@ function normalizeFileNameParam(paramValue) {
     return paramValue.join('/');
   }
   return typeof paramValue === 'string' ? paramValue : '';
-}
-
-function isExpectedClientDisconnectError(err) {
-  if (!err) return false;
-
-  const message = String(err.message || '').toLowerCase();
-  const code = String(err.code || '').toUpperCase();
-  const statusCode = Number(err.statusCode || err.status || 0);
-
-  return (
-    code === 'ECONNABORTED' ||
-    code === 'ECONNRESET' ||
-    code === 'EPIPE' ||
-    statusCode === 499 ||
-    message.includes('request aborted') ||
-    message.includes('aborted') ||
-    message.includes('write epipe') ||
-    message.includes('socket hang up') ||
-    message.includes('premature close')
-  );
 }
 
 /**
@@ -92,7 +72,7 @@ function sendFileFromDisk(res, req, metadata, context = {}) {
         if (!res.headersSent) {
           res.status(416).set('Content-Range', `bytes */${file_size || 0}`).send('Range Not Satisfiable');
         }
-      } else if (isExpectedClientDisconnectError(err)) {
+      } else if (isClientDisconnectError(err)) {
         logger.debug('[Resolver] Client disconnected during file send', {
           ...context, error: err.message, code: err.code, statusCode: err.statusCode || err.status
         });
@@ -122,8 +102,11 @@ async function sendFileFromStorage(res, req, metadata, context = {}, storage) {
   // Range — пустой 200 с Content-Length: 0, то есть видео не играло вообще.
   // Для части записей (в том числе у только что помеченных заглушек) размер
   // в БД не заполнен, поэтому берём его из самого объекта хранилища.
+  // Локальный backend проверяем всегда: fs.stat дешёвый, а metadata.file_size
+  // мог устареть. Для S3 лишний HEAD на каждый Range-запрос не нужен —
+  // отсутствующий объект и так даст NoSuchKey до отправки заголовков.
   let totalSize = Number(file_size) || 0;
-  if (totalSize <= 0) {
+  if (totalSize <= 0 || storage.isLocal === true) {
     try {
       const stat = await storage.stat(storageKey);
       totalSize = Number(stat?.size) || 0;
@@ -238,7 +221,7 @@ async function sendFileFromStorage(res, req, metadata, context = {}, storage) {
     await pipeline(stream, res);
     logger.debug('[Resolver] Storage stream complete', { ...context, bytes: end - start + 1 });
   } catch (error) {
-    if (isExpectedClientDisconnectError(error)) {
+    if (isClientDisconnectError(error)) {
       logger.debug('[Resolver] Client disconnected during storage send', {
         ...context, error: error.message, code: error.code
       });
@@ -572,7 +555,7 @@ router.get('/preview/:deviceId/*fileName', async (req, res) => {
           if (err.message === 'Range Not Satisfiable') {
             logger.warn('[Preview] Range not satisfiable', { deviceId, fileName, range: req.headers.range, fileSize: metadata.file_size });
             if (!res.headersSent) res.status(416).set('Content-Range', `bytes */${metadata.file_size}`).send('Range Not Satisfiable');
-          } else if (isExpectedClientDisconnectError(err)) {
+          } else if (isClientDisconnectError(err)) {
             logger.debug('[Preview] Client disconnected', { deviceId, fileName, error: err.message });
           } else {
             logger.error('[Preview] Error sending file', { error: err.message, deviceId, fileName });
@@ -583,50 +566,12 @@ router.get('/preview/:deviceId/*fileName', async (req, res) => {
       return;
     }
 
-    // Файл не на диске, но есть storage — шлём через storage
-    const dataRoot = getDataRoot();
-    const storageKey = path.relative(dataRoot, metadata.file_path);
-    if (storageKey.startsWith('..')) {
-      return res.status(403).send('Forbidden');
-    }
-
-    const totalSize = metadata.file_size || 0;
-    let start = 0;
-    let end = totalSize - 1;
-    let statusCode = 200;
-
-    if (req.headers.range) {
-      const parts = req.headers.range.replace(/bytes=/, '').split('-');
-      start = parseInt(parts[0], 10) || 0;
-      end = parts[1] ? parseInt(parts[1], 10) : totalSize - 1;
-      if (start >= totalSize) {
-        return res.status(416).set('Content-Range', `bytes */${totalSize}`).end();
-      }
-      statusCode = 206;
-    }
-
-    res.status(statusCode);
-    res.set({
-      'Content-Type': mime || 'video/mp4',
-      'Content-Range': `bytes ${start}-${end}/${totalSize}`,
-      'Content-Length': end - start + 1,
-      'Accept-Ranges': 'bytes',
-      'X-Accel-Buffering': 'no',
-      'Cache-Control': 'public, max-age=3600'
-    });
-
-    try {
-      const stream = await storage.createReadStream(storageKey, { start, end });
-      stream.pipe(res);
-      stream.on('error', (streamErr) => {
-        logger.error('[Preview] Storage stream error', { error: streamErr.message, deviceId, fileName });
-        if (!res.headersSent) res.status(500).end();
-      });
-    } catch (err) {
-      logger.error('[Preview] Storage stream failed', { error: err.message, deviceId, fileName });
-      if (!res.headersSent) res.status(500).send('Error streaming file');
-    }
-    return;
+    // Файл не на диске, но есть storage. Не дублируем Range/pipeline/404 —
+    // отдаём тем же кодом, что и обычное скачивание.
+    return sendFileFromStorage(
+      res, req, metadata,
+      { deviceId, fileName, kind: 'preview' }, storage
+    );
   }
   
   // Для стримов используем ffmpeg

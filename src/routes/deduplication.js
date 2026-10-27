@@ -16,6 +16,7 @@ const logger = createModuleLogger('file');
 import { VIDEO_EXTENSIONS } from '../config/file-types.js';
 import { getCurrentStorage } from '../storage/current.js';
 import { isLocalStorage, toStorageKey } from '../storage/sync.js';
+import { probeStorageKey } from '../storage/probe.js';
 
 const router = express.Router();
 
@@ -149,15 +150,11 @@ export function createDeduplicationRouter(deps) {
 
       if (sourceState === 'missing' && storage && !isLocalStorage(storage)) {
         try {
-          const key = toStorageKey(sourceMetadata.file_path);
-          if (typeof storage.checkExists === 'function') {
-            const probe = await storage.checkExists(key);
-            sourceState = probe.state;
-          } else {
-            sourceState = (await storage.exists(key)) ? 'present' : 'missing';
-          }
+          const probe = await probeStorageKey(storage, toStorageKey(sourceMetadata.file_path));
+          sourceState = probe.state;
         } catch {
-          // Не смогли проверить — нельзя утверждать, что файла нет.
+          // Не смогли построить ключ (путь вне data root) — нельзя
+          // утверждать, что файла нет.
           sourceState = 'unknown';
         }
       }

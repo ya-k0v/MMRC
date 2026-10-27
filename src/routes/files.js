@@ -27,6 +27,7 @@ import { commitFolderToStorage, copyFolderEverywhere, isLocalStorage, toStorageK
 import { createZipArchiveFromFolder, downloadFolderFromStorage } from '../storage/folder-archive.js';
 import { getStorageErrorStatus, storageErrorBody, isClientDisconnectError } from '../storage/errors.js';
 import { LocalStorage } from '../storage/local.js';
+import { probeStorageKey } from '../storage/probe.js';
 import { validatePath } from '../utils/path-validator.js';
 import { fetchPublicUrl, assertPublicHttpUrl } from '../utils/ssrf.js';
 import { getCachedResolution, clearResolutionCache } from '../video/resolution-cache.js';
@@ -40,7 +41,7 @@ import { getUserDevices, hasDeviceAccess, checkDeviceAccess } from '../middlewar
 import { validateUploadSize } from '../middleware/multer-config.js';
 import { validateFilesAsync } from '../middleware/file-validation.js';
 import { getDatabase } from '../database/database.js';
-import { resolveContentType, STATIC_CONTENT_TYPES, VIDEO_EXTENSIONS } from '../config/file-types.js';
+import { resolveContentType, STATIC_CONTENT_TYPES, VIDEO_EXTENSIONS, VIDEO_EXTENSIONS_DOTTED } from '../config/file-types.js';
 import { ensureLocalYtDlpBinary } from '../utils/yt-dlp.js';
 import { needsFaststart } from '../video/mp4-faststart.js';
 import { needsOptimization, getVideoOptConfig } from '../video/optimizer.js';
@@ -48,7 +49,7 @@ import { notificationsManager } from '../utils/notifications.js';
 import { jobResourceManager } from '../utils/job-resource-manager.js';
 
 const STREAM_PROTOCOLS = new Set(['auto', 'hls', 'dash']);
-const VIDEO_PROCESSING_EXTENSIONS = new Set(['.mp4', '.webm', '.ogg', '.mkv', '.mov', '.avi', '.m4v']);
+const VIDEO_PROCESSING_EXTENSIONS = new Set(VIDEO_EXTENSIONS_DOTTED);
 const MP4_COMPATIBLE_EXTENSIONS = new Set(['.mp4', '.m4v']);
 const AUDIO_COMPATIBLE_CODECS = new Set(['aac', 'mp3']);
 const YTDLP_FINAL_PATH_MARKER = '__VC_FINAL_PATH__';
@@ -817,26 +818,22 @@ export async function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
       const key = path.relative(getDataRoot(), path.resolve(String(filePath)));
       if (key.startsWith('..')) return false;
 
-      if (typeof storage.checkExists === 'function') {
-        const probe = await storage.checkExists(key);
-        if (probe.state === 'present') return true;
-        if (probe.state === 'unknown') {
-          // Недоступное хранилище не должно скрывать файл из списка.
-          logger.warn('[updateDeviceFilesFromDB] Не удалось проверить файл в хранилище', {
-            filePath,
-            key,
-            error: probe.error?.message || null
-          });
-          return true;
-        }
-
-        // Папка в S3 — это префикс, а не объект.
-        const prefix = `${key.replace(/\\/g, '/')}/`;
-        const entries = await storage.list(prefix).catch(() => null);
-        return Array.isArray(entries) && entries.length > 0;
+      const probe = await probeStorageKey(storage, key);
+      if (probe.state === 'present') return true;
+      if (probe.state === 'unknown') {
+        // Недоступное хранилище не должно скрывать файл из списка.
+        logger.warn('[updateDeviceFilesFromDB] Не удалось проверить файл в хранилище', {
+          filePath,
+          key,
+          error: probe.error?.message || null
+        });
+        return true;
       }
 
-      return await storage.exists(key);
+      // Папка в S3 — это префикс, а не объект.
+      const prefix = `${key.replace(/\\/g, '/')}/`;
+      const entries = await storage.list(prefix).catch(() => null);
+      return Array.isArray(entries) && entries.length > 0;
     } catch {
       // Fail-open: ошибка проверки — не доказательство отсутствия.
       return true;
@@ -5654,7 +5651,7 @@ for (let i = 0; i < files.length; i++) {
           durationSeconds = Math.round(metadata.video_duration);
         }
 
-        if (metadata.md5_hash && ['.mp4', '.m4v', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) {
+        if (metadata.md5_hash && VIDEO_PROCESSING_EXTENSIONS.has(ext)) {
           try {
             const trailerPath = getTrailerPath(metadata.md5_hash);
             // Трейлер коммитится в S3 и локальной копии не имеет, поэтому
@@ -5684,7 +5681,7 @@ for (let i = 0; i < files.length; i++) {
         }
         
         // Разрешение для видео файлов
-        if (['.mp4', '.m4v', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) {
+        if (VIDEO_PROCESSING_EXTENSIONS.has(ext)) {
           if (metadata.video_width && metadata.video_height) {
             resolution = {
               width: metadata.video_width,
@@ -5695,7 +5692,7 @@ for (let i = 0; i < files.length; i++) {
       }
 
       // Дополнительный ffprobe fallback для старых файлов
-      if (['.mp4', '.m4v', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) {
+      if (VIDEO_PROCESSING_EXTENSIONS.has(ext)) {
         const devicesPath = getDevicesPath();
         const deviceFolderPath = path.join(devicesPath, id);
         const filePath = (metadata && metadata.file_path) || path.join(deviceFolderPath, safeName);

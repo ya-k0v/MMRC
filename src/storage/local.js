@@ -55,13 +55,14 @@ export class LocalStorage extends StorageProvider {
     }
   }
 
+  /**
+   * Fail-safe, как и S3Storage.exists(): false только при доказанном
+   * отсутствии. EACCES/EIO/ENOTDIR — «проверить не удалось», иначе один
+   * сбой файловой системы выглядел бы как пропажа файла.
+   */
   async exists(key) {
-    try {
-      await fsp.access(this._resolve(key));
-      return true;
-    } catch {
-      return false;
-    }
+    const probe = await this.checkExists(key);
+    return probe.state !== 'missing';
   }
 
   async checkExists(key) {

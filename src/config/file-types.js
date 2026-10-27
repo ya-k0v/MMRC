@@ -12,6 +12,8 @@
 
 export const AUDIO_EXTENSIONS = ['mp3', 'aac', 'wav', 'flac', 'ogg', 'm4a', 'opus', 'weba'];
 export const VIDEO_EXTENSIONS = ['mp4', 'm4v', 'webm', 'ogg', 'mkv', 'mov', 'avi'];
+// Те же расширения с точкой — для кода, который сравнивает path.extname().
+export const VIDEO_EXTENSIONS_DOTTED = VIDEO_EXTENSIONS.map(ext => `.${ext}`);
 export const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
 export const DOCUMENT_EXTENSIONS = ['pdf', 'pptx'];
 export const FOLDER_EXTENSIONS = ['zip'];
@@ -206,6 +208,7 @@ export function getFileTypeInfo(fileName) {
 export default {
   AUDIO_EXTENSIONS,
   VIDEO_EXTENSIONS,
+  VIDEO_EXTENSIONS_DOTTED,
   IMAGE_EXTENSIONS,
   DOCUMENT_EXTENSIONS,
   FOLDER_EXTENSIONS,

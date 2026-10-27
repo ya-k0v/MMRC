@@ -33,5 +33,8 @@ describe('LocalStorage.checkExists', () => {
     const probe = await storage.checkExists('plain.txt/child');
     expect(probe.state).toBe('unknown');
     expect(probe.error.code).toBe('ENOTDIR');
+
+    // exists() тоже fail-safe: unknown не должен выглядеть как пропажа.
+    await expect(storage.exists('plain.txt/child')).resolves.toBe(true);
   });
 });

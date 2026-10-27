@@ -19,6 +19,7 @@ import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { getDataRoot, getTempDir } from '../config/settings-manager.js';
 import { createModuleLogger } from '../utils/logger.js';
+import { probeStorageKey } from './probe.js';
 
 const logger = createModuleLogger('storage');
 
@@ -94,9 +95,7 @@ export async function syncFileToStorage(localPath, storage, options = {}) {
   //
   // Проверка строгая: unknown (таймаут, 403, обрыв) — не доказательство
   // записи. В этом случае бросаем ошибку и НЕ удаляем локальную копию.
-  const probe = typeof storage.checkExists === 'function'
-    ? await storage.checkExists(key)
-    : { state: (await storage.exists(key)) ? 'present' : 'missing' };
+  const probe = await probeStorageKey(storage, key);
   if (probe.state !== 'present') {
     const reason = probe.state === 'unknown'
       ? `не удалось проверить объект (${probe.error?.name || probe.error?.message || 'unknown error'})`
@@ -201,9 +200,7 @@ export async function materializeToLocal(localPath, storage, options = {}) {
     return null;
   }
 
-  const probe = typeof storage.checkExists === 'function'
-    ? await storage.checkExists(key).catch((error) => ({ state: 'unknown', error }))
-    : { state: (await storage.exists(key).catch(() => false)) ? 'present' : 'missing' };
+  const probe = await probeStorageKey(storage, key);
 
   if (probe.state !== 'present') {
     logger.error(

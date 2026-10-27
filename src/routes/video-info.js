@@ -20,9 +20,10 @@ import {
   createScratchPath,
   removeLocalCopy
 } from '../storage/sync.js';
+import { VIDEO_EXTENSIONS_DOTTED } from '../config/file-types.js';
 
 const router = express.Router();
-const VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.webm', '.ogg', '.mkv', '.mov', '.avi']);
+const VIDEO_EXTENSIONS = new Set(VIDEO_EXTENSIONS_DOTTED);
 
 function normalizeStatus(statusValue) {
   return String(statusValue || '').toLowerCase();

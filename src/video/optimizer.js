@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { VIDEO_OPTIMIZATION_CONFIG_PATH } from '../config/constants.js';
+import { VIDEO_EXTENSIONS_DOTTED } from '../config/file-types.js';
 import { getDevicesPath, getDataRoot } from '../config/settings-manager.js';
 import { checkVideoParameters } from './ffmpeg-wrapper.js';
 import { setFileStatus, deleteFileStatus, getFileStatus } from './file-status.js';
@@ -23,6 +24,7 @@ import {
   removeLocalCopy,
   createScratchPath
 } from '../storage/sync.js';
+import { probeStorageKey } from '../storage/probe.js';
 
 function parseNonNegativeInt(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -304,7 +306,7 @@ export function getVideoOptConfig() {
   return videoOptConfig;
 }
 
-const VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.webm', '.ogg', '.mkv', '.mov', '.avi']);
+const VIDEO_EXTENSIONS = new Set(VIDEO_EXTENSIONS_DOTTED);
 const MP4_LIKE_EXTENSIONS = new Set(['.mp4', '.m4v']);
 const UNSUPPORTED_PROFILES = new Set(['High 10', 'High 4:2:2', 'High 4:4:4 Predictive']);
 const FOUR_K_WIDTH = 3840;
@@ -614,9 +616,7 @@ export async function ensureOriginalCommitted(filePath, storage, { deviceId, fil
   // Локальной копии нет — возможно, файл уже был закоммичен ранее.
   try {
     const key = toStorageKey(filePath);
-    const probe = typeof storage.checkExists === 'function'
-      ? await storage.checkExists(key)
-      : { state: (await storage.exists(key)) ? 'present' : 'missing' };
+    const probe = await probeStorageKey(storage, key);
     if (probe.state !== 'present') {
       logger.warn('[VideoOpt] Оригинал не подтверждён в S3', {
         deviceId, fileName, key, state: probe.state, error: probe.error?.message || null

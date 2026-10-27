@@ -13,15 +13,18 @@ import { ensureTrailerForFile } from '../video/trailer-generator.js';
 import { getConvertedCache } from '../config/settings-manager.js';
 import { getFolderImagesCount } from '../converters/folder-converter.js';
 import { getDevicesPath } from '../config/settings-manager.js';
-import { IMAGE_EXTENSIONS } from '../config/file-types.js';
+import { IMAGE_EXTENSIONS, VIDEO_EXTENSIONS_DOTTED } from '../config/file-types.js';
 import { getCurrentStorage } from '../storage/current.js';
 import { isLocalStorage, toStorageKey } from '../storage/sync.js';
+import { probeStorageKey } from '../storage/probe.js';
 
 const STATIC_EXTENSIONS = new Set(['.pdf', '.pptx', '.zip']);
+const VIDEO_EXTENSIONS_WITH_DOT = new Set(VIDEO_EXTENSIONS_DOTTED);
 
 function inferMimeTypeFromExt(ext) {
+  // video/m4v не существует: контейнер M4V — это MP4.
   if (ext === '.m4v') return 'video/mp4';
-  if (['.mp4', '.m4v', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) return `video/${ext.substring(1)}`;
+  if (VIDEO_EXTENSIONS_WITH_DOT.has(ext)) return `video/${ext.substring(1)}`;
   if (['.mp3', '.wav', '.m4a'].includes(ext)) return 'audio/*';
   if (['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext)) return 'image/*';
   if (ext === '.pdf') return 'application/pdf';
@@ -193,8 +196,7 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
     
     // ШАГ 3: Проверяем дедупликацию по MD5 обработанного файла
     // Дедупликация применяется ТОЛЬКО для видео файлов
-    const videoExtensions = ['.mp4', '.m4v', '.webm', '.ogg', '.mkv', '.mov', '.avi'];
-    const isVideoFile = videoExtensions.includes(ext);
+    const isVideoFile = VIDEO_EXTENSIONS_WITH_DOT.has(ext);
     
     if (isVideoFile) {
       // Проверяем есть ли дубликат на других устройствах (используем partial для больших файлов)
@@ -209,15 +211,10 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
         duplicatePresent = fs.existsSync(duplicate.file_path);
         if (!duplicatePresent && optionsStorage && !isLocalStorage(optionsStorage)) {
           try {
-            const key = toStorageKey(duplicate.file_path);
-            if (typeof optionsStorage.checkExists === 'function') {
-              const probe = await optionsStorage.checkExists(key);
-              // Только доказанное present. unknown — не повод ссылаться на
-              // объект, который может быть недоступен.
-              duplicatePresent = probe.state === 'present';
-            } else {
-              duplicatePresent = await optionsStorage.exists(key);
-            }
+            // Только доказанное present. unknown — не повод ссылаться на
+            // объект, который может быть недоступен.
+            const probe = await probeStorageKey(optionsStorage, toStorageKey(duplicate.file_path));
+            duplicatePresent = probe.state === 'present';
           } catch {
             // Хранилище недоступно — лучше не дедуплицировать, чем потерять файл
             duplicatePresent = false;
@@ -307,7 +304,7 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
       }
     }
     // Иначе получаем метаданные через FFmpeg (только для новых файлов)
-    else if (['.mp4', '.m4v', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext)) {
+    else if (VIDEO_EXTENSIONS_WITH_DOT.has(ext)) {
       try {
         const params = await checkVideoParameters(filePath);
         if (params) {
@@ -424,7 +421,7 @@ export async function processUploadedFile(deviceId, safeName, originalName, file
     // дедупликации удаляется, а основной файл лежит в S3.
 
     // Фоновая генерация трейлера для видео (не блокирует ответ)
-    if (['.mp4', '.m4v', '.webm', '.ogg', '.mkv', '.mov', '.avi'].includes(ext) && md5Hash && filePath) {
+    if (VIDEO_EXTENSIONS_WITH_DOT.has(ext) && md5Hash && filePath) {
       ensureTrailerForFile(md5Hash, filePath, { seconds: 10 }).catch(() => {});
     }
     

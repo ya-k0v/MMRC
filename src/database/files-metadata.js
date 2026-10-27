@@ -14,6 +14,7 @@ import { fixEncoding } from '../utils/encoding.js';
 import { STATIC_CONTENT_TYPES } from '../config/file-types.js';
 import { getCurrentStorage } from '../storage/current.js';
 import { isLocalStorage, toStorageKey } from '../storage/sync.js';
+import { probeStorageKey } from '../storage/probe.js';
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -975,19 +976,15 @@ export async function cleanupMissingFiles({ deviceId = null, dryRun = false, sto
         if (state === 'missing' && activeStorage && !isLocalStorage(activeStorage)) {
           try {
             const key = toStorageKey(record.file_path);
-            if (typeof activeStorage.checkExists === 'function') {
-              const probe = await activeStorage.checkExists(key);
-              state = probe.state;
-              if (state === 'unknown') {
-                logger.warn('[Cleanup] Storage check inconclusive, keeping metadata', {
-                  deviceId: record.device_id,
-                  safeName: record.safe_name,
-                  key,
-                  error: probe.error?.message || null
-                });
-              }
-            } else if (await activeStorage.exists(key)) {
-              state = 'present';
+            const probe = await probeStorageKey(activeStorage, key);
+            state = probe.state;
+            if (state === 'unknown') {
+              logger.warn('[Cleanup] Storage check inconclusive, keeping metadata', {
+                deviceId: record.device_id,
+                safeName: record.safe_name,
+                key,
+                error: probe.error?.message || null
+              });
             }
           } catch (error) {
             // Хранилище недоступно или путь вне data root — не доказательство

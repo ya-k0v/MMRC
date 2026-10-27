@@ -20,7 +20,7 @@ node --experimental-vm-modules node_modules/jest/bin/jest.js tests/unit/<file>.t
 
 ## Этап 0 — P0: не терять файлы и не врать «не найдено»
 
-> **Статус этапа 0:** реализован. Автотесты: `47` suites / `444` tests,
+> **Статус этапа 0:** реализован. Автотесты: `48` suites / `449` tests,
 > `npm test` (unit + CI smoke) — PASS. Изменения не запушены.
 
 ### 0.1. Три состояния `exists()` и корректный abort в S3
@@ -102,12 +102,31 @@ node --experimental-vm-modules node_modules/jest/bin/jest.js tests/unit/<file>.t
 
 ### 0.7. Проверка этапа 0
 
-- [x] `npm test` зелёный: 47 suites / 444 tests + CI smoke PASS.
+- [x] `npm test` зелёный: 48 suites / 451 tests + CI smoke PASS.
 - [ ] Ручной сценарий local: upload → download → rename → delete.
   (автоматизирован частично: route-тест скачивания + CI startup smoke)
 - [ ] Ручной сценарий S3 (MinIO): upload → download → dedup download → folder ZIP.
   (нужен запущенный MinIO; в текущем окружении не выполнялся)
 - [x] Локальный коммит этапа 0 (без push).
+
+### 0.8. Рефакторинг после проверки этапа 0
+
+- [x] Общий tri-state helper `src/storage/probe.js` (`probeStorageKey`) вместо
+  шести копий `typeof checkExists` + `catch`: `sync.js`, `deduplication.js`,
+  `files-metadata.js`, `file-metadata-processor.js`, `optimizer.js`, `files.js`.
+- [x] Один классификатор обрыва клиента: `file-resolver.js` использует
+  `isClientDisconnectError` из `storage/errors.js`, локальная копия удалена.
+- [x] Preview-роут не дублирует Range/pipeline: S3-ветка отдаётся через
+  `sendFileFromStorage()`, получая 404/503 вместо 500 после заголовков.
+- [x] Для локального backend `sendFileFromStorage()` всегда сверяет размер
+  через `stat` — устаревший `file_size` в БД больше не ломает Range.
+- [x] Единый список видео-расширений: `VIDEO_EXTENSIONS_DOTTED` в
+  `config/file-types.js`; убраны копии в `files.js`, `optimizer.js`,
+  `video-info.js`, `file-metadata-processor.js`.
+- [x] `LocalStorage.exists()` тоже fail-safe (`false` только при доказанном
+  `missing`), как `S3Storage.exists()`.
+- [x] Тест `storage-probe.test.js` + регрессия `exists()` при `ENOTDIR`.
+- [x] `npm test` после рефакторинга — PASS.
 
 ---
 

@@ -49,6 +49,7 @@ function fakeRes() {
     return this;
   };
   res.send = function (body) { this.headersSent = true; this.body = body; return this; };
+  res.json = function (body) { this.headersSent = true; this.jsonBody = body; return this; };
   res.end = function (...a) { this.headersSent = true; return Writable.prototype.end.apply(this, a); };
   return res;
 }
@@ -146,5 +147,50 @@ describe('отдача файла из S3 (sendFileFromStorage)', () => {
       res
     );
     expect(res.statusCode).toBe(403);
+  });
+});
+
+describe('preview из storage', () => {
+  beforeEach(() => { jest.clearAllMocks(); });
+
+  it('NoSuchKey → 404 до отправки заголовков, а не 500', async () => {
+    const missing = Object.assign(new Error('NoSuchKey'), { name: 'NoSuchKey' });
+    mockStorage.stat.mockRejectedValue(missing);
+    // Размер в БД неизвестен — preview обязан сходить в storage и получить 404.
+    mockGetFileMetadata.mockResolvedValue(metadata({ mime_type: 'video/mp4', file_size: 0 }));
+
+    const layer = resolverRouter.stack.find((l) => l.route?.path === '/preview/:deviceId/*fileName');
+    const handler = layer.route.stack[0].handle;
+    const req = {
+      params: { deviceId: 'ATV001', fileName: 'default.mp4' },
+      headers: {},
+      query: {}
+    };
+    const res = fakeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(404);
+    expect(res.headersSent).toBe(true);
+    expect(res.jsonBody).toMatchObject({ error: expect.stringMatching(/не найден/i) });
+  });
+
+  it('Range отдаётся тем же кодом, что и скачивание', async () => {
+    mockStorage.stat.mockResolvedValue({ size: FILE_SIZE });
+    mockStorage.createReadStream.mockResolvedValue(Readable.from([Buffer.alloc(8)]));
+    mockGetFileMetadata.mockResolvedValue(metadata({ mime_type: 'video/mp4' }));
+
+    const layer = resolverRouter.stack.find((l) => l.route?.path === '/preview/:deviceId/*fileName');
+    const handler = layer.route.stack[0].handle;
+    const req = {
+      params: { deviceId: 'ATV001', fileName: 'default.mp4' },
+      headers: { range: 'bytes=0-99' },
+      query: {}
+    };
+    const res = fakeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(206);
+    expect(res.headers['Content-Range']).toBe(`bytes 0-99/${FILE_SIZE}`);
+    expect(res.headers['Content-Length']).toBe(100);
   });
 });
