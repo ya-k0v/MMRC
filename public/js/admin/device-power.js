@@ -12,13 +12,18 @@
  */
 
 import { escapeHtml } from '../shared/utils.js';
-import { getPowerIcon, getSunIcon, getMoonIcon, getPlayIcon, getRestartIcon, getChevronLeftIcon, getChevronRightIcon, getSlidersIcon } from '../shared/svg-icons.js';
+import { getPowerIcon, getSunIcon, getMoonIcon, getPlayIcon, getRestartIcon, getChevronLeftIcon, getChevronRightIcon, getSlidersIcon, getUpDownloadIcon } from '../shared/svg-icons.js';
 
 const POWER_ENDPOINT = '/api/devices/power';
 const STATE_ENDPOINT = '/api/devices/power-state';
+const APK_VERSION_ENDPOINT = '/api/admin/apk-version';
+const PLAYER_UPDATE_ENDPOINT = '/api/admin/install-apk-bound';
 
 /** deviceId → {ok, awake}. Живёт дольше рендера карточки. */
 const powerStates = new Map();
+/** deviceId → {currentVersion, releaseVersion}. Обновляется после запроса версии APK. */
+let playerVersions = new Map();
+let releaseVersion = '';
 let deviceNames = new Map();
 
 /** Управляемые устройства текущей карточки, текущая страница списка. */
@@ -46,6 +51,18 @@ function badgeView(state) {
   return { text: 'спит', cls: 'is-sleep' };
 }
 
+/** Версии приходят и как «3.4.1», и как «v3.4.1» — сравниваем без префикса. */
+function normalizeVersion(value) {
+  return String(value || '').trim().replace(/^v/i, '');
+}
+
+function updateAvailable(id) {
+  const versions = playerVersions.get(id);
+  if (!versions || !releaseVersion) return false;
+  return Boolean(versions.currentVersion)
+    && normalizeVersion(versions.currentVersion) !== releaseVersion;
+}
+
 function rowHtml(device) {
   const id = device.device_id;
   const name = device.name || id;
@@ -60,6 +77,7 @@ function rowHtml(device) {
       <span class="meta st-power-ip">${escapeHtml(ip || 'IP не задан')}</span>
       <span data-power-badge="${escapeHtml(id)}" class="meta st-power-badge ${badge.cls}">${badge.text}</span>
       <span class="st-power-actions">
+        <button type="button" class="secondary meta st-power-btn st-power-update" data-power-action="update-player" data-power-id="${escapeHtml(id)}" data-player-update="${escapeHtml(id)}" title="Обновить плеер" aria-label="Обновить плеер на ${escapeHtml(name)}">${getUpDownloadIcon(14)}</button>
         <button type="button" class="secondary meta st-power-btn" data-power-action="sleep" data-power-id="${escapeHtml(id)}" title="Усыпить устройство" aria-label="Усыпить ${escapeHtml(name)}">${getMoonIcon(14)}</button>
         <button type="button" class="secondary meta st-power-btn" data-power-action="wake" data-power-id="${escapeHtml(id)}" title="Разбудить и запустить плеер" aria-label="Разбудить ${escapeHtml(name)}">${getSunIcon(14)}</button>
         <button type="button" class="secondary meta st-power-btn" data-power-action="launch" data-power-id="${escapeHtml(id)}" title="Завершить процесс плеера и открыть заново" aria-label="Запустить плеер на ${escapeHtml(name)}">${getPlayIcon(14)}</button>
@@ -73,6 +91,10 @@ export function renderPowerControlsHtml(devices) {
   powerTargets = (devices || []).filter(isPowerControllable);
   page = 0;
   deviceNames = new Map((devices || []).map(device => [device.device_id, device.name || device.device_id]));
+  playerVersions = new Map((devices || []).map(device => [
+    device.device_id,
+    { currentVersion: device.appVersion || device.app_version || '', releaseVersion }
+  ]));
 
   return `
     <div class="st-card">
@@ -172,12 +194,31 @@ export function stopPowerControls() {
   }
 }
 
+function updatePlayerUpdateButtons() {
+  document.querySelectorAll('[data-player-update]').forEach((el) => {
+    const id = el.getAttribute('data-player-update');
+    const versions = playerVersions.get(id) || {};
+    const available = updateAvailable(id);
+    const current = normalizeVersion(versions.currentVersion);
+    const title = available
+      ? `Обновить плеер: v${current} → v${releaseVersion} (настройки сохранятся)`
+      : releaseVersion
+        ? `Плеер уже на версии v${releaseVersion}`
+        : 'Обновить плеер';
+
+    el.classList.toggle('st-power-update--available', available);
+    el.title = title;
+    el.setAttribute('aria-label', `${title} на ${deviceNames.get(id) || id}`);
+  });
+}
+
 function updateBadges() {
   document.querySelectorAll('[data-power-badge]').forEach((el) => {
     const badge = badgeView(powerStates.get(el.getAttribute('data-power-badge')));
     el.textContent = badge.text;
     el.className = `meta st-power-badge ${badge.cls}`;
   });
+  updatePlayerUpdateButtons();
 }
 
 function setBusy(busy) {
@@ -195,7 +236,7 @@ function setStatus(text) {
  * бейдж по сокету). Прямой локальный тост не показываем: уведомление живёт
  * на сервере, переживает рестарт и видно всем админам.
  */
-async function reportPowerResult(adminFetch, { ok, message }) {
+async function reportPowerResult(adminFetch, { ok, message, title }) {
   try {
     await adminFetch('/api/notifications/report', {
       method: 'POST',
@@ -203,7 +244,7 @@ async function reportPowerResult(adminFetch, { ok, message }) {
       body: JSON.stringify({
         type: 'device_power',
         severity: ok ? 'info' : 'warning',
-        title: ok ? 'Управление питанием' : 'Не все устройства отреагировали',
+        title: title || (ok ? 'Управление питанием' : 'Не все устройства отреагировали'),
         message,
         source: 'admin-ui'
       })
@@ -241,6 +282,79 @@ async function refreshStates(adminFetch, deviceIds) {
     updateBadges();
   } catch (_) {
     // недоступный опрос состояния не должен ломать раздел настроек
+  }
+}
+
+/**
+ * Версия, которую поставит кнопка обновления: сначала выбранная в настройках,
+ * затем последний релиз GitHub, затем уже установленная на сервере APK.
+ */
+async function refreshPlayerVersions(adminFetch) {
+  try {
+    const response = await adminFetch(APK_VERSION_ENDPOINT);
+    if (!response?.ok) return;
+    const data = await response.json();
+    releaseVersion = normalizeVersion(
+      data.selectedVersion || data.latestVersion || data.installedVersion || data.version
+    );
+
+    for (const device of powerTargets) {
+      const versions = playerVersions.get(device.device_id) || {};
+      playerVersions.set(device.device_id, {
+        currentVersion: versions.currentVersion || device.appVersion || device.app_version || '',
+        releaseVersion
+      });
+    }
+    updatePlayerUpdateButtons();
+  } catch (_) {
+    // Недоступный GitHub не должен ломать карточку: просто не подсвечиваем.
+  }
+}
+
+async function runPlayerUpdate(adminFetch, deviceId) {
+  setBusy(true);
+  setStatus('Обновление плеера...');
+  try {
+    const response = await adminFetch(PLAYER_UPDATE_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceIds: [deviceId] })
+    });
+    const data = await response.json().catch(() => ({}));
+    const name = deviceNames.get(deviceId) || deviceId;
+
+    if (!response.ok || data.ok === false) {
+      const message = data.error || 'Не удалось обновить плеер';
+      setStatus(message);
+      await reportPowerResult(adminFetch, {
+        ok: false,
+        message: `${name}: ${message}`,
+        title: 'Обновление плеера'
+      });
+      return;
+    }
+
+    // После успешной установки устройство перерегистрируется с новой версией,
+    // но подсветку снимаем сразу, не дожидаясь socket-события.
+    const versions = playerVersions.get(deviceId) || {};
+    playerVersions.set(deviceId, {
+      ...versions,
+      currentVersion: releaseVersion || versions.currentVersion
+    });
+    updatePlayerUpdateButtons();
+
+    const message = `Плеер обновлён: ${name}`;
+    setStatus(message);
+    await reportPowerResult(adminFetch, { ok: true, message, title: 'Обновление плеера' });
+  } catch (error) {
+    setStatus(error.message);
+    await reportPowerResult(adminFetch, {
+      ok: false,
+      message: error.message,
+      title: 'Обновление плеера'
+    });
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -319,6 +433,10 @@ export function initPowerControls({ devices, adminFetch }) {
 
   powerTargets = (devices || []).filter(isPowerControllable);
   page = 0;
+  playerVersions = new Map((devices || []).map(device => [
+    device.device_id,
+    { currentVersion: device.appVersion || device.app_version || '', releaseVersion }
+  ]));
 
   document.getElementById('stPowerSleepAll')?.addEventListener('click', () => {
     runPower(adminFetch, 'sleep', { relaunch: false });
@@ -341,9 +459,16 @@ export function initPowerControls({ devices, adminFetch }) {
   list.addEventListener('click', (event) => {
     const button = event.target.closest('[data-power-action]');
     if (!button || !list.contains(button)) return;
-    runPower(adminFetch, button.getAttribute('data-power-action'), {
+    const action = button.getAttribute('data-power-action');
+
+    if (action === 'update-player') {
+      runPlayerUpdate(adminFetch, button.getAttribute('data-power-id'));
+      return;
+    }
+
+    runPower(adminFetch, action, {
       deviceIds: [button.getAttribute('data-power-id')],
-      relaunch: button.getAttribute('data-power-action') === 'wake'
+      relaunch: action === 'wake'
     });
   });
 
@@ -364,6 +489,7 @@ export function initPowerControls({ devices, adminFetch }) {
 
   if (powerTargets.length) {
     refreshStates(adminFetch, powerTargets.map(target => target.device_id));
+    refreshPlayerVersions(adminFetch);
   } else {
     setStatus('Нет Android-устройств');
   }

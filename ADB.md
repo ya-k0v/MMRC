@@ -21,7 +21,7 @@ adb -s <IP>:5555 shell ip addr show wlan0 | grep "inet "
 ## MMRC App
 
 ```bash
-adb -s <IP>:5555 install -r /path/to/app-release.apk
+adb -s <IP>:5555 install -r -d /path/to/app-release.apk   # -r сохраняет данные, -d разрешает даунгрейд
 adb -s <IP>:5555 shell am start -n com.videocontrol.mediaplayer/.MainActivity
 adb -s <IP>:5555 shell am force-stop com.videocontrol.mediaplayer
 adb -s <IP>:5555 shell dumpsys package com.videocontrol.mediaplayer | grep versionName

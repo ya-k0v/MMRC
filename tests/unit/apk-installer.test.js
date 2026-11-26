@@ -20,6 +20,7 @@ const events = [];
 let installFailures = 0;
 let installStderr = '';
 let connectFails = false;
+let installedPackage = false;
 
 jest.unstable_mockModule('node:child_process', () => ({
   execFile: (file, args, optionsOrCallback, maybeCallback) => {
@@ -37,6 +38,10 @@ jest.unstable_mockModule('node:child_process', () => ({
           return;
         }
         callback(null, `connected to ${args[1]}\n`, '');
+        return;
+      }
+      if (args.includes('list') && args.includes('packages')) {
+        callback(null, installedPackage ? 'package:com.videocontrol.mediaplayer\n' : '', '');
         return;
       }
       if (args.includes('install')) {
@@ -74,6 +79,7 @@ beforeEach(() => {
   installFailures = 0;
   installStderr = '';
   connectFails = false;
+  installedPackage = false;
 });
 
 const countInstall = () => events.filter(command => command.includes(' install ')).length;
@@ -102,18 +108,45 @@ test('повторяет install при сбое и в итоге ставит A
   expect(countInstall()).toBe(3);
 }, 30000);
 
-test('чистая переустановка: стоп, удаление, установка, затем настройки', async () => {
+test('первичная установка: стоп, install -r, настройки broadcast и перезапуск', async () => {
   await installAndSetupApk(callArgs);
 
   const stopIdx = events.findIndex((command) => command.includes('am force-stop'));
-  const uninstallIdx = events.findIndex(command => command.includes(' uninstall '));
-  const installIdx = events.findIndex(command => command.includes(' install '));
+  const installIdx = events.findIndex(command => command.includes(' install -r '));
   const broadcastIdx = events.findIndex(command => command.includes('am broadcast'));
 
   expect(stopIdx).toBeGreaterThanOrEqual(0);
-  expect(uninstallIdx).toBeGreaterThan(stopIdx);
-  expect(installIdx).toBeGreaterThan(uninstallIdx);
+  expect(installIdx).toBeGreaterThan(stopIdx);
   expect(broadcastIdx).toBeGreaterThan(installIdx);
+  expect(events.some(command => command.includes(' uninstall '))).toBe(false);
+}, 30000);
+
+test('обновление установленного плеера сохраняет настройки: -r -d, без uninstall и broadcast', async () => {
+  installedPackage = true;
+
+  await installAndSetupApk(callArgs);
+
+  expect(countInstall()).toBe(1);
+  expect(events.some(command => command.includes(' install -r -d '))).toBe(true);
+  expect(events.some(command => command.includes(' uninstall '))).toBe(false);
+  expect(events.some(command => command.includes('am broadcast'))).toBe(false);
+  // Один гарантированный запуск после обновления — данные приложения не сброшены.
+  expect(countLaunch()).toBe(1);
+  expect(events.some(command => command.includes('disconnect'))).toBe(true);
+}, 30000);
+
+test('обновление с сохранением настроек работает и при понижении версии', async () => {
+  installedPackage = true;
+  installFailures = 1;
+  installStderr = 'Failure [INSTALL_FAILED_VERSION_DOWNGRADE]';
+
+  // -d разрешает даунгрейд, поэтому сервер не снимает флаг сохранения данных
+  // и не прибегает к uninstall даже после первой неудачной попытки.
+  await installAndSetupApk(callArgs);
+
+  expect(countInstall()).toBe(2);
+  expect(events.every(command => !command.includes(' install ') || command.includes(' -r -d '))).toBe(true);
+  expect(events.some(command => command.includes(' uninstall '))).toBe(false);
 }, 30000);
 
 test('при постоянной ошибке бросает причину из stderr, но перезапускает плеер и отключается', async () => {

@@ -15,9 +15,9 @@ const {
 } = await import('../../public/js/admin/device-power.js');
 
 const DEVICES = [
-  { device_id: 'tv1', name: 'Зал', deviceType: 'android', ipAddress: '192.168.1.10' },
-  { device_id: 'tv2', name: 'Кухня', deviceType: 'VJC', platform: 'Android', ipAddress: '192.168.1.11' },
-  { device_id: 'native1', name: 'MMRC', deviceType: 'NATIVE_MEDIAPLAYER', ipAddress: '192.168.1.12' },
+  { device_id: 'tv1', name: 'Зал', deviceType: 'android', ipAddress: '192.168.1.10', appVersion: '3.4.0' },
+  { device_id: 'tv2', name: 'Кухня', deviceType: 'VJC', platform: 'Android', ipAddress: '192.168.1.11', appVersion: '3.4.1' },
+  { device_id: 'native1', name: 'MMRC', deviceType: 'NATIVE_MEDIAPLAYER', ipAddress: '192.168.1.12', appVersion: 'v3.4.1' },
   { device_id: 'browser', name: 'Браузер', deviceType: 'browser', ipAddress: '192.168.1.13' }
 ];
 
@@ -26,6 +26,18 @@ const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 function jsonFetch(payload, ok = true) {
   return jest.fn(async () => ({ ok, json: async () => payload }));
 }
+
+function playerFetch({ apk = {}, install = { ok: true, updated: 1 } } = {}) {
+  return jest.fn(async (url) => {
+    if (url === '/api/admin/apk-version') return { ok: true, json: async () => apk };
+    if (url === '/api/admin/install-apk-bound') return { ok: true, json: async () => install };
+    if (url === '/api/devices/power-state') return { ok: true, json: async () => ({ states: [] }) };
+    if (url === '/api/notifications/report') return { ok: true, json: async () => ({}) };
+    return { ok: true, json: async () => ({}) };
+  });
+}
+
+const updateButton = deviceId => document.querySelector(`[data-player-update="${deviceId}"]`);
 
 function badge(deviceId) {
   return document.querySelector(`[data-power-badge="${deviceId}"]`);
@@ -353,5 +365,90 @@ describe('команды питания', () => {
     expect(bodyOf(call)).toEqual({ action: 'reboot', deviceIds: ['tv1'], relaunch: false });
     // Перезагрузка режим питания не меняет — бейдж остаётся прежним.
     expect(badge('tv1').textContent).toBe('спит');
+  });
+});
+
+describe('обновление плеера', () => {
+  const APK = {
+    selectedVersion: '3.4.1',
+    latestVersion: '3.4.2',
+    installedVersion: '3.4.1'
+  };
+
+  test('кнопка есть у каждого устройства и зеленеет только при различии версий', async () => {
+    document.body.innerHTML = renderPowerControlsHtml(DEVICES);
+    const adminFetch = playerFetch({ apk: APK });
+
+    initPowerControls({ devices: DEVICES, adminFetch });
+    await flush();
+    await flush();
+
+    expect(updateButton('tv1')).not.toBeNull();
+    expect(updateButton('tv2')).not.toBeNull();
+    expect(updateButton('tv1').classList.contains('st-power-update--available')).toBe(true);
+    expect(updateButton('tv2').classList.contains('st-power-update--available')).toBe(false);
+    // 'v3.4.1' и '3.4.1' — одна и та же версия.
+    expect(updateButton('native1').classList.contains('st-power-update--available')).toBe(false);
+    expect(updateButton('tv1').title).toContain('v3.4.0 → v3.4.1');
+  });
+
+  test('нажатие обновляет только выбранное устройство и снимает подсветку', async () => {
+    document.body.innerHTML = renderPowerControlsHtml(DEVICES);
+    const adminFetch = playerFetch({
+      apk: APK,
+      install: { ok: true, updated: 1, results: [{ deviceId: 'tv1', ok: true }] }
+    });
+
+    initPowerControls({ devices: DEVICES, adminFetch });
+    await flush();
+    await flush();
+    updateButton('tv1').click();
+    await flush();
+    await flush();
+
+    const call = findCall(adminFetch, '/api/admin/install-apk-bound');
+    expect(call).toBeDefined();
+    expect(bodyOf(call)).toEqual({ deviceIds: ['tv1'] });
+    expect(updateButton('tv1').classList.contains('st-power-update--available')).toBe(false);
+    expect(document.getElementById('stPowerStatus').textContent).toBe('Плеер обновлён: Зал');
+    expect(reportedNotification(adminFetch)).toMatchObject({
+      title: 'Обновление плеера',
+      severity: 'info',
+      message: 'Плеер обновлён: Зал'
+    });
+  });
+
+  test('ошибка установки оставляет подсветку и показывает причину', async () => {
+    document.body.innerHTML = renderPowerControlsHtml(DEVICES);
+    const adminFetch = playerFetch({
+      apk: APK,
+      install: { ok: false, error: 'adb недоступен' }
+    });
+
+    initPowerControls({ devices: DEVICES, adminFetch });
+    await flush();
+    await flush();
+    updateButton('tv1').click();
+    await flush();
+    await flush();
+
+    expect(document.getElementById('stPowerStatus').textContent).toBe('adb недоступен');
+    expect(updateButton('tv1').classList.contains('st-power-update--available')).toBe(true);
+    expect(reportedNotification(adminFetch)).toMatchObject({
+      title: 'Обновление плеера',
+      severity: 'warning'
+    });
+  });
+
+  test('без известной версии релиза кнопка не подсвечивается', async () => {
+    document.body.innerHTML = renderPowerControlsHtml(DEVICES);
+    const adminFetch = playerFetch({ apk: { error: 'GitHub недоступен' } });
+
+    initPowerControls({ devices: DEVICES, adminFetch });
+    await flush();
+    await flush();
+
+    expect(updateButton('tv1').classList.contains('st-power-update--available')).toBe(false);
+    expect(updateButton('tv1').title).toBe('Обновить плеер');
   });
 });

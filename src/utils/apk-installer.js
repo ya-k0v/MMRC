@@ -137,11 +137,16 @@ async function runAdbResilient(adbTarget, args, { timeoutMs = SHELL_TIMEOUT_MS, 
 /**
  * Одна попытка установки. `runAdb` при ненулевом коде возвращает stderr в текст
  * ошибки, поэтому причина (`INSTALL_FAILED_...`) больше не теряется.
+ *
+ * `-r` сохраняет данные приложения, `-d` разрешает понижение версии. Вместе
+ * они дают обновление «поверх» установленного плеера без uninstall — то есть
+ * без потери настроек на устройстве.
  */
-async function installApk(adbTarget, apkPath) {
+async function installApk(adbTarget, apkPath, { preserveData = false } = {}) {
+  const flags = preserveData ? ['-r', '-d'] : ['-r'];
   const out = String(await runAdbResilient(
     adbTarget,
-    ['-s', adbTarget, 'install', '-r', apkPath],
+    ['-s', adbTarget, 'install', ...flags, apkPath],
     { timeoutMs: INSTALL_TIMEOUT_MS, attempts: 1 }
   ) || '');
   if (!/Success/i.test(out)) {
@@ -168,18 +173,22 @@ async function stopPlayer(adbTarget) {
 }
 
 /**
- * Удалить установленный плеер перед чистой установкой.
- *
- * install -r не даёт понизить версию (INSTALL_FAILED_VERSION_DOWNGRADE) и не
- * сбрасывает старое состояние. Полное удаление решает и то, и другое: работает
- * апгрейд/даунгрейд, а настройки затем заново отправляются broadcast'ом.
+ * Плеер уже стоит? Тогда обновление должно идти поверх него: install -r -d
+ * сохраняет SharedPreferences и прочие настройки. Только для первичной
+ * установки отправляем конфигурацию broadcast'ом.
  */
-async function removePlayer(adbTarget) {
+async function isPlayerInstalled(adbTarget) {
   try {
-    await runAdbResilient(adbTarget, ['-s', adbTarget, 'uninstall', ANDROID_PACKAGE_NAME]);
+    const out = String(await runAdbResilient(
+      adbTarget,
+      ['-s', adbTarget, 'shell', 'pm', 'list', 'packages', ANDROID_PACKAGE_NAME]
+    ) || '');
+    return out.split(/\r?\n/).some(line => line.trim() === `package:${ANDROID_PACKAGE_NAME}`);
   } catch (error) {
-    // «Failure [not installed for 0]» — норма, если плеера ещё нет.
-    logger.debug('[APK] uninstall не удался (возможно, пакет отсутствует)', { error: error.message });
+    logger.debug('[APK] Не удалось проверить наличие плеера', {
+      adbTarget, error: error.message
+    });
+    return false;
   }
 }
 
@@ -238,7 +247,6 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
     throw new Error('APK файл не найден');
   }
 
-  const urlForBroadcast = normalizeServerUrlForXml(serverUrl);
   const adbTarget = `${host}:${adbPort}`;
 
   // Вся установка идёт эксклюзивно для target, в той же очереди, что и
@@ -249,18 +257,18 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
   return enqueueAdbCommand(adbTarget, async () => {
     await connectAdb(adbTarget);
 
-    // Чистая переустановка: останавливаем и удаляем старый плеер, затем ставим
-    // выбранную версию. Так работает и апгрейд, и даунгрейд (install -r
-    // блокирует понижение версии), и сбрасывается прежнее состояние.
+    // Обновление идёт поверх установленного плеера: -r сохраняет данные, -d
+    // разрешает и даунгрейд. uninstall больше не используется — он стирал бы
+    // настройки устройства. Первичная установка конфигурируется broadcast'ом.
+    const hadPlayer = await isPlayerInstalled(adbTarget);
     await stopPlayer(adbTarget);
-    await removePlayer(adbTarget);
 
     let installError = null;
     let installed = false;
 
     for (let attempt = 1; attempt <= INSTALL_ATTEMPTS && !installed; attempt++) {
       try {
-        await installApk(adbTarget, safeApkPath);
+        await installApk(adbTarget, safeApkPath, { preserveData: hadPlayer });
         installed = true;
       } catch (error) {
         installError = error;
@@ -283,28 +291,32 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
         throw installError || new Error('Не удалось установить APK');
       }
 
-      // Запуск приложения, чтобы оно создало рабочие папки
-      await launchPlayer(adbTarget);
-      await delay(SETTLE_MS);
+      if (hadPlayer) {
+        logger.info('[APK] Плеер обновлён с сохранением настроек', { adbTarget, deviceId: safeDeviceId });
+      } else {
+        // Первичная установка: приложение ещё не создало рабочие папки и не
+        // знает адрес сервера/идентификатор устройства.
+        const urlForBroadcast = normalizeServerUrlForXml(serverUrl);
+        await launchPlayer(adbTarget);
+        await delay(SETTLE_MS);
 
-      // Остановка перед отправкой настроек
-      await runAdbResilient(adbTarget, ['-s', adbTarget, 'shell', 'am', 'force-stop', ANDROID_PACKAGE_NAME]);
-      await delay(RETRY_DELAY_MS);
+        await runAdbResilient(adbTarget, ['-s', adbTarget, 'shell', 'am', 'force-stop', ANDROID_PACKAGE_NAME]);
+        await delay(RETRY_DELAY_MS);
 
-      logger.info('[APK] Sending config via broadcast', { serverUrl: urlForBroadcast, deviceId: safeDeviceId });
+        logger.info('[APK] Sending config via broadcast', { serverUrl: urlForBroadcast, deviceId: safeDeviceId });
 
-      // Отправка настроек через broadcast (ConfigReceiver) — явный вызов компонента
-      try {
-        const broadcastResult = await runAdbResilient(adbTarget, ['-s', adbTarget, 'shell', 'am', 'broadcast',
-          '-n', ANDROID_CONFIG_RECEIVER,
-          '-a', ANDROID_CONFIGURE_ACTION,
-          '--es', 'server_url', urlForBroadcast,
-          '--es', 'device_id', safeDeviceId,
-          '--ez', 'show_status', 'false'
-        ]);
-        logger.info('[APK] Broadcast result:', { result: broadcastResult });
-      } catch (broadcastErr) {
-        logger.warn('[APK] Broadcast failed, app may need manual configuration', { error: broadcastErr.message });
+        try {
+          const broadcastResult = await runAdbResilient(adbTarget, ['-s', adbTarget, 'shell', 'am', 'broadcast',
+            '-n', ANDROID_CONFIG_RECEIVER,
+            '-a', ANDROID_CONFIGURE_ACTION,
+            '--es', 'server_url', urlForBroadcast,
+            '--es', 'device_id', safeDeviceId,
+            '--ez', 'show_status', 'false'
+          ]);
+          logger.info('[APK] Broadcast result:', { result: broadcastResult });
+        } catch (broadcastErr) {
+          logger.warn('[APK] Broadcast failed, app may need manual configuration', { error: broadcastErr.message });
+        }
       }
     } finally {
       // Гарантированный перезапуск плеера: раньше при сбое ADB приложение

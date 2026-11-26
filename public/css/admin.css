@@ -954,6 +954,20 @@ body.admin-page #grid button.st-btn-danger {
 .st-power-badge.is-active { background: rgba(34, 197, 94, 0.14); color: var(--success); }
 .st-power-badge.is-sleep { background: rgba(245, 158, 11, 0.16); color: var(--warning); }
 
+/* Кнопка обновления плеера подсвечивается, когда версия устройства
+   отличается от версии, которую поставит сервер. */
+body.admin-page #grid button.st-power-btn.st-power-update--available {
+  color: var(--success);
+  background: rgba(34, 197, 94, 0.16);
+  border-color: rgba(34, 197, 94, 0.5);
+}
+
+body.admin-page #grid button.st-power-btn.st-power-update--available:hover:not(:disabled) {
+  color: var(--success);
+  background: rgba(34, 197, 94, 0.26);
+  border-color: rgba(34, 197, 94, 0.7);
+}
+
 /* Действия над устройством (сон/пробуждение/плеер) — иконки */
 .st-power-actions {
   display: inline-flex;
