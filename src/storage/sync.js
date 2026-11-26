@@ -89,13 +89,26 @@ export async function syncFileToStorage(localPath, storage, options = {}) {
 
   const localSize = fs.statSync(localPath).size;
 
-  // Уже лежит в хранилище и размер совпадает — не перезаливаем
+  // Уже лежит в хранилище: при !force и совпадении не перезаливаем. Размера
+  // недостаточно — объект того же размера, но с другим содержимым тоже битой.
+  // Доказанное расхождение удаляем (в том числе при force) и заливаем заново.
   try {
-    if (!force && await storage.exists(key)) {
-      const stat = await storage.stat(key).catch(() => null);
-      if (stat && Number(stat.size) === localSize) {
+    if (await storage.exists(key)) {
+      const stat = typeof storage.stat === 'function'
+        ? await storage.stat(key).catch(() => null)
+        : null;
+      const check = await checkStoredAgainstLocal(localPath, key, [stat], localSize, {
+        requireStat: true,
+        // force всё равно перезаливает: хэшировать много-ГБ файл перед
+        // перезаписью нет смысла, достаточно сравнить размер.
+        sizeOnly: Boolean(force)
+      });
+      if (!force && check.ok) {
         const localRemoved = removeLocal ? await removeLocalCopy(localPath, key) : false;
         return { synced: true, key, skipped: true, size: localSize, localRemoved };
+      }
+      if (!check.ok && check.reason !== 'unknown') {
+        await removeCorruptedObject(storage, key, check.reason, check.error);
       }
     }
   } catch {
@@ -119,20 +132,16 @@ export async function syncFileToStorage(localPath, storage, options = {}) {
 
   const stat = probe.stat || await storage.stat(key).catch(() => null);
 
-  // Если S3 вернул checksum — сверяем его потоковым чтением локального файла.
-  // Отсутствие checksum не считается ошибкой (старые объекты/MinIO без него).
-  await verifyUploadChecksum(localPath, uploadResult, stat);
-
   // КРИТИЧНО: существование объекта не доказывает целостность. Обрыв
   // потока на середине (сеть, рестарт MinIO) оставляет в хранилище
   // усечённый объект, который раньше молча помечался как успешная загрузка:
   // видео на 2 ГБ «загружалось», а воспроизвести его было невозможно.
-  const storedSize = Number(stat?.size);
-  if (Number.isFinite(localSize) && Number.isFinite(storedSize) && storedSize !== localSize) {
-    throw new Error(
-      `Размер в хранилище не совпадает с локальным для ${key}: ` +
-      `локально ${localSize}, в хранилище ${storedSize}`
-    );
+  // Отсутствие checksum не считается ошибкой (старые объекты/MinIO без него).
+  const check = await checkStoredAgainstLocal(localPath, key, [uploadResult, stat], localSize);
+  if (!check.ok) {
+    // Удаляем только доказанно битый объект; unknown удалять нельзя.
+    await removeCorruptedObject(storage, key, check.reason, check.error);
+    throw check.error;
   }
 
   const localRemoved = removeLocal ? await removeLocalCopy(localPath, key) : false;
@@ -160,9 +169,50 @@ async function localChecksum(localPath, algorithm) {
   return hash.digest('base64');
 }
 
-async function verifyUploadChecksum(localPath, uploadResult, stat) {
-  const sources = [uploadResult, stat].filter(Boolean);
-  const checksums = sources.flatMap((item) => Object.entries(item.checksums || {}));
+/**
+ * Сравнить объект в хранилище с локальным файлом по размеру и checksum.
+ * `requireStat` нужен в быстром пути: без stat нельзя доказать совпадение,
+ * поэтому файл уходит на перезагрузку. После загрузки stat необязателен —
+ * unknown не должен быть ошибкой, если объект подтверждён как present.
+ */
+async function checkStoredAgainstLocal(localPath, key, sources, localSize, { requireStat = false, sizeOnly = false } = {}) {
+  // Размер берём из HEAD-ответа (последний источник), а не из ответа
+  // multipart: результат Upload может содержать другие поля без размера.
+  const stat = sources.filter(Boolean).reverse()
+    .find(item => Number.isFinite(Number(item.size))) || null;
+  if (!stat) {
+    return requireStat
+      ? { ok: false, reason: 'unknown' }
+      : { ok: true, stat: null };
+  }
+
+  const storedSize = Number(stat.size);
+  if (Number.isFinite(localSize) && storedSize !== localSize) {
+    return {
+      ok: false,
+      reason: 'size',
+      stat,
+      error: new Error(
+        `Размер в хранилище не совпадает с локальным для ${key}: ` +
+        `локально ${localSize}, в хранилище ${storedSize}`
+      )
+    };
+  }
+
+  if (!sizeOnly) {
+    try {
+      await verifyChecksums(localPath, sources);
+    } catch (error) {
+      return { ok: false, reason: 'checksum', stat, error };
+    }
+  }
+
+  return { ok: true, stat };
+}
+
+/** Сверяем checksum, только если хранилище его вернуло. */
+async function verifyChecksums(localPath, sources) {
+  const checksums = sources.filter(Boolean).flatMap(item => Object.entries(item.checksums || {}));
   for (const [name, remoteValue] of checksums) {
     const algorithmMatch = /^Checksum(SHA256|SHA1|MD5)$/i.exec(name);
     if (!algorithmMatch || typeof remoteValue !== 'string') continue;
@@ -174,6 +224,26 @@ async function verifyUploadChecksum(localPath, uploadResult, stat) {
         `локально ${localValue}, в хранилище ${remoteValue}`
       );
     }
+  }
+}
+
+/**
+ * Удалить объект, только если расхождение с локальным файлом доказано.
+ * Ошибка rm не скрывает саму причину: вызывающий всё равно сообщит о ней.
+ */
+async function removeCorruptedObject(storage, key, reason, error) {
+  logger.warn('[StorageSync] Удаляем испорченный объект из хранилища', {
+    key, reason, error: error?.message || null
+  });
+  if (typeof storage.rm !== 'function') return false;
+  try {
+    await storage.rm(key);
+    return true;
+  } catch (rmError) {
+    logger.warn('[StorageSync] Не удалось удалить испорченный объект', {
+      key, reason, error: rmError.message
+    });
+    return false;
   }
 }
 

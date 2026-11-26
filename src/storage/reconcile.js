@@ -2,9 +2,10 @@
  * Сверка локального диска, базы данных и primary-хранилища (S3).
  *
  * Два разных режима, которые нельзя путать:
- *  - startup: локальные файлы, которых нет в S3, ставятся в очередь на коммит
- *    с ограничением параллелизма; локальная копия удаляется только после
- *    подтверждённой загрузки (это делает syncFileToStorage);
+ *  - startup: локальные файлы, которых нет в S3, и файлы с доказанным
+ *    расхождением размера ставятся в очередь на коммит с ограничением
+ *    параллелизма; локальная копия удаляется только после подтверждённой
+ *    загрузки (это делает syncFileToStorage);
  *  - report: сверка БД ↔ storage только считает present/missing/unknown и
  *    сироты, не удаляя ничего. Удаление метаданных остаётся в cleanupMissingFiles.
  *
@@ -103,8 +104,8 @@ function describeLocalFile(root, absolutePath) {
  * Стартовая сверка: локальные файлы без подтверждённого объекта в S3 идут
  * в очередь коммита. Для локального бэкенда работа не нужна.
  *
- * @returns {Promise<object>} отчёт: { checked, present, missing, unknown,
- *   committed, skipped, commitErrors, errors, samples, skippedReason? }
+ * @returns {Promise<object>} отчёт: { checked, present, missing, mismatched,
+ *   unknown, committed, skipped, commitErrors, errors, samples, skippedReason? }
  */
 export async function reconcileStartupLocalToStorage({
   storage = getCurrentStorage(),
@@ -117,6 +118,7 @@ export async function reconcileStartupLocalToStorage({
     checked: 0,
     present: 0,
     missing: 0,
+    mismatched: 0,
     unknown: 0,
     committed: 0,
     skipped: 0,
@@ -154,7 +156,26 @@ export async function reconcileStartupLocalToStorage({
     recordStorageEvent(probe.state);
 
     if (probe.state === 'present') {
-      report.present++;
+      // present ≠ целый: усечённый объект остаётся «существующим» и блокирует
+      // повторный коммит. Сверяем размер локального файла и объекта.
+      const stat = probe.stat
+        || (typeof storage.stat === 'function' ? await storage.stat(key).catch(() => null) : null);
+      const localStat = await fsp.stat(absolutePath).catch(() => null);
+      const storedSize = Number(stat?.size);
+      const localSize = Number(localStat?.size);
+
+      if (Number.isFinite(localSize) && Number.isFinite(storedSize) && storedSize !== localSize) {
+        report.mismatched++;
+        if (report.samples.length < 20) {
+          report.samples.push({ key, state: 'mismatch', localSize, storedSize });
+        }
+        logger.warn('[StorageReconcile] Stored object size mismatch, recommit queued', {
+          key, localSize, storedSize
+        });
+        pending.push({ absolutePath, key, force: true, ...describeLocalFile(root, absolutePath) });
+      } else {
+        report.present++;
+      }
       continue;
     }
     if (probe.state === 'unknown') {
@@ -180,7 +201,7 @@ export async function reconcileStartupLocalToStorage({
         report.skipped++;
       } else {
         const result = await syncFileToStorage(item.absolutePath, storage, {
-          force: false,
+          force: Boolean(item.force),
           removeLocal: true,
           deviceId: item.deviceId,
           fileName: item.fileName

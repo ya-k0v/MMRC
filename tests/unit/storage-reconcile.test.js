@@ -23,11 +23,13 @@ function createStorage({ objects = new Map(), state = 'missing', delayMs = 0 } =
       if (objects.has(key)) return { state: 'present', stat: { size: objects.get(key) } };
       return state === 'unknown' ? { state, error: new Error('HEAD timeout') } : { state: 'missing' };
     },
+    async exists(key) { return objects.has(key); },
     async writeStream(key, stream) {
       let size = 0;
       for await (const chunk of stream) size += chunk.length;
       objects.set(key, size);
     },
+    async rm(key) { objects.delete(key); },
     async list() {
       return [...objects.keys()];
     }
@@ -108,6 +110,38 @@ describe('reconcileStartupLocalToStorage', () => {
     expect(objects.size).toBe(0);
     expect(fs.existsSync(path.join(deviceDir, 'keep.mp4'))).toBe(true);
     expect(getMetrics().storage.unknown).toBeGreaterThanOrEqual(1);
+  });
+
+  test('present с совпадающим размером не перезаливается', async () => {
+    const file = path.join(deviceDir, 'present.mp4');
+    fs.writeFileSync(file, 'data');
+    const objects = new Map([[storageKey(file), 4]]);
+
+    const report = await reconcileStartupLocalToStorage({
+      storage: createStorage({ objects }), root: deviceDir
+    });
+
+    expect(report).toMatchObject({ checked: 1, present: 1, mismatched: 0, committed: 0 });
+    expect(objects.get(storageKey(file))).toBe(4);
+    expect(fs.existsSync(file)).toBe(true);
+  });
+
+  test('present с другим размером перезаливается с силой', async () => {
+    const file = path.join(deviceDir, 'truncated.mp4');
+    fs.writeFileSync(file, 'data');
+    const key = storageKey(file);
+    const objects = new Map([[key, 2]]);
+
+    const report = await reconcileStartupLocalToStorage({
+      storage: createStorage({ objects }), root: deviceDir
+    });
+
+    expect(report).toMatchObject({
+      checked: 1, present: 0, mismatched: 1, committed: 1, commitErrors: 0
+    });
+    expect(objects.get(key)).toBe(4);
+    expect(fs.existsSync(file)).toBe(false);
+    expect(report.samples).toContainEqual({ key, state: 'mismatch', localSize: 4, storedSize: 2 });
   });
 
   test('dryRun не загружает и не удаляет локальные файлы', async () => {
