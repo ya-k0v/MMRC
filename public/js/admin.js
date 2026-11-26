@@ -22,6 +22,17 @@ import { initNotifications } from './admin/notifications.js';
 import { mountNotificationsSection } from './admin/notifications-modal.js';
 import { createSidebar } from './admin/sidebar.js';
 import { renderSettingsNavHtml, initSettingsNav } from './admin/settings-nav.js';
+import {
+  formatDateTime,
+  formatUptimeShort,
+  renderDefs,
+  renderServices,
+  renderNetwork,
+  renderStorageDetails,
+  renderLdapDetails,
+  renderApkSummary,
+  formatReconcileReport
+} from './admin/settings-panels.js';
 
 const socket = io({ auth: { token: localStorage.getItem('accessToken') } });
 const grid = document.getElementById('grid');
@@ -316,6 +327,10 @@ function createSettingsSection() {
       ...(result.storage || {})
     };
 
+    const services = result.services || {};
+    const network = Array.isArray(result.network) ? result.network : [];
+    const sessions = Array.isArray(result.sessions) ? result.sessions : [];
+
     // Список разделов промежуточной колонки. Пункты, которых нет на текущей установке
     // (PostgreSQL, LDAP выключен), просто не попадают в дерево.
     const settingsPages = [
@@ -352,9 +367,32 @@ function createSettingsSection() {
               <button id="stRestart" class="danger meta st-btn-danger">${getRestartIcon(14)} Перезапустить</button>
             </div>
 
+            <div class="st-sub">Среда</div>
+            ${renderDefs([
+              { label: 'ОС', value: `${services.platform?.os || '—'} / ${services.platform?.arch || ''}`.trim() },
+              { label: 'Node.js', value: services.node?.version || '—' },
+              { label: 'Uptime процесса', value: formatUptimeShort(services.processUptime) },
+              { label: 'Uptime сервера', value: formatUptimeShort(services.systemUptime) },
+              { label: 'Режим запуска', value: docker && docker.enabled ? 'Docker' : 'Локальный' },
+              { label: 'Ветка', html: '<span id="stSysBranchText">—</span>' }
+            ])}
+
+            <div class="st-sub">Мониторинг</div>
             <div id="stSysMonitorBody">
               <div class="meta">Загрузка...</div>
             </div>
+
+            <div class="st-sub">Сервисы</div>
+            ${renderServices(services)}
+
+            <div class="st-sub">Сеть</div>
+            ${renderNetwork(network)}
+
+            <div class="st-sub">Сессии</div>
+            ${renderDefs([
+              { label: 'Активных', value: sessions.length },
+              { label: 'Последняя активность', value: formatDateTime(sessions[0]?.last_used) }
+            ])}
 
             <hr class="st-hr" />
 
@@ -386,25 +424,9 @@ function createSettingsSection() {
             <span class="st-badge ${storageInfo.isRemote ? 'st-badge--remote' : 'st-badge--local'}" id="stStorageBadge">${storageInfo.isRemote ? 'S3' : 'Локальное'}</span>
           </div>
           <div class="st-card-b">
-            ${storageInfo.isRemote ? `
-              <div class="st-kv">
-                <span class="st-kv-label">Endpoint</span>
-                <code class="st-kv-code">${escapeHtml(storageInfo.endpoint || 'не задан')}</code>
-              </div>
-              <div class="st-kv">
-                <span class="st-kv-label">Bucket</span>
-                <code class="st-kv-code">${escapeHtml(storageInfo.bucket || 'не задан')}</code>
-              </div>
-              <div class="st-kv">
-                <span class="st-kv-label">Регион</span>
-                <code class="st-kv-code">${escapeHtml(storageInfo.region || 'по умолчанию')}</code>
-              </div>
-            ` : `
-              <div class="st-kv">
-                <span class="st-kv-label">Путь</span>
-                <code class="st-kv-code">${escapeHtml(storageInfo.hostContentRoot || contentRoot)}</code>
-              </div>
-            `}
+            ${renderStorageDetails(storageInfo, data?.runtime || {})}
+
+            <div class="st-sub">Занятость</div>
             ${storageInfo.usage ? (() => {
               const u = storageInfo.usage;
               // Основной показатель — занятость раздела с контентом из statfs
@@ -430,6 +452,12 @@ function createSettingsSection() {
                 ${dataLine}
               </div>`;
             })() : ''}
+
+            <div class="st-sub">Сверка</div>
+            <div class="st-actions">
+              <button id="stStorageReconcile" type="button" class="secondary meta">${getSearchIcon(14)} Проверить файлы</button>
+              <span id="stStorageStatus" class="st-status"></span>
+            </div>
           </div>
         </div>
         </section>
@@ -442,6 +470,10 @@ function createSettingsSection() {
             <span>Модули</span>
           </div>
           <div class="st-card-b">
+            ${renderDefs([
+              { label: 'Доступно модулей', value: modules.length },
+              { label: 'Включено', value: modules.filter(m => m.enabled).length }
+            ])}
             <div id="stModList" class="st-mod-grid">
               ${modules.length === 0 ? '<div class="meta">Нет доступных модулей</div>' :
                 modules.map(m => `
@@ -470,6 +502,7 @@ function createSettingsSection() {
             <span>APK устройств</span>
           </div>
           <div class="st-card-b">
+            <div id="stApkSummary" class="st-apk-summary"></div>
             <div id="stApkVersion" class="meta st-actions">Загрузка...</div>
             <div class="st-actions">
               <input id="stApkIp" class="input st-input-sm" placeholder="IP" />
@@ -501,6 +534,12 @@ function createSettingsSection() {
             <span>База данных</span>
           </div>
           <div class="st-card-b">
+            ${renderDefs([
+              { label: 'Драйвер', value: 'SQLite' },
+              { label: 'Корень данных', value: data?.runtime?.dataRoot || contentRoot, code: true },
+              { label: 'Резервная копия', value: 'экспорт .db' }
+            ])}
+            <div class="st-sub">Резервное копирование</div>
             <div class="st-actions">
               <button id="stDbExport" class="primary">${getDownloadIcon(14)} Экспорт</button>
               <button id="stDbImport" class="secondary">${getUpDownloadIcon(14)} Импорт</button>
@@ -524,11 +563,13 @@ function createSettingsSection() {
         <!-- LDAP (только если настроен) -->
         ${ldap && ldap.enabled ? `
         <div class="st-card">
-          <div class="st-ldap">
-            <span class="st-dot st-dot--success"></span>
-            <span>LDAP: <code>${escapeHtml(ldap.url || '—')}</code></span>
-            <span class="st-sep">·</span>
-            <span>Base DN: <code>${escapeHtml(ldap.baseDN || '—')}</code></span>
+          <div class="st-card-h">
+            ${getKeyIcon(16)}
+            <span>LDAP</span>
+            <span class="st-badge st-badge--remote">Включена</span>
+          </div>
+          <div class="st-card-b">
+            ${renderLdapDetails(ldap)}
           </div>
         </div>` : ''}
         </section>
@@ -585,6 +626,35 @@ function createSettingsSection() {
         } catch { if (modStatus) { modStatus.textContent = 'Ошибка соединения'; modStatus.style.color = 'var(--danger)'; } }
       };
     });
+
+    // Сверка БД и хранилища — только отчёт, ничего не удаляет.
+    const storageReconcile = document.getElementById('stStorageReconcile');
+    if (storageReconcile) {
+      storageReconcile.onclick = async () => {
+        const s = document.getElementById('stStorageStatus');
+        storageReconcile.disabled = true;
+        if (s) { s.textContent = 'Проверяю...'; s.style.color = 'var(--text-secondary)'; }
+        try {
+          const r = await adminFetch('/api/admin/storage/reconcile', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}'
+          });
+          const result = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(result.error || 'Ошибка запроса');
+          if (s) {
+            s.textContent = formatReconcileReport(result);
+            const problems = (result.missing || 0) + (result.unknown || 0)
+              + (result.orphanCount || 0) + (result.errors || 0);
+            s.style.color = problems > 0 ? 'var(--warning)' : 'var(--success)';
+          }
+        } catch (error) {
+          if (s) { s.textContent = `Ошибка: ${error.message}`; s.style.color = 'var(--danger)'; }
+        } finally {
+          storageReconcile.disabled = false;
+        }
+      };
+    }
 
     // APK Install
     const apkInstall = document.getElementById('stApkInstall');
@@ -758,6 +828,9 @@ function createSettingsSection() {
       let busy = false;
 
       const render = () => {
+        const summary = document.getElementById('stApkSummary');
+        if (summary) summary.innerHTML = renderApkSummary(data || {});
+
         const versions = data && Array.isArray(data.versions) ? data.versions : [];
         if (!data || !data.available || !versions.length) {
           el.textContent = data?.error ? `Версия APK: ${data.error}` : 'Версия APK: неизвестна';
@@ -835,6 +908,8 @@ function createSettingsSection() {
 
         branchEl.innerHTML = hasUpdate ? getWarningIcon(14) : getCheckIcon(14);
         branchEl.style.color = hasUpdate ? 'var(--warning)' : 'var(--success)';
+        const branchText = document.getElementById('stSysBranchText');
+        if (branchText) branchText.textContent = `${branch} (${localSha})`;
         branchEl.title = hasUpdate
           ? `${branch} (${localSha}) — доступно обновление`
           : `${branch} (${localSha}) — всё актуально`;

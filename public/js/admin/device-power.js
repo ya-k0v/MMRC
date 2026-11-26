@@ -103,6 +103,7 @@ export function renderPowerControlsHtml(devices) {
         <span>Управление Android устройствами</span>
         <span id="stPowerStatus" class="st-status st-card-h-status"></span>
       </div>
+      <div id="stPowerSummary" class="st-power-summary"></div>
       <div class="st-power-body">
         <div class="st-actions">
           <button type="button" id="stPowerSleepAll" class="secondary st-power-btn" title="Усыпить все" aria-label="Усыпить все">${getMoonIcon(14)}</button>
@@ -219,6 +220,41 @@ function updatePlayerUpdateButtons() {
   });
 }
 
+/** Сводка по устройствам: состояния плюс количество устаревших версий. */
+function updateSummary() {
+  const el = document.getElementById('stPowerSummary');
+  if (!el) return;
+
+  let awake = 0;
+  let sleeping = 0;
+  let unreachable = 0;
+  let unknown = 0;
+  let outdated = 0;
+
+  powerTargets.forEach((device) => {
+    const state = powerStates.get(device.device_id);
+    if (!state) unknown += 1;
+    else if (!state.ok) unreachable += 1;
+    else if (state.awake) awake += 1;
+    else sleeping += 1;
+    if (updateAvailable(device.device_id)) outdated += 1;
+  });
+
+  const chips = [
+    ['Всего', powerTargets.length, ''],
+    ['Активны', awake, 'is-success'],
+    ['Спят', sleeping, 'is-warning'],
+    ['Нет ответа', unreachable, 'is-danger'],
+    ['Не опрошены', unknown, ''],
+    ['Требуют обновления', outdated, 'is-success']
+  ];
+
+  el.innerHTML = chips.map(([label, value, tone]) => `
+    <span class="st-power-summary-item${tone ? ` ${tone}` : ''}">
+      <span>${label}</span><strong>${value}</strong>
+    </span>`).join('');
+}
+
 function updateBadges() {
   document.querySelectorAll('[data-power-badge]').forEach((el) => {
     const badge = badgeView(powerStates.get(el.getAttribute('data-power-badge')));
@@ -226,6 +262,7 @@ function updateBadges() {
     el.className = `meta st-power-badge ${badge.cls}`;
   });
   updatePlayerUpdateButtons();
+  updateSummary();
 }
 
 function setBusy(busy) {
@@ -313,6 +350,7 @@ async function refreshPlayerVersions(adminFetch) {
       });
     }
     updatePlayerUpdateButtons();
+    updateSummary();
   } catch (_) {
     // Недоступный GitHub не должен ломать карточку: просто не подсвечиваем.
   }
@@ -349,6 +387,7 @@ async function runPlayerUpdate(adminFetch, deviceId) {
       currentVersion: releaseVersion || versions.currentVersion
     });
     updatePlayerUpdateButtons();
+    updateSummary();
 
     const message = `Плеер обновлён: ${name}`;
     setStatus(message);

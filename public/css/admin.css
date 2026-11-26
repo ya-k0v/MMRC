@@ -666,6 +666,103 @@ body.admin-page #grid .input:not(.lg-field) {
   min-width: 0;
 }
 
+/* Наполнение панелей: подзаголовки, сетки параметров и диагностики. */
+.st-sub {
+  margin-top: var(--space-xs);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.st-defs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px var(--space-md);
+  margin: 0;
+}
+
+.st-defs-item {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.st-defs dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.st-defs dd {
+  margin: 0;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.st-defs-code,
+.st-defs-code code {
+  font-family: monospace;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.st-service-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.st-service {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  font-size: 0.76rem;
+}
+
+.st-service code {
+  max-width: 170px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+
+.st-net-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.st-net-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+}
+
+.st-net-iface {
+  min-width: 70px;
+  color: var(--muted);
+}
+
+.st-net-addr {
+  overflow-wrap: anywhere;
+}
+
+.st-apk-error {
+  color: var(--warning);
+}
+
 /* Бейдж типа хранилища (S3 / локальное) в шапке карточки */
 .st-badge {
   margin-left: auto;
@@ -970,6 +1067,35 @@ body.admin-page #grid button.st-btn-danger {
 .st-ldap code {
   font-family: monospace;
 }
+
+/* Сводка над списком устройств: состояния и число устаревших версий. */
+.st-power-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: var(--space-sm) var(--space-sm) 0;
+}
+
+.st-power-summary-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.st-power-summary-item strong {
+  color: var(--text);
+  font-weight: var(--font-weight-semibold);
+}
+
+.st-power-summary-item.is-success strong { color: var(--success); }
+.st-power-summary-item.is-warning strong { color: var(--warning); }
+.st-power-summary-item.is-danger strong { color: var(--danger); }
 
 /* Тело карточки питания тянется до её низа, список занимает остаток. */
 .st-power-body {

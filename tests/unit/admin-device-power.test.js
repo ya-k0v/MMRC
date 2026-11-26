@@ -39,6 +39,12 @@ function playerFetch({ apk = {}, install = { ok: true, updated: 1 } } = {}) {
 
 const updateButton = deviceId => document.querySelector(`[data-player-update="${deviceId}"]`);
 
+function summary(label) {
+  const item = Array.from(document.querySelectorAll('.st-power-summary-item'))
+    .find(el => el.querySelector('span')?.textContent === label);
+  return item?.querySelector('strong')?.textContent;
+}
+
 function badge(deviceId) {
   return document.querySelector(`[data-power-badge="${deviceId}"]`);
 }
@@ -150,6 +156,9 @@ describe('бейдж состояния', () => {
 
     expect(badge('tv1').textContent).toBe('спит');
     expect(badge('tv2').textContent).toBe('активен');
+    expect(summary('Активны')).toBe('1');
+    expect(summary('Спят')).toBe('1');
+    expect(summary('Не опрошены')).toBe('1');
   });
 
   test('состояние подтягивается из /api/devices/power-state', async () => {
@@ -392,6 +401,8 @@ describe('обновление плеера', () => {
     // 'v3.4.1' и '3.4.1' — одна и та же версия.
     expect(updateButton('native1').hidden).toBe(true);
     expect(updateButton('native1').classList.contains('st-power-update--available')).toBe(false);
+    expect(summary('Всего')).toBe('3');
+    expect(summary('Требуют обновления')).toBe('1');
   });
 
   test('нажатие обновляет только выбранное устройство и снимает подсветку', async () => {
@@ -413,6 +424,7 @@ describe('обновление плеера', () => {
     expect(bodyOf(call)).toEqual({ deviceIds: ['tv1'] });
     expect(updateButton('tv1').classList.contains('st-power-update--available')).toBe(false);
     expect(updateButton('tv1').hidden).toBe(true);
+    expect(summary('Требуют обновления')).toBe('0');
     expect(document.getElementById('stPowerStatus').textContent).toBe('Плеер обновлён: Зал');
     expect(reportedNotification(adminFetch)).toMatchObject({
       title: 'Обновление плеера',
