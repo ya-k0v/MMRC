@@ -182,6 +182,11 @@ function scheduleFit() {
   });
 }
 
+/** Пересчёт после показа карточки, которая была скрыта деревом настроек. */
+export function refreshPowerControlsLayout() {
+  scheduleFit();
+}
+
 /** Отписка от ресайзов — вызывается при удалении секции настроек. */
 export function stopPowerControls() {
   if (listObserver) {

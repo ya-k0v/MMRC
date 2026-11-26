@@ -511,10 +511,9 @@ body.admin-page #grid .input:not(.lg-field) {
   animation: fadeIn 0.2s ease-out;
 }
 
-/* Настройки: слева колонка карточек (Система → Хранилище → Модули → APK),
-   справа «Управление устройствами» на всю высоту секции. Колонки делят
-   высоту тела секции и скроллятся независимо; список устройств внутри
-   правой колонки пагинируется, если не влезает. */
+/* Настройки как дерево: левый сайдбар выбирает «Настройки», средняя колонка
+   — список разделов, правая — только выбранная карточка. Все карточки живут
+   в DOM, чтобы не пересоздавать фоновые опросы и обработчики. */
 .settings-columns {
   display: flex;
   flex-direction: column;
@@ -523,23 +522,102 @@ body.admin-page #grid .input:not(.lg-field) {
   min-height: 0;
 }
 
-.settings-col {
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.settings-nav-title {
+  padding: 0 var(--space-sm);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.settings-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-sm);
+  width: 100%;
+  min-height: 36px;
+  padding: 6px var(--space-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+.settings-nav-item:hover {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.settings-nav-item.is-active {
+  background: rgba(59, 130, 246, 0.14);
+  border-color: rgba(59, 130, 246, 0.35);
+  color: var(--brand);
+  font-weight: var(--font-weight-semibold);
+}
+
+.settings-nav-icon,
+.settings-nav-icon svg {
+  display: inline-flex;
+  flex: none;
+  color: inherit;
+}
+
+.settings-nav-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.settings-pages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.settings-page {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
   min-width: 0;
 }
 
-.settings-col--left {
-  min-height: 0;
-  overflow-y: auto;
+.settings-page[hidden] {
+  display: none;
 }
 
-.settings-col--right {
+/* Карточка управления устройствами занимает остаток высоты панели. */
+.settings-page--power {
+  flex: 1;
   min-height: 0;
 }
 
-.settings-col--right > .st-card {
+.settings-page--power > .st-card {
   flex: 1;
   min-height: 0;
   display: flex;
@@ -1307,23 +1385,25 @@ body.admin-page #grid button.st-pager-btn {
     flex-direction: row;
   }
 
-  .settings-col {
-    flex: 1 1 0;
+  .settings-nav {
+    flex: 0 0 210px;
   }
 }
 
 @media (max-width: 1023.98px) {
-  /* В стопке колонки живут обычным потоком: секция скроллится целиком,
+  /* В стопке меню и панели идут обычным потоком: секция скроллится целиком,
      а список устройств ограничен по высоте, чтобы работала пагинация. */
   .settings-columns {
     flex: none;
   }
 
-  .settings-col--left {
+  .settings-nav,
+  .settings-pages {
     overflow-y: visible;
   }
 
-  .settings-col--right > .st-card {
+  .settings-page--power,
+  .settings-page--power > .st-card {
     flex: none;
   }
 

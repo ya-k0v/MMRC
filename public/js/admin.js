@@ -4,7 +4,7 @@ import { DEVICE_ICONS, DEVICE_TYPE_NAMES } from './shared/constants.js';
 import { ensureAuth, adminFetch, setXhrAuth, logout } from './admin/auth.js';
 import { setupSocketListeners } from './admin/socket-listeners.js';
 import { showCopyProgress, updateCopyProgress, finishCopyProgress } from './admin/copy-progress.js';
-import { renderPowerControlsHtml, initPowerControls, applyPowerState, stopPowerControls } from './admin/device-power.js';
+import { renderPowerControlsHtml, initPowerControls, applyPowerState, stopPowerControls, refreshPowerControlsLayout } from './admin/device-power.js';
 import { initPowerConstructor, stopPowerConstructor } from './admin/power-constructor.js';
 import { loadDevices as loadDevicesModule, renderTVList as renderTVListModule, syncDeviceStatuses, updateDeviceTile, focusDeviceInList as focusDeviceInListModule } from './admin/devices-manager.js';
 import { createDevice, renameDevice, deleteDevice } from './admin/device-crud.js';
@@ -21,6 +21,7 @@ import { escapeHtml } from './shared/utils.js';
 import { initNotifications } from './admin/notifications.js';
 import { mountNotificationsSection } from './admin/notifications-modal.js';
 import { createSidebar } from './admin/sidebar.js';
+import { renderSettingsNavHtml, initSettingsNav } from './admin/settings-nav.js';
 
 const socket = io({ auth: { token: localStorage.getItem('accessToken') } });
 const grid = document.getElementById('grid');
@@ -315,9 +316,24 @@ function createSettingsSection() {
       ...(result.storage || {})
     };
 
-    body.innerHTML = `
-      <div class="settings-columns"><div class="settings-col settings-col--left">
+    // Список разделов промежуточной колонки. Пункты, которых нет на текущей установке
+    // (PostgreSQL, LDAP выключен), просто не попадают в дерево.
+    const settingsPages = [
+      { id: 'system', label: 'Система', icon: getCpuIcon(16) },
+      { id: 'storage', label: 'Хранилище', icon: getStorageIcon(16) },
+      { id: 'modules', label: 'Модули', icon: getSlidersIcon(16) },
+      { id: 'apk', label: 'APK устройств', icon: getMobileIcon(16) },
+      ...(isSqlite ? [{ id: 'database', label: 'База данных', icon: getDatabaseIcon(16) }] : []),
+      ...(ldap && ldap.enabled ? [{ id: 'ldap', label: 'LDAP', icon: getKeyIcon(16) }] : []),
+      { id: 'devices', label: 'Управление Android устройствами', icon: getPowerIcon(16) }
+    ];
 
+    body.innerHTML = `
+      <div class="settings-columns">
+        ${renderSettingsNavHtml(settingsPages)}
+        <div class="settings-pages" id="stSettingsPages">
+
+        <section class="settings-page" data-settings-page="system">
         <!-- Система: версия/uptime/перезапуск + монитор + состояния контейнеров -->
         <div class="st-card">
           <div class="st-card-h">
@@ -359,7 +375,9 @@ function createSettingsSection() {
             </div>` : ''}
           </div>
         </div>
+        </section>
 
+        <section class="settings-page" data-settings-page="storage">
         <!-- Хранилище контента -->
         <div class="st-card">
           <div class="st-card-h">
@@ -414,7 +432,9 @@ function createSettingsSection() {
             })() : ''}
           </div>
         </div>
+        </section>
 
+        <section class="settings-page" data-settings-page="modules">
         <!-- Модули -->
         <div class="st-card">
           <div class="st-card-h">
@@ -440,7 +460,9 @@ function createSettingsSection() {
             <div id="stModStatus" class="st-status"></div>
           </div>
         </div>
+        </section>
 
+        <section class="settings-page" data-settings-page="apk">
         <!-- APK -->
         <div class="st-card">
           <div class="st-card-h">
@@ -468,7 +490,9 @@ function createSettingsSection() {
             </div>
           </div>
         </div>
+        </section>
 
+        <section class="settings-page" data-settings-page="database" ${isSqlite ? '' : 'hidden'}>
         <!-- База данных (только SQLite) -->
         ${isSqlite ? `
         <div class="st-card">
@@ -494,7 +518,9 @@ function createSettingsSection() {
             </details>
           </div>
         </div>` : ''}
+        </section>
 
+        <section class="settings-page" data-settings-page="ldap" ${ldap && ldap.enabled ? '' : 'hidden'}>
         <!-- LDAP (только если настроен) -->
         ${ldap && ldap.enabled ? `
         <div class="st-card">
@@ -505,12 +531,27 @@ function createSettingsSection() {
             <span>Base DN: <code>${escapeHtml(ldap.baseDN || '—')}</code></span>
           </div>
         </div>` : ''}
+        </section>
 
-      </div><div class="settings-col settings-col--right">
+        <section class="settings-page settings-page--power" data-settings-page="devices">
         <!-- Управление устройствами (сон/пробуждение Android-приставок) -->
         ${renderPowerControlsHtml(devicesCache)}
-      </div></div>
+        </section>
+        </div>
+      </div>
     `;
+
+    // Дерево настроек: по умолчанию открыта «Система», остальные панели
+    // остаются в DOM скрытыми и не теряют своих обработчиков.
+    initSettingsNav({
+      root: body,
+      items: settingsPages,
+      onChange: (id) => {
+        // Скрытая карточка имеет нулевую высоту, поэтому после показа
+        // «Управления устройствами» пересчитываем пагинацию списка.
+        if (id === 'devices') refreshPowerControlsLayout();
+      }
+    });
 
     // --- Bind events ---
 
