@@ -90,6 +90,19 @@ describe('карточка «Управление Android устройствам
     expect(document.querySelector('[data-power-action="reboot"][data-power-id="tv1"]')).not.toBeNull();
   });
 
+  test('массовое обновление плеера живёт среди действий с устройствами', () => {
+    const bulk = '<button id="stApkBatch" type="button">Обновить плеер везде</button>'
+      + '<span id="stApkBatchStatus" class="st-status"></span>';
+    const html = renderPowerControlsHtml(DEVICES, { bulkActionsHtml: bulk });
+    document.body.innerHTML = html;
+
+    const actions = document.getElementById('stPowerSleepAll').closest('.st-actions');
+    expect(actions.querySelector('#stApkBatch')).not.toBeNull();
+    expect(actions.querySelector('#stApkBatchStatus')).not.toBeNull();
+    expect(document.getElementById('stPowerList')).not.toBeNull();
+    expect(html).not.toContain('stApkMenuToggle');
+  });
+
   test('isPowerControllable принимает тип, платформу и нативный плеер', () => {
     expect(isPowerControllable({ deviceType: 'android' })).toBe(true);
     expect(isPowerControllable({ platform: 'Android TV' })).toBe(true);

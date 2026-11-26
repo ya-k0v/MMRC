@@ -16,7 +16,7 @@ import { renderDeviceCard as renderDeviceCardModule, deviceCardSignature, buildD
 import { setupUploadUI as setupUploadUIModule } from './admin/upload-ui.js';
 import { showDevicesModal, showUsersModal, showSettingsModal } from './admin/modal.js';
 import { initSystemMonitor, stopSystemMonitor } from './admin/system-monitor.js';
-import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon, getCloseIcon, getCheckIcon, getWarningIcon, getUnlockIcon, getLockIcon, getDeviceIcon, getKeyIcon, getTrashIcon, getPauseIcon, getPlayIcon, getCopyIcon, getDownloadIcon, getBellIcon, getStorageIcon, getCpuIcon, getSlidersIcon, getDatabaseIcon, getMobileIcon, getMonitorIcon, getBrowserIcon, getTVIcon, getChevronLeftIcon, getChevronRightIcon, getChevronDownIcon, getPowerIcon, getSearchIcon, getUpDownloadIcon, getRestartIcon, getUsersIcon, getPlusIcon } from './shared/svg-icons.js';
+import { getSettingsIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon, getCloseIcon, getCheckIcon, getWarningIcon, getUnlockIcon, getLockIcon, getDeviceIcon, getKeyIcon, getTrashIcon, getPauseIcon, getPlayIcon, getCopyIcon, getDownloadIcon, getBellIcon, getStorageIcon, getCpuIcon, getSlidersIcon, getDatabaseIcon, getMobileIcon, getMonitorIcon, getBrowserIcon, getTVIcon, getChevronLeftIcon, getChevronRightIcon, getPowerIcon, getUpdateIcon, getSearchIcon, getUpDownloadIcon, getRestartIcon, getUsersIcon, getPlusIcon } from './shared/svg-icons.js';
 import { escapeHtml } from './shared/utils.js';
 import { initNotifications } from './admin/notifications.js';
 import { mountNotificationsSection } from './admin/notifications-modal.js';
@@ -45,7 +45,6 @@ let filePage = 0;
 const filePageByDevice = new Map();
 let nodeNames = {};
 let user = null;
-let apkMenuOutsideClick = null;
 const volumeStateByDevice = new Map();
 const VOLUME_STEP = 5;
 
@@ -337,11 +336,18 @@ function createSettingsSection() {
       { id: 'system', label: 'Система', icon: getCpuIcon(16) },
       { id: 'storage', label: 'Хранилище', icon: getStorageIcon(16) },
       { id: 'modules', label: 'Модули', icon: getSlidersIcon(16) },
-      { id: 'apk', label: 'APK устройств', icon: getMobileIcon(16) },
       ...(isSqlite ? [{ id: 'database', label: 'База данных', icon: getDatabaseIcon(16) }] : []),
       ...(ldap && ldap.enabled ? [{ id: 'ldap', label: 'LDAP', icon: getKeyIcon(16) }] : []),
-      { id: 'devices', label: 'Управление Android устройствами', icon: getPowerIcon(16) }
+      // APK и управление устройствами — один раздел: версии/установка сверху,
+      // действия с устройствами и их список снизу.
+      { id: 'devices', label: 'APK и Android-устройства', icon: getMobileIcon(16) }
     ];
+
+    // Массовое обновление плеера — действие над устройствами, поэтому кнопка
+    // живёт в панели питания, а не в форме ручной установки APK.
+    const apkBulkActionsHtml = `
+      <button type="button" id="stApkBatch" class="secondary st-power-btn st-power-bulk-update" title="Обновить плеер на всех устройствах" aria-label="Обновить плеер на всех устройствах">${getUpdateIcon(14)} Обновить плеер везде</button>
+      <span id="stApkBatchStatus" class="st-status"></span>`;
 
     body.innerHTML = `
       <div class="settings-columns">
@@ -494,37 +500,6 @@ function createSettingsSection() {
         </div>
         </section>
 
-        <section class="settings-page" data-settings-page="apk">
-        <!-- APK -->
-        <div class="st-card">
-          <div class="st-card-h">
-            ${getMobileIcon(16)}
-            <span>APK устройств</span>
-          </div>
-          <div class="st-card-b">
-            <div id="stApkSummary" class="st-apk-summary"></div>
-            <div id="stApkVersion" class="meta st-actions">Загрузка...</div>
-            <div class="st-actions">
-              <input id="stApkIp" class="input st-input-sm" placeholder="IP" />
-              <input id="stApkPort" class="input st-input-xs" placeholder="Порт" value="5555" />
-              <input id="stApkId" class="input st-input-md" placeholder="ID устройства" />
-              <input id="stApkName" class="input st-input-sm" placeholder="Имя" />
-              <span style="position:relative; display:inline-flex; align-items:center; gap:6px;">
-                <button id="stApkInstall" class="primary">${getDownloadIcon(14)} Установить</button>
-                <button id="stApkMenuToggle" type="button" class="secondary" aria-expanded="false" aria-label="Дополнительные действия APK" title="Дополнительные действия APK" style="min-width:36px; width:36px; height:36px; padding:0; display:inline-flex; align-items:center; justify-content:center; border-radius:10px;"><span style="display:inline-flex; transform: rotate(-90deg);">${getChevronDownIcon(16)}</span></button>
-                <div id="stApkMenu" style="display:none; position:absolute; left:calc(100% + 6px); top:50%; transform:translateY(-50%); min-width:190px; background:var(--panel); border:1px solid var(--border); border-radius:12px; box-shadow:0 12px 24px rgba(0,0,0,0.35); padding:8px; z-index:30;">
-                  <button id="stApkBatch" type="button" class="secondary" style="width:100%; text-align:left; justify-content:flex-start; display:flex; align-items:center; gap:8px; border-radius:10px;">${getRestartIcon(14)} Обновить все</button>
-                </div>
-              </span>
-            </div>
-            <div class="st-actions">
-              <span id="stApkStatus" class="st-status"></span>
-              <span id="stApkBatchStatus" class="st-status st-ml-auto"></span>
-            </div>
-          </div>
-        </div>
-        </section>
-
         <section class="settings-page" data-settings-page="database" ${isSqlite ? '' : 'hidden'}>
         <!-- База данных (только SQLite) -->
         ${isSqlite ? `
@@ -575,8 +550,32 @@ function createSettingsSection() {
         </section>
 
         <section class="settings-page settings-page--power" data-settings-page="devices">
-        <!-- Управление устройствами (сон/пробуждение Android-приставок) -->
-        ${renderPowerControlsHtml(devicesCache)}
+        <!-- APK и версии плеера: что выбрано, что загружено, ручная установка -->
+        <div class="st-card">
+          <div class="st-card-h">
+            ${getMobileIcon(16)}
+            <span>APK и версии плеера</span>
+          </div>
+          <div class="st-card-b">
+            <div id="stApkSummary" class="st-apk-summary"></div>
+
+            <div class="st-sub">Установка на устройство</div>
+            <div id="stApkVersion" class="meta st-actions">Загрузка...</div>
+            <div class="st-actions">
+              <input id="stApkIp" class="input st-input-sm" placeholder="IP" />
+              <input id="stApkPort" class="input st-input-xs" placeholder="Порт" value="5555" />
+              <input id="stApkId" class="input st-input-md" placeholder="ID устройства" />
+              <input id="stApkName" class="input st-input-sm" placeholder="Имя" />
+              <button id="stApkInstall" class="primary">${getDownloadIcon(14)} Установить</button>
+            </div>
+            <div class="st-actions">
+              <span id="stApkStatus" class="st-status"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Устройства: состояния, питание, обновление плеера и список -->
+        ${renderPowerControlsHtml(devicesCache, { bulkActionsHtml: apkBulkActionsHtml })}
         </section>
         </div>
       </div>
@@ -676,32 +675,10 @@ function createSettingsSection() {
       };
     }
 
-    const apkMenuToggle = document.getElementById('stApkMenuToggle');
-    const apkMenu = document.getElementById('stApkMenu');
-    const closeApkMenu = () => {
-      if (!apkMenu) return;
-      apkMenu.style.display = 'none';
-      if (apkMenuToggle) apkMenuToggle.setAttribute('aria-expanded', 'false');
-    };
-    if (apkMenuToggle && apkMenu) {
-      if (apkMenuOutsideClick) document.removeEventListener('click', apkMenuOutsideClick);
-      apkMenuOutsideClick = (e) => {
-        if (!apkMenuToggle.contains(e.target) && !apkMenu.contains(e.target)) closeApkMenu();
-      };
-      document.addEventListener('click', apkMenuOutsideClick);
-      apkMenuToggle.onclick = (e) => {
-        e.stopPropagation();
-        if (apkMenu.style.display === 'block') { closeApkMenu(); return; }
-        apkMenu.style.display = 'block';
-        apkMenuToggle.setAttribute('aria-expanded', 'true');
-      };
-    }
-
-    // APK Batch
+    // APK Batch — обновляет все привязанные Android-устройства.
     const apkBatch = document.getElementById('stApkBatch');
     if (apkBatch) {
       apkBatch.onclick = async () => {
-        closeApkMenu();
         const s = document.getElementById('stApkBatchStatus');
         apkBatch.disabled = true; s.textContent = 'Обновление...'; s.style.color = 'var(--text-secondary)';
         try {

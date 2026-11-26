@@ -611,13 +611,14 @@ body.admin-page #grid .input:not(.lg-field) {
   display: none;
 }
 
-/* Карточка управления устройствами занимает остаток высоты панели. */
+/* В объединённом разделе только карточка устройств тянется до низа панели:
+   блок APK и версий остаётся компактным и не отбирает место у списка. */
 .settings-page--power {
   flex: 1;
   min-height: 0;
 }
 
-.settings-page--power > .st-card {
+.settings-page--power > .st-card--power {
   flex: 1;
   min-height: 0;
   display: flex;
@@ -1192,6 +1193,12 @@ body.admin-page #grid button.st-power-btn {
   line-height: 1;
 }
 
+/* Текстовая кнопка массового обновления среди иконок питания. */
+body.admin-page #grid button.st-power-btn.st-power-bulk-update {
+  gap: 6px;
+  padding: 0 10px;
+}
+
 .st-power-btn svg {
   display: block;
 }
@@ -1529,7 +1536,7 @@ body.admin-page #grid button.st-pager-btn {
   }
 
   .settings-page--power,
-  .settings-page--power > .st-card {
+  .settings-page--power > .st-card--power {
     flex: none;
   }
 

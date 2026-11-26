@@ -86,8 +86,12 @@ function rowHtml(device) {
     </div>`;
 }
 
-/** HTML карточки «Управление устройствами» для раздела настроек. */
-export function renderPowerControlsHtml(devices) {
+/**
+ * HTML карточки «Управление устройствами» для раздела настроек.
+ * `bulkActionsHtml` — доверенная статическая разметка дополнительных кнопок
+ * массовых действий (например, обновления плеера на всех устройствах).
+ */
+export function renderPowerControlsHtml(devices, { bulkActionsHtml = '' } = {}) {
   powerTargets = (devices || []).filter(isPowerControllable);
   page = 0;
   deviceNames = new Map((devices || []).map(device => [device.device_id, device.name || device.device_id]));
@@ -97,7 +101,7 @@ export function renderPowerControlsHtml(devices) {
   ]));
 
   return `
-    <div class="st-card">
+    <div class="st-card st-card--power">
       <div class="st-card-h">
         ${getPowerIcon(16)}
         <span>Управление Android устройствами</span>
@@ -112,6 +116,7 @@ export function renderPowerControlsHtml(devices) {
           <button type="button" id="stPowerLaunchAll" class="primary st-power-btn" title="Запустить плеер везде" aria-label="Запустить плеер везде">${getPlayIcon(14)}</button>
           <button type="button" id="stPowerRebootAll" class="secondary st-power-btn" title="Перезагрузить все устройства" aria-label="Перезагрузить все устройства">${getRestartIcon(14)}</button>
           <button type="button" id="stPowerConstructor" class="secondary st-power-btn" title="Профили питания" aria-label="Профили питания">${getSlidersIcon(14)}</button>
+          ${bulkActionsHtml}
         </div>
         <div id="stPowerList" class="st-power-list">${powerTargets.map(rowHtml).join('')}</div>
         <div id="stPowerPager" class="st-power-pager" hidden>
