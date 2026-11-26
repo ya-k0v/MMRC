@@ -74,7 +74,7 @@ function renderApkTargets(targets, version) {
   if (!version) {
     el.textContent = 'Версия не выбрана';
   } else if (!targets.length) {
-    el.textContent = `На v${version}: все управляемые устройства уже актуальны`;
+    el.textContent = `На v${version}: обновлять нечего — подходящих устройств нет`;
   } else {
     const shown = targets.slice(0, 5).map(target => target.name).join(', ');
     const rest = targets.length > 5 ? ` и ещё ${targets.length - 5}` : '';

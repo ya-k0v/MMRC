@@ -92,6 +92,8 @@ do not delete it as "generated junk".
   all admin tabs. Recompute dependent UI (update targets, filters, badges)
   from one shared state on every path: local action, socket event, fresh device
   snapshot. Never require a UI reload to see the consequence of a selection.
+- Do not offer an update for a device whose installed version is unknown or
+  unparseable: only a known older version qualifies as outdated.
 - Settings tree: navigation lives in its own module, cards stay in the DOM and
   are hidden, `system` is the default panel; Database/LDAP entries are added
   only when applicable. Summary chips are filters driven by one shared
@@ -227,6 +229,8 @@ SQLite **и** PostgreSQL; локальный диск **и** S3/MinIO; primary *
   из одного общего состояния на всех путях: локальное действие, socket-событие,
   свежий снимок устройств. Перезагрузка UI не должна быть нужна, чтобы увидеть
   последствия выбора.
+- Не предлагать обновление устройству с неизвестной или неразбираемой версией
+  плеера: устаревшей считается только достоверно более старая версия.
 - Дерево настроек: навигация в отдельном модуле, карточки остаются в DOM и
   скрываются, по умолчанию «Система»; пункты БД и LDAP добавляются только когда
   применимо. Чипы сводки — фильтры с общим источником правды.

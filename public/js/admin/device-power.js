@@ -111,9 +111,11 @@ function updateAvailable(id) {
   const versions = playerVersions.get(id);
   if (!versions || !releaseVersion) return false;
   const current = normalizeVersion(versions.currentVersion);
-  if (!current) return true;
+  if (!current) return false;
   const comparison = compareVersions(current, releaseVersion);
-  return comparison === null ? true : comparison < 0;
+  // Неизвестную или неразбираемую версию не трогаем: обновление предлагаем
+  // только тогда, когда точно знаем, что установленная версия старше.
+  return comparison !== null && comparison < 0;
 }
 
 /**
@@ -130,9 +132,9 @@ export function getPlayerUpdateTargets(versionOverride) {
     if (!device.ipAddress && !device.ip_address) return false;
     const versions = playerVersions.get(device.device_id) || {};
     const current = normalizeVersion(versions.currentVersion || device.appVersion || device.app_version);
-    if (!current) return true;
+    if (!current) return false;
     const comparison = compareVersions(current, target);
-    return comparison === null || comparison < 0;
+    return comparison !== null && comparison < 0;
   }).map((device) => ({
     id: device.device_id,
     name: deviceNames.get(device.device_id) || device.name || device.device_id,
@@ -359,14 +361,15 @@ function updatePlayerUpdateButtons() {
     const versions = playerVersions.get(id) || {};
     const available = updateAvailable(id);
     const current = normalizeVersion(versions.currentVersion);
-    const from = current ? `v${current}` : 'версия неизвестна';
     const title = available
-      ? `Обновить плеер: ${from} → v${releaseVersion} (настройки сохранятся)`
-      : releaseVersion
-        ? `Плеер уже на версии v${releaseVersion}`
-        : 'Обновить плеер';
+      ? `Обновить плеер: v${current} → v${releaseVersion} (настройки сохранятся)`
+      : !current
+        ? 'Версия плеера неизвестна — обновление не предлагается'
+        : releaseVersion
+          ? `Плеер уже на версии v${releaseVersion}`
+          : 'Обновить плеер';
 
-    // Актуальная версия — кнопку вообще не показываем.
+    // Актуальная или неизвестная версия — кнопку не показываем.
     el.hidden = !available;
     el.classList.toggle('st-power-update--available', available);
     el.title = title;

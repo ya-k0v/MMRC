@@ -589,7 +589,7 @@ describe('обновление плеера', () => {
     expect(summary('Требуют обновления')).toBe('1');
   });
 
-  test('устройство с неизвестной версией попадает в обновление', async () => {
+  test('устройство с неизвестной версией не попадает в обновление', async () => {
     const devices = DEVICES.map(device => (
       device.device_id === 'tv1' ? { ...device, appVersion: '' } : device
     ));
@@ -599,9 +599,11 @@ describe('обновление плеера', () => {
     await flush();
     await flush();
 
-    expect(updateButton('tv1').hidden).toBe(false);
-    expect(updateButton('tv1').title).toContain('версия неизвестна');
-    expect(summary('Требуют обновления')).toBe('1');
+    expect(updateButton('tv1').hidden).toBe(true);
+    expect(updateButton('tv1').classList.contains('st-power-update--available')).toBe(false);
+    expect(updateButton('tv1').title).toContain('Версия плеера неизвестна');
+    expect(getPlayerUpdateTargets().map(target => target.id)).not.toContain('tv1');
+    expect(summary('Требуют обновления')).toBe('0');
   });
 
   test('смена выбранной версии сразу пересчитывает подсветку', async () => {
