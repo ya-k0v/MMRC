@@ -67,8 +67,13 @@ export function renderServices(services = {}) {
     const check = services[key] || {};
     const disabled = check.status === 'disabled';
     const ok = check.status === 'ok';
-    const tone = ok ? 'st-dot--success' : disabled ? 'st-dot--warning' : 'st-dot--danger';
-    const version = ok ? (check.version || 'доступен') : disabled ? 'локальный запуск' : 'недоступен';
+    const external = check.status === 'external';
+    const tone = ok ? 'st-dot--success' : disabled ? 'st-dot--warning'
+      : external ? 'st-dot--neutral' : 'st-dot--danger';
+    const version = ok ? (check.version || 'доступен')
+      : disabled ? 'локальный запуск'
+        : external ? (check.version || 'внешний сервис')
+          : 'недоступен';
     return `<span class="st-service" title="${escapeHtml(label)}: ${escapeHtml(version)}">
       <span class="st-dot ${tone}"></span>
       <span class="st-service-name">${escapeHtml(label)}</span>
@@ -76,6 +81,41 @@ export function renderServices(services = {}) {
     </span>`;
   });
   return `<div class="st-service-grid">${items.join('')}</div>`;
+}
+
+/**
+ * Состояние стека в Docker-режиме: здесь статус контейнеров важнее проверок
+ * бинарников внутри mmrc. Префикс проекта приходит из конфигурации, а не
+ * хардкодится, чтобы панель работала с любым compose-проектом.
+ */
+export function renderDockerContainers(containers, projectPrefix = '') {
+  const prefix = String(projectPrefix || '');
+  const shortName = (value) => {
+    const name = String(value || '');
+    return prefix && name.startsWith(`${prefix}-`) ? name.slice(prefix.length + 1) : name;
+  };
+
+  const rows = (Array.isArray(containers) ? containers : [])
+    .filter(Boolean)
+    .filter((container) => shortName(container.names) !== 'minio-setup')
+    .map((container) => {
+      const running = String(container.state || '').toLowerCase() === 'running';
+      const exitCode = /Exited \((\d+)\)/.exec(String(container.status || ''));
+      const exitedClean = !running && exitCode && Number(exitCode[1]) === 0;
+      const dot = running ? 'st-dot--success' : exitedClean ? 'st-dot--warning' : 'st-dot--danger';
+      const status = running ? 'работает' : exitedClean ? 'завершён' : 'ошибка';
+      const detail = [container.runningFor || container.status, container.image]
+        .filter(Boolean).join(' · ');
+      return `<div class="st-docker-row">
+        <span class="st-dot ${dot}"></span>
+        <span class="st-docker-name">${escapeHtml(shortName(container.names))}</span>
+        <span class="st-docker-status">${status}</span>
+        <span class="st-docker-detail" title="${escapeHtml(detail)}">${escapeHtml(detail)}</span>
+      </div>`;
+    });
+
+  if (!rows.length) return '<div class="meta">Состояние контейнеров недоступно</div>';
+  return `<div class="st-docker-list">${rows.join('')}</div>`;
 }
 
 /** Внешние (не loopback) адреса интерфейсов сервера. */

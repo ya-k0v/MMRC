@@ -1224,6 +1224,7 @@ export function createAdminRouter(deps = {}) {
       const docker = {
         enabled: process.env.MMRC_DOCKER === '1',
         composeDir: process.env.MMRC_COMPOSE_DIR || null,
+        projectName: process.env.COMPOSE_PROJECT_NAME || null,
         mainImage: process.env.DOCKER_IMAGE || null,
         mainTag: process.env.DOCKER_IMAGE_TAG || DOCKER_TAG || null,
         converterImage: process.env.CONVERTER_IMAGE || null,
@@ -1243,12 +1244,27 @@ export function createAdminRouter(deps = {}) {
           resolve({ status: 'ok', version: v });
         });
       });
-      const [ffmpegRes, ffprobeRes, gitRes, opensslRes] = await Promise.all([
-        runCheck('ffmpeg -version 2>&1 | head -1'),
-        runCheck('ffprobe -version 2>&1 | head -1'),
-        runCheck('git --version 2>&1'),
-        runCheck('openssl version 2>&1')
-      ]);
+      // В Docker бинарники ffmpeg/ffprobe живут в отдельном образе или в
+      // mmrc-streamer, а git внутри образа не используется. Проверять их
+      // локальными командами внутри mmrc — значит показывать ложную ошибку.
+      let ffmpegRes, ffprobeRes, gitRes, opensslRes;
+      if (docker.enabled) {
+        const image = docker.ffmpegImage || docker.images?.ffmpeg || 'ffmpeg';
+        const ffmpegVia = docker.streamerEnabled
+          ? 'через mmrc-streamer'
+          : `через образ ${image}${docker.mainTag ? `:${docker.mainTag}` : ''}`;
+        ffmpegRes = { status: 'external', version: ffmpegVia };
+        ffprobeRes = { status: 'external', version: ffmpegVia };
+        gitRes = { status: 'external', version: 'не нужен внутри образа' };
+        opensslRes = await runCheck('openssl version 2>&1');
+      } else {
+        [ffmpegRes, ffprobeRes, gitRes, opensslRes] = await Promise.all([
+          runCheck('ffmpeg -version 2>&1 | head -1'),
+          runCheck('ffprobe -version 2>&1 | head -1'),
+          runCheck('git --version 2>&1'),
+          runCheck('openssl version 2>&1')
+        ]);
+      }
       const services = {
         ffmpeg: ffmpegRes, ffprobe: ffprobeRes, git: gitRes, openssl: opensslRes,
         node: { status: 'ok', version: process.version },
@@ -1329,7 +1345,13 @@ export function createAdminRouter(deps = {}) {
           const list = String(stdout || '').split('\n').filter(Boolean).map(line => {
             try {
               const c = JSON.parse(line);
-              return { names: c.Names, state: c.State, status: c.Status, image: c.Image };
+              return {
+                names: c.Names,
+                state: c.State,
+                status: c.Status,
+                image: c.Image,
+                runningFor: c.RunningFor
+              };
             } catch { return null; }
           }).filter(c => c && c.names);
           resolve(list);

@@ -38,6 +38,7 @@ import {
   formatUptimeShort,
   renderDefs,
   renderServices,
+  renderDockerContainers,
   renderNetwork,
   renderStorageDetails,
   renderStorageBar,
@@ -332,11 +333,6 @@ function createSectionWrapper(title, icon) {
   return el;
 }
 
-/** Короткое имя контейнера без общего префикса проекта (mmrc-postgres → postgres). */
-function shortContainerName(name) {
-  return String(name || '').replace(/^mmrc-/, '');
-}
-
 function createSettingsSection() {
   const el = createSectionWrapper('Настройки сервера', getSettingsIcon(24));
   const body = el.querySelector('.admin-section-body');
@@ -354,6 +350,10 @@ function createSettingsSection() {
     const modules = Array.isArray(data?.modules) ? data.modules : [];
     const docker = result.docker;
     const containers = Array.isArray(result.containers) ? result.containers : null;
+    // Панель различает хост и контейнер: в Docker главный сигнал — состояние
+    // стека, а не проверки бинарников внутри образа.
+    const dockerMode = Boolean(docker && docker.enabled);
+    const containerPrefix = docker?.projectName || String(docker?.mainImage || '').split('/').pop();
     const ldap = data?.ldapAuth || {};
     // Тип хранилища приходит из бэкенда. Раньше его в ответе не было, и
     // карточка «Хранилище» не могла отличить локальное хранилище от S3.
@@ -409,7 +409,7 @@ function createSettingsSection() {
               <span>${escapeHtml(isSqlite ? 'SQLite' : 'PostgreSQL')}</span>
               <span class="st-sep">·</span>
               <span>Uptime: <strong id="stSysUptime">—</strong></span>
-              ${docker && docker.enabled ? `<span class="st-sep">·</span><span>Docker: <strong>${escapeHtml((docker.mainImage || '').split('/').pop())}:${escapeHtml(docker.mainTag || '')}</strong></span>` : ''}
+              ${dockerMode ? `<span class="st-sep">·</span><span>Docker: <strong>${escapeHtml((docker.mainImage || '').split('/').pop())}:${escapeHtml(docker.mainTag || '')}</strong></span>` : ''}
               <button id="stRestart" class="danger meta st-btn-danger">${getRestartIcon(14)} Перезапустить</button>
             </div>
 
@@ -419,7 +419,7 @@ function createSettingsSection() {
               { label: 'Node.js', value: services.node?.version || '—' },
               { label: 'Uptime процесса', value: formatUptimeShort(services.processUptime) },
               { label: 'Uptime сервера', value: formatUptimeShort(services.systemUptime) },
-              { label: 'Режим запуска', value: docker && docker.enabled ? 'Docker' : 'Локальный' },
+              { label: 'Режим запуска', value: dockerMode ? 'Docker (контейнер)' : 'Локальный (тачка)' },
               { label: 'Ветка', html: '<span id="stSysBranchText">—</span>' }
             ])}
 
@@ -427,9 +427,15 @@ function createSettingsSection() {
             <div id="stSysMonitorBody">
               <div class="meta">Загрузка...</div>
             </div>
+            ${dockerMode ? '<div class="meta st-mode-note">Цифры видны контейнеру с хоста; статус стека — ниже.</div>' : ''}
 
+            ${dockerMode ? `
+            <div class="st-sub">Контейнеры Docker</div>
+            ${renderDockerContainers(containers, containerPrefix)}
+            ` : `
             <div class="st-sub">Сервисы</div>
             ${renderServices(services)}
+            `}
 
             <div class="st-sub">Сеть</div>
             ${renderNetwork(network)}
@@ -440,23 +446,6 @@ function createSettingsSection() {
               { label: 'Последняя активность', value: formatDateTime(sessions[0]?.last_used) }
             ])}
 
-            <hr class="st-hr" />
-
-            ${containers && containers.length ? `
-            <div class="st-chip-row">
-              ${containers.filter(c => shortContainerName(c.names) !== 'minio-setup').map(c => {
-                const running = String(c.state || '').toLowerCase() === 'running';
-                // Одноразовые контейнеры (инициализация/миграции) не должны
-                // гореть красным «ошибкой»: exited (0) — штатное завершение.
-                const exitCode = /Exited \((\d+)\)/.exec(String(c.status || ''));
-                const exitedClean = !running && exitCode && Number(exitCode[1]) === 0;
-                const dot = running ? 'st-dot--success' : exitedClean ? 'st-dot--warning' : 'st-dot--danger';
-                return `<span class="st-chip" title="${escapeHtml(c.image || '')}${c.status ? ` · ${escapeHtml(c.status)}` : ''}">
-                  <span class="st-dot ${dot}"></span>
-                  ${escapeHtml(shortContainerName(c.names))}
-                </span>`;
-              }).join('<span class="st-sep">·</span>')}
-            </div>` : ''}
           </div>
         </div>
         </section>

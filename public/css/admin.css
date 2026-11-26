@@ -873,6 +873,46 @@ body.admin-page #grid button.settings-nav-item {
 .st-dot--success { background: var(--success); }
 .st-dot--warning { background: var(--warning); }
 .st-dot--danger { background: var(--danger); }
+.st-dot--neutral { background: var(--muted); }
+
+/* Docker: статус контейнеров — основной диагностический блок панели. */
+.st-mode-note {
+  margin-top: var(--space-2xs);
+}
+
+.st-docker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.st-docker-row {
+  display: grid;
+  grid-template-columns: 6px minmax(80px, auto) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  font-size: 0.78rem;
+}
+
+.st-docker-name {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.st-docker-status {
+  color: var(--text-secondary);
+}
+
+.st-docker-detail {
+  color: var(--muted);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 
 /* Прогресс-бары (занятость диска) */
 .st-bar {

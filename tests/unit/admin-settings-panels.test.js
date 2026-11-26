@@ -6,6 +6,7 @@ const {
   formatUptimeShort,
   renderDefs,
   renderServices,
+  renderDockerContainers,
   renderNetwork,
   renderStorageDetails,
   renderStorageBar,
@@ -69,6 +70,53 @@ describe('блоки панелей', () => {
     expect(html).toContain('локальный запуск');
     expect(html).toContain('st-dot--danger');
     expect(html).toContain('недоступен');
+  });
+
+  test('renderServices показывает внешние сервисы без ложной ошибки', () => {
+    const html = renderServices({
+      ffmpeg: { status: 'external', version: 'через mmrc-streamer' },
+      ffprobe: { status: 'external', version: 'через mmrc-streamer' },
+      git: { status: 'external', version: 'не нужен внутри образа' },
+      node: { status: 'ok', version: 'v22' },
+      openssl: { status: 'ok', version: 'OpenSSL 3' },
+      docker: { status: 'ok', version: 'доступен' }
+    });
+
+    expect(html).toContain('st-dot--neutral');
+    expect(html).toContain('через mmrc-streamer');
+    expect(html).not.toContain('st-dot--danger');
+  });
+
+  test('renderDockerContainers показывает статусы стека и скрывает одноразовый setup', () => {
+    const html = renderDockerContainers([
+      { names: 'mmrc', state: 'running', status: 'Up 54 minutes', runningFor: '54 minutes', image: 'mmrc:v340' },
+      { names: 'mmrc-redis', state: 'exited', status: 'Exited (0) 2 minutes ago', image: 'redis:7' },
+      { names: 'mmrc-minio-setup', state: 'exited', status: 'Exited (0)', image: 'minio/mc' },
+      { names: 'mmrc-streamer', state: 'exited', status: 'Exited (1)', image: 'streamer:v1' }
+    ], 'mmrc');
+
+    expect(html).toContain('st-dot--success');
+    expect(html).toContain('работает');
+    expect(html).toContain('54 minutes');
+    expect(html).toContain('st-dot--warning');
+    expect(html).toContain('завершён');
+    expect(html).toContain('st-dot--danger');
+    expect(html).toContain('ошибка');
+    expect(html).not.toContain('minio-setup');
+    // Префикс проекта убирается только когда он передан конфигурацией.
+    expect(html).toContain('>redis<');
+  });
+
+  test('renderDockerContainers экранирует данные и работает без списка', () => {
+    const html = renderDockerContainers([
+      { names: '<evil>', state: 'running', status: 'Up', image: 'x"<script>' }
+    ]);
+
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+    expect(html).not.toContain('<evil>');
+    expect(renderDockerContainers(null)).toContain('недоступно');
+    expect(renderDockerContainers([])).toContain('недоступно');
   });
 
   test('renderNetwork ограничивает число адресов и экранирует имена', () => {
