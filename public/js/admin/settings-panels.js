@@ -123,6 +123,119 @@ export function renderStorageDetails(storage = {}, runtime = {}) {
   return renderDefs(rows);
 }
 
+const STORAGE_SEGMENT_LABELS = Object.freeze({
+  video: 'Видео',
+  audio: 'Аудио',
+  image: 'Изображения',
+  documents: 'Документы',
+  other: 'Другое',
+  data: 'Данные MMRC',
+  system: 'Система и прочее',
+  used: 'Занято'
+});
+const STORAGE_SEGMENT_ORDER = Object.keys(STORAGE_SEGMENT_LABELS);
+
+/** Размер в человекочитаемом виде; отрицательные значения не показываем. */
+export function formatStorageSize(bytes) {
+  const value = Math.max(0, Number(bytes) || 0);
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(1)} ГБ`;
+  if (value >= 1048576) return `${(value / 1048576).toFixed(1)} МБ`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} КБ`;
+  return `${Math.round(value)} Б`;
+}
+
+/**
+ * Сегменты бара занятости в стиле «Хранилище iPhone»: типы контента из БД,
+ * остаток данных без метаданных, прочее на диске и свободное место.
+ * Значения в байтах; сумма сегментов не превышает ёмкость раздела.
+ */
+export function buildStorageSegments(usage = {}, byType = []) {
+  const MB = 1048576;
+  const usedBytes = Math.max(0, (Number(usage?.usedMB) || 0) * MB);
+  const freeBytes = Math.max(0, (Number(usage?.availableMB) || 0) * MB);
+  const capacityBytes = usedBytes + freeBytes;
+  const hasDataSize = usage?.dataBytes != null || usage?.dataMB != null;
+  const dataBytes = hasDataSize
+    ? Math.max(0, Number(usage.dataBytes ?? ((Number(usage.dataMB) || 0) * MB)) || 0)
+    : null;
+
+  const totals = new Map();
+  for (const item of Array.isArray(byType) ? byType : []) {
+    const key = item?.key;
+    if (!Object.hasOwn(STORAGE_SEGMENT_LABELS, key) || key === 'system' || key === 'data' || key === 'used') continue;
+    totals.set(key, (totals.get(key) || 0) + Math.max(0, Number(item.bytes) || 0));
+  }
+
+  const sum = (map) => [...map.values()].reduce((acc, value) => acc + value, 0);
+  const classifiedBytes = sum(totals);
+  // Метаданные могут быть устаревшими (дубли, удалённые файлы): не даём
+  // сегментам вылезти за реальный объём данных.
+  if (dataBytes != null && classifiedBytes > dataBytes && classifiedBytes > 0) {
+    const scale = dataBytes / classifiedBytes;
+    for (const [key, bytes] of totals) totals.set(key, bytes * scale);
+  }
+
+  if (dataBytes != null) {
+    const residual = Math.max(0, dataBytes - sum(totals));
+    if (residual > 0) {
+      // Если разбивки нет, весь объём MMRC — один сегмент «Данные MMRC».
+      const key = totals.size ? 'other' : 'data';
+      totals.set(key, (totals.get(key) || 0) + residual);
+    }
+    const systemBytes = Math.max(0, usedBytes - dataBytes);
+    if (systemBytes > 0) totals.set('system', systemBytes);
+  } else if (usedBytes > 0) {
+    // Старый режим: объём наших данных неизвестен — сплошная заливка.
+    totals.set('used', usedBytes);
+  }
+
+  const denominator = capacityBytes > 0 ? capacityBytes : sum(totals);
+  const segments = [...totals.entries()]
+    .filter(([, bytes]) => bytes > 0)
+    .sort(([a], [b]) => STORAGE_SEGMENT_ORDER.indexOf(a) - STORAGE_SEGMENT_ORDER.indexOf(b))
+    .map(([key, bytes]) => ({
+      key,
+      label: STORAGE_SEGMENT_LABELS[key],
+      bytes: Math.round(bytes),
+      percent: denominator > 0 ? (bytes * 100) / denominator : 0
+    }));
+
+  return { segments, freeBytes, capacityBytes };
+}
+
+/** Сегментированный бар и легенда под ним. При отсутствии разбивки — как раньше. */
+export function renderStorageBar(usage = {}, byType = []) {
+  const { segments, freeBytes } = buildStorageSegments(usage, byType);
+  const stacked = segments.some(segment => segment.key !== 'used');
+  const description = segments.map(segment => `${segment.label}: ${formatStorageSize(segment.bytes)}`).join('; ');
+
+  const bar = `<div class="st-bar${stacked ? ' st-bar--stacked' : ''}" role="img" aria-label="${escapeHtml(description || 'Нет данных о занятости')}">
+    ${segments.map(segment => {
+      const tone = segment.key === 'used'
+        ? segment.percent >= 90 ? ' st-bar-fill--danger' : segment.percent >= 75 ? ' st-bar-fill--warning' : ' st-bar-fill--success'
+        : '';
+      const title = `${segment.label}: ${formatStorageSize(segment.bytes)} · ${segment.percent.toFixed(1)}%`;
+      return `<span class="st-bar-seg storage-seg--${segment.key}${tone}" style="width:${Math.min(100, segment.percent).toFixed(3)}%" title="${escapeHtml(title)}"></span>`;
+    }).join('')}
+  </div>`;
+  if (!stacked) return bar;
+
+  const legend = segments.map(segment => `<span class="st-storage-legend-item">
+    <span class="st-legend-dot storage-seg--${segment.key}"></span>
+    <span class="st-legend-label">${escapeHtml(segment.label)}</span>
+    <strong>${formatStorageSize(segment.bytes)}</strong>
+  </span>`);
+  if (freeBytes > 0) {
+    legend.push(`<span class="st-storage-legend-item">
+      <span class="st-legend-dot storage-seg--free"></span>
+      <span class="st-legend-label">Свободно</span>
+      <strong>${formatStorageSize(freeBytes)}</strong>
+    </span>`);
+  }
+
+  return `${bar}<div class="st-storage-legend">${legend.join('')}</div>`;
+}
+
 /** Безопасные (без пароля) настройки LDAP из /api/admin/settings/extended. */
 export function renderLdapDetails(ldap = {}) {
   const rows = [

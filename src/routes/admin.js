@@ -30,6 +30,7 @@ import { loadDevicesFromDB, loadFileNamesFromDB, saveDevicesToDB } from '../stor
 import { updateDeviceFilesFromDB } from './files.js';
 import { resolveDeviceAdbPort } from './devices.js';
 import { repairImportedFilePaths } from '../database/files-metadata.js';
+import { fetchStorageBreakdown } from '../database/storage-breakdown.js';
 import bcrypt from 'bcrypt';
 import {
   resolveLatestServiceLogFilePath,
@@ -1302,6 +1303,10 @@ export function createAdminRouter(deps = {}) {
           }
         }
       } catch { /* подсчёт объёма данных недоступен — не критично */ }
+
+      // Состав контента по типам для сегментированного бара «как в iOS»:
+      // только агрегаты из files_metadata, без имён файлов и путей.
+      storage.byType = await fetchStorageBreakdown(db);
 
       // Состояние контейлеров стека: docker CLI входит в образ (INCLUDE_DOCKER_CLI)
       // и сокет демона примонтирован. Если docker недоступен — отдаём null,

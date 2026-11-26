@@ -38,6 +38,7 @@ import {
   renderServices,
   renderNetwork,
   renderStorageDetails,
+  renderStorageBar,
   renderLdapDetails,
   renderApkSummary,
   formatReconcileReport
@@ -453,7 +454,6 @@ function createSettingsSection() {
               const pct = u.usagePercent != null
                 ? Math.min(100, u.usagePercent)
                 : (u.totalMB ? Math.min(100, Math.round((occupiedMB / u.totalMB) * 100)) : 0);
-              const barClass = pct >= 90 ? 'st-bar-fill--danger' : pct >= 75 ? 'st-bar-fill--warning' : 'st-bar-fill--success';
               const fmt = mb => mb >= 1024 ? `${(mb / 1024).toFixed(1)} ГБ` : `${mb} МБ`;
               const dataLine = u.dataMB != null
                 ? `<div class="meta">Данные MMRC: <strong>${fmt(u.dataMB)}</strong></div>`
@@ -464,9 +464,7 @@ function createSettingsSection() {
                   <span>Занято на диске: <strong>${fmt(occupiedMB)}</strong></span>
                   <span>свободно ${fmt(u.availableMB)} из ${fmt(u.totalMB)} · ${pct}%</span>
                 </div>
-                <div class="st-bar">
-                  <div class="st-bar-fill ${barClass}" style="width:${pct}%;"></div>
-                </div>
+                ${renderStorageBar(u, storageInfo.byType)}
                 ${dataLine}
               </div>`;
             })() : ''}

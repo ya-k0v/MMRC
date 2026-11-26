@@ -8,6 +8,9 @@ const {
   renderServices,
   renderNetwork,
   renderStorageDetails,
+  renderStorageBar,
+  buildStorageSegments,
+  formatStorageSize,
   renderLdapDetails,
   renderApkSummary,
   formatReconcileReport
@@ -152,5 +155,70 @@ describe('блоки панелей', () => {
     expect(text).toContain('отсутствуют: 1');
     expect(text).toContain('list timeout');
     expect(formatReconcileReport({ error: 'boom' })).toBe('boom');
+  });
+});
+
+describe('сегментированный бар хранилища', () => {
+  const MB = 1048576;
+
+  test('форматирует размеры без отрицательных значений', () => {
+    expect(formatStorageSize(2 * 1024 ** 3)).toBe('2.0 ГБ');
+    expect(formatStorageSize(512 * MB)).toBe('512.0 МБ');
+    expect(formatStorageSize(-10)).toBe('0 Б');
+  });
+
+  test('разбивает данные по типам, добавляет остаток и прочее на диске', () => {
+    const { segments, freeBytes } = buildStorageSegments(
+      { usedMB: 1000, availableMB: 1000, dataBytes: 500 * MB },
+      [
+        { key: 'video', bytes: 200 * MB, files: 5 },
+        { key: 'audio', bytes: 50 * MB, files: 2 }
+      ]
+    );
+
+    expect(segments.map(segment => segment.key)).toEqual(['video', 'audio', 'other', 'system']);
+    expect(segments.find(segment => segment.key === 'other').bytes).toBe(250 * MB);
+    expect(segments.find(segment => segment.key === 'system').bytes).toBe(500 * MB);
+    expect(freeBytes).toBe(1000 * MB);
+    expect(segments.reduce((sum, segment) => sum + segment.percent, 0)).toBeCloseTo(50, 5);
+  });
+
+  test('устаревшие метаданные не выходят за реальный объём данных', () => {
+    const { segments } = buildStorageSegments(
+      { usedMB: 100, availableMB: 100, dataBytes: 100 * MB },
+      [{ key: 'video', bytes: 150 * MB }]
+    );
+    expect(segments).toHaveLength(1);
+    expect(segments[0].bytes).toBe(100 * MB);
+  });
+
+  test('без разбивки показывается один сегмент, как раньше', () => {
+    const { segments } = buildStorageSegments({ usedMB: 100, availableMB: 900 }, []);
+    expect(segments.map(segment => segment.key)).toEqual(['used']);
+    expect(segments[0].percent).toBeCloseTo(10, 5);
+    expect(renderStorageBar({ usedMB: 100, availableMB: 900 }, [])).not.toContain('st-bar--stacked');
+  });
+
+  test('без данных о наших файлах весь объём MMRC — сегмент «Данные MMRC»', () => {
+    const { segments } = buildStorageSegments(
+      { usedMB: 100, availableMB: 100, dataMB: 40 },
+      []
+    );
+    expect(segments.map(segment => segment.key)).toEqual(['data', 'system']);
+  });
+
+  test('рендерит легенду, цветные сегменты и экранирует атрибуты', () => {
+    const html = renderStorageBar(
+      { usedMB: 200, availableMB: 800, dataBytes: 100 * MB },
+      [{ key: 'video', bytes: 100 * MB }]
+    );
+
+    expect(html).toContain('st-bar--stacked');
+    expect(html).toContain('storage-seg--video');
+    expect(html).toContain('storage-seg--free');
+    expect(html).toContain('Видео');
+    expect(html).toContain('Свободно');
+    expect(html).toMatch(/aria-label="[^"]*Видео/);
+    expect(html).not.toContain('<script>');
   });
 });

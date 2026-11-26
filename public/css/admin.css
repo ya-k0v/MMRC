@@ -892,6 +892,54 @@ body.admin-page #grid button.settings-nav-item {
 .st-bar-fill--warning { background: var(--warning); }
 .st-bar-fill--danger { background: var(--danger); }
 
+/* Сегментированный бар «Хранилище iPhone»: цвет = тип контента.
+   Цвета фиксированные, чтобы легенда и бар совпадали в обеих темах. */
+.st-bar--stacked {
+  display: flex;
+}
+
+.st-bar-seg {
+  display: block;
+  height: 100%;
+  flex: none;
+  min-width: 1px;
+}
+
+.storage-seg--video { background: #a78bfa; }
+.storage-seg--audio { background: #f472b6; }
+.storage-seg--image { background: #60a5fa; }
+.storage-seg--documents { background: #fbbf24; }
+.storage-seg--other,
+.storage-seg--data { background: #34d399; }
+.storage-seg--system { background: #64748b; }
+.storage-seg--free { background: rgba(148, 163, 184, 0.28); }
+.storage-seg--used { background: var(--success); }
+
+.st-storage-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px var(--space-md);
+  margin-top: var(--space-2xs);
+}
+
+.st-storage-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.st-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.st-legend-label {
+  color: var(--muted);
+}
+
 /* Заголовок прогресс-бара: занято / свободно */
 .st-bar-head {
   justify-content: space-between;
