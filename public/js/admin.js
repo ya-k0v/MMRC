@@ -4,7 +4,16 @@ import { DEVICE_ICONS, DEVICE_TYPE_NAMES } from './shared/constants.js';
 import { ensureAuth, adminFetch, setXhrAuth, logout } from './admin/auth.js';
 import { setupSocketListeners } from './admin/socket-listeners.js';
 import { showCopyProgress, updateCopyProgress, finishCopyProgress } from './admin/copy-progress.js';
-import { renderPowerControlsHtml, initPowerControls, applyPowerState, stopPowerControls, refreshPowerControlsLayout } from './admin/device-power.js';
+import {
+  renderPowerControlsHtml,
+  initPowerControls,
+  applyPowerState,
+  stopPowerControls,
+  refreshPowerControlsLayout,
+  refreshPlayerVersions,
+  syncPowerDevices,
+  setPowerBusy
+} from './admin/device-power.js';
 import { initPowerConstructor, stopPowerConstructor } from './admin/power-constructor.js';
 import { loadDevices as loadDevicesModule, renderTVList as renderTVListModule, syncDeviceStatuses, updateDeviceTile, focusDeviceInList as focusDeviceInListModule } from './admin/devices-manager.js';
 import { createDevice, renameDevice, deleteDevice } from './admin/device-crud.js';
@@ -94,6 +103,9 @@ setupSocketListeners(socket, {
     const prev = currentDeviceId;
     await loadDevices();
     updateDevicesCount(); // Обновляем счетчик после загрузки устройств
+    // Карточка питания живёт в DOM постоянно: подтягиваем в неё свежий список,
+    // иначе имена, версии и чип «Требуют обновления» остаются от прошлого опроса.
+    if (document.getElementById('stPowerList')) syncPowerDevices(devicesCache);
     let hasSelection = false;
     if (prev && devicesCache.find(d => d.device_id === prev)) {
       openDevice(prev);
@@ -669,7 +681,15 @@ function createSettingsSection() {
         try {
           const r = await adminFetch('/api/admin/install-apk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ip, port, deviceId, deviceName }) });
           const result = await r.json();
-          s.innerHTML = result.ok ? getCheckIcon(14, 'var(--success)') + ' Установлено!' : (result.error || 'Ошибка'); s.style.color = result.ok ? 'var(--success)' : 'var(--danger)';
+          if (result.ok) {
+            s.innerHTML = getCheckIcon(14, 'var(--success)') + ' Установлено!';
+            s.style.color = 'var(--success)';
+            await loadDevices();
+            if (document.getElementById('stPowerList')) syncPowerDevices(devicesCache);
+          } else {
+            s.textContent = result.error || 'Ошибка';
+            s.style.color = 'var(--danger)';
+          }
         } catch { s.textContent = 'Ошибка соединения'; s.style.color = 'var(--danger)'; }
         apkInstall.disabled = false;
       };
@@ -680,14 +700,30 @@ function createSettingsSection() {
     if (apkBatch) {
       apkBatch.onclick = async () => {
         const s = document.getElementById('stApkBatchStatus');
-        apkBatch.disabled = true; s.textContent = 'Обновление...'; s.style.color = 'var(--text-secondary)';
+        setPowerBusy(true);
+        s.textContent = 'Обновление...'; s.style.color = 'var(--text-secondary)';
         try {
           const r = await adminFetch('/api/admin/install-apk-bound', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
           const result = await r.json().catch(() => ({}));
-          s.textContent = `Готово: ${result.updated || 0} обновлено, ${result.failed || 0} ошибок`;
-          s.style.color = (result.failed || 0) > 0 ? 'var(--warning)' : 'var(--success)';
+          const updated = Number(result.updated);
+          const failed = Number(result.failed);
+
+          // 400/500 приходят с { ok:false, error } и без счётчиков — раньше
+          // это выглядело как «Готово: 0 обновлено, 0 ошибок».
+          if (!r.ok || result.ok === false || !Number.isFinite(updated) || !Number.isFinite(failed)) {
+            s.textContent = result.error || `Ошибка обновления (HTTP ${r.status})`;
+            s.style.color = 'var(--danger)';
+            return;
+          }
+
+          s.textContent = `Готово: ${updated} обновлено, ${failed} ошибок`;
+          s.style.color = failed > 0 ? 'var(--warning)' : 'var(--success)';
+          if (updated > 0) {
+            await loadDevices();
+            if (document.getElementById('stPowerList')) syncPowerDevices(devicesCache);
+          }
         } catch { s.textContent = 'Ошибка соединения'; s.style.color = 'var(--danger)'; }
-        apkBatch.disabled = false;
+        finally { setPowerBusy(false); }
       };
     }
 
@@ -855,11 +891,16 @@ function createSettingsSection() {
         busy = true;
         render();
         try {
-          await adminFetch('/api/admin/apk-version/select', {
+          const r = await adminFetch('/api/admin/apk-version/select', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ version })
           });
+          const result = await r.json().catch(() => ({}));
+          if (!r.ok || result.ok === false) throw new Error(result.error || 'Не удалось выбрать версию');
+          // Подсветка «Требуют обновления» и кнопки на устройствах должны
+          // сразу пересчитаться под новую выбранную версию.
+          await refreshPlayerVersions(adminFetch);
         } catch {}
         busy = false;
         await load();

@@ -11,7 +11,10 @@ const {
   isPowerControllable,
   renderPowerControlsHtml,
   initPowerControls,
-  applyPowerState
+  applyPowerState,
+  refreshPlayerVersions,
+  syncPowerDevices,
+  setPowerBusy
 } = await import('../../public/js/admin/device-power.js');
 
 const DEVICES = [
@@ -564,5 +567,93 @@ describe('обновление плеера', () => {
     expect(updateButton('tv1').hidden).toBe(true);
     expect(updateButton('tv1').classList.contains('st-power-update--available')).toBe(false);
     expect(updateButton('tv1').title).toBe('Обновить плеер');
+  });
+
+  test('более новая версия и пререлиз сравниваются по частям', async () => {
+    const devices = DEVICES.map(device => {
+      if (device.device_id === 'tv1') return { ...device, appVersion: '3.4.2' };
+      if (device.device_id === 'tv2') return { ...device, appVersion: '3.4.1-rc1' };
+      return device;
+    });
+    document.body.innerHTML = renderPowerControlsHtml(devices);
+    const adminFetch = playerFetch({ apk: APK });
+
+    initPowerControls({ devices, adminFetch });
+    await flush();
+    await flush();
+
+    expect(updateButton('tv1').hidden).toBe(true);
+    expect(updateButton('tv2').hidden).toBe(false);
+    expect(summary('Требуют обновления')).toBe('1');
+  });
+
+  test('устройство с неизвестной версией попадает в обновление', async () => {
+    const devices = DEVICES.map(device => (
+      device.device_id === 'tv1' ? { ...device, appVersion: '' } : device
+    ));
+    document.body.innerHTML = renderPowerControlsHtml(devices);
+
+    initPowerControls({ devices, adminFetch: playerFetch({ apk: APK }) });
+    await flush();
+    await flush();
+
+    expect(updateButton('tv1').hidden).toBe(false);
+    expect(updateButton('tv1').title).toContain('версия неизвестна');
+    expect(summary('Требуют обновления')).toBe('1');
+  });
+
+  test('смена выбранной версии сразу пересчитывает подсветку', async () => {
+    document.body.innerHTML = renderPowerControlsHtml(DEVICES);
+    const adminFetch = playerFetch({ apk: { selectedVersion: '3.4.0' } });
+
+    initPowerControls({ devices: DEVICES, adminFetch });
+    await flush();
+    await flush();
+    expect(updateButton('tv1').hidden).toBe(true);
+
+    await refreshPlayerVersions(playerFetch({ apk: { selectedVersion: '3.4.2' } }));
+    await flush();
+
+    expect(updateButton('tv1').hidden).toBe(false);
+    expect(updateButton('tv1').title).toContain('v3.4.0 → v3.4.2');
+    expect(summary('Требуют обновления')).toBe('3');
+  });
+
+  test('новый список устройств подтягивается без пересоздания карточки', async () => {
+    document.body.innerHTML = renderPowerControlsHtml(DEVICES);
+    const adminFetch = playerFetch({ apk: APK });
+    initPowerControls({ devices: DEVICES, adminFetch });
+    await flush();
+    await flush();
+
+    syncPowerDevices([
+      { device_id: 'tv1', name: 'Новый зал', deviceType: 'android', ipAddress: '10.0.0.1', appVersion: '3.4.1' }
+    ]);
+
+    expect(row('tv2')).toBeNull();
+    expect(row('native1')).toBeNull();
+    expect(row('tv1').textContent).toContain('Новый зал');
+    expect(summary('Всего')).toBe('1');
+    expect(summary('Требуют обновления')).toBe('0');
+  });
+
+  test('занятость сохраняется после перерисовки списка фильтром', async () => {
+    const bulk = '<button id="stApkBatch" type="button">Обновить плеер везде</button>';
+    document.body.innerHTML = renderPowerControlsHtml(DEVICES, { bulkActionsHtml: bulk });
+    initPowerControls({ devices: DEVICES, adminFetch: playerFetch({ apk: APK }) });
+    await flush();
+    await flush();
+
+    setPowerBusy(true);
+    filterChip('outdated').click();
+
+    expect(row('tv1').querySelector('[data-power-action]').disabled).toBe(true);
+    expect(document.getElementById('stApkBatch').disabled).toBe(true);
+
+    setPowerBusy(false);
+    filterChip('all').click();
+
+    expect(row('tv1').querySelector('[data-power-action]').disabled).toBe(false);
+    expect(document.getElementById('stApkBatch').disabled).toBe(false);
   });
 });

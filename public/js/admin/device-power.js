@@ -36,6 +36,9 @@ let fitRaf = 0;
 /** Активный фильтр сводки: 'all' или одно из состояний/«требуют обновления». */
 let activeFilter = 'all';
 
+/** Пока идёт команда, повторные нажатия не должны запускать её ещё раз. */
+let busy = false;
+
 const SUMMARY_FILTERS = [
   { key: 'all', label: 'Всего', tone: '' },
   { key: 'active', label: 'Активны', tone: 'is-success' },
@@ -69,11 +72,42 @@ function normalizeVersion(value) {
   return String(value || '').trim().replace(/^v/i, '');
 }
 
+/**
+ * Сравнение версий по частям: '3.4.2' новее '3.4.1', а '3.4.1-rc1' — старее
+ * '3.4.1'. Для неразбираемой строки возвращаем null: такая версия считается
+ * неизвестной и подлежит обновлению, если релиз известен.
+ */
+function compareVersions(current, target) {
+  const parse = (value) => {
+    const match = /^(\d+(?:\.\d+)*)([-+].*)?$/.exec(normalizeVersion(value));
+    if (!match) return null;
+    return { parts: match[1].split('.').map(Number), suffix: match[2] || '' };
+  };
+  const a = parse(current);
+  const b = parse(target);
+  if (!a || !b) return null;
+
+  const length = Math.max(a.parts.length, b.parts.length);
+  for (let i = 0; i < length; i += 1) {
+    const diff = (a.parts[i] || 0) - (b.parts[i] || 0);
+    if (diff) return diff < 0 ? -1 : 1;
+  }
+  // Номер совпал: пререлиз считается более старой версией, чем релиз.
+  if (a.suffix !== b.suffix) {
+    if (!a.suffix) return 1;
+    if (!b.suffix) return -1;
+    return a.suffix < b.suffix ? -1 : 1;
+  }
+  return 0;
+}
+
 function updateAvailable(id) {
   const versions = playerVersions.get(id);
   if (!versions || !releaseVersion) return false;
-  return Boolean(versions.currentVersion)
-    && normalizeVersion(versions.currentVersion) !== releaseVersion;
+  const current = normalizeVersion(versions.currentVersion);
+  if (!current) return true;
+  const comparison = compareVersions(current, releaseVersion);
+  return comparison === null ? true : comparison < 0;
 }
 
 /** Один источник правды для счётчиков сводки и фильтрации списка. */
@@ -132,20 +166,38 @@ function rowHtml(device) {
     </div>`;
 }
 
+/** Обновляем снимок устройств из свежего списка без пересоздания карточки. */
+function setPowerDevices(devices) {
+  const list = Array.isArray(devices) ? devices : [];
+  powerTargets = list.filter(isPowerControllable);
+  deviceNames = new Map(list.map(device => [device.device_id, device.name || device.device_id]));
+  playerVersions = new Map(list.map(device => [
+    device.device_id,
+    {
+      currentVersion: device.appVersion || device.app_version || '',
+      releaseVersion
+    }
+  ]));
+}
+
+/**
+ * Вызывается после socket-события devices/updated: карточка настроек живёт в
+ * DOM постоянно, поэтому её снимок устройств надо обновлять явно.
+ */
+export function syncPowerDevices(devices) {
+  setPowerDevices(devices);
+  if (document.getElementById('stPowerList')) fitPowerList();
+}
+
 /**
  * HTML карточки «Управление устройствами» для раздела настроек.
  * `bulkActionsHtml` — доверенная статическая разметка дополнительных кнопок
  * массовых действий (например, обновления плеера на всех устройствах).
  */
 export function renderPowerControlsHtml(devices, { bulkActionsHtml = '' } = {}) {
-  powerTargets = (devices || []).filter(isPowerControllable);
+  setPowerDevices(devices);
   page = 0;
   activeFilter = 'all';
-  deviceNames = new Map((devices || []).map(device => [device.device_id, device.name || device.device_id]));
-  playerVersions = new Map((devices || []).map(device => [
-    device.device_id,
-    { currentVersion: device.appVersion || device.app_version || '', releaseVersion }
-  ]));
 
   return `
     <div class="st-card st-card--power">
@@ -262,8 +314,9 @@ function updatePlayerUpdateButtons() {
     const versions = playerVersions.get(id) || {};
     const available = updateAvailable(id);
     const current = normalizeVersion(versions.currentVersion);
+    const from = current ? `v${current}` : 'версия неизвестна';
     const title = available
-      ? `Обновить плеер: v${current} → v${releaseVersion} (настройки сохранятся)`
+      ? `Обновить плеер: ${from} → v${releaseVersion} (настройки сохранятся)`
       : releaseVersion
         ? `Плеер уже на версии v${releaseVersion}`
         : 'Обновить плеер';
@@ -306,6 +359,7 @@ function updateBadges() {
   });
   updatePlayerUpdateButtons();
   updateSummary();
+  applyBusyState();
 }
 
 /**
@@ -318,9 +372,33 @@ function syncAfterStatusChange() {
   if (activeFilter !== 'all') fitPowerList();
 }
 
-function setBusy(busy) {
-  const buttons = document.querySelectorAll('#stPowerList [data-power-action], #stPowerSleepAll, #stPowerWakeAll, #stPowerWakeLaunch, #stPowerLaunchAll, #stPowerRebootAll, #stPowerPrev, #stPowerNext');
-  buttons.forEach((button) => { button.disabled = busy; });
+const BUSY_SELECTOR = [
+  '#stPowerList [data-power-action]',
+  '#stPowerSleepAll',
+  '#stPowerWakeAll',
+  '#stPowerWakeLaunch',
+  '#stPowerLaunchAll',
+  '#stPowerRebootAll',
+  '#stApkBatch',
+  '#stPowerPrev',
+  '#stPowerNext'
+].join(', ');
+
+/** Список перерисовывается при смене фильтра — состояние кнопок храним в модуле. */
+function applyBusyState() {
+  document.querySelectorAll(BUSY_SELECTOR).forEach((button) => {
+    button.disabled = busy;
+  });
+}
+
+/** Блокирует все элементы управления обновлением/питанием на время команды. */
+export function setPowerBusy(value) {
+  busy = Boolean(value);
+  applyBusyState();
+}
+
+function setBusy(value) {
+  setPowerBusy(value);
 }
 
 function setStatus(text) {
@@ -386,7 +464,7 @@ async function refreshStates(adminFetch, deviceIds) {
  * Версия, которую поставит кнопка обновления: сначала выбранная в настройках,
  * затем последний релиз GitHub, затем уже установленная на сервере APK.
  */
-async function refreshPlayerVersions(adminFetch) {
+export async function refreshPlayerVersions(adminFetch) {
   try {
     const response = await adminFetch(APK_VERSION_ENDPOINT);
     if (!response?.ok) return;
@@ -528,14 +606,9 @@ export function initPowerControls({ devices, adminFetch }) {
   const list = document.getElementById('stPowerList');
   if (!list) return;
 
-  powerTargets = (devices || []).filter(isPowerControllable);
+  setPowerDevices(devices);
   page = 0;
   activeFilter = 'all';
-  deviceNames = new Map((devices || []).map(device => [device.device_id, device.name || device.device_id]));
-  playerVersions = new Map((devices || []).map(device => [
-    device.device_id,
-    { currentVersion: device.appVersion || device.app_version || '', releaseVersion }
-  ]));
 
   // Фильтры в сводке: слушатель на контейнере, чипы при этом не пересоздаются.
   document.getElementById('stPowerSummary')?.addEventListener('click', (event) => {
