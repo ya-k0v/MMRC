@@ -32,6 +32,7 @@ import {
   saveFileNamesToDB
 } from './src/storage/devices-storage-sqlite.js';
 import { cleanupMissingFiles, repairImportedFilePaths } from './src/database/files-metadata.js';
+import { isHaReplica } from './src/utils/ha.js';
 import { getFileStatus } from './src/video/file-status.js';
 import { checkVideoParameters } from './src/video/ffmpeg-wrapper.js';
 import { autoOptimizeVideo } from './src/video/optimizer.js';
@@ -87,6 +88,8 @@ import { createPowerProfilesRouter } from './src/routes/power-profiles.js';
 import { configurePowerProfileStore, loadPowerProfiles } from './src/utils/power-profiles.js';
 import { loadPowerProfilesFromDb, savePowerProfileToDb, deletePowerProfileFromDb } from './src/database/power-profiles-db.js';
 
+const HA_REPLICA = isHaReplica();
+
 const app = express();
 const server = http.createServer(app);
 const io = createSocketServer(server);
@@ -116,14 +119,18 @@ logger.info(`[Config] Storage backend: ${storage.__target?.constructor?.name || 
 // После падения оптимизатора/конвертера в temp/scratch могли остаться
 // рабочие файлы. Чистим только старые (>=6 ч), без удаления
 // свежих результатов, которые ещё может подхватить повторный коммит.
-import('./src/storage/sync.js')
-  .then(({ cleanupScratchDir }) => cleanupScratchDir())
-  .then(({ removed }) => {
-    if (removed) logger.info('[Server] Stale scratch files removed', { removed });
-  })
-  .catch((error) => {
-    logger.warn('[Server] Scratch cleanup failed', { error: error.message });
-  });
+// HA-реплики делят mmrc-temp с основным процессом и не должны чистить
+// его файлы одновременно с ним.
+if (!HA_REPLICA) {
+  import('./src/storage/sync.js')
+    .then(({ cleanupScratchDir }) => cleanupScratchDir())
+    .then(({ removed }) => {
+      if (removed) logger.info('[Server] Stale scratch files removed', { removed });
+    })
+    .catch((error) => {
+      logger.warn('[Server] Scratch cleanup failed', { error: error.message });
+    });
+}
 
 // Логируем используемые директории данных
 logger.info(`[Config] Data root (contentRoot): ${dataRoot}`);
@@ -813,7 +820,7 @@ async function hydrateDevicesFromDatabase() {
   // Стартовая сверка S3-primary: локальные файлы без подтверждённого объекта
   // идут в очередь на коммит с ограничением параллелизма. Реплики не должны
   // удалять локальные копии одновременно с основным процессом.
-  if (process.env.STORAGE_STARTUP_RECONCILE_ENABLED !== '0' && process.env.MMRC_HA_MODE !== 'true') {
+  if (process.env.STORAGE_STARTUP_RECONCILE_ENABLED !== '0' && !HA_REPLICA) {
     try {
       await settingsInitPromise;
       const { reconcileStartupLocalToStorage } = await import('./src/storage/reconcile.js');
@@ -985,7 +992,9 @@ const STORAGE_RECONCILE_INTERVAL_MS = Number.parseInt(
   process.env.STORAGE_RECONCILE_INTERVAL_MS || '21600000',
   10
 );
-if (STORAGE_RECONCILE_INTERVAL_MS > 0) {
+// Отчёт и уведомления нужны один раз на кластер: на репликах он дублируется
+// и дополнительно чистит общий temp. Ручной отчёт из админки остаётся доступен.
+if (STORAGE_RECONCILE_INTERVAL_MS > 0 && !HA_REPLICA) {
   let reconcileRunning = false;
 
   const runStorageReconcile = async () => {
@@ -1042,7 +1051,10 @@ if (STORAGE_RECONCILE_INTERVAL_MS > 0) {
     intervalMs: STORAGE_RECONCILE_INTERVAL_MS
   });
 } else {
-  logger.info('[StorageReconcile] Periodic report disabled by STORAGE_RECONCILE_INTERVAL_MS<=0');
+  logger.info('[StorageReconcile] Periodic report disabled', {
+    intervalMs: STORAGE_RECONCILE_INTERVAL_MS,
+    reason: HA_REPLICA ? 'ha-replica' : 'interval'
+  });
 }
 
 // ========================================
