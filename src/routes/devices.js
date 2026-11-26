@@ -373,17 +373,9 @@ export function createDevicesRouter(deps) {
       logger.warn('[Devices] Failed to stop streams before delete', { deviceId: id, error: err.message });
     }
 
-    // 1. Удаляем из БД
-    deleteDeviceFromDB(id);
-    setStoredPowerState(id, null);
-    forgetDevice(id);
-    logDevice('info', `Device deleted from DB`, { deviceId: id });
-    
-    // 1.5. Удаляем метаданные файлов устройства
-    const deletedMetadata = await deleteDeviceFilesMetadata(id);
-    logDevice('info', `Device files metadata deleted`, { deviceId: id, filesCount: deletedMetadata });
-    
-    // 2. Удаляем папку устройства
+    // 1. Сначала удаляем файлы и метаданные, и только потом — само устройство.
+    // При ошибке хранилища/БД устройство остаётся в базе, поэтому запрос можно
+    // повторить: раньше ошибка просто логировалась и клиенту возвращался ok.
     // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
     const devicesPath = getDevicesPath();
     const folderName = typeof d.folder === 'string' && d.folder.trim() ? d.folder : id;
@@ -401,10 +393,18 @@ export function createDevicesRouter(deps) {
 
     if (safeDevicePath) {
       logDevice('info', `Deleting device folder`, { deviceId: id, path: safeDevicePath });
+      let cleanupError = null;
       try {
         await storage.rm(toStorageKey(safeDevicePath));
         logDevice('info', `Device folder deleted from storage`, { deviceId: id, path: safeDevicePath });
-      } catch { /* fallback to fs */ }
+      } catch (err) {
+        // fs-fallback нужен для локальной установки и локального кэша при S3,
+        // но успех на диске не доказывает удаление объекта в S3.
+        cleanupError = err;
+        logDevice('warn', `Storage delete failed, trying filesystem fallback`, {
+          deviceId: id, path: safeDevicePath, error: err.message
+        });
+      }
       try {
         if (fs.existsSync(safeDevicePath)) {
           fs.rmSync(safeDevicePath, { recursive: true, force: true });
@@ -412,10 +412,35 @@ export function createDevicesRouter(deps) {
         }
       } catch (err) {
         logDevice('error', `Failed to delete device folder`, { deviceId: id, path: safeDevicePath, error: err.message });
+        if (!cleanupError) cleanupError = err;
+      }
+      if (cleanupError) {
+        return res.status(500).json({ error: 'Не удалось удалить папку устройства из хранилища' });
       }
     } else {
       logDevice('warn', `Device folder path unresolved, skipping`, { deviceId: id, folder: folderName });
     }
+
+    // 1.5. Удаляем метаданные файлов устройства
+    let deletedMetadata = 0;
+    try {
+      deletedMetadata = await deleteDeviceFilesMetadata(id);
+      logDevice('info', `Device files metadata deleted`, { deviceId: id, filesCount: deletedMetadata });
+    } catch (err) {
+      logDevice('error', `Failed to delete device files metadata`, { deviceId: id, error: err.message });
+      return res.status(500).json({ error: 'Не удалось удалить метаданные файлов устройства' });
+    }
+
+    // 2. Удаляем из БД
+    try {
+      await deleteDeviceFromDB(id);
+    } catch (err) {
+      logDevice('error', `Failed to delete device from DB`, { deviceId: id, error: err.message });
+      return res.status(500).json({ error: 'Не удалось удалить устройство из базы данных' });
+    }
+    setStoredPowerState(id, null);
+    forgetDevice(id);
+    logDevice('info', `Device deleted from DB`, { deviceId: id });
     
     // 3. Удаляем из devices (память)
     for (const key of Object.keys(devices)) {

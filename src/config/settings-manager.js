@@ -84,6 +84,29 @@ function trimTrailingPathSeparators(value) {
   return input.slice(0, end);
 }
 
+/**
+ * Определить contentRoot по пути файла, когда сохранённого предыдущего корня
+ * нет. Нельзя брать dirname(firstPath): для `.../content/video.mp4` это теряет
+ * `content/`, и миграция БД заменяет не тот префикс.
+ */
+export function inferLegacyContentRoot(filePath) {
+  const normalized = String(filePath || '').replace(/\\/g, '/');
+  let markerIndex = -1;
+  for (const subdir of ['content', 'converted', 'streams', 'logs', 'temp']) {
+    const index = normalized.indexOf(`/${subdir}/`);
+    if (index >= 0 && (markerIndex < 0 || index < markerIndex)) {
+      markerIndex = index;
+    }
+  }
+  if (markerIndex > 0) {
+    return normalized.slice(0, markerIndex);
+  }
+  // Угадывать корень через dirname(firstPath) опасно: для .../content/dev/a.mp4
+  // он даст .../content/dev и migration заменит не тот префикс. Если маркера
+  // нет, миграцию не делаем — предпочтительнее оставить пути как есть.
+  return null;
+}
+
 function normalizeBoolean(value, fallback = false) {
   if (typeof value === 'boolean') {
     return value;
@@ -469,41 +492,53 @@ export async function initializeSettings() {
   // КРИТИЧНО: Используем lazy import logger, чтобы избежать циклической зависимости
   const { default: logger } = await import('../utils/logger.js');
   
-  // КРИТИЧНО: Проверяем и мигрируем пути в БД при старте, если нужно
-  // Проверяем, отличается ли путь от значения по умолчанию
-  const defaultDataRoot = trimTrailingPathSeparators(DEFAULT_DATA_ROOT);
-  const normalizedDefault = path.resolve(defaultDataRoot);
-  if (normalizedPath !== normalizedDefault) {
-    try {
-      const { getAllFilePaths, migrateFilePaths } = await import('../database/files-metadata.js');
-      const allPaths = await getAllFilePaths();
-      
-      if (allPaths.length > 0) {
-        // Проверяем первый путь чтобы понять, нужна ли миграция
-        const firstPath = allPaths[0];
-        const pathNormalized = trimTrailingPathSeparators(normalizedPath);
-        const firstPathRoot = firstPath.split('/').slice(0, -1).join('/'); // Путь без имени файла
-        
-        // Если пути начинаются с другого корня - мигрируем
-        if (!firstPath.startsWith(pathNormalized)) {
-          // Пробуем определить старый корень из первого пути
-          // Например: /var/lib/mmrc/public/content/video.mp4 -> /var/lib/mmrc/public/content
-          const oldRoot = firstPathRoot || trimTrailingPathSeparators(DEFAULT_DATA_ROOT);
-          
-          logger.info(`[Settings] Detected path mismatch, migrating: ${oldRoot} -> ${pathNormalized}`);
-          const updated = await migrateFilePaths(oldRoot, pathNormalized);
-          if (updated > 0) {
-            logger.info(`[Settings] Migrated ${updated} file paths on startup`);
-          }
+  // КРИТИЧНО: Проверяем и мигрируем пути в БД при старте, если нужно.
+  // previousContentRoot сохраняется при смене корня до обновления БД: если
+  // процесс упал посередине, при следующем запуске мы знаем точный старый
+  // корень и не пытаемся угадать его по dirname(firstPath).
+  const normalizedDefault = path.resolve(DEFAULT_DATA_ROOT);
+  const previousRoot = typeof settings.previousContentRoot === 'string'
+    ? trimTrailingPathSeparators(path.resolve(settings.previousContentRoot))
+    : null;
+
+  try {
+    const { getAllFilePaths, migrateFilePaths } = await import('../database/files-metadata.js');
+    const allPaths = await getAllFilePaths();
+
+    if (allPaths.length > 0) {
+      const pathNormalized = trimTrailingPathSeparators(normalizedPath);
+      const firstPath = allPaths[0];
+
+      let oldRoot = null;
+      if (previousRoot && previousRoot !== pathNormalized) {
+        oldRoot = previousRoot;
+      } else if (
+        normalizedPath !== normalizedDefault &&
+        firstPath !== pathNormalized &&
+        !firstPath.startsWith(`${pathNormalized}${path.sep}`)
+      ) {
+        oldRoot = trimTrailingPathSeparators(inferLegacyContentRoot(firstPath));
+      }
+
+      if (oldRoot && oldRoot !== pathNormalized) {
+        logger.info(`[Settings] Detected path mismatch, migrating: ${oldRoot} -> ${pathNormalized}`);
+        const updated = await migrateFilePaths(oldRoot, pathNormalized);
+        if (updated > 0) {
+          logger.info(`[Settings] Migrated ${updated} file paths on startup`);
         }
       }
-    } catch (error) {
-      logger.warn('[Settings] Failed to check/migrate paths on startup', {
-        error: error.message,
-        stack: error.stack
-      });
-      // Не прерываем инициализацию при ошибке миграции
     }
+
+    if (previousRoot && previousRoot !== pathNormalized) {
+      settings.previousContentRoot = null;
+      safeWriteSettings();
+    }
+  } catch (error) {
+    logger.warn('[Settings] Failed to check/migrate paths on startup', {
+      error: error.message,
+      stack: error.stack
+    });
+    // Не прерываем инициализацию при ошибке миграции
   }
   
   currentContentRoot = normalizedPath;
@@ -660,6 +695,7 @@ export async function updateContentRootPath(newPath) {
   const oldRoot = currentContentRoot || DEFAULT_DATA_ROOT;
   const normalizedOldRoot = trimTrailingPathSeparators(oldRoot);
   const normalizedNewRoot = trimTrailingPathSeparators(canonicalRoot);
+  const isSameRoot = normalizedOldRoot === normalizedNewRoot;
 
   // КРИТИЧНО: Создаем все необходимые поддиректории до сохранения настроек,
   // чтобы не сохранять нерабочий путь в app-settings.json.
@@ -670,20 +706,65 @@ export async function updateContentRootPath(newPath) {
   ensureDirectoryStrict(path.join(canonicalRoot, 'logs'), 'директорию logs');
   ensureDirectoryStrict(path.join(canonicalRoot, 'temp'), 'директорию temp');
 
+  // КРИТИЧНО: Используем lazy import logger, чтобы избежать циклической зависимости
+  const { default: logger } = await import('../utils/logger.js');
+
+  // Провайдер пересоздаётся и при смене корня, и при same-path обновлении:
+  // factory читает STORAGE_BACKEND в момент вызова, поэтому подменившийся
+  // бэкенд (например, правка .env без перезапуска) тоже подхватится.
+  const { createStorage } = await import('../storage/factory.js');
+  const { replaceCurrentStorage } = await import('../storage/current.js');
+
+  if (isSameRoot) {
+    replaceCurrentStorage(createStorage(normalizedNewRoot));
+    logger.info('[Settings] Content root updated (same path, no migration needed)', {
+      path: normalizedNewRoot
+    });
+    currentContentRoot = normalizedNewRoot;
+    return canonicalRoot;
+  }
+
+  // Сначала переносим сами данные. Пока файлы (или объекты S3) не подтверждены
+  // в новом корне, настройки и БД не трогаем: иначе приложение начнёт искать
+  // файлы по новым путям, которых там ещё нет.
+  const { migrateContentRoot } = await import('../storage/relocate.js');
+
+  const sourceStorage = createStorage(normalizedOldRoot);
+  const targetStorage = createStorage(normalizedNewRoot);
+
+  try {
+    await migrateContentRoot({
+      oldRoot: normalizedOldRoot,
+      newRoot: normalizedNewRoot,
+      sourceStorage,
+      targetStorage
+    });
+  } catch (error) {
+    logger.error('[Settings] contentRoot migration failed, settings unchanged', {
+      oldRoot: normalizedOldRoot,
+      newRoot: normalizedNewRoot,
+      error: error?.message,
+      stack: error?.stack
+    });
+    throw new Error(`Не удалось перенести данные в новый contentRoot: ${error.message}`);
+  }
+
   // Обновляем настройки. Если запись в файл не удалась,
   // откатываем значение в памяти, чтобы не оставлять несогласованное состояние.
   const previousContentRoot = settings.contentRoot;
+  const previousSavedRoot = settings.previousContentRoot;
   settings.contentRoot = canonicalRoot;
+  // previousContentRoot нужен стартовой миграции, если процесс упадёт между
+  // сохранением настроек и обновлением путей в БД.
+  settings.previousContentRoot = normalizedOldRoot;
   try {
     safeWriteSettings({ throwOnError: true });
   } catch (error) {
     settings.contentRoot = previousContentRoot;
+    settings.previousContentRoot = previousSavedRoot;
     throw error;
   }
   setDevicesPath(path.join(canonicalRoot, 'content'));
-
-  // КРИТИЧНО: Используем lazy import logger, чтобы избежать циклической зависимости
-  const { default: logger } = await import('../utils/logger.js');
 
   logger.info('[Settings] Created all data directories', {
     dataRoot: canonicalRoot,
@@ -694,39 +775,58 @@ export async function updateContentRootPath(newPath) {
     temp: getTempDir()
   });
 
-  // КРИТИЧНО: Мигрируем пути в базе данных если путь изменился
-  if (normalizedOldRoot !== normalizedNewRoot) {
-    try {
-      const { migrateFilePaths } = await import('../database/files-metadata.js');
-      const updated = await migrateFilePaths(normalizedOldRoot, normalizedNewRoot);
+  try {
+    const { migrateFilePaths } = await import('../database/files-metadata.js');
+    const updated = await migrateFilePaths(normalizedOldRoot, normalizedNewRoot);
 
-      if (updated > 0) {
-        logger.info(`[Settings] Migrated ${updated} file paths in database`, {
-          oldRoot: normalizedOldRoot,
-          newRoot: normalizedNewRoot,
-          updated
-        });
-      } else {
-        logger.info('[Settings] Content root updated (no paths to migrate)', {
-          oldRoot: normalizedOldRoot,
-          newRoot: normalizedNewRoot
-        });
-      }
-    } catch (error) {
-      logger.error('[Settings] Failed to migrate file paths', {
-        stack: error?.stack,
+    if (updated > 0) {
+      logger.info(`[Settings] Migrated ${updated} file paths in database`, {
         oldRoot: normalizedOldRoot,
-        dataRoot: normalizedNewRoot
+        newRoot: normalizedNewRoot,
+        updated
       });
-      // НЕ прерываем выполнение - путь всё равно обновлен в настройках
+    } else {
+      logger.info('[Settings] Content root updated (no paths to migrate)', {
+        oldRoot: normalizedOldRoot,
+        newRoot: normalizedNewRoot
+      });
     }
-  } else {
-    logger.info('[Settings] Content root updated (same path, no migration needed)', {
-      path: normalizedNewRoot
+  } catch (error) {
+    // Файлы уже скопированы, но БД указывает на старый корень. Откатываем
+    // настройки, чтобы приложение продолжало работать с согласованным
+    // состоянием, и сообщаем об ошибке наверх.
+    logger.error('[Settings] Failed to migrate file paths, rolling back contentRoot', {
+      stack: error?.stack,
+      oldRoot: normalizedOldRoot,
+      dataRoot: normalizedNewRoot
+    });
+    settings.contentRoot = previousContentRoot;
+    settings.previousContentRoot = previousSavedRoot;
+    setDevicesPath(path.join(normalizedOldRoot, 'content'));
+    currentContentRoot = normalizedOldRoot;
+    try {
+      safeWriteSettings({ throwOnError: true });
+    } catch (rollbackError) {
+      logger.error('[Settings] Failed to persist rollback of contentRoot', {
+        error: rollbackError?.message
+      });
+    }
+    throw new Error(`Не удалось обновить пути в базе данных: ${error.message}`);
+  }
+
+  replaceCurrentStorage(targetStorage);
+  currentContentRoot = normalizedNewRoot;
+  settings.previousContentRoot = null;
+  try {
+    safeWriteSettings({ throwOnError: true });
+  } catch (error) {
+    // Стартовая миграция идемпотентна: если previousContentRoot останется,
+    // при следующем запуске она просто не найдёт путей старого корня.
+    logger.warn('[Settings] Failed to clear previousContentRoot marker', {
+      error: error?.message
     });
   }
 
-  currentContentRoot = normalizedNewRoot;
   logger.info('[Settings] Updated paths', {
     dataRoot: canonicalRoot,
     streams: getStreamsOutputDir(),

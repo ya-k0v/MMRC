@@ -30,7 +30,9 @@ export class LocalStorage extends StorageProvider {
 
   _resolve(key) {
     const resolved = path.resolve(this.#root, String(key));
-    if (!resolved.startsWith(this.#root)) {
+    // startsWith(root) пропускал соседний каталог с общим префиксом:
+    // root=/tmp/data, key=../data2 → /tmp/data2. Сравниваем по границе сегмента.
+    if (resolved !== this.#root && !resolved.startsWith(this.#root + path.sep)) {
       throw new Error(`Path traversal detected: ${key}`);
     }
     return resolved;
@@ -88,7 +90,9 @@ export class LocalStorage extends StorageProvider {
   }
 
   async copy(src, dest) {
-    await fsp.cp(this._resolve(src), this._resolve(dest), { recursive: true });
+    const target = this._resolve(dest);
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await fsp.cp(this._resolve(src), target, { recursive: true });
   }
 
   async move(src, dest) {

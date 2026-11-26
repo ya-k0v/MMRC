@@ -4,20 +4,14 @@ import { execFile as execFileCallback } from 'node:child_process';
 import util from 'node:util';
 import crypto from 'node:crypto';
 import os from 'node:os';
-import { getDevicesPath, getConvertedCache, getDataRoot } from '../config/settings-manager.js';
+import { getDevicesPath } from '../config/settings-manager.js';
 import { getAnyFileMetadataBySafeName } from '../database/files-metadata.js';
 import { makeSafeFolderName } from '../utils/transliterate.js';
 import { createModuleLogger } from '../utils/logger.js';
+import { toStorageKey, toStoragePrefix } from '../storage/sync.js';
 const logger = createModuleLogger('convert');
 
 const execFileAsync = util.promisify(execFileCallback);
-
-function toStorageKey(absPath) {
-  const root = getDataRoot();
-  const rel = path.relative(root, path.resolve(String(absPath)));
-  if (rel.startsWith('..')) throw new Error('Path outside data root');
-  return rel.replace(/\\/g, '/');
-}
 
 export async function extractZipToFolder(deviceId, zipFileName, deviceFolderName = null, storage = null) {
   try {
@@ -209,7 +203,7 @@ export async function resolveFolderPath(deviceId, folderName, storage = null) {
   if (storage) {
     for (const candidate of candidates) {
       try {
-        const prefix = toStorageKey(candidate);
+        const prefix = toStoragePrefix(candidate);
         const entries = await storage.list(prefix);
         const hasImages = entries.some(e => /\.(png|jpg|jpeg|gif|webp)$/i.test(e));
         if (hasImages) {
@@ -249,7 +243,7 @@ export async function getFolderImages(deviceId, folderName, storage = null) {
 
     if (storage) {
       try {
-        const prefix = toStorageKey(folderPath);
+        const prefix = toStoragePrefix(folderPath);
         const entries = await storage.list(prefix);
         const files = entries
           .filter(e => {
@@ -272,34 +266,4 @@ export async function getFolderImages(deviceId, folderName, storage = null) {
 export async function getFolderImagesCount(deviceId, folderName, storage = null) {
   const { files } = await getFolderImages(deviceId, folderName, storage);
   return files.length;
-}
-
-export function findImageFolder(deviceId, fileName, storage = null) {
-  try {
-    const devicesPath = getDevicesPath();
-    const baseName = fileName.replace(/\.zip$/i, '');
-    const folderPath = path.join(devicesPath, deviceId, baseName);
-
-    if (fs.existsSync(folderPath)) {
-      const stat = fs.statSync(folderPath);
-      if (stat.isDirectory()) {
-        return folderPath;
-      }
-    }
-
-    if (storage) {
-      try {
-        const prefix = toStorageKey(folderPath);
-        const entries = storage.listSync ? storage.listSync(prefix) : null;
-        if (entries && entries.length > 0) {
-          return folderPath;
-        }
-      } catch {
-      }
-    }
-
-    return null;
-  } catch (error) {
-    return null;
-  }
 }

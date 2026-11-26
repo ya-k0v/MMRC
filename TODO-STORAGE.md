@@ -132,35 +132,42 @@ node --experimental-vm-modules node_modules/jest/bin/jest.js tests/unit/<file>.t
 
 ## Этап 1 — консистентность путей и метаданных
 
-- [ ] `LocalStorage._resolve()`: проверять `resolved === root || resolved.startsWith(root + path.sep)`
+> **Статус этапа 1:** реализован. `npm test` — PASS (59 suites / 482 tests + CI smoke).
+> Совместимость: `docker compose config` проходит для sqlite/local, postgres/s3,
+> deploy и ha; local и S3 покрыты юнит-тестами, PostgreSQL — общим драйвером БД
+> (runtime-проверка не выполнялась). Локальный коммит без push.
+
+- [x] `LocalStorage._resolve()`: проверять `resolved === root || resolved.startsWith(root + path.sep)`
   (сейчас `/tmp/data2` проходит проверку для root `/tmp/data`).
-- [ ] `S3Storage.copy()`: кодировать каждый сегмент `CopySource` через
+- [x] `S3Storage.copy()`: кодировать каждый сегмент `CopySource` через
   `encodeURIComponent`, а не `encodeURI` (символы `#`, `?` ломают копирование).
-- [ ] Смена `contentRoot`:
-  - [ ] не менять пути в БД, пока файлы не перемещены/не подтверждены в новом корне;
-  - [ ] пересоздавать storage provider после смены бэкенда/корня;
-  - [ ] отдельная миграция файлов, а не только `UPDATE files_metadata`;
-  - [ ] при неудаче — откат настроек и понятная ошибка.
-- [ ] Стартовая миграция путей: не использовать `dirname(firstPath)` как старый корень
+- [x] Смена `contentRoot`:
+  - [x] не менять пути в БД, пока файлы не перемещены/не подтверждены в новом корне;
+  - [x] пересоздавать storage provider после смены бэкенда/корня (бэкенд задаётся
+    в `.env` на установке и подхватывается на старте и при `updateContentRootPath`);
+  - [x] отдельная миграция файлов, а не только `UPDATE files_metadata`;
+  - [x] при неудаче — откат настроек и понятная ошибка.
+- [x] Стартовая миграция путей: не использовать `dirname(firstPath)` как старый корень
   (теряется `content/`); брать сохранённый старый `contentRoot`.
-- [ ] Медиа лежат в `content/<safeName>`, а очистка устройства удаляет только
+- [x] Медиа лежат в `content/<safeName>`, а очистка устройства удаляет только
   `content/<device>` → удалять/пересчитывать объекты по `file_path` из БД.
-- [ ] `routes/video-info.js`: убрать жёсткий `content/<device>/<name>`, использовать
+- [x] `routes/video-info.js`: убрать жёсткий `content/<device>/<name>`, использовать
   `metadata.file_path` / storage key.
-- [ ] `folder-converter.js`: `list(prefix)` с завершающим `/`, убрать/использовать `listSync`.
-- [ ] `document-converter.js`: корректный префикс для `getPageSlideCount`.
-- [ ] Коллизии имён PDF/ZIP в общем `content/`: суффикс должен учитывать файлы,
+- [x] `folder-converter.js`: `list(prefix)` с завершающим `/`, убрать/использовать `listSync`.
+- [x] `document-converter.js`: корректный префикс для `getPageSlideCount`.
+- [x] Коллизии имён PDF/ZIP в общем `content/`: суффикс учитывает файлы,
   папки и объекты S3, а не только текущую локальную папку.
-- [ ] `file-resolver.isFileLocallyAvailable()`: не считать наличие storage
-  доказательством доступности; убрать мёртвый fallback.
-- [ ] `file-resolver` для локального отсутствующего файла: всегда завершать ответ
+- [x] `file-resolver.isFileLocallyAvailable()`: не считать наличие storage
+  доказательством доступности; fallback по имени остался только для локального
+  backend и отсутствия storage.
+- [x] `file-resolver` для локального отсутствующего файла: всегда завершать ответ
   (404/503), не оставлять запрос висеть.
-- [ ] `deleteDeviceFilesMetadata()`: не глотать ошибку и не рапортовать успех.
-- [ ] `clear-device`: сначала подтвердить удаление объектов, потом метаданные;
+- [x] `deleteDeviceFilesMetadata()`: не глотать ошибку и не рапортовать успех.
+- [x] `clear-device`: сначала подтвердить удаление объектов, потом метаданные;
   при ошибке storage не очищать БД.
-- [ ] `storage.rm()` при ошибке листинга не должен приводить к «успешной» очистке.
-- [ ] Тесты: path traversal `../data2`, copy с `#`/`?`, смена root, clear-device
-  с медиа в корне, video-info путь, конвертеры.
+- [x] `storage.rm()` при ошибке листинга не должен приводить к «успешной» очистке.
+- [x] Тесты: path traversal `../data2`, copy с `#`/`?`, смена root, clear-device
+  с медиа в корне, video-info путь, конвертеры, ошибки удаления и resolver.
 
 ---
 

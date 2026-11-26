@@ -86,6 +86,28 @@ function sendFileFromDisk(res, req, metadata, context = {}) {
   });
 }
 
+/**
+ * fs.createReadStream открывает файл лениво: ENOENT приходит уже после
+ * res.status()/res.set(), когда честный JSON-ответ невозможен. Ждём
+ * события open до заголовков, чтобы отсутствующий локальный файл превращался
+ * в 404/503, а не в оборванное соединение.
+ */
+async function waitForLocalStreamOpen(stream) {
+  if (!stream || typeof stream.once !== 'function' || typeof stream.path !== 'string') return;
+  await new Promise((resolve, reject) => {
+    const cleanup = () => {
+      if (typeof stream.off === 'function') {
+        stream.off('open', onOpen);
+        stream.off('error', onError);
+      }
+    };
+    const onOpen = () => { cleanup(); resolve(); };
+    const onError = (err) => { cleanup(); reject(err); };
+    stream.once('open', onOpen);
+    stream.once('error', onError);
+  });
+}
+
 // Отправка файла через storage (S3 и др.)
 async function sendFileFromStorage(res, req, metadata, context = {}, storage) {
   const { file_path, file_size, mime_type, safe_name, md5_hash, content_type } = metadata;
@@ -190,6 +212,8 @@ async function sendFileFromStorage(res, req, metadata, context = {}, storage) {
   let stream;
   try {
     stream = await storage.createReadStream(storageKey, { start, end });
+    // Локальный ReadStream открывается лениво: дождёмся open/error до заголовков.
+    await waitForLocalStreamOpen(stream);
   } catch (error) {
     const status = getStorageErrorStatus(error);
     logger.warn('[Resolver] Storage stream failed', {
@@ -228,23 +252,27 @@ async function sendFileFromStorage(res, req, metadata, context = {}, storage) {
       return;
     }
 
+    const status = getStorageErrorStatus(error);
     logger.error('[Resolver] Storage stream error', {
-      error: error.message, ...context
+      error: error.message, status, ...context
     });
+    if (!res.headersSent && !res.destroyed && typeof res.status === 'function') {
+      return res.status(status).json(storageErrorBody(status));
+    }
     // Заголовки уже ушли — JSON отправить нельзя, обрываем соединение.
-    if (!res.headersSent && !res.destroyed) {
-      res.status(500).end();
-    } else if (!res.destroyed && typeof res.destroy === 'function') {
+    if (!res.destroyed && typeof res.destroy === 'function') {
       res.destroy(error);
     }
   }
 }
 
 // Вспомогательная проверка: файл доступен локально?
+// Наличие storage backend само по себе не доказывает доступность файла:
+// для локального backend объект — это тот же файл на диске.
 function isFileLocallyAvailable(filePath) {
   const storage = getCurrentStorage();
-  if (storage) return true;  // storage backend не требует локального файла
-  return filePath && fs.existsSync(filePath);
+  if (storage && !isLocalStorage(storage)) return true;
+  return Boolean(filePath && fs.existsSync(filePath));
 }
 
 // Универсальная отправка файла с поддержкой локального диска и S3
@@ -283,15 +311,17 @@ router.get('/resolve-all/*fileName', async (req, res) => {
 
   let metadata = await getAnyFileMetadataBySafeName(fileName);
 
+  const storage = getCurrentStorage();
   if (!metadata || !metadata.file_path || !isFileLocallyAvailable(metadata.file_path)) {
-    if (getCurrentStorage()) {
-      // Если есть storage — DB источник истины, отсутствие файла на диске не ошибка
+    if (storage && !isLocalStorage(storage)) {
+      // Для S3 DB — источник истины: локальной копии может закономерно не быть.
       if (!metadata || !metadata.file_path) {
         logger.warn('[Resolver] File not found in DB (resolve-all)', { fileName });
         return res.status(404).send('File not found');
       }
     } else {
-      // Нет storage — файл должен быть на диске, пробуем fallback
+      // Локальный backend (или storage не задан): файл обязан быть на диске,
+      // поэтому ищем его по имени и возвращаем 404, а не уходим в storage.
       const devicesPath = getDevicesPath();
       const fallbackPaths = [path.join(devicesPath, fileName)];
       try {
@@ -312,7 +342,15 @@ router.get('/resolve-all/*fileName', async (req, res) => {
         }
       }
       if (foundPath) {
-        const stat = fs.statSync(foundPath);
+        let stat;
+        try {
+          stat = fs.statSync(foundPath);
+        } catch (err) {
+          logger.warn('[Resolver] Fallback file disappeared before stat', {
+            fileName, path: foundPath, error: err.message
+          });
+          return res.status(404).send('File not found');
+        }
         metadata = {
           device_id: 'shared',
           safe_name: fileName,

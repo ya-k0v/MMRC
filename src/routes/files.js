@@ -26,13 +26,13 @@ import { setCurrentStorage, getCurrentStorage } from '../storage/current.js';
 import { commitFolderToStorage, copyFolderEverywhere, isLocalStorage, toStorageKey } from '../storage/sync.js';
 import { createZipArchiveFromFolder, downloadFolderFromStorage } from '../storage/folder-archive.js';
 import { getStorageErrorStatus, storageErrorBody, isClientDisconnectError } from '../storage/errors.js';
-import { LocalStorage } from '../storage/local.js';
 import { probeStorageKey } from '../storage/probe.js';
+import { findAvailableSafeName } from '../storage/unique-name.js';
 import { validatePath } from '../utils/path-validator.js';
 import { fetchPublicUrl, assertPublicHttpUrl } from '../utils/ssrf.js';
 import { getCachedResolution, clearResolutionCache } from '../video/resolution-cache.js';
 import { processUploadedFilesAsync, processUploadedStaticContent, registerUploadedFilesImmediately } from '../utils/file-metadata-processor.js';
-import { getFileMetadata, deleteFileMetadata, getDeviceFilesMetadata, deleteDeviceFilesMetadata, saveFileMetadata, countFileReferences, updateFileOriginalName, createStreamingEntry, updateStreamMetadata, cleanupMissingFiles } from '../database/files-metadata.js';
+import { getFileMetadata, deleteFileMetadata, getDeviceFilesMetadata, deleteDeviceFilesMetadata, saveFileMetadata, countFileReferences, updateFileOriginalName, createStreamingEntry, updateStreamMetadata, cleanupMissingFiles, getAllFilePaths } from '../database/files-metadata.js';
 import { setFileStatus as setGlobalFileStatus } from '../video/file-status.js';
 import { removeStreamJob } from '../streams/stream-manager.js';
 import { getTrailerPath } from '../video/trailer-generator.js';
@@ -504,13 +504,37 @@ async function isFolderPresent(folderPath) {
 }
 
 /**
- * Удалить папку из хранилища и с диска.
- *
- * Сначала хранилище: если листинг префикса упал (MinIO недоступен), исключение
- * уходит наружу и локальная копия остаётся нетронутой — так «перенос» не может
- * пройти успешно ценой потери данных. Сама локальная копия при S3 — кэш, и
- * удаляется всегда, когда до этого дошли.
+ * Удалить файл/папку из хранилища и подтвердить, что их действительно нет.
+ * Для S3 DeleteObject отвечает успехом даже на отсутствующий ключ, поэтому
+ * после удаления дополнительно проверяем сам ключ и префикс.
  */
+async function removePathConfirmed(storage, absPath) {
+  const key = toStorageKey(absPath).replace(/\\/g, '/');
+  await storage.rm(key);
+
+  if (!storage || isLocalStorage(storage)) {
+    if (fs.existsSync(absPath)) {
+      throw new Error(`Не удалось удалить локальный путь: ${absPath}`);
+    }
+    return;
+  }
+
+  const probe = await probeStorageKey(storage, key);
+  if (probe.state !== 'missing') {
+    throw new Error(
+      `Удаление объекта ${key} не подтверждено (${probe.state}` +
+      `${probe.error ? `: ${probe.error.message}` : ''})`
+    );
+  }
+
+  const prefix = key ? `${key.replace(/\/+$/, '')}/` : '';
+  const leftovers = (await storage.list(prefix))
+    .filter(entry => entry === key || entry.startsWith(prefix));
+  if (leftovers.length > 0) {
+    throw new Error(`После удаления ${key} остались объекты: ${leftovers.slice(0, 5).join(', ')}`);
+  }
+}
+
 async function removeFolderEverywhere(folderPath) {
   const storage = getCurrentStorage();
   let removedInStorage = false;
@@ -935,7 +959,7 @@ export async function updateDeviceFilesFromDB(deviceId, devices, fileNamesMap) {
     if (!exists) continue;
     // Для S3 полагаемся на content_type, для локальных файлов проверяем stat
     const storage = getCurrentStorage();
-    if (storage && !(storage instanceof LocalStorage)) {
+    if (storage && !isLocalStorage(storage)) {
       if (f.content_type === 'folder') folderPaths.push(f.file_path);
     } else {
       try {
@@ -1848,10 +1872,8 @@ export function createFilesRouter(deps) {
     }
 
     let targetPath = path.join(resolvedDevicesPath, safeName);
-    while (fs.existsSync(targetPath) && path.resolve(targetPath) !== finalPath) {
-      const extName = path.extname(safeName);
-      const baseName = path.basename(safeName, extName);
-      safeName = `${baseName}_${crypto.randomBytes(3).toString('hex')}${extName}`;
+    if (path.resolve(targetPath) !== finalPath) {
+      safeName = await findAvailableSafeName(safeName, resolvedDevicesPath, storage);
       targetPath = path.join(resolvedDevicesPath, safeName);
     }
 
@@ -5072,25 +5094,87 @@ export function createFilesRouter(deps) {
         }
       }
       
-      // Удаляем каталог устройства полностью (включая заглушки и медиа)
+      const activeStorage = getCurrentStorage() || storage;
+
+      // Медиа может лежать не в content/<device>, а в общем content/<safeName>
+      // (дедупликация/общий контент). Поэтому удаляем и пересчитываем объекты
+      // по file_path из БД, а не только каталог устройства.
+      const metadataPaths = [...new Set(
+        metadata
+          .filter(meta => meta.file_path && meta.content_type !== 'streaming')
+          .map(meta => meta.file_path)
+      )];
+      const metadataPathSet = new Set(metadataPaths);
+
+      let allPathsBefore;
       try {
-        const storageKey = toStorageKey(devicePath);
-        await storage.rm(storageKey);
-        await storage.ensureDir(storageKey);
-        logger.info('[clear-device-files] Директория удалена и создана заново', { deviceId: id, devicePath });
-      } catch (storageErr) {
-        // Fallback на прямые fs операции, если storage не может обработать путь
-        if (fs.existsSync(devicePath)) {
-          logger.info('[clear-device-files] Удаление директории (fallback)', { deviceId: id, devicePath });
-          fs.rmSync(devicePath, { recursive: true, force: true });
-        }
-        fs.mkdirSync(devicePath, { recursive: true });
-        logger.info('[clear-device-files] Директория создана заново (fallback)', { deviceId: id, devicePath });
+        allPathsBefore = await getAllFilePaths();
+      } catch (pathsError) {
+        throw new Error(`Не удалось прочитать пути из БД: ${pathsError.message}`);
       }
-      
-      // Очищаем метаданные в БД (используем функцию вместо цикла)
+
+      const deviceRootResolved = path.resolve(devicePath);
+      const isUnderDeviceRoot = (candidate) => {
+        const resolved = path.resolve(candidate);
+        return resolved === deviceRootResolved || resolved.startsWith(`${deviceRootResolved}${path.sep}`);
+      };
+
+      // Пути других устройств внутри удаляемого каталога нельзя трогать.
+      const foreignRefsUnderDevice = allPathsBefore.filter(filePath =>
+        filePath && !metadataPathSet.has(filePath) && isUnderDeviceRoot(filePath)
+      );
+
+      let skippedShared = 0;
+      let sharedInsideDevice = 0;
+      for (const filePath of metadataPaths) {
+        let refs;
+        try {
+          refs = await countFileReferences(filePath);
+        } catch (refsError) {
+          throw new Error(`Не удалось проверить ссылки на ${filePath}: ${refsError.message}`);
+        }
+
+        // null означает ошибку БД: нельзя удалять объект, не зная, нужен ли он
+        // другому устройству.
+        if (refs === null) {
+          throw new Error(`Не удалось проверить ссылки на ${filePath}`);
+        }
+
+        if (refs > 1) {
+          skippedShared += 1;
+          if (isUnderDeviceRoot(filePath)) sharedInsideDevice += 1;
+          logger.info('[clear-device-files] Файл используется другим устройством, оставляем', {
+            deviceId: id, filePath, references: refs
+          });
+          continue;
+        }
+
+        logger.info('[clear-device-files] Удаление файла', { deviceId: id, filePath });
+        await removePathConfirmed(activeStorage, filePath);
+      }
+
+      // Только после подтверждённого удаления объектов очищаем БД.
       const deletedCount = await deleteDeviceFilesMetadata(id);
-      logger.info('[clear-device-files] Метаданные удалены', { deviceId: id, deletedCount });
+      logger.info('[clear-device-files] Метаданные удалены', {
+        deviceId: id, deletedCount, skippedShared
+      });
+
+      // Каталог устройства удаляем, только если в нём нет файлов других
+      // устройств и мы не оставили там общий файл.
+      if (foreignRefsUnderDevice.length === 0 && sharedInsideDevice === 0) {
+        await removePathConfirmed(activeStorage, devicePath);
+        if (isLocalStorage(activeStorage)) {
+          fs.mkdirSync(devicePath, { recursive: true });
+        }
+        logger.info('[clear-device-files] Директория удалена и создана заново', { deviceId: id, devicePath });
+      } else {
+        logger.warn('[clear-device-files] Каталог устройства не удалён: внутри остались чужие ссылки', {
+          deviceId: id,
+          devicePath,
+          foreignRefs: foreignRefsUnderDevice.length,
+          sharedInsideDevice
+        });
+      }
       
       // Очищаем fileNamesMap и сохраняем
       if (fileNamesMap[id]) {
@@ -5377,6 +5461,12 @@ export function createFilesRouter(deps) {
               error: e.message,
               filePath: physicalPath
             });
+            // Объект уже отсутствует — это не ошибка очистки. Ошибки хранилища
+            // (листинг, доступ, сеть) нельзя выдавать за успешное удаление.
+            const alreadyGone = e.code === 'ENOENT' || e.name === 'NotFound' || e.name === 'NoSuchKey';
+            if (!alreadyGone) {
+              return res.status(500).json({ error: 'Не удалось удалить файл из хранилища' });
+            }
           }
         } else {
           logFile('info', 'Physical file kept (still used)', {
@@ -5399,22 +5489,39 @@ export function createFilesRouter(deps) {
         ];
         let deletedFile = false;
         for (const candidatePath of candidatePaths) {
+          if (!fs.existsSync(candidatePath)) continue;
+
+          let cleanupError = null;
           try {
-            if (fs.existsSync(candidatePath)) {
-              try { await storage.rm(toStorageKey(candidatePath)); } catch { fs.rmSync(candidatePath, { recursive: true, force: true }); }
-              logFile('info', 'File deleted from disk (no DB record)', {
-                filePath: candidatePath,
-                deviceId: id
-              });
-              deletedFile = true;
-              break;
-            }
+            await storage.rm(toStorageKey(candidatePath));
+          } catch (e) {
+            // fs-fallback подчищает локальную копию, но не отменяет ошибку S3:
+            // удаление объекта в бакете не подтверждено.
+            cleanupError = e;
+            logger.warn('storage.rm failed, trying filesystem fallback', {
+              error: e.message,
+              filePath: candidatePath
+            });
+          }
+          try {
+            fs.rmSync(candidatePath, { recursive: true, force: true });
           } catch (e) {
             logger.warn('Failed to delete file from disk', {
               error: e.message,
               filePath: candidatePath
             });
+            if (!cleanupError) cleanupError = e;
           }
+          if (cleanupError) {
+            return res.status(500).json({ error: 'Не удалось удалить файл из хранилища' });
+          }
+
+          logFile('info', 'File deleted from disk (no DB record)', {
+            filePath: candidatePath,
+            deviceId: id
+          });
+          deletedFile = true;
+          break;
         }
         if (!deletedFile) {
           logFile('warn', 'File not found in DB or on disk', { deviceId: id, fileName: name });

@@ -81,6 +81,7 @@ import { createAdminRouter, createAdminEndpoints } from './src/routes/admin.js';
 import { createModulesRouter } from './src/routes/modules.js';
 import { initEnabledModules, getEnabledModules } from './src/modules/index.js';
 import { createStorage } from './src/storage/factory.js';
+import { createStorageHandle, setCurrentStorage } from './src/storage/current.js';
 import { createVolumeService } from './src/services/volume.js';
 import { createPowerProfilesRouter } from './src/routes/power-profiles.js';
 import { configurePowerProfileStore, loadPowerProfiles } from './src/utils/power-profiles.js';
@@ -108,8 +109,9 @@ if (!fs.existsSync(convertedDir)) fs.mkdirSync(convertedDir, { recursive: true }
 if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
-const storage = createStorage(dataRoot);
-logger.info(`[Config] Storage backend: ${storage.constructor.name} (root: ${storage.root})`);
+const storage = createStorageHandle(createStorage(dataRoot));
+setCurrentStorage(storage);
+logger.info(`[Config] Storage backend: ${storage.__target?.constructor?.name || 'unknown'} (root: ${storage.root})`);
 
 // Логируем используемые директории данных
 logger.info(`[Config] Data root (contentRoot): ${dataRoot}`);

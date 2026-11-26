@@ -415,6 +415,7 @@ export async function deleteFileMetadata(deviceId, safeName) {
 /**
  * Удалить все метаданные устройства
  * @param {string} deviceId
+ * @throws {Error} если БД не подтвердила удаление
  */
 export async function deleteDeviceFilesMetadata(deviceId) {
   try {
@@ -428,7 +429,7 @@ export async function deleteDeviceFilesMetadata(deviceId) {
     return result.changes;
   } catch (error) {
     logger.error('Failed to delete device files metadata', { error: error.message, deviceId });
-    return 0;
+    throw error;
   }
 }
 
@@ -895,17 +896,12 @@ export async function deleteStreamingEntry(deviceId, safeName) {
  * @returns {Array<string>} - Массив уникальных путей
  */
 export async function getAllFilePaths() {
-  try {
-    const db = getDatabase();
-    const rows = await db.query(`
-      SELECT DISTINCT file_path FROM files_metadata
-      ORDER BY file_path
-    `);
-    return rows.map(row => row.file_path);
-  } catch (error) {
-    logger.error('Failed to get all file paths', { error: error.message, stack: error.stack });
-    return [];
-  }
+  const db = getDatabase();
+  const rows = await db.query(`
+    SELECT DISTINCT file_path FROM files_metadata
+    ORDER BY file_path
+  `);
+  return rows.map(row => row.file_path);
 }
 
 /**

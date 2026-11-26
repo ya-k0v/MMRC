@@ -42,7 +42,17 @@ export function toStorageKey(absPath) {
   const root = getDataRoot();
   const rel = path.relative(root, path.resolve(String(absPath)));
   if (rel.startsWith('..')) throw new Error('Path outside data root');
-  return rel;
+  return rel.replace(/\\/g, '/');
+}
+
+/**
+ * Ключ-префикс для list(): всегда с завершающим `/`.
+ * Без него `list('content/dev/deck')` захватывает соседний `deck-old`.
+ */
+export function toStoragePrefix(absPath) {
+  const key = toStorageKey(absPath);
+  if (!key || key === '.') return '';
+  return `${key.replace(/\/+$/, '')}/`;
 }
 
 /**

@@ -14,11 +14,14 @@ import { notificationsManager } from '../utils/notifications.js';
 import { setFileStatus, deleteFileStatus } from '../video/file-status.js';
 import { cancelOptimizationJob, hasActiveOptimizationJob } from '../video/optimizer.js';
 import { getCurrentStorage } from '../storage/current.js';
+import { probeStorageKey } from '../storage/probe.js';
+import { getFileMetadata } from '../database/files-metadata.js';
 import {
   isLocalStorage,
   materializeToLocal,
   createScratchPath,
-  removeLocalCopy
+  removeLocalCopy,
+  toStorageKey
 } from '../storage/sync.js';
 import { VIDEO_EXTENSIONS_DOTTED } from '../config/file-types.js';
 
@@ -400,7 +403,7 @@ export function createVideoInfoRouter(deps) {
     schedulerTimer.unref();
   }
 
-  const ensureVideoFileExists = (deviceId, fileName) => {
+  const ensureVideoFileExists = async (deviceId, fileName) => {
     const d = devices[deviceId];
     if (!d) {
       return { ok: false, status: 404, error: 'Устройство не найдено' };
@@ -424,20 +427,49 @@ export function createVideoInfoRouter(deps) {
       return { ok: false, status: 400, error: 'Некорректный путь устройства' };
     }
 
-    const filePath = path.resolve(deviceRoot, normalizedFileName);
-    const isInsideDeviceRoot = filePath.startsWith(`${deviceRoot}${path.sep}`);
+    const guessedPath = path.resolve(deviceRoot, normalizedFileName);
+    const isInsideDeviceRoot = guessedPath.startsWith(`${deviceRoot}${path.sep}`);
     if (!isInsideDeviceRoot) {
       return { ok: false, status: 400, error: 'Некорректный путь к файлу' };
     }
 
+    // После дедупликации/общего контента файл может лежать не в папке
+    // устройства. DB — источник истины для фактического пути.
+    let metadata = null;
+    try {
+      metadata = await getFileMetadata(deviceId, normalizedFileName);
+    } catch (error) {
+      logger.warn('[video-info] Не удалось прочитать метаданные файла', {
+        deviceId, fileName: normalizedFileName, error: error.message
+      });
+    }
+
+    const filePath = metadata?.file_path ? path.resolve(metadata.file_path) : guessedPath;
     const inList = Array.isArray(d.files) ? d.files.includes(normalizedFileName) : false;
     const existsOnDisk = fs.existsSync(filePath);
 
-    if (!inList && !existsOnDisk) {
+    let storageState = 'missing';
+    const activeStorage = getCurrentStorage() || storage;
+    if (activeStorage && !isLocalStorage(activeStorage)) {
+      try {
+        storageState = (await probeStorageKey(activeStorage, toStorageKey(filePath))).state;
+      } catch (error) {
+        logger.warn('[video-info] Не удалось проверить файл в хранилище', {
+          deviceId, fileName: normalizedFileName, filePath, error: error.message
+        });
+        storageState = 'unknown';
+      }
+    }
+
+    if (!inList && !existsOnDisk && storageState === 'missing') {
       return { ok: false, status: 404, error: 'Файл не найден' };
     }
 
-    return { ok: true, device: d };
+    if (!existsOnDisk && storageState === 'unknown') {
+      return { ok: false, status: 503, error: 'Хранилище временно недоступно' };
+    }
+
+    return { ok: true, device: d, filePath };
   };
   
   // GET /api/devices/:id/files/:name/status - Получить статус обработки файла
@@ -481,10 +513,14 @@ export function createVideoInfoRouter(deps) {
       return res.status(404).json({ error: 'Устройство не найдено' });
     }
     
-    // КРИТИЧНО: Используем getDevicesPath() для получения актуального пути
-    const devicesPath = getDevicesPath();
+    // КРИТИЧНО: фактический путь берём из метаданных: после дедупликации
+    // файл может лежать в общем content/<safeName>, а не в папке устройства.
     const fileName = decodeURIComponent(req.params.name);
-    const filePath = path.join(devicesPath, d.folder, fileName);
+    const validation = await ensureVideoFileExists(id, fileName);
+    if (!validation.ok) {
+      return res.status(validation.status).json({ error: validation.error });
+    }
+    const filePath = validation.filePath;
     
     // S3 — основное хранилище, поэтому файла на диске может не быть.
     // ffprobe читает только файловую систему: скачиваем во временную рабочую
@@ -545,7 +581,7 @@ export function createVideoInfoRouter(deps) {
     }
     
     const fileName = decodeURIComponent(req.params.name);
-    const validation = ensureVideoFileExists(id, fileName);
+    const validation = await ensureVideoFileExists(id, fileName);
     if (!validation.ok) {
       return res.status(validation.status).json({ success: false, message: validation.error });
     }
@@ -594,14 +630,14 @@ export function createVideoInfoRouter(deps) {
   });
 
   // POST /api/devices/:id/files/:name/cancel-optimize - Отменить текущую обработку
-  router.post('/:id/files/:name/cancel-optimize', requireAdmin, (req, res) => {
+  router.post('/:id/files/:name/cancel-optimize', requireAdmin, async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
     if (!id) {
       return res.status(400).json({ error: 'Неверный ID устройства' });
     }
 
     const fileName = decodeURIComponent(req.params.name);
-    const validation = ensureVideoFileExists(id, fileName);
+    const validation = await ensureVideoFileExists(id, fileName);
     if (!validation.ok) {
       return res.status(validation.status).json({ ok: false, error: validation.error });
     }
@@ -646,14 +682,14 @@ export function createVideoInfoRouter(deps) {
   });
 
   // POST /api/devices/:id/files/:name/schedule-optimize-night - Запланировать обработку на ночь
-  router.post('/:id/files/:name/schedule-optimize-night', requireAdmin, (req, res) => {
+  router.post('/:id/files/:name/schedule-optimize-night', requireAdmin, async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
     if (!id) {
       return res.status(400).json({ error: 'Неверный ID устройства' });
     }
 
     const fileName = decodeURIComponent(req.params.name);
-    const validation = ensureVideoFileExists(id, fileName);
+    const validation = await ensureVideoFileExists(id, fileName);
     if (!validation.ok) {
       return res.status(validation.status).json({ ok: false, error: validation.error });
     }

@@ -14,15 +14,9 @@ import { setFileStatus } from '../video/file-status.js';
 import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('convert');
 import { validatePath } from '../utils/path-validator.js';
+import { toStorageKey, toStoragePrefix } from '../storage/sync.js';
 
 const execFileAsync = promisify(execFile);
-
-function toStorageKey(absPath) {
-  const root = getDataRoot();
-  const rel = path.relative(root, path.resolve(String(absPath)));
-  if (rel.startsWith('..')) throw new Error('Path outside data root');
-  return rel.replace(/\\/g, '/');
-}
 
 export async function getPdfPageCount(pdfPath, storage = null) {
   let pdfBytes;
@@ -365,7 +359,7 @@ export async function findFileFolder(deviceFolderOrId, fileName, storage = null)
   if (!fs.existsSync(deviceFolder)) {
     if (storage) {
       try {
-        const prefix = toStorageKey(deviceFolder);
+        const prefix = toStoragePrefix(deviceFolder);
         const entries = await storage.list(prefix);
         const folderName = fileName.replace(/\.(pdf|pptx)$/i, '');
         const possibleFolderRel = path.posix.join(prefix, folderName);
@@ -406,7 +400,7 @@ export async function findFileFolder(deviceFolderOrId, fileName, storage = null)
 
   if (storage) {
     try {
-      const prefix = toStorageKey(deviceFolder);
+      const prefix = toStoragePrefix(deviceFolder);
       const entries = await storage.list(prefix);
       const targetFolder = path.posix.join(prefix, folderName);
       const hasPng = entries.some(e => e.startsWith(`${targetFolder}/page.`) && e.endsWith('.png'));
@@ -434,7 +428,7 @@ export async function getPageSlideCount(deviceId, fileName, storage = null) {
 
     if (storage) {
       try {
-        const prefix = toStorageKey(convertedDir);
+        const prefix = toStoragePrefix(convertedDir);
         const entries = await storage.list(prefix);
         const pngFiles = entries
           .filter(e => e.endsWith('.png'))

@@ -13,7 +13,7 @@ import { hasDeviceAccess } from '../middleware/device-access.js';
 import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('convert');
 import { getFolderImagesCount } from '../converters/folder-converter.js';
-import { isLocalStorage, toStorageKey } from '../storage/sync.js';
+import { isLocalStorage, toStoragePrefix } from '../storage/sync.js';
 
 const router = express.Router();
 
@@ -160,7 +160,7 @@ export function createConversionRouter(deps) {
           return res.status(404).json({ error: 'Слайды не найдены' });
         }
 
-        const prefix = `${toStorageKey(convertedDir).replace(/\\/g, '/')}/`;
+        const prefix = toStoragePrefix(convertedDir);
         const entries = await storage.list(prefix);
         pngKeys = entries
           .filter(e => e.toLowerCase().endsWith('.png'))

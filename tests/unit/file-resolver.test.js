@@ -1,7 +1,10 @@
 import { jest } from '@jest/globals';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
 
-const DATA_ROOT = '/app/data';
+let DATA_ROOT = '/app/data';
 
 const mockGetFileMetadata = jest.fn();
 const mockGetAnyMetadata = jest.fn();
@@ -51,6 +54,12 @@ function fakeRes() {
   res.send = function (body) { this.headersSent = true; this.body = body; return this; };
   res.json = function (body) { this.headersSent = true; this.jsonBody = body; return this; };
   res.end = function (...a) { this.headersSent = true; return Writable.prototype.end.apply(this, a); };
+  res.sendFile = function (filePath, _options, callback) {
+    this.headersSent = true;
+    this.body = fs.readFileSync(filePath).toString();
+    if (callback) callback(null);
+    return this;
+  };
   return res;
 }
 
@@ -192,5 +201,87 @@ describe('preview из storage', () => {
     expect(res.statusCode).toBe(206);
     expect(res.headers['Content-Range']).toBe(`bytes 0-99/${FILE_SIZE}`);
     expect(res.headers['Content-Length']).toBe(100);
+  });
+});
+
+describe('/resolve-all с локальным хранилищем', () => {
+  let tempRoot;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'resolver-local-'));
+    DATA_ROOT = tempRoot;
+    fs.mkdirSync(path.join(tempRoot, 'content', 'ATV001'), { recursive: true });
+    mockStorage.isLocal = true;
+    mockStorage.stat.mockImplementation(async () => {
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    });
+    mockStorage.createReadStream.mockImplementation(async () => {
+      throw new Error('createReadStream не должен вызываться для локального файла');
+    });
+  });
+
+  afterEach(() => {
+    mockStorage.isLocal = false;
+    DATA_ROOT = '/app/data';
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  async function resolveAll() {
+    const layer = resolverRouter.stack.find((l) => l.route?.path === '/resolve-all/*fileName');
+    const res = fakeRes();
+    await layer.route.stack[0].handle(
+      {
+        params: { fileName: 'default.mp4' },
+        headers: {},
+        on() {},
+        removeListener() {}
+      },
+      res
+    );
+    return res;
+  }
+
+  it('находит файл по имени, если путь из БД отсутствует на диске', async () => {
+    const fallback = path.join(tempRoot, 'content', 'ATV001', 'default.mp4');
+    fs.writeFileSync(fallback, 'hello');
+    mockGetAnyMetadata.mockResolvedValue(metadata({
+      file_path: path.join(tempRoot, 'content', 'missing.mp4'),
+      file_size: FILE_SIZE
+    }));
+
+    const res = await resolveAll();
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe('hello');
+    expect(mockStorage.createReadStream).not.toHaveBeenCalled();
+  });
+
+  it('возвращает 404, если файла нет ни в БД, ни на диске', async () => {
+    mockGetAnyMetadata.mockResolvedValue(null);
+
+    const res = await resolveAll();
+
+    expect(res.statusCode).toBe(404);
+    expect(mockStorage.stat).not.toHaveBeenCalled();
+    expect(mockStorage.createReadStream).not.toHaveBeenCalled();
+  });
+
+  it('ENOENT при открытии локального потока превращается в 404 до заголовков', async () => {
+    mockStorage.isLocal = true;
+    mockStorage.stat.mockResolvedValue({ size: FILE_SIZE });
+    const missingPath = path.join(tempRoot, 'content', 'ATV001', 'gone.mp4');
+    mockStorage.createReadStream.mockImplementation(async () => fs.createReadStream(missingPath));
+    mockGetFileMetadata.mockResolvedValue(metadata({ file_path: missingPath }));
+
+    const layer = resolverRouter.stack.find((l) => l.route?.path === '/resolve/:deviceId/*fileName');
+    const res = fakeRes();
+    await layer.route.stack[0].handle(
+      { params: { deviceId: 'ATV001', fileName: 'gone.mp4' }, headers: {}, on() {}, removeListener() {} },
+      res
+    );
+
+    expect(res.statusCode).toBe(404);
+    expect(res.jsonBody).toMatchObject({ error: expect.stringMatching(/не найден/i) });
   });
 });

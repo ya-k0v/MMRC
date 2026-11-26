@@ -64,8 +64,30 @@ export class S3Storage extends StorageProvider {
     return this.#root ? `s3://${this.#bucket}/${this.#root}` : `s3://${this.#bucket}/`;
   }
 
+  get bucket() {
+    return this.#bucket;
+  }
+
+  get keyPrefix() {
+    return this.#root;
+  }
+
   _key(key) {
     return this.#root + String(key).replace(/^\/+/, '');
+  }
+
+  /**
+   * CopySource — это URL-путь. encodeURI() оставляет `#` и `?` как есть,
+   * из-за чего объект `clip#1.mp4` превращался в обрезанный ключ и копирование
+   * падало/копировало не то. Кодируем каждый сегмент отдельно.
+   */
+  _copySourceFor(sourceStorage, key) {
+    const fullKey = `${sourceStorage.keyPrefix}${String(key).replace(/^\/+/, '')}`;
+    const encodedKey = fullKey
+      .split('/')
+      .map(segment => encodeURIComponent(segment))
+      .join('/');
+    return `/${sourceStorage.bucket}/${encodedKey}`;
   }
 
   async read(key) {
@@ -295,7 +317,23 @@ export class S3Storage extends StorageProvider {
   async copy(src, dest) {
     const cmd = new S3.CopyObjectCommand({
       Bucket: this.#bucket,
-      CopySource: `/${this.#bucket}/${encodeURI(this._key(src))}`,
+      CopySource: this._copySourceFor(this, src),
+      Key: this._key(dest)
+    });
+    await this.#client.send(cmd);
+  }
+
+  /**
+   * Копирование между разными корнями (например, при смене contentRoot).
+   * sourceStorage должен быть S3Storage.
+   */
+  async copyFrom(sourceStorage, src, dest) {
+    if (!sourceStorage || typeof sourceStorage.keyPrefix !== 'string') {
+      throw new Error('S3Storage.copyFrom requires an S3Storage source');
+    }
+    const cmd = new S3.CopyObjectCommand({
+      Bucket: this.#bucket,
+      CopySource: this._copySourceFor(sourceStorage, src),
       Key: this._key(dest)
     });
     await this.#client.send(cmd);
