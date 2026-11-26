@@ -6,7 +6,8 @@
  * устройство в сне выпало из сети — будит его Wake-on-LAN пакетом).
  *
  * Карточка живёт в разделе «Настройки сервера» → «Управление устройствами»,
- * список плиток устройств она не засоряет.
+ * список плиток устройств она не засоряет. Чипы сводки над списком — это
+ * фильтры: по ним показываются только устройства с выбранным статусом.
  *
  * @module admin/device-power
  */
@@ -31,6 +32,18 @@ let powerTargets = [];
 let page = 0;
 let listObserver = null;
 let fitRaf = 0;
+
+/** Активный фильтр сводки: 'all' или одно из состояний/«требуют обновления». */
+let activeFilter = 'all';
+
+const SUMMARY_FILTERS = [
+  { key: 'all', label: 'Всего', tone: '' },
+  { key: 'active', label: 'Активны', tone: 'is-success' },
+  { key: 'sleeping', label: 'Спят', tone: 'is-warning' },
+  { key: 'unreachable', label: 'Нет ответа', tone: 'is-danger' },
+  { key: 'unknown', label: 'Не опрошены', tone: '' },
+  { key: 'outdated', label: 'Требуют обновления', tone: 'is-success' }
+];
 
 /** Отступ между рядами в списке, px (должен совпадать с .st-power-list). */
 const LIST_GAP = 6;
@@ -61,6 +74,39 @@ function updateAvailable(id) {
   if (!versions || !releaseVersion) return false;
   return Boolean(versions.currentVersion)
     && normalizeVersion(versions.currentVersion) !== releaseVersion;
+}
+
+/** Один источник правды для счётчиков сводки и фильтрации списка. */
+function deviceMatchesFilter(device, filter) {
+  const id = device.device_id;
+  if (filter === 'all') return true;
+  if (filter === 'outdated') return updateAvailable(id);
+
+  const state = powerStates.get(id);
+  if (filter === 'active') return Boolean(state?.ok && state.awake);
+  if (filter === 'sleeping') return Boolean(state?.ok && !state.awake);
+  if (filter === 'unreachable') return Boolean(state && !state.ok);
+  if (filter === 'unknown') return !state;
+  return true;
+}
+
+function summaryCounts() {
+  const counts = Object.fromEntries(SUMMARY_FILTERS.map(({ key }) => [key, 0]));
+  powerTargets.forEach((device) => {
+    SUMMARY_FILTERS.forEach(({ key }) => {
+      if (deviceMatchesFilter(device, key)) counts[key] += 1;
+    });
+  });
+  return counts;
+}
+
+function summaryChipsHtml(counts = summaryCounts()) {
+  return SUMMARY_FILTERS.map(({ key, label, tone }) => `
+    <button type="button" class="st-power-summary-item${tone ? ` ${tone}` : ''}"
+      data-power-filter="${key}" aria-pressed="${key === activeFilter}"
+      title="Показать устройства: ${label}">
+      <span>${label}</span><strong>${counts[key]}</strong>
+    </button>`).join('');
 }
 
 function rowHtml(device) {
@@ -94,6 +140,7 @@ function rowHtml(device) {
 export function renderPowerControlsHtml(devices, { bulkActionsHtml = '' } = {}) {
   powerTargets = (devices || []).filter(isPowerControllable);
   page = 0;
+  activeFilter = 'all';
   deviceNames = new Map((devices || []).map(device => [device.device_id, device.name || device.device_id]));
   playerVersions = new Map((devices || []).map(device => [
     device.device_id,
@@ -107,7 +154,7 @@ export function renderPowerControlsHtml(devices, { bulkActionsHtml = '' } = {}) 
         <span>Управление Android устройствами</span>
         <span id="stPowerStatus" class="st-status st-card-h-status"></span>
       </div>
-      <div id="stPowerSummary" class="st-power-summary"></div>
+      <div id="stPowerSummary" class="st-power-summary">${summaryChipsHtml()}</div>
       <div class="st-power-body">
         <div class="st-actions">
           <button type="button" id="stPowerSleepAll" class="secondary st-power-btn" title="Усыпить все" aria-label="Усыпить все">${getMoonIcon(14)}</button>
@@ -141,13 +188,17 @@ function fitPowerList() {
   const pager = document.getElementById('stPowerPager');
   if (!list || !pager) return;
 
-  if (!powerTargets.length) {
-    list.innerHTML = '';
+  const targets = powerTargets.filter(device => deviceMatchesFilter(device, activeFilter));
+  if (!targets.length) {
+    list.innerHTML = activeFilter === 'all'
+      ? ''
+      : '<div class="st-power-empty">Нет устройств с таким статусом</div>';
     pager.hidden = true;
+    updateBadges();
     return;
   }
 
-  list.innerHTML = powerTargets.map(rowHtml).join('');
+  list.innerHTML = targets.map(rowHtml).join('');
   const available = list.clientHeight;
   if (!(available > 0)) {
     // Контейнер не разложен (скрытая секция, измерения невозможны) —
@@ -159,9 +210,9 @@ function fitPowerList() {
   const rowHeight = (list.firstElementChild?.offsetHeight || 0) + LIST_GAP;
   const fitCount = rowHeight > 0
     ? Math.max(1, Math.floor((available + LIST_GAP) / rowHeight))
-    : powerTargets.length;
-  const perPage = Math.min(powerTargets.length, fitCount);
-  const totalPages = Math.ceil(powerTargets.length / perPage);
+    : targets.length;
+  const perPage = Math.min(targets.length, fitCount);
+  const totalPages = Math.ceil(targets.length / perPage);
 
   if (totalPages <= 1) {
     page = 0;
@@ -170,7 +221,7 @@ function fitPowerList() {
     if (page > totalPages - 1) page = totalPages - 1;
     if (page < 0) page = 0;
     const from = page * perPage;
-    list.innerHTML = powerTargets.slice(from, from + perPage).map(rowHtml).join('');
+    list.innerHTML = targets.slice(from, from + perPage).map(rowHtml).join('');
     pager.hidden = false;
     const info = document.getElementById('stPowerPagerInfo');
     if (info) info.textContent = `${page + 1} / ${totalPages}`;
@@ -225,39 +276,26 @@ function updatePlayerUpdateButtons() {
   });
 }
 
-/** Сводка по устройствам: состояния плюс количество устаревших версий. */
+/** Сводка по устройствам: те же счётчики, что работают в фильтрах списка. */
 function updateSummary() {
   const el = document.getElementById('stPowerSummary');
   if (!el) return;
 
-  let awake = 0;
-  let sleeping = 0;
-  let unreachable = 0;
-  let unknown = 0;
-  let outdated = 0;
+  const counts = summaryCounts();
+  let chips = el.querySelectorAll('[data-power-filter]');
+  if (!chips.length) {
+    el.innerHTML = summaryChipsHtml(counts);
+    chips = el.querySelectorAll('[data-power-filter]');
+  }
 
-  powerTargets.forEach((device) => {
-    const state = powerStates.get(device.device_id);
-    if (!state) unknown += 1;
-    else if (!state.ok) unreachable += 1;
-    else if (state.awake) awake += 1;
-    else sleeping += 1;
-    if (updateAvailable(device.device_id)) outdated += 1;
+  chips.forEach((chip) => {
+    const key = chip.getAttribute('data-power-filter');
+    const value = chip.querySelector('strong');
+    if (value) value.textContent = String(counts[key] ?? 0);
+    const selected = key === activeFilter;
+    chip.classList.toggle('is-selected', selected);
+    chip.setAttribute('aria-pressed', String(selected));
   });
-
-  const chips = [
-    ['Всего', powerTargets.length, ''],
-    ['Активны', awake, 'is-success'],
-    ['Спят', sleeping, 'is-warning'],
-    ['Нет ответа', unreachable, 'is-danger'],
-    ['Не опрошены', unknown, ''],
-    ['Требуют обновления', outdated, 'is-success']
-  ];
-
-  el.innerHTML = chips.map(([label, value, tone]) => `
-    <span class="st-power-summary-item${tone ? ` ${tone}` : ''}">
-      <span>${label}</span><strong>${value}</strong>
-    </span>`).join('');
 }
 
 function updateBadges() {
@@ -268,6 +306,16 @@ function updateBadges() {
   });
   updatePlayerUpdateButtons();
   updateSummary();
+}
+
+/**
+ * После смены состояния/версии список надо пересобрать только при активном
+ * фильтре: при «Всего» состав строк не меняется, а при фильтре устройство
+ * может войти в выборку или выйти из неё.
+ */
+function syncAfterStatusChange() {
+  updateBadges();
+  if (activeFilter !== 'all') fitPowerList();
 }
 
 function setBusy(busy) {
@@ -313,7 +361,7 @@ export function applyPowerState(payload) {
   } else {
     powerStates.set(payload.deviceId, { ok: true, awake: !!awake });
   }
-  updateBadges();
+  syncAfterStatusChange();
 }
 
 async function refreshStates(adminFetch, deviceIds) {
@@ -328,7 +376,7 @@ async function refreshStates(adminFetch, deviceIds) {
     for (const state of data.states || []) {
       powerStates.set(state.deviceId, { ok: state.ok, awake: state.awake });
     }
-    updateBadges();
+    syncAfterStatusChange();
   } catch (_) {
     // недоступный опрос состояния не должен ломать раздел настроек
   }
@@ -354,8 +402,7 @@ async function refreshPlayerVersions(adminFetch) {
         releaseVersion
       });
     }
-    updatePlayerUpdateButtons();
-    updateSummary();
+    syncAfterStatusChange();
   } catch (_) {
     // Недоступный GitHub не должен ломать карточку: просто не подсвечиваем.
   }
@@ -391,8 +438,7 @@ async function runPlayerUpdate(adminFetch, deviceId) {
       ...versions,
       currentVersion: releaseVersion || versions.currentVersion
     });
-    updatePlayerUpdateButtons();
-    updateSummary();
+    syncAfterStatusChange();
 
     const message = `Плеер обновлён: ${name}`;
     setStatus(message);
@@ -460,7 +506,7 @@ async function runPower(adminFetch, action, options = {}) {
         powerStates.set(result.deviceId, { ok: false, awake: null });
       }
     }
-    updateBadges();
+    syncAfterStatusChange();
 
     const summary = summarize(action, data.results || [], data.summary || { total: 0, succeeded: 0 });
     setStatus(summary.message);
@@ -484,10 +530,21 @@ export function initPowerControls({ devices, adminFetch }) {
 
   powerTargets = (devices || []).filter(isPowerControllable);
   page = 0;
+  activeFilter = 'all';
+  deviceNames = new Map((devices || []).map(device => [device.device_id, device.name || device.device_id]));
   playerVersions = new Map((devices || []).map(device => [
     device.device_id,
     { currentVersion: device.appVersion || device.app_version || '', releaseVersion }
   ]));
+
+  // Фильтры в сводке: слушатель на контейнере, чипы при этом не пересоздаются.
+  document.getElementById('stPowerSummary')?.addEventListener('click', (event) => {
+    const chip = event.target.closest('[data-power-filter]');
+    if (!chip || !chip.closest('#stPowerSummary')) return;
+    activeFilter = chip.getAttribute('data-power-filter') || 'all';
+    page = 0;
+    fitPowerList();
+  });
 
   document.getElementById('stPowerSleepAll')?.addEventListener('click', () => {
     runPower(adminFetch, 'sleep', { relaunch: false });

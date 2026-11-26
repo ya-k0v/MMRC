@@ -1087,6 +1087,32 @@ body.admin-page #grid button.st-btn-danger {
   background: var(--panel);
   color: var(--muted);
   font-size: 0.74rem;
+  cursor: pointer;
+}
+
+/* Чипы сводки — это кнопки-фильтры, а не обычные кнопки админки: возвращаем
+   компактную высоту «таблетки», заданную до общего правила #grid button. */
+body.admin-page #grid button.st-power-summary-item {
+  min-height: auto;
+  height: auto;
+  padding: 3px 8px;
+  font-size: 0.74rem;
+  line-height: 1.4;
+}
+
+body.admin-page #grid button.st-power-summary-item:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.2);
+  border-color: var(--border-hover);
+  transform: none;
+  box-shadow: none;
+}
+
+body.admin-page #grid button.st-power-summary-item.is-selected,
+body.admin-page #grid button.st-power-summary-item.is-selected:hover:not(:disabled) {
+  background: rgba(34, 197, 94, 0.14);
+  border-color: rgba(34, 197, 94, 0.55);
+  color: var(--success);
+  font-weight: var(--font-weight-semibold);
 }
 
 .st-power-summary-item strong {
@@ -1115,6 +1141,13 @@ body.admin-page #grid button.st-btn-danger {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.st-power-empty {
+  padding: 10px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-align: center;
 }
 
 /* Ряд устройства: имя + IP + бейдж состояния + действия */

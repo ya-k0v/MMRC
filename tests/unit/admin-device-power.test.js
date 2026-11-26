@@ -38,6 +38,7 @@ function playerFetch({ apk = {}, install = { ok: true, updated: 1 } } = {}) {
 }
 
 const updateButton = deviceId => document.querySelector(`[data-player-update="${deviceId}"]`);
+const filterChip = key => document.querySelector(`[data-power-filter="${key}"]`);
 
 function summary(label) {
   const item = Array.from(document.querySelectorAll('.st-power-summary-item'))
@@ -192,6 +193,73 @@ describe('бейдж состояния', () => {
       .toEqual({ deviceIds: ['tv1', 'tv2', 'native1'] });
     expect(badge('tv1').textContent).toBe('спит');
     expect(badge('tv2').textContent).toBe('нет ответа');
+  });
+});
+
+describe('фильтры сводки', () => {
+  test('чипы сводки — кнопки: показывают только устройства с выбранным статусом', async () => {
+    document.body.innerHTML = renderPowerControlsHtml(DEVICES);
+    applyPowerState({ deviceId: 'tv1', awake: false });
+    applyPowerState({ deviceId: 'tv2', awake: true });
+    applyPowerState({ deviceId: 'native1', awake: null });
+
+    initPowerControls({
+      devices: DEVICES,
+      adminFetch: jsonFetch({ ok: true, states: [] })
+    });
+    await flush();
+
+    expect(filterChip('all').tagName).toBe('BUTTON');
+    expect(filterChip('all').getAttribute('aria-pressed')).toBe('true');
+    expect(summary('Всего')).toBe('3');
+    expect(summary('Активны')).toBe('1');
+    expect(summary('Спят')).toBe('1');
+    expect(summary('Нет ответа')).toBe('1');
+    expect(summary('Не опрошены')).toBe('0');
+
+    filterChip('active').click();
+    expect(row('tv2')).not.toBeNull();
+    expect(row('tv1')).toBeNull();
+    expect(row('native1')).toBeNull();
+    expect(filterChip('active').getAttribute('aria-pressed')).toBe('true');
+    expect(filterChip('all').getAttribute('aria-pressed')).toBe('false');
+
+    filterChip('sleeping').click();
+    expect(row('tv1')).not.toBeNull();
+    expect(row('tv2')).toBeNull();
+
+    filterChip('unreachable').click();
+    expect(row('native1')).not.toBeNull();
+    expect(row('tv1')).toBeNull();
+
+    filterChip('unknown').click();
+    expect(document.getElementById('stPowerList').textContent).toContain('Нет устройств с таким статусом');
+
+    filterChip('all').click();
+    expect(row('tv1')).not.toBeNull();
+    expect(row('tv2')).not.toBeNull();
+    expect(row('native1')).not.toBeNull();
+  });
+
+  test('изменение статуса сразу обновляет список при активном фильтре', async () => {
+    document.body.innerHTML = renderPowerControlsHtml(DEVICES);
+    applyPowerState({ deviceId: 'tv1', awake: false });
+    applyPowerState({ deviceId: 'tv2', awake: null });
+    applyPowerState({ deviceId: 'native1', awake: null });
+    initPowerControls({
+      devices: DEVICES,
+      adminFetch: jsonFetch({ ok: true, states: [] })
+    });
+    await flush();
+
+    filterChip('sleeping').click();
+    expect(row('tv1')).not.toBeNull();
+
+    applyPowerState({ deviceId: 'tv1', awake: true });
+
+    expect(row('tv1')).toBeNull();
+    expect(summary('Спят')).toBe('0');
+    expect(summary('Активны')).toBe('1');
   });
 });
 
@@ -415,6 +483,22 @@ describe('обновление плеера', () => {
     expect(updateButton('native1').hidden).toBe(true);
     expect(updateButton('native1').classList.contains('st-power-update--available')).toBe(false);
     expect(summary('Всего')).toBe('3');
+    expect(summary('Требуют обновления')).toBe('1');
+  });
+
+  test('фильтр «Требуют обновления» оставляет только устройства со старой версией', async () => {
+    document.body.innerHTML = renderPowerControlsHtml(DEVICES);
+    const adminFetch = playerFetch({ apk: APK });
+
+    initPowerControls({ devices: DEVICES, adminFetch });
+    await flush();
+    await flush();
+
+    filterChip('outdated').click();
+
+    expect(row('tv1')).not.toBeNull();
+    expect(row('tv2')).toBeNull();
+    expect(row('native1')).toBeNull();
     expect(summary('Требуют обновления')).toBe('1');
   });
 
