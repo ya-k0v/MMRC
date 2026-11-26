@@ -92,4 +92,41 @@ describe('дерево настроек', () => {
     expect(page('storage').hidden).toBe(true);
     expect(page('modules').hidden).toBe(false);
   });
+
+  test('табы связаны с панелями через ARIA', () => {
+    const root = mount();
+    initSettingsNav({ root, items: ITEMS });
+
+    expect(link('system').getAttribute('aria-controls')).toBe('settings-page-system');
+    expect(page('system').getAttribute('role')).toBe('tabpanel');
+    expect(page('system').getAttribute('aria-labelledby')).toBe('settings-tab-system');
+    expect(page('storage').hidden).toBe(true);
+  });
+
+  test('стрелки, Home и End переключают разделы и переводят фокус', () => {
+    const root = mount();
+    const onChange = jest.fn();
+    initSettingsNav({ root, items: ITEMS, onChange });
+
+    const press = (target, key) => target.dispatchEvent(
+      new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    );
+
+    link('system').focus();
+    press(link('system'), 'ArrowRight');
+    expect(link('storage').getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(link('storage'));
+
+    press(link('storage'), 'End');
+    expect(link('modules').getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(link('modules'));
+
+    press(link('modules'), 'Home');
+    expect(link('system').getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(link('system'));
+
+    press(link('system'), 'ArrowLeft');
+    expect(link('modules').getAttribute('aria-selected')).toBe('true');
+    expect(onChange).toHaveBeenLastCalledWith('modules');
+  });
 });

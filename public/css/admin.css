@@ -549,7 +549,9 @@ body.admin-page #grid .input:not(.lg-field) {
   gap: 2px;
 }
 
-.settings-nav-item {
+/* Специфичность выше общего `body.admin-page #grid button`, иначе padding
+   и размер шрифта дерева настроек перебиваются общей шкалой кнопок. */
+body.admin-page #grid button.settings-nav-item {
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -1874,6 +1876,7 @@ body.admin-page .notification-toast__close {
   body.admin-page #grid button.meta.st-apk-chip,
   body.admin-page #grid button.meta.st-apk-action,
   body.admin-page #grid button.st-power-btn,
+  body.admin-page #grid button.st-power-summary-item,
   body.admin-page #grid button.st-pager-btn {
     height: 36px;
     min-height: 36px;

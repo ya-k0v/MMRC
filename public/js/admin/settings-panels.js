@@ -35,15 +35,16 @@ export function formatUptimeShort(seconds) {
 }
 
 /**
- * Список «параметр — значение». Значения экранируются; `html` нужен только
- * для служебных элементов вроде иконки статуса обновления.
+ * Список «параметр — значение». Значения экранируются; `html` — готовая
+ * статическая разметка служебного элемента (иконки, пустой заполнитель с id),
+ * которую caller подставляет сам. Данные с сервера в `html` передавать нельзя.
  */
 export function renderDefs(rows) {
   const items = (Array.isArray(rows) ? rows : []).filter(Boolean);
   if (!items.length) return '';
   return `<dl class="st-defs">${items.map((row) => {
     const value = row.value == null || row.value === '' ? '—' : String(row.value);
-    const rendered = row.html ? value : escapeHtml(value);
+    const rendered = typeof row.html === 'string' ? row.html : escapeHtml(value);
     const title = row.title ? ` title="${escapeHtml(row.title)}"` : '';
     return `<div class="st-defs-item">
       <dt>${escapeHtml(row.label)}</dt>

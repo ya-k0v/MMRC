@@ -43,6 +43,17 @@ describe('блоки панелей', () => {
     expect(html).toContain('<dd>—</dd>');
   });
 
+  test('renderDefs подставляет статическую разметку html как есть', () => {
+    const html = renderDefs([
+      { label: 'Ветка', html: '<span id="stSysBranchText">—</span>' },
+      { label: 'Внешнее значение', value: '<img src=x>', html: true }
+    ]);
+
+    expect(html).toContain('<span id="stSysBranchText">—</span>');
+    expect(html).toContain('&lt;img src=x&gt;');
+    expect(html).not.toContain('<img');
+  });
+
   test('renderServices различает доступные, отключённые и упавшие сервисы', () => {
     const html = renderServices({
       node: { status: 'ok', version: 'v22.0.0' },

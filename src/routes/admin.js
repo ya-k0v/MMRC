@@ -9,6 +9,7 @@ import { longOperationTimeout } from '../middleware/timeout.js';
 import { validate, schemas } from '../middleware/validate.js';
 import { validateUploadSize } from '../middleware/multer-config.js';
 import { createModuleLogger } from '../utils/logger.js';
+import { filterActiveSessions } from '../utils/session-filter.js';
 const logger = createModuleLogger('api');
 import { installAndSetupApk } from '../utils/apk-installer.js';
 import { APK_MAX_VERSIONS, sanitizeApkVersion, normalizeApkReleases } from '../utils/apk-releases.js';
@@ -1079,13 +1080,13 @@ export function createAdminRouter(deps = {}) {
   router.get('/sessions', requireAdmin, async (req, res) => {
     try {
       const db = getDatabase();
-      const sessions = await db.query(`
+      const sessions = filterActiveSessions(await db.query(`
         SELECT rt.id, rt.user_id, u.username, u.full_name, u.role,
                rt.ip_address, rt.user_agent, rt.expires_at, rt.last_used, rt.created_at
         FROM refresh_tokens rt
         JOIN users u ON rt.user_id = u.id
         ORDER BY rt.last_used DESC
-      `);
+      `));
       res.json(sessions);
     } catch (error) {
       logger.error('[Admin] Failed to get sessions:', error);
@@ -1192,6 +1193,7 @@ export function createAdminRouter(deps = {}) {
           return s;
         }),
         db.query(`SELECT rt.id, rt.user_id, u.username, u.full_name, u.role, rt.ip_address, rt.user_agent, rt.expires_at, rt.last_used, rt.created_at FROM refresh_tokens rt JOIN users u ON rt.user_id = u.id ORDER BY rt.last_used DESC`)
+          .then(rows => filterActiveSessions(rows))
       ]);
 
       // Network
