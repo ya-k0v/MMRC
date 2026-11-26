@@ -497,6 +497,18 @@ body.admin-page #grid button.lg-btn-icon {
   font-size: var(--font-size-sm);
 }
 
+/* Иконочные кнопки уведомлений (пагинация, «прочитано», «удалить») живут
+   внутри #grid. Общее правило выше даёт им padding 6px 14px, из-за чего SVG
+   при ширине 24px схлопывается до 0 и кнопка выглядит пустой. */
+body.admin-page #grid button.notification-btn-icon,
+body.admin-page #modalOverlay button.notification-btn-icon {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+}
+
 /* Поля ввода идут в одной строке с кнопками 36px, поэтому держим ту же
    ступень. Компактные поля тулбара логов (.lg-field, 32px) исключаем. */
 body.admin-page #grid .input:not(.lg-field) {
@@ -1988,6 +2000,17 @@ body.admin-page .notification-toast__close {
   body.admin-page #grid button.lg-btn-icon,
   body.admin-page #modalOverlay button.lg-btn-icon {
     width: 40px;
+    padding: 0;
+  }
+
+  /* Тап-таргет увеличиваем, но padding остаётся нулевым — иначе иконка
+     снова пропадает внутри плотной кнопки. */
+  body.admin-page #grid button.notification-btn-icon,
+  body.admin-page #modalOverlay button.notification-btn-icon {
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px;
     padding: 0;
   }
 

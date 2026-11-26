@@ -74,8 +74,12 @@ test('загружает одну страницу и показывает пе�
   expect(adminFetch.mock.calls[0][0]).toContain('page=1');
   expect(adminFetch.mock.calls[0][0]).toContain('pageSize=10');
   expect(container.querySelectorAll('.notification-item')).toHaveLength(10);
+  expect(container.querySelector('.notification-item .notification-remove-btn svg')).not.toBeNull();
   expect(document.getElementById('notificationsPrevPage').disabled).toBe(true);
   expect(document.getElementById('notificationsNextPage').disabled).toBe(false);
+  // Кнопки не должны быть пустыми: иконка приходит из svg-icons.js.
+  expect(document.querySelector('#notificationsNextPage svg')).not.toBeNull();
+  expect(document.querySelector('#notificationsPrevPage svg')).not.toBeNull();
   expect(document.querySelector('.notification-pagination__label').textContent).toContain('1 / 2');
 
   document.getElementById('notificationsNextPage').click();

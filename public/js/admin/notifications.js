@@ -273,7 +273,8 @@ function showToastNotification(notification) {
   const closeButton = document.createElement('button');
   closeButton.className = 'notification-toast__close';
   closeButton.setAttribute('aria-label', 'Закрыть');
-  closeButton.innerHTML = getCloseIcon(16);
+  closeButton.setAttribute('title', 'Закрыть уведомление');
+  closeButton.innerHTML = getCloseIcon(18);
   closeButton.onclick = async (event) => {
     event.stopPropagation();
     closeButton.disabled = true;

@@ -95,7 +95,10 @@ test('клик по кнопке внутри тоста не удаляет е�
 test('кнопка закрытия тоста закрывает уведомление и на сервере', async () => {
   fire({ id: 'n6', severity: 'info' });
   const el = toast();
-  el.querySelector('.notification-toast__close').click();
+  const close = el.querySelector('.notification-toast__close');
+  expect(close.getAttribute('title')).toBe('Закрыть уведомление');
+  expect(close.querySelector('svg')).not.toBeNull();
+  close.click();
   await Promise.resolve();
 
   expect(mockCloseNotification).toHaveBeenCalledWith('n6');
