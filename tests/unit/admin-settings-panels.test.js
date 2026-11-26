@@ -107,6 +107,32 @@ describe('блоки панелей', () => {
     expect(html).toContain('>redis<');
   });
 
+  test('renderDockerContainers показывает только имя образа без пользователя и тега', () => {
+    const html = renderDockerContainers([
+      {
+        names: 'mmrc-streamer',
+        state: 'running',
+        status: 'Up 6 hours',
+        image: 'pingwin1900/mmrc-streamer:v340'
+      },
+      {
+        names: 'mmrc-redis',
+        state: 'running',
+        status: 'Up 6 hours',
+        image: 'registry.local:5000/team/redis:7-alpine'
+      }
+    ], 'mmrc');
+
+    expect(html).not.toContain('pingwin1900');
+    expect(html).not.toContain(':v340');
+    expect(html).not.toContain('registry.local:5000');
+    expect(html).not.toContain('7-alpine');
+    expect(html).toContain('>streamer</span>');
+    expect(html).toContain('· streamer</span>');
+    expect(html).toContain('>redis</span>');
+    expect(html).toContain('· redis</span>');
+  });
+
   test('renderDockerContainers экранирует данные и работает без списка', () => {
     const html = renderDockerContainers([
       { names: '<evil>', state: 'running', status: 'Up', image: 'x"<script>' }

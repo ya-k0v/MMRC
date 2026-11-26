@@ -90,9 +90,15 @@ export function renderServices(services = {}) {
  */
 export function renderDockerContainers(containers, projectPrefix = '') {
   const prefix = String(projectPrefix || '');
-  const shortName = (value) => {
-    const name = String(value || '');
-    return prefix && name.startsWith(`${prefix}-`) ? name.slice(prefix.length + 1) : name;
+  const stripPrefix = (name) => (
+    prefix && name.startsWith(`${prefix}-`) ? name.slice(prefix.length + 1) : name
+  );
+  const shortName = (value) => stripPrefix(String(value || ''));
+  // Образ показываем без registry/пользователя, тега и digest — только имя.
+  const shortImage = (value) => {
+    const image = String(value || '').split('@')[0];
+    const lastPart = image.slice(image.lastIndexOf('/') + 1);
+    return stripPrefix(lastPart.split(':')[0]);
   };
 
   const rows = (Array.isArray(containers) ? containers : [])
@@ -104,7 +110,7 @@ export function renderDockerContainers(containers, projectPrefix = '') {
       const exitedClean = !running && exitCode && Number(exitCode[1]) === 0;
       const dot = running ? 'st-dot--success' : exitedClean ? 'st-dot--warning' : 'st-dot--danger';
       const status = running ? 'работает' : exitedClean ? 'завершён' : 'ошибка';
-      const detail = [container.runningFor || container.status, container.image]
+      const detail = [container.runningFor || container.status, shortImage(container.image)]
         .filter(Boolean).join(' · ');
       return `<div class="st-docker-row">
         <span class="st-dot ${dot}"></span>
