@@ -1,5 +1,5 @@
 /**
- * Регрессия единого стиля страниц (кроме hero и картотеки).
+ * Регрессия единого стиля страниц (кроме hero, картотеки и speaker).
  *
  * Эталон — админская шкала 36/32/24px. app.css — единственный источник
  * токенов, остальные страницы и CSS-файлы должны использовать эти токены,
@@ -12,7 +12,6 @@ const read = (file) => fs.readFileSync(path.resolve(process.cwd(), file), 'utf8'
 
 const appCss = read('public/css/app.css');
 const adminCss = read('public/css/admin.css');
-const tabletCss = read('public/css/tablet-improvements.css');
 const statusCss = read('public/css/status.css');
 const analyticsJs = read('public/js/analytics.js');
 const playerHtml = read('public/player-videojs.html');
@@ -52,8 +51,7 @@ describe('разметка страниц', () => {
     const pages = [
       'public/index.html',
       'public/admin.html',
-      'public/analytics.html',
-      'public/speaker.html'
+      'public/analytics.html'
     ];
 
     for (const page of pages) {
@@ -100,12 +98,7 @@ describe('служебные страницы', () => {
 });
 
 describe('изоляция стилей', () => {
-  test('tablet-improvements.css не содержит глобальных селекторов', () => {
-    expect(tabletCss).not.toMatch(/(^|\n)\s*(body|button|\.file-item|#fileList)\s*[{,:]/m);
-    expect(tabletCss).not.toMatch(/(^|\n)\s*body:has\(/m);
-    expect(tabletCss).toMatch(/body\.speaker-page/);
-  });
-
+  // speaker, hero и картотека намеренно исключены из этой унификации.
   test('Hero и картотека не загружают общий app.css', () => {
     const hero = read('public/hero/index.html');
     expect(hero).not.toContain('/css/app.css');

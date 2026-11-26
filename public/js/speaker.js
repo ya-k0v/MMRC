@@ -2331,9 +2331,9 @@ function renderTVList() {
   if (pager) {
     if (totalPages > 1) {
       pager.innerHTML = `
-        <button class="secondary" id="tvPrev" ${tvPage<=0?'disabled':''} style="flex:1 1 0; min-width:var(--control-min-width); min-height:var(--control-height-sm)">Назад</button>
+        <button class="secondary" id="tvPrev" ${tvPage<=0?'disabled':''} style="flex:1 1 0; min-width:var(--speaker-tv-pager-btn-min-width,52px); min-height:var(--speaker-tv-pager-btn-height,36px)">Назад</button>
         <span style="white-space:nowrap; flex:0 0 auto">${tvPage+1} из ${totalPages}</span>
-        <button class="secondary" id="tvNext" ${tvPage>=totalPages-1?'disabled':''} style="flex:1 1 0; min-width:var(--control-min-width); min-height:var(--control-height-sm)">Вперёд</button>
+        <button class="secondary" id="tvNext" ${tvPage>=totalPages-1?'disabled':''} style="flex:1 1 0; min-width:var(--speaker-tv-pager-btn-min-width,52px); min-height:var(--speaker-tv-pager-btn-height,36px)">Вперёд</button>
       `;
       const prev = document.getElementById('tvPrev');
       const next = document.getElementById('tvNext');
@@ -2675,12 +2675,12 @@ async function loadFiles(stabilizeAttempt = 0) {
             overflow:hidden;
             background:transparent;
             transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s;
-            min-height:var(--item-min-height-sm);
+            min-height:var(--speaker-file-item-min-height,52px);
           ">
         
         <!-- Левая часть: информация о файле (75%) -->
         <div class="file-info" style="
-          padding:var(--space-3xs) var(--space-md);
+          padding:var(--speaker-file-info-padding, 3px 8px); 
           min-width:0; 
           display:flex; 
           flex-direction:column; 
@@ -2688,16 +2688,16 @@ async function loadFiles(stabilizeAttempt = 0) {
           background:var(--panel);
         ">
           <div class="file-item-name" title="${displayName}" 
-            style="display:block; flex:0 0 auto; font-size:var(--font-size-base); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:0 0 var(--space-3xs) 0; line-height:1.12;">
+            style="display:block; flex:0 0 auto; font-size:var(--speaker-file-name-size, 1rem); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:0 0 var(--speaker-file-name-gap, 2px) 0; line-height:1.12;">
             ${displayName}
           </div>
-          <div class="file-meta" style="display:flex; align-items:center; gap:var(--space-2xs); flex-wrap:wrap; margin:0; margin-top:auto;">
+          <div class="file-meta" style="display:flex; align-items:center; gap:var(--speaker-file-meta-gap, 3px); flex-wrap:wrap; margin:0; margin-top:auto;">
             <span class="file-type-badge" style="
               display:inline-block;
               padding:0 5px;
               border:1px solid rgba(255,255,255,0.15);
               border-radius:3px;
-              font-size:var(--font-size-xs);
+              font-size:var(--speaker-badge-font-size, 0.75rem);
               font-weight:500;
               color:var(--text);
               background:rgba(255,255,255,0.05);
@@ -2710,7 +2710,7 @@ async function loadFiles(stabilizeAttempt = 0) {
                 padding:0 5px;
                 border:1px solid var(--brand);
                 border-radius:3px;
-                font-size:var(--font-size-xs);
+                font-size:var(--speaker-badge-font-size, 0.75rem);
                 font-weight:500;
                 color:var(--brand);
                 background:var(--brand-light);
@@ -2746,13 +2746,13 @@ async function loadFiles(stabilizeAttempt = 0) {
              data-original="${encodeURIComponent(originalName)}"
              data-stream-protocol="${streamProtocol || ''}"
              style="
-               background:${isProcessing ? 'var(--muted)' : 'var(--brand)'};
+               background:${isProcessing ? 'var(--muted,#666)' : 'var(--brand)'};
                color:white;
                display:flex;
                align-items:center;
                justify-content:center;
-               font-size:var(--font-size-xl);
-               min-width:var(--control-min-width);
+               font-size:var(--speaker-play-icon-size, 2rem);
+               min-width:var(--speaker-play-min-width,72px);
                cursor:${isProcessing ? 'default' : 'pointer'};
                transition:background 0.2s;
                user-select:none;
@@ -2782,9 +2782,9 @@ async function loadFiles(stabilizeAttempt = 0) {
   if (filePager) {
     if (totalPages > 1) {
       filePager.innerHTML = `
-        <button class="secondary" id="filePrev" ${filePage<=0?'disabled':''} style="min-width:var(--control-min-width); min-height:var(--control-height)">Назад</button>
+        <button class="secondary" id="filePrev" ${filePage<=0?'disabled':''} style="min-width:var(--speaker-pager-btn-min-width,80px); min-height:var(--speaker-control-height,40px)">Назад</button>
         <span style="white-space:nowrap">${filePage+1} из ${totalPages}</span>
-        <button class="secondary" id="fileNext" ${filePage>=totalPages-1?'disabled':''} style="min-width:var(--control-min-width); min-height:var(--control-height)">Вперёд</button>
+        <button class="secondary" id="fileNext" ${filePage>=totalPages-1?'disabled':''} style="min-width:var(--speaker-pager-btn-min-width,80px); min-height:var(--speaker-control-height,40px)">Вперёд</button>
       `;
       const prev = document.getElementById('filePrev');
       const next = document.getElementById('fileNext');
@@ -3259,11 +3259,11 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
               overflow:hidden;
               background:transparent;
               transition: color, background-color, border-color, box-shadow, opacity, transform 0.2s;
-              min-height:var(--item-min-height-sm);
+              min-height:var(--speaker-file-item-min-height,52px);
             ">
           
           <div class="file-info" style="
-            padding:var(--space-3xs) var(--space-md);
+            padding:var(--speaker-file-info-padding, 3px 8px); 
             min-width:0; 
             display:flex; 
             flex-direction:column; 
@@ -3271,16 +3271,16 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
             background:var(--panel);
           ">
             <div class="file-item-name" title="${displayName}" 
-              style="display:block; flex:0 0 auto; font-size:var(--font-size-base); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:0 0 var(--space-3xs) 0; line-height:1.12;">
+              style="display:block; flex:0 0 auto; font-size:var(--speaker-file-name-size, 1rem); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:0 0 var(--speaker-file-name-gap, 2px) 0; line-height:1.12;">
               ${displayName}
             </div>
-              <div class="file-meta" style="display:flex; align-items:center; gap:var(--space-2xs); flex-wrap:wrap; margin:0; margin-top:auto;">
+              <div class="file-meta" style="display:flex; align-items:center; gap:var(--speaker-file-meta-gap, 3px); flex-wrap:wrap; margin:0; margin-top:auto;">
               <span class="file-type-badge" style="
                 display:inline-block;
                 padding:0 5px;
                 border:1px solid rgba(255,255,255,0.15);
                 border-radius:3px;
-                font-size:var(--font-size-xs);
+                font-size:var(--speaker-badge-font-size, 0.75rem);
                 font-weight:500;
                 color:var(--text);
                 background:rgba(255,255,255,0.05);
@@ -3293,7 +3293,7 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
                   padding:0 5px;
                   border:1px solid var(--brand);
                   border-radius:3px;
-                  font-size:var(--font-size-xs);
+                  font-size:var(--speaker-badge-font-size, 0.75rem);
                   font-weight:500;
                   color:var(--brand);
                   background:var(--brand-light);
@@ -3306,7 +3306,7 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
                 padding:0 5px;
                 border:1px solid rgba(255,255,255,0.15);
                 border-radius:3px;
-                font-size:var(--font-size-xs);
+                font-size:var(--speaker-badge-font-size, 0.75rem);
                 font-weight:500;
                 color:var(--text);
                 background:rgba(255,255,255,0.08);
@@ -3345,12 +3345,12 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
                  display:flex; 
                  align-items:center; 
                  justify-content:center; 
-                 font-size:var(--font-size-xl);
+                 font-size:var(--speaker-play-icon-size, 2rem);
                  background:var(--brand);
                  color:white;
                  transition:background 0.2s;
                  min-height:100%;
-                 min-width:var(--control-min-width);
+                 min-width:var(--speaker-play-min-width,72px);
                  cursor:pointer;
                  user-select:none;
                "
@@ -3369,9 +3369,9 @@ async function loadAllFilesAggregated(stabilizeAttempt = 0) {
     if (filePager) {
       if (totalPages > 1) {
         filePager.innerHTML = `
-          <button class="secondary" id="filePrev" ${filePage<=0?'disabled':''} style="min-width:var(--control-min-width); min-height:var(--control-height)">Назад</button>
+          <button class="secondary" id="filePrev" ${filePage<=0?'disabled':''} style="min-width:var(--speaker-pager-btn-min-width,80px); min-height:var(--speaker-control-height,40px)">Назад</button>
           <span style="white-space:nowrap">${filePage+1} из ${totalPages}</span>
-          <button class="secondary" id="fileNext" ${filePage>=totalPages-1?'disabled':''} style="min-width:var(--control-min-width); min-height:var(--control-height)">Вперёд</button>
+          <button class="secondary" id="fileNext" ${filePage>=totalPages-1?'disabled':''} style="min-width:var(--speaker-pager-btn-min-width,80px); min-height:var(--speaker-control-height,40px)">Вперёд</button>
         `;
         const prev = document.getElementById('filePrev');
         const next = document.getElementById('fileNext');
