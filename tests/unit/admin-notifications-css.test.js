@@ -23,12 +23,20 @@ beforeEach(() => {
   `;
 });
 
+// jsdom не вычисляет var(), поэтому подставляем значения из :root вручную.
+function resolveVar(value) {
+  const root = getComputedStyle(document.documentElement);
+  return String(value).replace(/var\((--[\w-]+)\)/g, (_, name) => root.getPropertyValue(name).trim() || _);
+}
+
 test('иконочные кнопки уведомлений не получают padding из общего правила #grid', () => {
+  expect(resolveVar(getComputedStyle(document.documentElement).getPropertyValue('--control-height-icon'))).toBe('24px');
+
   for (const id of ['next', 'close']) {
     const style = getComputedStyle(document.getElementById(id));
-    expect(style.padding).toBe('0px');
-    expect(style.minWidth).toBe('24px');
-    expect(style.minHeight).toBe('24px');
+    expect(resolveVar(style.padding)).toBe('0px');
+    expect(resolveVar(style.minWidth)).toBe('24px');
+    expect(resolveVar(style.minHeight)).toBe('24px');
   }
 });
 

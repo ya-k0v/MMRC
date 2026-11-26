@@ -16,61 +16,23 @@
   <link rel="stylesheet" href="/css/app.css"/>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script type="module" src="/js/analytics.js"></script>
-  <style>
-    :root { --card-bg: var(--bg-card, #1e1e2e); --card-border: var(--border, #313244); }
-    html, body { height: 100%; margin: 0; }
-    body.admin-page { overflow: hidden !important; }
-    #app { height: 100%; overflow-y: auto; overflow-x: hidden; padding-bottom: 40px; }
-    .analytics-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px; padding:16px; }
-    .analytics-grid .card { margin:0; }
-    .card-value { font-size:2rem; font-weight:700; color:var(--accent,#3b82f6); }
-    .card-label { font-size:0.85rem; color:var(--muted,#6c7086); margin-top:4px; }
-    .card-row { display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border,#313244); }
-    .card-row:last-child { border-bottom:none; }
-    .card-row .label { color:var(--muted,#6c7086); font-size:0.85rem; }
-    .card-row .value { color:var(--text,#cdd6f4); font-weight:500; }
-    .chart-container { position:relative; height:250px; width:100%; }
-    .status-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; }
-    .status-dot.up { background:#4caf50; }
-    .status-dot.down { background:#f44336; }
-    .section-title { font-size:1.2rem; font-weight:600; color:var(--text,#cdd6f4); padding:16px 16px 0; }
-    .empty-state { color:var(--muted,#6c7086); text-align:center; padding:24px; font-style:italic; }
-    .refresh-controls { display:flex; align-items:center; gap:12px; margin-left:auto; }
-    .refresh-controls .meta { color:var(--muted,#6c7086); font-size:0.8rem; }
-    #refreshBtn { cursor:pointer; padding:6px 12px; border:1px solid var(--border,#313244); border-radius:6px; background:var(--bg-card,#1e1e2e); color:var(--text,#cdd6f4); font-size:0.85rem; }
-    #refreshBtn:hover { background:var(--accent,#3b82f6); color:#fff; }
-    .inline-chart { width:100%; height:100%; }
-    .two-col { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
-    @media (max-width:768px) { .two-col { grid-template-columns:1fr; } }
-    .flow-node { cursor:pointer; }
-    .flow-node:hover .flow-node-bg { opacity:0.4 !important; transition:opacity 0.2s; }
-    .flow-edge { transition:stroke 0.2s; cursor:crosshair; fill:none; }
-    .flow-edge:hover { stroke:var(--accent,#3b82f6) !important; stroke-width:3 !important; }
-    .flow-edge-label { pointer-events:none; user-select:none; }
-    .flow-controls { display:flex; gap:8px; align-items:center; padding:8px 16px; flex-wrap:wrap; }
-    .flow-controls button { cursor:pointer; padding:4px 10px; border:1px solid var(--border,#313244); border-radius:6px; background:var(--bg-card,#1e1e2e); color:var(--text,#cdd6f4); font-size:0.8rem; }
-    .flow-controls button:hover { background:var(--accent,#3b82f6); color:#fff; }
-    .flow-controls input[type=range] { width:120px; accent-color:var(--accent,#3b82f6); }
-    .flow-map-container { position:relative; overflow:hidden; min-height:500px; background:var(--card-bg, var(--bg-card, #1e1e2e)); border:1px solid var(--card-border, var(--border, #313244)); border-radius:12px; }
-    .flow-map-container.fullscreen { position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:9999; background:var(--bg,#11111b); border:none; border-radius:0; }
-  </style>
 </head>
-<body class="maintenance-ui admin-page">
+<body class="maintenance-ui admin-page analytics-page">
   <header class="toolbar">
-    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-      <button id="themeBtn" class="meta-lg" type="button" style="padding:8px 12px; display:flex; align-items:center; justify-content:center;" aria-label="Переключить тему"></button>
+    <div class="toolbar-row">
+      <button id="themeBtn" class="meta toolbar-icon-btn" type="button" aria-label="Переключить тему"></button>
       <strong class="meta">Аналитика</strong>
-      <div style="display:flex; align-items:center; gap:8px;">
+      <div class="toolbar-user">
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-        <span id="userFullName" class="meta" style="font-weight:500; color:var(--text);"></span>
-        <span class="meta" style="color:var(--muted);">•</span>
-        <span id="logoutBtn" class="meta" style="font-weight:500; color:var(--text); text-decoration:underline; cursor:pointer;">Выйти</span>
+        <span id="userFullName" class="meta toolbar-link"></span>
+        <span class="meta toolbar-separator">•</span>
+        <span id="logoutBtn" class="meta toolbar-link">Выйти</span>
       </div>
     </div>
     <div class="refresh-controls">
       <span id="lastUpdated" class="meta">—</span>
-      <button id="refreshBtn" type="button">Обновить</button>
-      <button id="adminBtn" class="meta-lg" type="button" style="padding:8px 12px;">Админка</button>
+      <button id="refreshBtn" class="meta" type="button">Обновить</button>
+      <button id="adminBtn" class="meta" type="button">Админка</button>
     </div>
   </header>
 

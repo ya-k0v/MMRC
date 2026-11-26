@@ -1688,8 +1688,8 @@ function renderUsersSectionList() {
         </div>
       </td>
       <td style="padding:10px 12px;">
-        <span style="display:inline-block; padding:2px 8px; border-radius:4px; font-size:0.75rem; font-weight:500; background:${roleColors[u.role] || 'var(--panel-2)'}; color:var(--panel);">${(u.role || '').toUpperCase()}</span>
-        <span style="margin-left:4px; padding:2px 6px; border-radius:4px; font-size:0.7rem; background:${isLdap ? 'var(--warning)' : 'var(--panel-2)'}; color:${isLdap ? 'var(--panel)' : 'var(--muted)'};">${isLdap ? 'LDAP' : 'LOCAL'}</span>
+        <span class="role-badge" style="background:${roleColors[u.role] || 'var(--panel-2)'}; color:var(--panel);">${(u.role || '').toUpperCase()}</span>
+        <span class="role-badge" style="margin-left:var(--space-2xs); background:${isLdap ? 'var(--warning)' : 'var(--panel-2)'}; color:${isLdap ? 'var(--panel)' : 'var(--muted)'};">${isLdap ? 'LDAP' : 'LOCAL'}</span>
       </td>
       <td style="padding:10px 12px; text-align:center;">
         <span style="display:inline-flex; align-items:center; gap:4px; padding:2px 10px; border-radius:999px; font-size:0.75rem; font-weight:500; background:${u.is_active ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)'}; color:${u.is_active ? 'var(--success)' : 'var(--danger)'};">
@@ -2582,7 +2582,7 @@ function ensureProgressBar(fileEl) {
     'bottom:0',
     'height:4px',
     'background:rgba(0,0,0,0.12)',
-    'border-radius:0 0 var(--radius-sm,6px) var(--radius-sm,6px)',
+    'border-radius:0 0 var(--radius-sm) var(--radius-sm)',
     'overflow:hidden',
     'pointer-events:none'
   ].join(';');

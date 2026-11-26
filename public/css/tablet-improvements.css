@@ -1,123 +1,107 @@
 /**
- * Минимальные улучшения для планшетов
- * Основано на DESIGN-ANALYSIS-REPORT.md
- * Только критичные изменения для touch devices
+ * Speaker-only improvements for tablets.
+ * Все селекторы ограничены body.speaker-page, чтобы правила не proteкали
+ * в админку, аналитику и другие страницы. Значения берутся из общих токенов.
  */
 
-/* ===== 0. СПИКЕР: Карточка файла с кнопкой Play справа (25%) ===== */
-/* Переопределяем вертикальный layout из app.css для панели спикера */
-body:has(#filePreview) .file-item,
-.speaker-layout .file-item {
+/* Карточка файла: слева информация, справа кнопка Play. */
+body.speaker-page .speaker-layout .file-item,
+body.speaker-page:has(#filePreview) .file-item {
   display: grid !important;
-  grid-template-columns: 3fr 1fr !important; /* 75% информация + 25% кнопка Play */
+  grid-template-columns: 3fr 1fr !important;
   gap: 0 !important;
   padding: 0 !important;
   border-radius: var(--radius-md) !important;
   overflow: hidden !important;
   background: transparent !important;
   height: auto !important;
-  min-height: var(--speaker-file-item-min-height, 52px) !important;
+  min-height: var(--speaker-file-item-min-height) !important;
   max-height: none !important;
   border: var(--border) !important;
 }
 
-body:has(#filePreview) .file-item .file-info,
-.speaker-layout .file-item .file-info {
+body.speaker-page .speaker-layout .file-item .file-info,
+body.speaker-page:has(#filePreview) .file-item .file-info {
   justify-content: space-between !important;
 }
 
-body:has(#filePreview) .file-item.active,
-.speaker-layout .file-item.active {
+body.speaker-page .speaker-layout .file-item.active,
+body.speaker-page:has(#filePreview) .file-item.active {
   border-color: var(--brand) !important;
 }
 
-/* Границы файлов в светлой теме */
-body.light body:has(#filePreview) .file-item,
-body.light .speaker-layout .file-item {
-  border: 1px solid rgba(15, 23, 42, 0.45) !important;
+body.speaker-page.light .speaker-layout .file-item,
+body.speaker-page.light:has(#filePreview) .file-item {
+  border-color: var(--border-color) !important;
 }
 
-/* Убираем старые стили для file-item-actions */
-body:has(#filePreview) .file-item-actions,
-.speaker-layout .file-item-actions {
-  display: none !important; /* Старая структура не нужна */
+/* Старая структура кнопок внутри файла больше не используется. */
+body.speaker-page .speaker-layout .file-item-actions,
+body.speaker-page:has(#filePreview) .file-item-actions {
+  display: none !important;
 }
 
-/* Уменьшаем gap между файлами в панели спикера */
-body:has(#filePreview) #fileList,
-.speaker-layout #fileList {
-  gap: 4px !important;
+body.speaker-page .speaker-layout #fileList,
+body.speaker-page:has(#filePreview) #fileList {
+  gap: var(--space-2xs) !important;
 }
 
-/* ===== tvTile на панели спикера: такие же отступы как на админ панели ===== */
-.speaker-layout .tvTile {
-  padding: var(--item-padding) !important; /* 8px - как на админ панели */
+body.speaker-page .speaker-layout .tvTile {
+  padding: var(--item-padding) !important;
 }
 
-.speaker-layout .tvTile-content {
-  gap: var(--space-2xs) !important; /* 4px - как на админ панели */
+body.speaker-page .speaker-layout .tvTile-content {
+  gap: var(--space-2xs) !important;
 }
 
-.speaker-layout .tvTile-header {
-  gap: var(--space-sm) !important; /* 8px - как на админ панели */
+body.speaker-page .speaker-layout .tvTile-header {
+  gap: var(--space-sm) !important;
 }
 
-/* ===== 1. Touch targets: 40px → 48px (только для планшетов с touch) ===== */
+/* Тап-таргеты на планшетах остаются увеличенными: базовая шкала 40px. */
 @media (pointer: coarse) and (min-width: 768px) and (max-width: 1366px) {
-  button {
-    min-height: var(--speaker-control-height, 48px);
+  body.speaker-page button {
+    min-height: var(--control-height-touch);
   }
 }
 
-/* ===== 2. Gap: 8px → 12px (для планшетов) ===== */
 @media (min-width: 768px) and (max-width: 1366px) {
-  #tvList {
-    gap: 12px;
+  body.speaker-page #tvList {
+    gap: var(--space-md);
   }
-  /* Для файлов делаем более плотный список */
-  body:has(#filePreview) #fileList,
-  .speaker-layout #fileList {
-    gap: 6px !important;
+
+  body.speaker-page .speaker-layout #fileList,
+  body.speaker-page:has(#filePreview) #fileList {
+    gap: var(--space-xs) !important;
+  }
+
+  body.speaker-page {
+    font-size: var(--speaker-base-font-size);
   }
 }
 
-/* ===== 3. Sidebar: 280px → 240px (для landscape планшетов) ===== */
 @media (min-width: 1024px) and (max-width: 1366px) and (orientation: landscape) {
-  .speaker-layout {
+  body.speaker-page .speaker-layout {
     grid-template-columns: 240px 1fr;
   }
 }
 
-/* ===== 4. Шрифты: 16px → 17px (для планшетов) ===== */
-@media (min-width: 768px) and (max-width: 1366px) {
-  body {
-    font-size: var(--speaker-base-font-size, 17px);
-  }
-}
-
-/* ===== 5. Высота элементов списка: оптимизировано для горизонтального layout ===== */
-/* Для спикера - компактные карточки (горизонтальный layout) */
-body:has(#filePreview) #fileList li {
-  min-height: var(--speaker-file-item-min-height, 52px);
+body.speaker-page .speaker-layout #fileList li {
+  min-height: var(--speaker-file-item-min-height);
   max-height: none;
 }
 
-/* Устройства можно оставить повыше */
-#tvList li {
-  min-height: var(--speaker-tile-min-height, 80px);
+body.speaker-page #tvList li {
+  min-height: var(--speaker-tile-min-height);
 }
 
-/* На планшетах чуть больше для удобства */
 @media (min-width: 768px) and (max-width: 1366px) {
-  body:has(#filePreview) #fileList li {
-    min-height: var(--speaker-file-item-min-height, 56px);
+  body.speaker-page .speaker-layout #fileList li {
+    min-height: var(--speaker-file-item-min-height);
     max-height: none;
   }
-  
-  #tvList li {
-    min-height: var(--speaker-tile-min-height, 90px);
+
+  body.speaker-page #tvList li {
+    min-height: var(--speaker-tile-min-height);
   }
 }
-
-/* ===== КОНЕЦ - всего 5 изменений ===== */
-

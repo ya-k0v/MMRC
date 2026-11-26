@@ -7,20 +7,20 @@
   <link rel="icon" type="image/svg+xml" href="/icon.svg"/>
   <link rel="stylesheet" href="/css/app.css"/>
 </head>
-<body>
-  <div style="display:flex; align-items:center; justify-content:center; min-height:100vh; padding:20px;">
-    <div class="card" style="max-width:400px; width:100%;">
+<body class="login-page">
+  <div class="login-shell">
+    <div class="card login-card">
       <div class="header">
         <div class="title" id="pageTitle">Вход в MMRC Hub</div>
       </div>
       
       <div id="setupForm" style="display:none;">
-        <div class="meta" style="margin-bottom:16px; color:var(--muted);">
+        <div class="meta form-note">
           Первичная настройка: создайте учётную запись администратора
         </div>
-        <form id="setupFormEl" style="display:flex; flex-direction:column; gap:16px;">
+        <form id="setupFormEl" class="form-stack">
           <div>
-            <label style="display:block; margin-bottom:4px; font-weight:500;">Логин</label>
+            <label class="field-label" for="setupUsername">Логин</label>
             <input 
               type="text" 
               id="setupUsername" 
@@ -35,7 +35,7 @@
           </div>
           
           <div>
-            <label style="display:block; margin-bottom:4px; font-weight:500;">ФИО</label>
+            <label class="field-label" for="setupFullName">ФИО</label>
             <input 
               type="text" 
               id="setupFullName" 
@@ -49,7 +49,7 @@
           </div>
           
           <div>
-            <label style="display:block; margin-bottom:4px; font-weight:500;">Пароль (мин. 12 символов)</label>
+            <label class="field-label" for="setupPassword">Пароль (мин. 12 символов)</label>
             <input 
               type="password" 
               id="setupPassword" 
@@ -62,7 +62,7 @@
           </div>
           
           <div>
-            <label style="display:block; margin-bottom:4px; font-weight:500;">Подтвердите пароль</label>
+            <label class="field-label" for="setupPasswordConfirm">Подтвердите пароль</label>
             <input 
               type="password" 
               id="setupPasswordConfirm" 
@@ -73,17 +73,17 @@
             />
           </div>
           
-          <div id="setupError" style="color:var(--danger); font-size:0.875rem; display:none;"></div>
+          <div id="setupError" class="form-error" style="display:none;"></div>
           
-          <button type="submit" class="primary" id="setupBtn" style="width:100%;">
+          <button type="submit" class="primary full-width" id="setupBtn">
             Создать администратора
           </button>
         </form>
       </div>
 
-      <form id="loginForm" style="display:flex; flex-direction:column; gap:16px;">
+      <form id="loginForm" class="form-stack">
         <div>
-          <label style="display:block; margin-bottom:4px; font-weight:500;">Логин</label>
+          <label class="field-label" for="username">Логин</label>
           <input 
             type="text" 
             id="username" 
@@ -96,7 +96,7 @@
         </div>
         
         <div>
-          <label style="display:block; margin-bottom:4px; font-weight:500;">Пароль</label>
+          <label class="field-label" for="password">Пароль</label>
           <input 
             type="password" 
             id="password" 
@@ -107,14 +107,14 @@
           />
         </div>
         
-        <div id="error" style="color:var(--danger); font-size:0.875rem; display:none;"></div>
+        <div id="error" class="form-error" style="display:none;"></div>
         
-        <button type="submit" class="primary" id="loginBtn" style="width:100%;">
+        <button type="submit" class="primary full-width" id="loginBtn">
           Войти
         </button>
       </form>
       
-      <div class="meta" style="margin-top:16px; text-align:center;">
+      <div class="meta form-note">
       </div>
     </div>
   </div>

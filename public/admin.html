@@ -33,41 +33,40 @@
   <!-- Sidebar overlay for mobile -->
   <div id="sidebarOverlay" class="sidebar-overlay"></div>
 
-  <!-- Кнопка темы переехала в сайдбар (public/js/admin/sidebar.js):
-       эта шапка скрыта через style="display:none", поэтому элемент был
-       невидим и переключить тему было нечем. -->
-  <header class="toolbar" style="display:none;">
-    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+  <!-- Кнопка темы переехала в сайдбар (public/js/admin/sidebar.js).
+       Шапка скрыта классом, но остаётся в разметке для совместимости. -->
+  <header class="toolbar hidden">
+    <div class="toolbar-row">
       <strong class="meta">Админ‑панель</strong>
-      <div style="display:flex; align-items:center; gap:8px;">
+      <div class="toolbar-user">
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-        <span id="userFullName" class="meta" style="font-weight:500; color:var(--text);"></span>
-        <span class="meta" style="color:var(--muted);">•</span>
-        <span id="logoutBtn" class="meta" style="font-weight:500; color:var(--text); text-decoration:underline; cursor:pointer;">Выйти</span>
+        <span id="userFullName" class="meta toolbar-link"></span>
+        <span class="meta toolbar-separator">•</span>
+        <span id="logoutBtn" class="meta toolbar-link">Выйти</span>
       </div>
     </div>
-    <div style="display:flex; gap:8px; flex-shrink:0; margin-left:auto;">
+    <div class="toolbar-actions">
       <button id="heroBtn" class="meta-lg" type="button">Картотека</button>
-      <button id="speakerBtn" class="meta-lg" type="button" style="padding:8px 12px; display:flex; align-items:center; justify-content:center;" title="Открыть панель спикера">Спикер</button>
-      <button id="usersBtn" class="meta-lg" type="button" style="padding:8px 12px; display:flex; align-items:center; justify-content:center;" title="Пользователи">
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:4px;">
+      <button id="speakerBtn" class="meta-lg" type="button" title="Открыть панель спикера">Спикер</button>
+      <button id="usersBtn" class="meta-lg" type="button" title="Пользователи">
+        <svg class="toolbar-icon-svg" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
           <circle cx="9" cy="7" r="4"></circle>
           <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
           <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
         </svg>
       </button>
-      <button id="settingsBtn" class="meta-lg" type="button" style="padding:8px 12px; display:flex; align-items:center; justify-content:center;" aria-label="Настройки"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 12.94a7.8 7.8 0 0 0 0-1.88l2-1.55a.5.5 0 0 0 .12-.64l-1.9-3.3a.5.5 0 0 0-.6-.22l-2.35.95a7.9 7.9 0 0 0-1.62-.94l-.35-2.5A.5.5 0 0 0 14.2 2h-4.4a.5.5 0 0 0-.5.42l-.35 2.5a7.8 7.8 0 0 0-1.62.94L5 5.35a.5.5 0 0 0-.6.22l-1.9 3.3a.5.5 0 0 0 .12.64l2 1.55c-.08.62-.08 1.26 0 1.88l-2 1.55a.5.5 0 0 0-.12.64l1.9 3.3a.5.5 0 0 0 .6.22l2.35-.95c.5.39 1.05.71 1.62.94l.35 2.5a.5.5 0 0 0 .5.42h4.4a.5.5 0 0 0 .5-.42l.35-2.5c.57-.23 1.12-.55 1.62-.94l2.35.95a.5.5 0 0 0 .6-.22l1.9-3.3a.5.5 0 0 0-.12-.64l-2-1.55z"/></svg></button>
+      <button id="settingsBtn" class="meta-lg toolbar-icon-btn" type="button" aria-label="Настройки"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 12.94a7.8 7.8 0 0 0 0-1.88l2-1.55a.5.5 0 0 0 .12-.64l-1.9-3.3a.5.5 0 0 0-.6-.22l-2.35.95a7.9 7.9 0 0 0-1.62-.94l-.35-2.5A.5.5 0 0 0 14.2 2h-4.4a.5.5 0 0 0-.5.42l-.35 2.5a7.8 7.8 0 0 0-1.62.94L5 5.35a.5.5 0 0 0-.6.22l-1.9 3.3a.5.5 0 0 0 .12.64l2 1.55c-.08.62-.08 1.26 0 1.88l-2 1.55a.5.5 0 0 0-.12.64l1.9 3.3a.5.5 0 0 0 .6.22l2.35-.95c.5.39 1.05.71 1.62.94l.35 2.5a.5.5 0 0 0 .5.42h4.4a.5.5 0 0 0 .5-.42l.35-2.5c.57-.23 1.12-.55 1.62-.94l2.35.95a.5.5 0 0 0 .6-.22l1.9-3.3a.5.5 0 0 0-.12-.64l-2-1.55z"/></svg></button>
     </div>
   </header>
 
-  <main class="admin-main" style="flex:1; min-height:0;">
+  <main class="admin-main">
     <div id="grid"></div>
   </main>
   
   <!-- Modal overlay -->
-  <div id="modalOverlay" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center; padding:20px;">
-    <div id="modalContent" class="card" style="max-width:600px; width:100%; max-height:90vh; overflow-y:auto;"></div>
+  <div id="modalOverlay">
+    <div id="modalContent" class="card admin-modal-content"></div>
   </div>
 </body>
 </html>

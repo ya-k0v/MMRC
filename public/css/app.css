@@ -39,11 +39,25 @@ body {
   /* Дополнительные переменные для совместимости */
   --text-primary: var(--text);
   --text-secondary: var(--muted);
+  --text-dim: var(--muted);
   --card-bg: var(--panel);
+  --bg-card: var(--panel);
   --bg-secondary: var(--panel-2);
   --error: var(--danger);
-  
-  --border: 1px solid rgba(255, 255, 255, 0.08);
+
+  /* Алиасы для страниц, которые исторически использовали другие имена.
+     Все они указывают на каноническую палитру, чтобы не было второго источника
+     цветов в analytics/speaker/оверлеях. */
+  --accent: var(--brand);
+  --accent-color: var(--brand);
+  --accent-2: var(--brand-2);
+  --border-color: rgba(255, 255, 255, 0.08);
+  --card-border: var(--border-color);
+  --brand-rgb: 59, 130, 246;
+  --player-bg: #000;
+  --overlay-bg: rgba(0, 0, 0, 0.6);
+
+  --border: 1px solid var(--border-color);
   --border-2: 1px solid rgba(255, 255, 255, 0.12);
   --border-hover: 1px solid rgba(255, 255, 255, 0.18);
   
@@ -60,13 +74,35 @@ body {
   --space-2xl: 24px;  /* крупные разрывы */
   --space-3xl: 40px;  /* ритм секций */
   
-  /* Стандартные размеры элементов */
-  --button-height: 40px;
-  --button-padding: 8px 16px;
+  /* Единая шкала контролов (эталон — админ-панель): 36 / 32 / 24 px.
+     Остальные страницы используют те же токены, а на тач-устройствах
+     тап-таргеты поднимаются до 40 / 36 / 36 px. */
+  --control-height: 36px;
+  --control-height-sm: 32px;
+  --control-height-icon: 24px;
+  --control-padding-y: 6px;
+  --control-padding-x: 14px;
+  --control-padding-sm-y: 6px;
+  --control-padding-sm-x: 12px;
+  --control-padding: var(--control-padding-y) var(--control-padding-x);
+  --control-padding-sm: var(--control-padding-sm-y) var(--control-padding-sm-x);
+  --control-height-touch: 40px;
+  --control-height-sm-touch: 36px;
+  --control-height-icon-touch: 36px;
+  --control-min-width: 72px;
+  --radius-pill: 999px;
+  --focus-outline-width: 2px;
+  --focus-ring-width: 3px;
+
+  /* Обратно совместимые имена: всё, что использовало старые токены,
+     автоматически переходит на новую единую шкалу. */
+  --button-height: var(--control-height);
+  --button-padding: var(--control-padding);
   --item-padding: 8px;
+  --item-min-height-sm: 56px;
   --item-min-height: 100px;  /* Минимальная высота элементов - можно увеличить, но не уменьшить */
   --item-gap: 8px;  /* Отступ между элементами */
-  
+
   /* Border radius */
   --radius-sm: 8px;
   --radius-md: 12px;
@@ -84,6 +120,7 @@ body {
   --font-size-base: 0.9375rem;
   --font-size-lg: 1rem;
   --font-size-xl: 1.125rem;
+  --font-size-2xl: 2rem;
   
   --font-weight-normal: 400;
   --font-weight-medium: 500;
@@ -111,6 +148,8 @@ body {
   
   /* Z-index */
   --z-sticky: 200;
+  --z-modal: 1000;
+  --z-fullscreen: 9999;
 }
 
 /* Light theme — единая голубоватая палитра (совпадает с maintenance-ui.light).
@@ -144,10 +183,19 @@ body.light {
   --text-primary: var(--text);
   --text-secondary: var(--muted);
   --card-bg: #ffffff;
+  --bg-card: var(--card-bg);
   --bg-secondary: #f5faff;
+  --text-dim: var(--muted);
   --error: var(--danger);
+  --accent: var(--brand);
+  --accent-color: var(--brand);
+  --accent-2: var(--brand-2);
+  --border-color: rgba(73, 98, 127, 0.26);
+  --card-border: var(--border-color);
+  --brand-rgb: 29, 78, 216;
+  --overlay-bg: rgba(15, 23, 42, 0.35);
 
-  --border: 1px solid rgba(73, 98, 127, 0.26);
+  --border: 1px solid var(--border-color);
   --border-2: 1px solid rgba(73, 98, 127, 0.34);
   --border-hover: 1px solid rgba(73, 98, 127, 0.42);
 
@@ -293,12 +341,12 @@ h1, h2, h3, h4, h5, h6 {
 .folder-playlist-interval-options {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2xs);
 }
 
 .folder-playlist-interval-btn {
-  width: 40px;
-  height: 32px;
+  width: var(--control-height-touch);
+  height: var(--control-height-sm);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--panel-2);
@@ -351,7 +399,7 @@ button {
   font-family: inherit;
   font-size: var(--font-size-base);
   font-weight: var(--font-weight-medium);
-  padding: var(--button-padding);
+  padding: var(--control-padding);
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: color, background-color, border-color, box-shadow, opacity, transform var(--transition-base);
@@ -359,8 +407,8 @@ button {
   align-items: center;
   justify-content: center;
   gap: var(--space-2xs);
-  min-height: var(--button-height);
-  height: var(--button-height);
+  min-height: var(--control-height);
+  height: var(--control-height);
   white-space: nowrap;
 }
 
@@ -402,9 +450,9 @@ button.secondary {
 button.meta {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
-  padding: 6px 12px;
-  min-height: 32px;
-  height: 32px;
+  padding: var(--control-padding-sm);
+  min-height: var(--control-height-sm);
+  height: var(--control-height-sm);
 }
 
 button.primary.meta {
@@ -417,11 +465,11 @@ button.secondary.meta {
 
 /* Кнопки с классом meta-lg - компактный стиль с размером шрифта lg */
 button.meta-lg {
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
-  padding: 8px 16px;
-  min-height: 40px;
-  height: 40px;
+  padding: var(--control-padding-sm);
+  min-height: var(--control-height-sm);
+  height: var(--control-height-sm);
 }
 
 button.primary.meta-lg {
@@ -457,6 +505,29 @@ button.danger:hover:not(:disabled) {
   background: var(--danger);
   color: #fff;
   box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+}
+
+/* Единый компактный уровень для иконочных кнопок. Используется и в админке,
+   и в аналитике, и в шапках — больше не нужно подбирать padding на месте. */
+button.icon-btn,
+button.toolbar-icon-btn {
+  width: var(--control-height-icon);
+  min-width: var(--control-height-icon);
+  height: var(--control-height-icon);
+  min-height: var(--control-height-icon);
+  padding: 0;
+  gap: 0;
+}
+
+button.toolbar-icon-btn {
+  width: var(--control-height-sm);
+  min-width: var(--control-height-sm);
+  height: var(--control-height-sm);
+  min-height: var(--control-height-sm);
+}
+
+button.full-width {
+  width: 100%;
 }
 
 #volumeMuteBtn {
@@ -507,7 +578,7 @@ body.light button.danger:hover:not(:disabled) {
 /* ===== Inputs - Стандартизированные ===== */
 .input {
   width: 100%;
-  padding: var(--button-padding);
+  padding: var(--control-padding);
   border: var(--border);
   border-radius: var(--radius-sm);
   background: var(--panel-2);
@@ -515,8 +586,8 @@ body.light button.danger:hover:not(:disabled) {
   font-family: inherit;
   font-size: var(--font-size-base);
   transition: color, background-color, border-color, box-shadow, opacity, transform var(--transition-base);
-  min-height: var(--button-height);
-  height: var(--button-height);
+  min-height: var(--control-height);
+  height: var(--control-height);
 }
 
 .input::placeholder {
@@ -524,9 +595,14 @@ body.light button.danger:hover:not(:disabled) {
 }
 
 .input:focus {
-  outline: none;
   border-color: var(--brand);
-  box-shadow: 0 0 0 3px var(--brand-light);
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--brand-light);
+}
+
+/* Один видимый рамка фокуса для клавиатурной навигации на всех страницах. */
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: var(--focus-outline-width) solid var(--brand);
+  outline-offset: 2px;
 }
 
 body.light .input {
@@ -1113,18 +1189,18 @@ body.light .resolution-badge {
 }
 
 .admin-image-viewer-close {
-  top: 12px;
-  right: 12px;
-  width: 38px;
-  height: 38px;
+  top: var(--space-md);
+  right: var(--space-md);
+  width: var(--control-height-touch);
+  height: var(--control-height-touch);
   border-radius: 50%;
   transform: none;
 }
 
 .admin-image-viewer-nav {
   top: 50%;
-  width: 44px;
-  height: 44px;
+  width: var(--control-height-touch);
+  height: var(--control-height-touch);
   border-radius: 50%;
   font-size: 22px;
   transform: translateY(-50%);
@@ -1186,9 +1262,9 @@ body.light .resolution-badge {
   }
 
   .admin-image-viewer-nav {
-    width: 40px;
-    height: 40px;
-    font-size: 20px;
+    width: var(--control-height-touch);
+    height: var(--control-height-touch);
+    font-size: var(--font-size-base);
   }
 }
 
@@ -1352,11 +1428,8 @@ body.light .queue li {
 
 /* Tablet: 768px and up - Стандартизировано */
 @media (min-width: 768px) {
-  :root {
-    --font-size-base: 1rem;
-    /* spacing остаются стандартными - не переопределяем */
-  }
-  
+  /* Базовый размер шрифта не переопределяем: он должен быть одинаковым
+     на всех ширинах и во всех темах. */
   .toolbar {
     padding: var(--space-sm);
     gap: var(--space-sm);
@@ -1442,12 +1515,24 @@ body.light .queue li {
   }
 }
 
-/* Touch device optimizations - Стандартизировано */
+/* Touch device optimizations — та же шкала, что в админке. */
 @media (pointer: coarse) {
   button {
-    min-height: 44px;
-    height: 44px;
-    padding: var(--button-padding);
+    min-height: var(--control-height-touch);
+    height: var(--control-height-touch);
+    padding: var(--control-padding);
+  }
+
+  button.meta,
+  button.meta-lg,
+  button.icon-btn {
+    min-height: var(--control-height-icon-touch);
+    height: var(--control-height-icon-touch);
+  }
+
+  button.icon-btn {
+    width: var(--control-height-icon-touch);
+    min-width: var(--control-height-icon-touch);
   }
   
   button:hover {
@@ -1733,10 +1818,10 @@ body.light .queue li {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
   backdrop-filter: blur(8px);
-  background: rgba(0, 0, 0, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #fff;
-  height: var(--button-height);
+  background: var(--player-bg);
+  border: var(--border);
+  color: var(--text);
+  height: var(--control-height);
 }
 
 #unmute.hidden {
@@ -1978,12 +2063,9 @@ body.maintenance-ui.light .input {
   border-color: rgba(73, 98, 127, 0.3);
 }
 
-body.maintenance-ui .input:focus {
-  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.25);
-}
-
+body.maintenance-ui .input:focus,
 body.maintenance-ui.light .input:focus {
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--brand-light);
 }
 
 body.maintenance-ui .tvTile:hover:not(.active),
@@ -2034,6 +2116,7 @@ body.admin-page {
 }
 
 body.admin-page .admin-main {
+  flex: 1;
   min-height: 0;
   overflow: hidden;
 }
@@ -2992,6 +3075,601 @@ button.meta-lg.android-pastel {
   margin-top: 8px;
   font-size: 12px;
   color: var(--muted);
+}
+
+/* ===== Общие utility-классы страниц (кроме hero и картотеки) =====
+   Шапки, формы и аналитика используют ту же шкалу, что и админка.
+   Инлайновые padding/height в разметке больше не нужны. */
+
+body.login-page .login-shell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: var(--space-xl);
+}
+
+body.login-page .login-card {
+  max-width: 400px;
+  width: 100%;
+}
+
+.form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.field-label {
+  display: block;
+  margin-bottom: var(--space-2xs);
+  font-weight: var(--font-weight-medium);
+}
+
+.form-error {
+  color: var(--danger);
+  font-size: var(--font-size-sm);
+}
+
+.form-note {
+  margin-top: var(--space-lg);
+  text-align: center;
+}
+
+.toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.toolbar-row.grow {
+  flex: 1;
+}
+
+.toolbar.hidden {
+  display: none;
+}
+
+.toolbar-user {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.toolbar-spacer {
+  flex: 1 1 auto;
+}
+
+.toolbar-link {
+  font-weight: var(--font-weight-medium);
+  color: var(--text);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.toolbar-icon-svg {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: var(--space-2xs);
+}
+
+.inline-icon {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.block-icon {
+  display: block;
+}
+
+.dropZone-icon {
+  display: block;
+  color: var(--muted);
+  margin-bottom: var(--space-md);
+}
+
+.toolbar-separator {
+  color: var(--muted);
+}
+
+.role-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3xs);
+  padding: var(--space-3xs) var(--space-xs);
+  border: var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--panel-2);
+  color: var(--text-2);
+  font-size: var(--font-size-xs);
+  line-height: 1.2;
+}
+
+/* Аналитика */
+body.analytics-page {
+  overflow: hidden;
+}
+
+body.analytics-page #app {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: var(--space-3xl);
+}
+
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-lg);
+  padding: var(--space-lg);
+}
+
+.analytics-grid .card {
+  margin: 0;
+}
+
+.card-value {
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-bold);
+  color: var(--brand);
+}
+
+.card-label,
+.card-row .label,
+.refresh-controls .meta,
+.empty-state {
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.card-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-sm) 0;
+  border-bottom: var(--border);
+}
+
+.card-row:last-child {
+  border-bottom: 0;
+}
+
+.card-row .value {
+  color: var(--text);
+  font-weight: var(--font-weight-medium);
+}
+
+.chart-container {
+  position: relative;
+  height: 250px;
+  width: 100%;
+}
+
+.analytics-grid .analytics-card {
+  padding: var(--space-lg);
+}
+
+.analytics-block {
+  margin-bottom: var(--space-lg);
+}
+
+.analytics-subtitle {
+  margin-bottom: var(--space-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.analytics-id {
+  margin-left: var(--space-2xs);
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.analytics-footer {
+  padding: var(--space-lg);
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.status-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: var(--space-xs);
+}
+
+.status-dot.up {
+  background: var(--success);
+}
+
+.status-dot.down {
+  background: var(--danger);
+}
+
+.section-title {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text);
+  padding: var(--space-lg) var(--space-lg) 0;
+}
+
+.empty-state {
+  text-align: center;
+  padding: var(--space-2xl);
+  font-style: italic;
+}
+
+.refresh-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-left: auto;
+}
+
+.inline-chart {
+  width: 100%;
+  height: 100%;
+}
+
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-lg);
+}
+
+@media (max-width: 768px) {
+  .two-col {
+    grid-template-columns: 1fr;
+  }
+}
+
+.flow-node {
+  cursor: pointer;
+}
+
+.flow-node:hover .flow-node-bg {
+  opacity: 0.4;
+  transition: opacity var(--duration-base) var(--ease-standard);
+}
+
+.flow-edge {
+  transition: stroke var(--duration-base) var(--ease-standard);
+  cursor: crosshair;
+  fill: none;
+}
+
+.flow-edge:hover {
+  stroke: var(--brand);
+  stroke-width: 3;
+}
+
+.flow-edge-label {
+  pointer-events: none;
+  user-select: none;
+}
+
+.flow-controls {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  padding: var(--space-sm) var(--space-lg);
+  flex-wrap: wrap;
+}
+
+.flow-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.flow-controls button {
+  min-height: var(--control-height-sm);
+  height: var(--control-height-sm);
+  padding: var(--control-padding-sm);
+  font-size: var(--font-size-sm);
+}
+
+.flow-controls input[type="range"] {
+  width: 120px;
+  accent-color: var(--brand);
+}
+
+.flow-map-container {
+  position: relative;
+  overflow: hidden;
+  min-height: 500px;
+  background: var(--card-bg);
+  border: var(--border);
+  border-radius: var(--radius-md);
+}
+
+.flow-map-container.flow-map-wrapper {
+  margin: 0 var(--space-lg) var(--space-lg);
+}
+
+.flow-svg-wrapper {
+  width: 100%;
+  min-height: 500px;
+  max-height: 700px;
+  overflow: auto;
+}
+
+.flow-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.flow-tooltip {
+  position: absolute;
+  padding: var(--space-sm) var(--control-padding-x);
+  border: var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow-md);
+  font-size: var(--font-size-sm);
+  white-space: pre-line;
+  max-width: 280px;
+  pointer-events: none;
+  z-index: var(--z-sticky);
+}
+
+.flow-map-container.fullscreen {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: var(--z-fullscreen);
+  background: var(--bg);
+  border: 0;
+  border-radius: 0;
+}
+
+/* Полноэкранный плеер: чёрный фон — аппаратное требование Raspberry Pi,
+   но цвет и длительности теперь идут из общих токенов. */
+body.player-page,
+body.player-page #stage {
+  background: var(--player-bg);
+}
+
+body.player-page .layer {
+  transition: opacity var(--duration-slower) var(--ease-standard);
+}
+
+/* Панель спикера и модальные окна: те же отступы, радиусы и высоты. */
+body.speaker-page #uploadBtn.speaker-upload-btn {
+  min-width: var(--control-height-sm);
+  padding: 0 var(--control-padding-sm-x);
+  border-radius: var(--radius-sm);
+  gap: var(--space-xs);
+  background: var(--brand-solid);
+  color: var(--text);
+}
+
+body.speaker-page #launchAndroidBtn.android-launch-btn {
+  width: var(--control-height-icon-touch);
+  min-width: var(--control-height-icon-touch);
+  height: var(--control-height-icon-touch);
+  min-height: var(--control-height-icon-touch);
+  padding: 0;
+  border-radius: var(--radius-sm);
+  background: var(--success);
+  color: var(--text);
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: var(--font-size-base);
+}
+
+.panel-meta {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.panel-body-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.list-flex {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: visible;
+  overflow-x: hidden;
+}
+
+.pager-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.mode-switch {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3xs);
+}
+
+.mode-switch button {
+  padding: var(--control-padding);
+  border: var(--border);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: var(--panel-2);
+}
+
+.preview-playback-info {
+  margin: var(--space-xs) 0 var(--space-sm);
+  min-height: 1.2em;
+  color: var(--text);
+}
+
+.video-progress {
+  display: none;
+  margin: 0 0 var(--space-sm);
+}
+
+.video-progress input[type="range"] {
+  width: 100%;
+  cursor: pointer;
+}
+
+.player-controls {
+  display: flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  margin-top: var(--space-sm);
+}
+
+.player-controls button {
+  flex: 1;
+  min-width: 90px;
+}
+
+.modal-overlay,
+body.admin-page #modalOverlay {
+  position: fixed;
+  inset: 0;
+  display: none;
+  background: var(--overlay-bg);
+  z-index: var(--z-modal);
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xl);
+}
+
+.admin-modal-content {
+  max-width: 600px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal {
+  background: var(--panel);
+  border: var(--border);
+  border-radius: var(--radius-lg);
+  max-width: 720px;
+  width: 90%;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow-lg);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-lg) var(--space-xl);
+  border-bottom: var(--border);
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: var(--font-size-base);
+}
+
+.modal-body {
+  padding: var(--space-xl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-xl);
+  border-top: var(--border);
+}
+
+.modal .dropZone {
+  border: 2px dashed var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--space-3xl) var(--space-xl);
+  text-align: center;
+  cursor: pointer;
+  background: var(--panel-2);
+}
+
+.dropZone-title,
+.dropZone-hint {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--font-size-base);
+}
+
+.dropZone-hint {
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.upload-queue {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.upload-status {
+  text-align: center;
+  min-height: 1.2em;
+}
+
+.upload-progress {
+  display: none;
+}
+
+.upload-progress-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--font-size-sm);
+  margin-bottom: var(--space-2xs);
+}
+
+.upload-progress-track {
+  height: 6px;
+  background: var(--border-color);
+  border-radius: var(--space-3xs);
+  overflow: hidden;
+}
+
+.upload-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--brand);
+  border-radius: var(--space-3xs);
+  transition: width var(--duration-slow) var(--ease-standard);
 }
 
 /* ==========================================================================

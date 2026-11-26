@@ -1,4 +1,5 @@
 import { ensureAuth, adminFetch, logout } from '/js/admin/auth.js';
+import { initThemeToggle } from '/js/theme.js';
 
 let charts = {};
 let refreshInterval = null;
@@ -12,16 +13,9 @@ async function init() {
   document.getElementById('adminBtn').addEventListener('click', () => window.location.href = '/admin.html');
   document.getElementById('refreshBtn').addEventListener('click', loadAnalytics);
 
-  const themeBtn = document.getElementById('themeBtn');
-  themeBtn.addEventListener('click', () => {
-    const html = document.documentElement;
-    html.setAttribute('data-theme', html.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
-    try { localStorage.setItem('theme', html.getAttribute('data-theme')); } catch {}
-  });
-  try {
-    const saved = localStorage.getItem('theme');
-    if (saved) document.documentElement.setAttribute('data-theme', saved);
-  } catch {}
+  // Аналитика использует тот же переключатель темы, что админка и спикер:
+  // body.light и общий набор CSS-токенов.
+  initThemeToggle(document.getElementById('themeBtn'), 'vc_theme_analytics');
 
   await loadAnalytics();
   refreshInterval = setInterval(loadAnalytics, 30000);
@@ -103,25 +97,25 @@ function renderSummaryCards(inApp, docker, system, nginx) {
   let extraCards = '';
   if (docker) {
     extraCards += `
-      <div class="card" style="padding:16px;">
+      <div class="card analytics-card">
         <div class="card-value">${running}/${containers}</div>
         <div class="card-label">\u041A\u043E\u043D\u0442\u0435\u0439\u043D\u0435\u0440\u044B (\u0437\u0430\u043F\u0443\u0449\u0435\u043D\u043E/\u0432\u0441\u0435\u0433\u043E)</div>
       </div>`;
   }
   if (system) {
     extraCards += `
-      <div class="card" style="padding:16px;">
+      <div class="card analytics-card">
         <div class="card-value">${cpu}%</div>
         <div class="card-label">CPU</div>
       </div>
-      <div class="card" style="padding:16px;">
+      <div class="card analytics-card">
         <div class="card-value">${mem}%</div>
         <div class="card-label">\u041F\u0430\u043C\u044F\u0442\u044C</div>
       </div>`;
   }
   if (nginxReqs > 0) {
     extraCards += `
-      <div class="card" style="padding:16px;">
+      <div class="card analytics-card">
         <div class="card-value">${nginxReqs.toLocaleString()}</div>
         <div class="card-label">NGINX \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432</div>
       </div>`;
@@ -129,15 +123,15 @@ function renderSummaryCards(inApp, docker, system, nginx) {
 
   return `
     <div class="analytics-grid">
-      <div class="card" style="padding:16px;">
+      <div class="card analytics-card">
         <div class="card-value">${fmtUptime(uptime)}</div>
         <div class="card-label">\u0410\u043F\u0442\u0430\u0439\u043C</div>
       </div>
-      <div class="card" style="padding:16px;">
+      <div class="card analytics-card">
         <div class="card-value">${reqs.toLocaleString()}</div>
         <div class="card-label">\u0417\u0430\u043F\u0440\u043E\u0441\u043E\u0432</div>
       </div>
-      <div class="card" style="padding:16px;">
+      <div class="card analytics-card">
         <div class="card-value">${errors.toLocaleString()}</div>
         <div class="card-label">\u041E\u0448\u0438\u0431\u043E\u043A (${errRate})</div>
       </div>
@@ -145,18 +139,30 @@ function renderSummaryCards(inApp, docker, system, nginx) {
     </div>`;
 }
 
+function themeColors() {
+  const style = getComputedStyle(document.documentElement);
+  const token = (name) => style.getPropertyValue(name).trim();
+  return {
+    bg: token('--panel'),
+    text: token('--text'),
+    muted: token('--muted'),
+    border: token('--border-color'),
+    accent: token('--brand'),
+    green: token('--success'),
+    red: token('--danger'),
+    yellow: token('--warning')
+  };
+}
+
 function renderFlowMap(flowMap) {
   if (!flowMap.nodes || flowMap.nodes.length === 0) return '';
-  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
-  const colors = isDark
-    ? { bg: '#1e1e2e', text: '#cdd6f4', muted: '#6c7086', border: '#313244', accent: '#3b82f6', green: '#22c55e', red: '#ef4444', yellow: '#eab308' }
-    : { bg: '#ffffff', text: '#333333', muted: '#888888', border: '#cccccc', accent: '#3b82f6', green: '#22c55e', red: '#ef4444', yellow: '#eab308' };
+  const colors = themeColors();
 
   const nodeColors = {
-    source: '#22c55e',
-    lb: '#eab308',
-    app: '#3b82f6',
-    service: '#6c7086'
+    source: colors.green,
+    lb: colors.yellow,
+    app: colors.accent,
+    service: colors.muted
   };
 
   const nodes = flowMap.nodes;
@@ -245,16 +251,16 @@ function renderFlowMap(flowMap) {
     <div class="section-title">\u041A\u0430\u0440\u0442\u0430 \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432</div>
     <div class="flow-controls">
       <button id="flowZoomFit" type="button">\u041F\u043E \u0440\u0430\u0437\u043C\u0435\u0440\u0443</button>
-      <label style="display:flex;align-items:center;gap:6px;font-size:0.8rem;color:var(--muted,#6c7086);">
+      <label class="flow-label">
         \u041C\u0430\u0441\u0448\u0442\u0430\u0431:
-        <input type="range" id="flowZoomRange" min="25" max="200" value="100" style="width:100px;">
+        <input type="range" id="flowZoomRange" min="25" max="200" value="100">
         <span id="flowZoomPct">100%</span>
       </label>
       <button id="flowFullscreenBtn" type="button">\uD83D\uDDD2 \u041D\u0430 \u0432\u0435\u0441\u044C \u044D\u043A\u0440\u0430\u043D</button>
     </div>
-    <div class="flow-map-container" style="position:relative;margin:0 16px 16px;">
-      <div id="flowSvgWrapper" style="overflow:auto;width:100%;min-height:500px;max-height:700px;">
-          <svg id="flowSvg" viewBox="0 0 ${svgW} ${svgH}" style="width:100%;min-width:${svgW}px;height:auto;display:block;" xmlns="http://www.w3.org/2000/svg">
+    <div class="flow-map-container flow-map-wrapper">
+      <div id="flowSvgWrapper" class="flow-svg-wrapper">
+          <svg id="flowSvg" class="flow-svg" viewBox="0 0 ${svgW} ${svgH}" style="min-width:${svgW}px" xmlns="http://www.w3.org/2000/svg">
             <defs>
               <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
                 <polygon points="0 0, 10 3.5, 0 7" fill="${colors.muted}"/>
@@ -265,7 +271,7 @@ function renderFlowMap(flowMap) {
             ${nodeRects}
           </svg>
         </div>
-        <div id="flowTooltip" style="display:none;position:absolute;background:${colors.bg};border:1px solid ${colors.border};border-radius:6px;padding:8px 12px;font-size:0.85rem;color:${colors.text};pointer-events:none;z-index:100;white-space:pre-line;max-width:280px;box-shadow:0 4px 12px rgba(0,0,0,0.3);"></div>
+        <div id="flowTooltip" class="flow-tooltip" style="display:none;"></div>
       </div>
     </div>`;
 }
@@ -364,21 +370,21 @@ function renderCharts(inApp) {
   return `
     <div class="section-title">\u041C\u0435\u0442\u0440\u0438\u043A\u0438 \u043F\u0440\u0438\u043B\u043E\u0436\u0435\u043D\u0438\u044F</div>
     <div class="analytics-grid">
-      <div class="card" style="padding:16px;">
+      <div class="card analytics-card">
         <div class="card-label">\u0412\u0440\u0435\u043C\u044F \u043E\u0442\u0432\u0435\u0442\u0430 (\u043C\u0441)</div>
         <div class="chart-container"><canvas id="chartResponseTime"></canvas></div>
       </div>
-      <div class="card" style="padding:16px;">
+      <div class="card analytics-card">
         <div class="card-label">\u0421\u0442\u0430\u0442\u0443\u0441 \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432</div>
         <div class="chart-container"><canvas id="chartRequestStatus"></canvas></div>
       </div>
-      <div class="card" style="padding:16px;">
+      <div class="card analytics-card">
         <div class="card-label">\u041C\u0435\u0442\u043E\u0434\u044B \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432</div>
         <div class="chart-container"><canvas id="chartMethods"></canvas></div>
       </div>
-      <div class="card" style="padding:16px;">
+      <div class="card analytics-card">
         <div class="card-label">\u041C\u0435\u0442\u0440\u0438\u043A\u0438 \u0411\u0414</div>
-        <div style="padding:8px 0;">
+        <div class="card-row">
           <div class="card-row"><span class="label">\u0417\u0430\u043F\u0440\u043E\u0441\u043E\u0432</span><span class="value">${d?.queries?.toLocaleString() || '\u2014'}</span></div>
           <div class="card-row"><span class="label">\u041E\u0448\u0438\u0431\u043E\u043A</span><span class="value">${d?.errors?.toLocaleString() || '\u2014'} (${d?.errorRate || '0%'})</span></div>
           <div class="card-row"><span class="label">\u041C\u0435\u0434\u043B\u0435\u043D\u043D\u044B\u0445</span><span class="value">${d?.slowQueries?.toLocaleString() || '\u2014'}</span></div>
@@ -396,23 +402,23 @@ function renderSystem(system) {
   return `
     <div class="section-title">\u0421\u0438\u0441\u0442\u0435\u043C\u0430</div>
     <div class="analytics-grid">
-      <div class="card" style="padding:16px;">
-        <div style="margin-bottom:8px;font-weight:600;">CPU</div>
+      <div class="card analytics-card">
+        <div class="analytics-subtitle">CPU</div>
         <div class="card-row"><span class="label">\u041C\u043E\u0434\u0435\u043B\u044C</span><span class="value">${fmt(cpu?.model)}</span></div>
         <div class="card-row"><span class="label">\u042F\u0434\u0435\u0440</span><span class="value">${fmt(cpu?.count)}</span></div>
         <div class="card-row"><span class="label">\u0417\u0430\u0433\u0440\u0443\u0437\u043A\u0430</span><span class="value">${fmt(cpu?.usage)}%</span></div>
         <div class="card-row"><span class="label">Load Avg</span><span class="value">${cpu?.loadAverage?.map(v => v.toFixed(2)).join(' / ') || '\u2014'}</span></div>
       </div>
-      <div class="card" style="padding:16px;">
-        <div style="margin-bottom:8px;font-weight:600;">\u041F\u0430\u043C\u044F\u0442\u044C</div>
+      <div class="card analytics-card">
+        <div class="analytics-subtitle">\u041F\u0430\u043C\u044F\u0442\u044C</div>
         <div class="card-row"><span class="label">\u0412\u0441\u0435\u0433\u043E</span><span class="value">${fmtBytes(mem?.total)}</span></div>
         <div class="card-row"><span class="label">\u0418\u0441\u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u043D\u043E</span><span class="value">${fmtBytes(mem?.used)} (${mem?.usagePercent}%)</span></div>
         <div class="card-row"><span class="label">\u0421\u0432\u043E\u0431\u043E\u0434\u043D\u043E</span><span class="value">${fmtBytes(mem?.free)}</span></div>
         <div class="card-row"><span class="label">Node RSS</span><span class="value">${fmtBytes(p?.rss)}</span></div>
         <div class="card-row"><span class="label">Heap</span><span class="value">${fmtBytes(p?.heapUsed)} / ${fmtBytes(p?.heapTotal)}</span></div>
       </div>
-      <div class="card" style="padding:16px;">
-        <div style="margin-bottom:8px;font-weight:600;">\u0425\u043E\u0441\u0442</div>
+      <div class="card analytics-card">
+        <div class="analytics-subtitle">\u0425\u043E\u0441\u0442</div>
         <div class="card-row"><span class="label">Hostname</span><span class="value">${fmt(system.hostname)}</span></div>
         <div class="card-row"><span class="label">\u041F\u043B\u0430\u0442\u0444\u043E\u0440\u043C\u0430</span><span class="value">${fmt(system.platform)} ${fmt(system.arch)}</span></div>
         <div class="card-row"><span class="label">Node.js</span><span class="value">${fmt(system.nodeVersion)}</span></div>
@@ -427,7 +433,7 @@ function renderDocker(docker) {
       <span class="label">
         <span class="status-dot ${c.status?.includes('Up') ? 'up' : 'down'}"></span>
         ${String(c.name || '').replace(/^mmrc-/, '')}
-        <span style="font-size:0.75rem;color:var(--muted,#6c7086);margin-left:4px;">${c.id}</span>
+        <span class="analytics-id">${c.id}</span>
       </span>
       <span class="value">
         ${fmt(c.status?.split(' ')[0])} | CPU: ${c.cpuPercent || '\u2014'} | RAM: ${c.memoryPercent || '\u2014'}
@@ -437,7 +443,7 @@ function renderDocker(docker) {
   return `
     <div class="section-title">Docker \u043A\u043E\u043D\u0442\u0435\u0439\u043D\u0435\u0440\u044B (${docker.running}/${docker.total})</div>
     <div class="analytics-grid">
-      <div class="card" style="padding:16px;">
+      <div class="card analytics-card">
         ${rows || '<div class="empty-state">\u041D\u0435\u0442 \u043A\u043E\u043D\u0442\u0435\u0439\u043D\u0435\u0440\u043E\u0432</div>'}
       </div>
     </div>`;
@@ -456,12 +462,12 @@ function renderNginxStats(nginx) {
   return `
     <div class="section-title">NGINX (\u0432\u0441\u0435\u0433\u043E ${nginx.total.toLocaleString()} \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432)</div>
     <div class="analytics-grid two-col">
-      <div class="card" style="padding:16px;">
-        <div style="margin-bottom:8px;font-weight:600;">\u0423\u043F\u0441\u0442\u0440\u0438\u043C\u044B (replica)</div>
+      <div class="card analytics-card">
+        <div class="analytics-subtitle">\u0423\u043F\u0441\u0442\u0440\u0438\u043C\u044B (replica)</div>
         ${upstreamRows || '<div class="empty-state">\u041D\u0435\u0442 \u0434\u0430\u043D\u043D\u044B\u0445</div>'}
       </div>
-      <div class="card" style="padding:16px;">
-        <div style="margin-bottom:8px;font-weight:600;">HTTP \u0441\u0442\u0430\u0442\u0443\u0441\u044B</div>
+      <div class="card analytics-card">
+        <div class="analytics-subtitle">HTTP \u0441\u0442\u0430\u0442\u0443\u0441\u044B</div>
         ${statusRows || '<div class="empty-state">\u041D\u0435\u0442 \u0434\u0430\u043D\u043D\u044B\u0445</div>'}
       </div>
     </div>`;
@@ -478,8 +484,8 @@ function renderReplicaMetrics(replicaMetrics) {
     const dbQ = m.database?.queries || 0;
     const rt = m.requests?.responseTime;
     return `
-      <div style="margin-bottom:16px;">
-        <div style="font-weight:600;margin-bottom:8px;">${name}</div>
+      <div class="analytics-block">
+        <div class="analytics-subtitle">${name}</div>
         <div class="card-row"><span class="label">\u0417\u0430\u043F\u0440\u043E\u0441\u043E\u0432</span><span class="value">${reqs.toLocaleString()}</span></div>
         <div class="card-row"><span class="label">\u041E\u0448\u0438\u0431\u043E\u043A</span><span class="value">${errs.toLocaleString()}</span></div>
         <div class="card-row"><span class="label">Socket \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432</span><span class="value">${socketAct.toLocaleString()}</span></div>
@@ -493,7 +499,7 @@ function renderReplicaMetrics(replicaMetrics) {
   return `
     <div class="section-title">\u041C\u0435\u0442\u0440\u0438\u043A\u0438 \u0440\u0435\u043F\u043B\u0438\u043A</div>
     <div class="analytics-grid">
-      <div class="card" style="padding:16px;">
+      <div class="card analytics-card">
         ${rows || '<div class="empty-state">\u041D\u0435\u0442 \u0434\u0430\u043D\u043D\u044B\u0445</div>'}
       </div>
     </div>`;
@@ -503,7 +509,7 @@ function renderRedis(redis) {
   return `
     <div class="section-title">Redis</div>
     <div class="analytics-grid">
-      <div class="card" style="padding:16px;">
+      <div class="card analytics-card">
         <div class="card-row"><span class="label">\u0412\u0435\u0440\u0441\u0438\u044F</span><span class="value">${fmt(redis.version)}</span></div>
         <div class="card-row"><span class="label">\u0420\u043E\u043B\u044C</span><span class="value">${fmt(redis.role)}</span></div>
         <div class="card-row"><span class="label">\u0410\u043F\u0442\u0430\u0439\u043C</span><span class="value">${fmtUptime(redis.uptime)}</span></div>
@@ -520,7 +526,7 @@ function renderPostgres(pg) {
   return `
     <div class="section-title">PostgreSQL</div>
     <div class="analytics-grid">
-      <div class="card" style="padding:16px;">
+      <div class="card analytics-card">
         <div class="card-row"><span class="label">\u0412\u0435\u0440\u0441\u0438\u044F</span><span class="value">${fmt(pg.version)}</span></div>
         <div class="card-row"><span class="label">\u0420\u0430\u0437\u043C\u0435\u0440 \u0411\u0414</span><span class="value">${fmtBytes(pg.databaseSize)}</span></div>
         <div class="card-row"><span class="label">\u0410\u043A\u0442\u0438\u0432\u043D\u044B\u0435 \u0441\u043E\u0435\u0434\u0438\u043D\u0435\u043D\u0438\u044F</span><span class="value">${fmt(pg.activeConnections)}</span></div>
@@ -535,8 +541,8 @@ function renderQueues(queues) {
   const rows = Object.entries(queues).map(([name, stats]) => {
     if (!stats) return `<div class="card-row"><span class="label">${name}</span><span class="value">\u041E\u0448\u0438\u0431\u043A\u0430</span></div>`;
     return `
-      <div style="margin-bottom:12px;">
-        <div style="font-weight:600;margin-bottom:8px;">${name}</div>
+      <div class="analytics-block">
+        <div class="analytics-subtitle">${name}</div>
         <div class="card-row"><span class="label">\u041E\u0436\u0438\u0434\u0430\u044E\u0442</span><span class="value">${stats.waiting || 0}</span></div>
         <div class="card-row"><span class="label">\u0410\u043A\u0442\u0438\u0432\u043D\u044B</span><span class="value">${stats.active || 0}</span></div>
         <div class="card-row"><span class="label">\u0417\u0430\u0432\u0435\u0440\u0448\u0435\u043D\u044B</span><span class="value">${stats.completed || 0}</span></div>
@@ -548,7 +554,7 @@ function renderQueues(queues) {
   return `
     <div class="section-title">\u041E\u0447\u0435\u0440\u0435\u0434\u0438 Bull</div>
     <div class="analytics-grid">
-      <div class="card" style="padding:16px;">
+      <div class="card analytics-card">
         ${rows}
       </div>
     </div>`;
@@ -556,7 +562,7 @@ function renderQueues(queues) {
 
 function renderFooter(data) {
   return `
-    <div style="text-align:center;padding:16px;color:var(--muted,#6c7086);font-size:0.8rem;">
+    <div class="analytics-footer">
       \u0421\u043E\u0431\u0440\u0430\u043D\u043E \u0437\u0430 ${data.collectTimeMs} \u043C\u0441 • ${new Date(data.timestamp).toLocaleString()}
     </div>`;
 }
@@ -568,9 +574,10 @@ function initCharts(data) {
   Object.values(charts).forEach(c => { try { c.destroy(); } catch {} });
   charts = {};
 
-  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-  const gridColor = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
-  const textColor = isDark ? '#cdd6f4' : '#333';
+  const colors = themeColors();
+  const gridColor = colors.border;
+  const textColor = colors.text;
+  const palette = [colors.accent, colors.green, colors.yellow, colors.red, colors.muted];
   const chartDefaults = { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: textColor } } }, scales: { x: { ticks: { color: textColor }, grid: { color: gridColor } }, y: { ticks: { color: textColor }, grid: { color: gridColor } } } };
 
   const rtEl = document.getElementById('chartResponseTime');
@@ -583,7 +590,7 @@ function initCharts(data) {
         datasets: [{
           label: '\u043C\u0441',
           data: [rt.avg, rt.p50, rt.p95, rt.p99],
-          backgroundColor: ['#3b82f6', '#22c55e', '#eab308', '#ef4444'],
+          backgroundColor: palette.slice(0, 4),
           borderRadius: 4
         }]
       },
@@ -600,7 +607,7 @@ function initCharts(data) {
         labels: ['\u0423\u0441\u043F\u0435\u0448\u043D\u043E', '\u041E\u0448\u0438\u0431\u043A\u0438'],
         datasets: [{
           data: [Math.max(ok, 0), inApp.requests.errors],
-          backgroundColor: ['#22c55e', '#ef4444']
+          backgroundColor: palette.slice(1, 3)
         }]
       },
       options: { ...chartDefaults, plugins: { ...chartDefaults.plugins, legend: { position: 'bottom', labels: { color: textColor } } } }
@@ -619,7 +626,7 @@ function initCharts(data) {
         datasets: [{
           label: '\u0417\u0430\u043F\u0440\u043E\u0441\u043E\u0432',
           data: values,
-          backgroundColor: ['#3b82f6', '#22c55e', '#eab308', '#ef4444', '#a855f7'],
+          backgroundColor: palette,
           borderRadius: 4
         }]
       },

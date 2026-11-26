@@ -1173,12 +1173,12 @@ function filterAndRenderUsers(adminFetch) {
         <div style="flex:1; min-width:0;">
           <div style="display:flex; align-items:center; gap:var(--space-2xs); flex-wrap:wrap;">
             <strong>${safeUsername}</strong>
-            ${isLdapUser ? '<span style="background:var(--warning); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">LDAP</span>' : '<span style="background:var(--panel-2); color:var(--text-secondary); padding:2px 6px; border-radius:4px; font-size:0.7rem;">LOCAL</span>'}
-            ${u.role === 'admin' ? '<span style="background:var(--brand); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">ADMIN</span>' : ''}
-            ${u.role === 'manager' ? '<span style="background:var(--warning); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">MANAGER</span>' : ''}
-            ${u.role === 'speaker' ? '<span style="background:var(--success); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">SPEAKER</span>' : ''}
-            ${u.role === 'hero_admin' ? '<span style="background:var(--warning); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">HERO ADMIN</span>' : ''}
-            ${!u.is_active ? '<span style="background:var(--danger); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem;">OFF</span>' : ''}
+            ${isLdapUser ? '<span class="role-badge" style="background:var(--warning); color:var(--panel);">LDAP</span>' : '<span class="role-badge">LOCAL</span>'}
+            ${u.role === 'admin' ? '<span class="role-badge" style="background:var(--brand); color:var(--panel);">ADMIN</span>' : ''}
+            ${u.role === 'manager' ? '<span class="role-badge" style="background:var(--warning); color:var(--panel);">MANAGER</span>' : ''}
+            ${u.role === 'speaker' ? '<span class="role-badge" style="background:var(--success); color:var(--panel);">SPEAKER</span>' : ''}
+            ${u.role === 'hero_admin' ? '<span class="role-badge" style="background:var(--warning); color:var(--panel);">HERO ADMIN</span>' : ''}
+            ${!u.is_active ? '<span class="role-badge" style="background:var(--danger); color:var(--panel);">OFF</span>' : ''}
           </div>
           <div class="meta">${safeFullName}</div>
           ${u.role === 'speaker' || u.role === 'manager' ? `<div class="meta" style="font-size:0.75rem; color:var(--text-secondary);">Устройств: ${deviceCountLabel}</div>` : ''}
@@ -2295,7 +2295,7 @@ async function loadSettingsContent(adminFetch) {
             if (result.ok) {
               apkVersionLabel.textContent = `APK обновлён до ${escapeHtml(result.version)}`;
               apkUpdateBtn.style.display = 'none';
-              apkVersionLabel.style.color = 'var(--success, #4caf50)';
+              apkVersionLabel.style.color = 'var(--success)';
             } else {
               apkVersionLabel.textContent = `Ошибка: ${result.error || 'не удалось скачать'}`;
               apkVersionLabel.style.color = 'var(--danger)';
@@ -2309,7 +2309,7 @@ async function loadSettingsContent(adminFetch) {
       };
     } else {
       apkVersionLabel.textContent = `Установлена версия: ${escapeHtml(data.version || '?')}`;
-      apkVersionLabel.style.color = 'var(--success, #4caf50)';
+      apkVersionLabel.style.color = 'var(--success)';
     }
   } else {
     apkVersionLabel.textContent = `Версия APK: неизвестна (${data.error || ''})`;
@@ -2431,7 +2431,7 @@ async function loadSettingsContent(adminFetch) {
       const result = await resp.json();
       if (result.ok) {
         apkStatus.textContent = 'APK установлен и устройство настроено!';
-        apkStatus.style.color = 'var(--success, #4caf50)';
+        apkStatus.style.color = 'var(--success)';
       } else {
         apkStatus.textContent = 'Ошибка: ' + (result.error || 'Неизвестная ошибка');
         apkStatus.style.color = 'var(--danger)';
@@ -2466,10 +2466,10 @@ async function loadSettingsContent(adminFetch) {
 
       if (resp.ok && failed === 0) {
         apkStatus.textContent = `Обновление завершено: ${updated} из ${total}`;
-        apkStatus.style.color = 'var(--success, #4caf50)';
+        apkStatus.style.color = 'var(--success)';
       } else if (updated > 0 || failed > 0) {
         apkStatus.textContent = `Частично завершено: успешно ${updated}, ошибок ${failed}`;
-        apkStatus.style.color = failed > 0 ? 'var(--warning, #f59e0b)' : 'var(--text-secondary)';
+        apkStatus.style.color = failed > 0 ? 'var(--warning)' : 'var(--text-secondary)';
       } else {
         apkStatus.textContent = 'Ошибка: ' + (result.error || 'Не удалось обновить Android-плееры');
         apkStatus.style.color = 'var(--danger)';
@@ -2970,7 +2970,7 @@ async function loadSettingsContent(adminFetch) {
       }
       
       cleanupStatusEl.textContent = resultText;
-      cleanupStatusEl.style.color = 'var(--success, #22c55e)';
+      cleanupStatusEl.style.color = 'var(--success)';
       cleanupFilesBtn.disabled = true;
       cleanupFilesBtn.innerHTML = getTrashIcon(16);
       lastCheckResult = null;

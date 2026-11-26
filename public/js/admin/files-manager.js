@@ -973,7 +973,8 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       const headerLeft = document.createElement('div'); headerLeft.style.cssText = 'flex:1; display:flex; align-items:stretch; gap:var(--space-2xs); min-width:0;';
       if (isPlaceholder) {
         const placeholderSpan = document.createElement('span');
-        placeholderSpan.style.cssText = 'background:rgba(59, 130, 246, 0.8); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:600; align-self:center; flex-shrink:0; display:inline-flex; align-items:center; gap:4px;';
+        placeholderSpan.className = 'role-badge';
+          placeholderSpan.style.cssText = 'background:var(--brand-light); color:var(--brand); font-weight:var(--font-weight-semibold); align-self:center; flex-shrink:0;';
         placeholderSpan.innerHTML = `${toIconOnlySvg(getPinIcon(11))} ЗАГЛУШКА`;
         headerLeft.appendChild(placeholderSpan);
       }
@@ -1189,7 +1190,8 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         
         if (isPlaceholder) {
           const placeholderSpan = document.createElement('span');
-          placeholderSpan.style.cssText = 'background:rgba(59, 130, 246, 0.8); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:600; align-self:center; flex-shrink:0; display:inline-flex; align-items:center; gap:4px;';
+          placeholderSpan.className = 'role-badge';
+          placeholderSpan.style.cssText = 'background:var(--brand-light); color:var(--brand); font-weight:var(--font-weight-semibold); align-self:center; flex-shrink:0;';
           placeholderSpan.innerHTML = `${toIconOnlySvg(getPinIcon(11))} ЗАГЛУШКА`;
           headerLeft.appendChild(placeholderSpan);
         }
