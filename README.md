@@ -64,6 +64,7 @@ npm run test:unit    # юнит-тесты
 
 ## Документация
 
+- [AGENT.md](AGENT.md) — правила работы с репозиторием для AI-агентов (EN/RU)
 - [DOCKER.md](DOCKER.md) — Docker и диагностика
 - [ADB.md](ADB.md) — управление Android TV
 - [DEBUG.md](DEBUG.md) — логи и ошибки
