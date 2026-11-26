@@ -346,7 +346,7 @@ function createSettingsSection() {
     // Массовое обновление плеера — действие над устройствами, поэтому кнопка
     // живёт в панели питания, а не в форме ручной установки APK.
     const apkBulkActionsHtml = `
-      <button type="button" id="stApkBatch" class="secondary st-power-btn st-power-bulk-update" title="Обновить плеер на всех устройствах" aria-label="Обновить плеер на всех устройствах">${getUpdateIcon(14)} Обновить плеер везде</button>
+      <button type="button" id="stApkBatch" class="secondary st-power-btn st-power-bulk-update" title="Обновить плеер на всех устройствах (настройки сохранятся)" aria-label="Обновить плеер на всех устройствах">${getUpdateIcon(14)} Обновить плеер везде</button>
       <span id="stApkBatchStatus" class="st-status"></span>`;
 
     body.innerHTML = `

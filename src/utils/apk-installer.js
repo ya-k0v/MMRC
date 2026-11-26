@@ -173,9 +173,9 @@ async function stopPlayer(adbTarget) {
 }
 
 /**
- * Плеер уже стоит? Тогда обновление должно идти поверх него: install -r -d
- * сохраняет SharedPreferences и прочие настройки. Только для первичной
- * установки отправляем конфигурацию broadcast'ом.
+ * Присутствие плеера — три состояния: `true` (точно стоит), `false` (точно
+ * нет) и `null` (проверить не удалось). Последнее важно: «неизвестно» не
+ * означает «первичная установка», иначе broadcast перезапишет настройки.
  */
 async function isPlayerInstalled(adbTarget) {
   try {
@@ -185,10 +185,10 @@ async function isPlayerInstalled(adbTarget) {
     ) || '');
     return out.split(/\r?\n/).some(line => line.trim() === `package:${ANDROID_PACKAGE_NAME}`);
   } catch (error) {
-    logger.debug('[APK] Не удалось проверить наличие плеера', {
+    logger.warn('[APK] Не удалось проверить наличие плеера — обновляем поверх, без broadcast', {
       adbTarget, error: error.message
     });
-    return false;
+    return null;
   }
 }
 
@@ -223,8 +223,15 @@ function normalizeServerUrlForXml(serverUrl) {
   return parsed.host;
 }
 
-// Установка и настройка APK на Android-устройстве
-export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl, port }) {
+/**
+ * Установка или обновление APK на Android-устройстве.
+ *
+ * `sendConfig` задаёт действие пользователя, а не результат опроса пакета:
+ *  - кнопка «Установить» → `true`, broadcast с адресом сервера и deviceId шлём;
+ *  - кнопки «Обновить плеер» / «Обновить плеер везде» → `false`, настройки
+ *    плеера на устройстве не перезаписываем ни при каких результатах проверки.
+ */
+export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl, port, sendConfig = true }) {
   const host = normalizeHost(ip);
   const safeDeviceId = normalizeDeviceId(deviceId);
   const safeApkPath = resolveAndValidateApkPath(apkPath);
@@ -257,10 +264,12 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
   return enqueueAdbCommand(adbTarget, async () => {
     await connectAdb(adbTarget);
 
-    // Обновление идёт поверх установленного плеера: -r сохраняет данные, -d
-    // разрешает и даунгрейд. uninstall больше не используется — он стирал бы
-    // настройки устройства. Первичная установка конфигурируется broadcast'ом.
-    const hadPlayer = await isPlayerInstalled(adbTarget);
+    // Флаги install выбираем по факту наличия пакета: -r сохраняет данные, -d
+    // разрешает даунгрейд. Если проверить не удалось, ведём себя как при
+    // обновлении. uninstall не используется — он стёр бы настройки устройства.
+    // Отправку конфигурации решаем отдельно, по кнопке пользователя.
+    const playerState = await isPlayerInstalled(adbTarget);
+    const updateInPlace = playerState !== false;
     await stopPlayer(adbTarget);
 
     let installError = null;
@@ -268,7 +277,7 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
 
     for (let attempt = 1; attempt <= INSTALL_ATTEMPTS && !installed; attempt++) {
       try {
-        await installApk(adbTarget, safeApkPath, { preserveData: hadPlayer });
+        await installApk(adbTarget, safeApkPath, { preserveData: updateInPlace });
         installed = true;
       } catch (error) {
         installError = error;
@@ -291,11 +300,16 @@ export async function installAndSetupApk({ ip, deviceId, deviceName, apkPath, se
         throw installError || new Error('Не удалось установить APK');
       }
 
-      if (hadPlayer) {
-        logger.info('[APK] Плеер обновлён с сохранением настроек', { adbTarget, deviceId: safeDeviceId });
+      if (!sendConfig) {
+        // Кнопка обновления: данные приложения сохраняются install -r, а
+        // broadcast с настройками не шлётся в принципе.
+        logger.info('[APK] Плеер обновлён без перезаписи настроек', {
+          adbTarget,
+          deviceId: safeDeviceId,
+          packageCheck: playerState === null ? 'unknown' : playerState ? 'installed' : 'absent'
+        });
       } else {
-        // Первичная установка: приложение ещё не создало рабочие папки и не
-        // знает адрес сервера/идентификатор устройства.
+        // Кнопка установки: пользователь явно задаёт конфигурацию плеера.
         const urlForBroadcast = normalizeServerUrlForXml(serverUrl);
         await launchPlayer(adbTarget);
         await delay(SETTLE_MS);

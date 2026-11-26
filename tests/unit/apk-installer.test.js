@@ -20,6 +20,7 @@ const events = [];
 let installFailures = 0;
 let installStderr = '';
 let connectFails = false;
+let packageCheckFails = false;
 let installedPackage = false;
 
 jest.unstable_mockModule('node:child_process', () => ({
@@ -41,6 +42,10 @@ jest.unstable_mockModule('node:child_process', () => ({
         return;
       }
       if (args.includes('list') && args.includes('packages')) {
+        if (packageCheckFails) {
+          callback(new Error('Command failed: adb shell pm list packages'), '', 'device offline');
+          return;
+        }
         callback(null, installedPackage ? 'package:com.videocontrol.mediaplayer\n' : '', '');
         return;
       }
@@ -79,6 +84,7 @@ beforeEach(() => {
   installFailures = 0;
   installStderr = '';
   connectFails = false;
+  packageCheckFails = false;
   installedPackage = false;
 });
 
@@ -109,7 +115,7 @@ test('повторяет install при сбое и в итоге ставит A
 }, 30000);
 
 test('первичная установка: стоп, install -r, настройки broadcast и перезапуск', async () => {
-  await installAndSetupApk(callArgs);
+  await installAndSetupApk({ ...callArgs, sendConfig: true });
 
   const stopIdx = events.findIndex((command) => command.includes('am force-stop'));
   const installIdx = events.findIndex(command => command.includes(' install -r '));
@@ -121,10 +127,21 @@ test('первичная установка: стоп, install -r, настро�
   expect(events.some(command => command.includes(' uninstall '))).toBe(false);
 }, 30000);
 
+test('кнопка «Установить» передаёт настройки, даже если плеер уже стоит', async () => {
+  installedPackage = true;
+
+  await installAndSetupApk({ ...callArgs, sendConfig: true });
+
+  expect(events.some(command => command.includes(' install -r -d '))).toBe(true);
+  expect(events.some(command => command.includes('am broadcast'))).toBe(true);
+  expect(events.some(command => command.includes('--es server_url'))).toBe(true);
+  expect(events.some(command => command.includes(' uninstall '))).toBe(false);
+}, 30000);
+
 test('обновление установленного плеера сохраняет настройки: -r -d, без uninstall и broadcast', async () => {
   installedPackage = true;
 
-  await installAndSetupApk(callArgs);
+  await installAndSetupApk({ ...callArgs, sendConfig: false });
 
   expect(countInstall()).toBe(1);
   expect(events.some(command => command.includes(' install -r -d '))).toBe(true);
@@ -135,6 +152,30 @@ test('обновление установленного плеера сохра�
   expect(events.some(command => command.includes('disconnect'))).toBe(true);
 }, 30000);
 
+test('при обновлении неизвестное состояние пакета не приводит к broadcast', async () => {
+  packageCheckFails = true;
+
+  await installAndSetupApk({ ...callArgs, sendConfig: false });
+
+  expect(events.some(command => command.includes(' install -r -d '))).toBe(true);
+  expect(events.some(command => command.includes('am broadcast'))).toBe(false);
+  expect(events.some(command => command.includes(' uninstall '))).toBe(false);
+  expect(countLaunch()).toBe(1);
+}, 30000);
+
+test('массовое обновление не шлёт broadcast даже если пакет не найден', async () => {
+  // Это тот путь, который использует кнопка «Обновить плеер везде»: устройство
+  // уже зарегистрировано, поэтому настройки на приставке трогать нельзя.
+  await installAndSetupApk({ ...callArgs, sendConfig: false });
+
+  // Пакет не найден — это чистая установка, поэтому -d не нужен; главное,
+  // что режим обновления всё равно не отправляет broadcast с настройками.
+  expect(events.some(command => / install -r(?: -d)? /.test(command))).toBe(true);
+  expect(events.some(command => command.includes('am broadcast'))).toBe(false);
+  expect(events.some(command => command.includes(' uninstall '))).toBe(false);
+  expect(countLaunch()).toBe(1);
+}, 30000);
+
 test('обновление с сохранением настроек работает и при понижении версии', async () => {
   installedPackage = true;
   installFailures = 1;
@@ -142,11 +183,12 @@ test('обновление с сохранением настроек работ
 
   // -d разрешает даунгрейд, поэтому сервер не снимает флаг сохранения данных
   // и не прибегает к uninstall даже после первой неудачной попытки.
-  await installAndSetupApk(callArgs);
+  await installAndSetupApk({ ...callArgs, sendConfig: false });
 
   expect(countInstall()).toBe(2);
   expect(events.every(command => !command.includes(' install ') || command.includes(' -r -d '))).toBe(true);
   expect(events.some(command => command.includes(' uninstall '))).toBe(false);
+  expect(events.some(command => command.includes('am broadcast'))).toBe(false);
 }, 30000);
 
 test('при постоянной ошибке бросает причину из stderr, но перезапускает плеер и отключается', async () => {

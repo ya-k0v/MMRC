@@ -489,7 +489,8 @@ export function createAdminRouter(deps = {}) {
 
     let installCompleted = false;
     try {
-      await installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl, port });
+      // Кнопка «Установить»: пользователь явно задаёт конфигурацию плеера.
+      await installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl, port, sendConfig: true });
       installCompleted = true;
 
       const incomingAuthHeader = req.get('authorization');
@@ -623,7 +624,17 @@ export function createAdminRouter(deps = {}) {
           // на память/дефолт. target.adbPort пришёл из памяти и может быть
           // устаревшим — раньше массовое обновление шло на него же.
           const deviceAdbPort = await resolveDeviceAdbPort(deviceId);
-          await installAndSetupApk({ ip, deviceId, deviceName, apkPath, serverUrl, port: deviceAdbPort });
+          // Кнопки «Обновить плеер» и «Обновить плеер везде»: устройство уже
+          // зарегистрировано, настройки плеера передавать нельзя.
+          await installAndSetupApk({
+            ip,
+            deviceId,
+            deviceName,
+            apkPath,
+            serverUrl,
+            port: deviceAdbPort,
+            sendConfig: false
+          });
           updated += 1;
           results.push({ deviceId, deviceName, ip, ok: true });
         } catch (error) {
