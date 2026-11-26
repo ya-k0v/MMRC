@@ -19,6 +19,10 @@ original wording of the project rules and wins if the two differ.
   destructive operations.
 - Commit locally after a change is tested; use a short imperative message.
   Never publish it.
+- Never commit secrets, local `.env`, databases or generated runtime data;
+  document new configuration in `.env.example` instead.
+- When behaviour or UI modules change, update the relevant README/dev docs and
+  keep links valid — some docs already reference missing files.
 
 ### 2. Compatibility is mandatory
 
@@ -82,7 +86,38 @@ do not delete it as "generated junk".
   predicate/count function.
 - Communicate in Russian unless the user asks otherwise.
 
-### 6. Report after every change
+### 6. UI and design
+
+- **No emoji** in UI text, labels or code. Use only SVG icons from
+  `public/js/shared/svg-icons.js` (`get<Name>Icon(size, color)`, default
+  `currentColor`). Reuse an existing icon before adding a new one; a new icon
+  must follow the same 24×24 `viewBox`, `stroke`/`fill` with `currentColor` and
+  inline alignment. No icon fonts or pasted pictographs.
+- Use existing design tokens from `public/css/app.css` (`:root`, `body.light`,
+  `body.maintenance-ui`, `body.maintenance-ui.light`): colors, `--space-*`,
+  radii, typography, motion. Prefer classes to inline styles; never add literal
+  hex/rgba colors or arbitrary spacing when a token exists. A genuinely new
+  color must be added as a token to **both** light and dark palettes.
+- Verify every UI change in **dark and light** themes on all affected surfaces:
+  admin, speaker, analytics, plus overlays, toasts, previews and the collapsed
+  sidebar. Hero and maintenance pages are dark-only and duplicate tokens in
+  `hero.css`; editing `app.css` does not affect them.
+- Three theme mechanisms coexist: canonical `body.light`, the `maintenance-ui`
+  palette layer and `html[data-theme]` (analytics charts only). Do not "fix"
+  one blindly. Sidebar theme buttons are rebuilt on re-render — re-run
+  `initThemeToggle()` after sidebar `innerHTML` changes.
+- Scope CSS to the page (`body.admin-page …`, existing `st-*`/`pc-*` prefixes)
+  so it does not leak into speaker/analytics. Respect existing breakpoints and
+  `@media (pointer: coarse)` touch targets (≈40–44 px). Do not add `!important`
+  to win specificity — fix the selector or stylesheet order instead.
+- Accessibility: icon-only controls need `aria-label`/`title`, decorative SVG
+  gets `aria-hidden="true"`. Preserve keyboard navigation, visible focus and
+  `prefers-reduced-motion`. Icons are raw SVG injected via `innerHTML`, so
+  always escape adjacent user data with `escapeHtml()`.
+- Cover pure markup/logic with unit tests where possible; otherwise say
+  explicitly that visual/browser verification was not performed.
+
+### 7. Report after every change
 
 End the reply with exactly three items:
 
@@ -107,6 +142,10 @@ verified and which were not. If nothing was changed, say "Изменений н�
   молча. Перед разрушительными действиями спрашивать.
 - После проверки изменений сделать локальный коммит с коротким сообщением.
   Публиковать его нельзя.
+- Не коммитить секреты, локальный `.env`, базы данных и сгенерированные данные;
+  новые настройки описывать в `.env.example`.
+- При изменении поведения или UI-модулей обновлять соответствующие README/dev-доки
+  и следить за валидностью ссылок — часть доков уже ссылается на несуществующие файлы.
 
 ### 2. Совместимость обязательна
 
@@ -168,7 +207,38 @@ SQLite **и** PostgreSQL; локальный диск **и** S3/MinIO; primary *
   применимо. Чипы сводки — фильтры с общим источником правды.
 - Общаться на русском, если пользователь не попросил иначе.
 
-### 6. Отчёт после любого изменения
+### 6. UI и дизайн
+
+- **Никаких emoji** в тексте интерфейса, подписях и коде. Только SVG-иконки из
+  `public/js/shared/svg-icons.js` (`get<Name>Icon(size, color)`, по умолчанию
+  `currentColor`). Сначала искать существующую иконку; новая должна повторять
+  стиль модуля: `viewBox="0 0 24 24"`, `stroke`/`fill` с `currentColor`,
+  встроенное выравнивание. Никаких шрифтов иконок и вставленных пиктограмм.
+- Использовать существующие токены из `public/css/app.css` (`:root`,
+  `body.light`, `body.maintenance-ui`, `body.maintenance-ui.light`): цвета,
+  `--space-*`, радиусы, типографика, анимация. Предпочитать классы инлайн-
+  стилям; не добавлять литеральные hex/rgba и произвольные отступы, если есть
+  токен. Действительно новый цвет заводится токеном **в обеих** темах.
+- Проверять каждое изменение UI в **тёмной и светлой** темах на всех затронутых
+  поверхностях: админка, спикер, аналитика, оверлеи, тосты, превью и свёрнутый
+  сайдбар. Hero и maintenance-страницы — только тёмные и дублируют токены в
+  `hero.css`; правка `app.css` на них не влияет.
+- Сосуществуют три механизма темы: канонический `body.light`, слой
+  `maintenance-ui` и `html[data-theme]` (только графики аналитики). Не «чинить»
+  один вслепую. Кнопки темы в сайдбаре пересоздаются при ререндере — после
+  изменения `innerHTML` сайдбара снова вызывать `initThemeToggle()`.
+- Ограничивать CSS страницей (`body.admin-page …`, префиксы `st-*`/`pc-*`), чтобы
+  стили не протекали в спикер/аналитику. Соблюдать существующие брейкпоинты и
+  `@media (pointer: coarse)` (тач-цели ≈40–44 px). Не добавлять `!important`
+  ради победы в специфичности — исправлять селектор или порядок стилей.
+- Доступность: иконочные кнопки получают `aria-label`/`title`, декоративный SVG —
+  `aria-hidden="true"`. Сохранять навигацию с клавиатуры, видимый фокус и
+  `prefers-reduced-motion`. Иконки — сырой SVG через `innerHTML`, поэтому
+  соседние пользовательские данные всегда экранировать `escapeHtml()`.
+- Чистую разметку/логику покрывать юнит-тестами; если это невозможно, прямо
+  говорить, что визуальная проверка в браузере не проводилась.
+
+### 7. Отчёт после любого изменения
 
 В конце ответа обязательно три пункта:
 

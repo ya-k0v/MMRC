@@ -12,6 +12,7 @@ import {
   getEyeIcon,
   getSlidersIcon,
   getMoonIcon,
+  getPinIcon,
   getChevronLeftIcon,
   getChevronRightIcon
 } from '../shared/svg-icons.js';
@@ -972,8 +973,8 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
       const headerLeft = document.createElement('div'); headerLeft.style.cssText = 'flex:1; display:flex; align-items:stretch; gap:var(--space-2xs); min-width:0;';
       if (isPlaceholder) {
         const placeholderSpan = document.createElement('span');
-        placeholderSpan.style.cssText = 'background:rgba(59, 130, 246, 0.8); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:600; align-self:center; flex-shrink:0;';
-        placeholderSpan.textContent = '📌 ЗАГЛУШКА';
+        placeholderSpan.style.cssText = 'background:rgba(59, 130, 246, 0.8); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:600; align-self:center; flex-shrink:0; display:inline-flex; align-items:center; gap:4px;';
+        placeholderSpan.innerHTML = `${toIconOnlySvg(getPinIcon(11))} ЗАГЛУШКА`;
         headerLeft.appendChild(placeholderSpan);
       }
       const nameSpan = document.createElement('span');
@@ -1036,7 +1037,7 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         optimizeWrap.appendChild(optimizeMenu);
         actions.appendChild(optimizeWrap);
       }
-      if (isEligible) { const makeDefaultBtn = document.createElement('button'); makeDefaultBtn.className = 'meta-lg makeDefaultBtn'; makeDefaultBtn.setAttribute('data-safe', encodeURIComponent(safeName)); makeDefaultBtn.setAttribute('data-original', encodeURIComponent(originalName)); makeDefaultBtn.title = 'Сделать заглушкой'; makeDefaultBtn.disabled = !canPlay; makeDefaultBtn.textContent = '📌'; applySquareActionButtonStyle(makeDefaultBtn); actions.appendChild(makeDefaultBtn); }
+      if (isEligible) { const makeDefaultBtn = document.createElement('button'); makeDefaultBtn.className = 'meta-lg makeDefaultBtn'; makeDefaultBtn.setAttribute('data-safe', encodeURIComponent(safeName)); makeDefaultBtn.setAttribute('data-original', encodeURIComponent(originalName)); makeDefaultBtn.title = 'Сделать заглушкой'; makeDefaultBtn.setAttribute('aria-label', 'Сделать заглушкой'); makeDefaultBtn.disabled = !canPlay; makeDefaultBtn.innerHTML = toIconOnlySvg(getPinIcon(14)); applySquareActionButtonStyle(makeDefaultBtn); actions.appendChild(makeDefaultBtn); }
       const delBtn = document.createElement('button'); delBtn.className = 'danger meta-lg delFileBtn'; delBtn.setAttribute('data-safe', encodeURIComponent(safeName)); delBtn.setAttribute('data-original', encodeURIComponent(originalName)); delBtn.title = 'Удалить'; delBtn.innerHTML = toIconOnlySvg(getTrashIcon(14)); applySquareActionButtonStyle(delBtn); actions.appendChild(delBtn);
 
       headerRight.appendChild(actions);
@@ -1188,8 +1189,8 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
         
         if (isPlaceholder) {
           const placeholderSpan = document.createElement('span');
-          placeholderSpan.style.cssText = 'background:rgba(59, 130, 246, 0.8); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:600; align-self:center; flex-shrink:0;';
-          placeholderSpan.textContent = '📌 ЗАГЛУШКА';
+          placeholderSpan.style.cssText = 'background:rgba(59, 130, 246, 0.8); color:var(--panel); padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:600; align-self:center; flex-shrink:0; display:inline-flex; align-items:center; gap:4px;';
+          placeholderSpan.innerHTML = `${toIconOnlySvg(getPinIcon(11))} ЗАГЛУШКА`;
           headerLeft.appendChild(placeholderSpan);
         }
         
@@ -1306,8 +1307,9 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
           makeDefaultBtn.setAttribute('data-safe', encodeURIComponent(safeName));
           makeDefaultBtn.setAttribute('data-original', encodeURIComponent(originalName));
           makeDefaultBtn.title = 'Сделать заглушкой';
+          makeDefaultBtn.setAttribute('aria-label', 'Сделать заглушкой');
           makeDefaultBtn.disabled = !canPlay;
-          makeDefaultBtn.textContent = '📌';
+          makeDefaultBtn.innerHTML = toIconOnlySvg(getPinIcon(14));
           applySquareActionButtonStyle(makeDefaultBtn);
           actions.appendChild(makeDefaultBtn);
         }
