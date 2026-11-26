@@ -16,6 +16,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import { getDataRoot, getTempDir } from '../config/settings-manager.js';
 import { createModuleLogger } from '../utils/logger.js';
@@ -66,7 +67,7 @@ export function toStoragePrefix(absPath) {
  * @returns {Promise<{synced: boolean, key?: string, reason?: string, size?: number|null}>}
  */
 export async function syncFileToStorage(localPath, storage, options = {}) {
-  const { force = false, removeLocal = false, deviceId = null, fileName = null } = options;
+  const { force = false, removeLocal = false, deviceId = null, fileName = null, targetKey = null } = options;
 
   if (!storage || isLocalStorage(storage)) {
     return { synced: false, reason: 'local-storage' };
@@ -78,7 +79,10 @@ export async function syncFileToStorage(localPath, storage, options = {}) {
 
   let key;
   try {
-    key = toStorageKey(localPath);
+    // targetKey нужен, когда результат сначала пишется в temp/scratch, а в
+    // хранилище должен лежать под логическим путём (например, трейлер).
+    key = targetKey ? String(targetKey) : toStorageKey(localPath);
+    if (!key) throw new Error('empty storage key');
   } catch (error) {
     return { synced: false, reason: 'path-outside-data-root', error: error.message };
   }
@@ -98,7 +102,7 @@ export async function syncFileToStorage(localPath, storage, options = {}) {
     // Проверка не критична — если не удалось, просто зальём заново
   }
 
-  await uploadStream(storage, key, localPath);
+  const uploadResult = await uploadStream(storage, key, localPath);
 
   // КРИТИЧНО: «успешная» загрузка без объекта в хранилище — это ошибка.
   // Без этой проверки файл молча оставался только на диске.
@@ -114,6 +118,10 @@ export async function syncFileToStorage(localPath, storage, options = {}) {
   }
 
   const stat = probe.stat || await storage.stat(key).catch(() => null);
+
+  // Если S3 вернул checksum — сверяем его потоковым чтением локального файла.
+  // Отсутствие checksum не считается ошибкой (старые объекты/MinIO без него).
+  await verifyUploadChecksum(localPath, uploadResult, stat);
 
   // КРИТИЧНО: существование объекта не доказывает целостность. Обрыв
   // потока на середине (сеть, рестарт MinIO) оставляет в хранилище
@@ -142,6 +150,34 @@ export async function syncFileToStorage(localPath, storage, options = {}) {
 }
 
 /**
+ * Вычислить локальный checksum потоково (без чтения много-ГБ файла в память).
+ * Поддерживаем только однозначные алгоритмы; ETag multipart не является MD5.
+ */
+async function localChecksum(localPath, algorithm) {
+  if (!['sha256', 'sha1', 'md5'].includes(algorithm)) return null;
+  const hash = crypto.createHash(algorithm);
+  for await (const chunk of fs.createReadStream(localPath)) hash.update(chunk);
+  return hash.digest('base64');
+}
+
+async function verifyUploadChecksum(localPath, uploadResult, stat) {
+  const sources = [uploadResult, stat].filter(Boolean);
+  const checksums = sources.flatMap((item) => Object.entries(item.checksums || {}));
+  for (const [name, remoteValue] of checksums) {
+    const algorithmMatch = /^Checksum(SHA256|SHA1|MD5)$/i.exec(name);
+    if (!algorithmMatch || typeof remoteValue !== 'string') continue;
+    const algorithm = algorithmMatch[1].toLowerCase();
+    const localValue = await localChecksum(localPath, algorithm);
+    if (localValue && localValue !== remoteValue) {
+      throw new Error(
+        `Checksum ${algorithm} не совпадает для ${path.basename(localPath)}: ` +
+        `локально ${localValue}, в хранилище ${remoteValue}`
+      );
+    }
+  }
+}
+
+/**
  * Потоковая загрузка: память не растёт вместе с размером файла.
  * Никогда не читать файл целиком через readFileSync — на видео в 2 ГБ это
  * синхронное выделение памяти размером с файл, которое блокирует event loop.
@@ -150,20 +186,17 @@ async function uploadStream(storage, key, localPath) {
   const size = fs.statSync(localPath).size;
 
   if (typeof storage.writeStream === 'function') {
-    await storage.writeStream(key, fs.createReadStream(localPath));
-    return;
+    return await storage.writeStream(key, fs.createReadStream(localPath));
   }
 
   if (typeof storage.uploadStream === 'function') {
-    await storage.uploadStream(key, fs.createReadStream(localPath), { size });
-    return;
+    return await storage.uploadStream(key, fs.createReadStream(localPath), { size });
   }
 
   // Фолбэк: write() понимает только Buffer. Полное чтение допустимо только
   // для мелких файлов, дальше это вернётся к проблеме с памятью.
   if (size <= 32 * 1024 * 1024) {
-    await storage.write(key, await fs.promises.readFile(localPath));
-    return;
+    return await storage.write(key, await fs.promises.readFile(localPath));
   }
 
   throw new Error(

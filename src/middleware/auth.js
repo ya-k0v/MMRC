@@ -82,6 +82,57 @@ export function generateRefreshToken(userId) {
   );
 }
 
+const DOWNLOAD_TICKET_EXPIRES_IN = process.env.DOWNLOAD_TICKET_EXPIRES_IN || '60s';
+
+/**
+ * Короткоживущий тикет на конкретный файл. Нужен, чтобы браузер мог скачать
+ * большой файл навигацией (без blob() в памяти), не передавая Bearer-токен
+ * в URL и не ослабляя requireAuth для остальных API.
+ */
+export function generateDownloadTicket(userId, role, deviceId, fileName) {
+  return jwt.sign(
+    { userId, role, type: 'download', deviceId, fileName },
+    JWT_SECRET,
+    { expiresIn: DOWNLOAD_TICKET_EXPIRES_IN }
+  );
+}
+
+export async function verifyDownloadTicket(token) {
+  const decoded = jwt.verify(token, JWT_SECRET);
+  if (decoded.type !== 'download') {
+    const error = new Error('Invalid ticket type');
+    error.name = 'JsonWebTokenError';
+    throw error;
+  }
+
+  if (decoded.iat && decoded.userId) {
+    try {
+      const user = await getDatabase().get(
+        'SELECT id, is_active, token_valid_from FROM users WHERE id = ?',
+        [decoded.userId]
+      );
+      if (!user || !user.is_active) {
+        const error = new Error('User inactive');
+        error.name = 'JsonWebTokenError';
+        throw error;
+      }
+      if (user.token_valid_from) {
+        const validFrom = Math.floor(new Date(user.token_valid_from + 'Z').getTime() / 1000);
+        if (decoded.iat < validFrom) {
+          const error = new Error('Session revoked');
+          error.name = 'JsonWebTokenError';
+          throw error;
+        }
+      }
+    } catch (error) {
+      if (error.name === 'JsonWebTokenError') throw error;
+      // fail-open на недоступность БД — та же политика, что и в requireAuth.
+    }
+  }
+
+  return decoded;
+}
+
 /**
  * Верификация Access Token (для HTTP и Socket.IO)
  * Бросает исключение при невалидном/истёкшем токене

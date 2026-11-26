@@ -2,6 +2,25 @@ import { StorageProvider } from './provider.js';
 import { PassThrough } from 'node:stream';
 
 /**
+ * Таймауты S3-операций. HEAD/GET-заголовки короткие, а тело Big-файлов может
+ * идти долго — поэтому для тела отдельный idle-таймаут, который сбрасывается
+ * на каждый chunk. Все значения настраиваются через env, без хардкода.
+ */
+function getTimeoutMs(primary, fallbackName, fallbackMs) {
+  const primaryValue = Number(process.env[primary]);
+  if (Number.isFinite(primaryValue) && primaryValue > 0) return primaryValue;
+  const fallbackValue = Number(process.env[fallbackName]);
+  if (Number.isFinite(fallbackValue) && fallbackValue > 0) return fallbackValue;
+  return fallbackMs;
+}
+
+function timeoutError(message) {
+  const error = new Error(message);
+  error.name = 'TimeoutError';
+  return error;
+}
+
+/**
  * S3-совместимые хранилища по-разному называют «объекта нет»: AWS SDK v3
  * отдаёт NoSuchKey/NotFound, MinIO может добавить код в `Code`, а HTTP-слой —
  * только 404. Все остальные ошибки (403, таймаут, сеть, 5xx) означают
@@ -112,14 +131,30 @@ export class S3Storage extends StorageProvider {
         queueSize: 4,
         partSize: 5 * 1024 * 1024
       });
-      await parallelUpload.done();
-    } else {
-      const cmd = new S3.PutObjectCommand({
+      return await parallelUpload.done();
+    }
+    const cmd = new S3.PutObjectCommand({
+      Bucket: this.#bucket,
+      Key: this._key(key),
+      Body: data
+    });
+    return await this.#client.send(cmd);
+  }
+
+  /** незавершённая multipart-загрузка не должна оставаться в бакете после ошибки */
+  async #abortMultipart(key, uploadId) {
+    if (!uploadId) return;
+    try {
+      await this.#client.send(new S3.AbortMultipartUploadCommand({
         Bucket: this.#bucket,
         Key: this._key(key),
-        Body: data
+        UploadId: uploadId
+      }));
+    } catch (error) {
+      // Вторичная ошибка не должна маскировать original-ошибку загрузки.
+      console.warn('[S3Storage] Failed to abort multipart upload', {
+        key: String(key), error: error?.message || String(error)
       });
-      await this.#client.send(cmd);
     }
   }
 
@@ -130,6 +165,7 @@ export class S3Storage extends StorageProvider {
    */
   async writeStream(key, stream) {
     if (libStorage) {
+      const abortController = new AbortController();
       const parallelUpload = new libStorage.Upload({
         client: this.#client,
         params: {
@@ -138,60 +174,81 @@ export class S3Storage extends StorageProvider {
           Body: stream
         },
         queueSize: 4,
-        partSize: 5 * 1024 * 1024
+        partSize: 5 * 1024 * 1024,
+        abortController
       });
-      await parallelUpload.done();
-      return;
+      let completed = false;
+      // Обрыв потока-источника (отмена клиентом, ошибка ffmpeg) не должен
+      // оставлять незавершённые части в бакете.
+      stream?.once?.('error', () => { if (!completed) parallelUpload.abort(); });
+      stream?.once?.('close', () => {
+        if (!completed && !stream.readableEnded) parallelUpload.abort();
+      });
+      try {
+        const result = await parallelUpload.done();
+        completed = true;
+        return result;
+      } catch (error) {
+        completed = true;
+        if (parallelUpload.uploadId) await this.#abortMultipart(key, parallelUpload.uploadId);
+        throw error;
+      }
     }
 
     // Без lib-storage читаем поток частями в multipart-загрузку вручную
     const partSize = 5 * 1024 * 1024;
-    const uploadId = (await this.#client.send(new S3.CreateMultipartUploadCommand({
-      Bucket: this.#bucket,
-      Key: this._key(key)
-    }))).UploadId;
+    let uploadId = null;
+    try {
+      uploadId = (await this.#client.send(new S3.CreateMultipartUploadCommand({
+        Bucket: this.#bucket,
+        Key: this._key(key)
+      }))).UploadId;
 
-    const parts = [];
-    let partNumber = 1;
-    let buffer = Buffer.alloc(0);
-    const source = typeof stream?.pipe === 'function' ? stream : stream;
-    const chunks = source[Symbol.asyncIterator]
-      ? source[Symbol.asyncIterator]()
-      : (async function* () { yield* source; })();
+      const parts = [];
+      let partNumber = 1;
+      let buffer = Buffer.alloc(0);
+      const source = typeof stream?.pipe === 'function' ? stream : stream;
+      const chunks = source[Symbol.asyncIterator]
+        ? source[Symbol.asyncIterator]()
+        : (async function* () { yield* source; })();
 
-    for await (const chunk of chunks) {
-      buffer = buffer.length ? Buffer.concat([buffer, chunk]) : chunk;
-      while (buffer.length >= partSize) {
-        const part = buffer.subarray(0, partSize);
-        buffer = buffer.subarray(partSize);
+      for await (const chunk of chunks) {
+        buffer = buffer.length ? Buffer.concat([buffer, chunk]) : chunk;
+        while (buffer.length >= partSize) {
+          const part = buffer.subarray(0, partSize);
+          buffer = buffer.subarray(partSize);
+          const uploaded = await this.#client.send(new S3.UploadPartCommand({
+            Bucket: this.#bucket,
+            Key: this._key(key),
+            UploadId: uploadId,
+            PartNumber: partNumber++,
+            Body: part
+          }));
+          parts.push({ ETag: uploaded.ETag, PartNumber: partNumber - 1 });
+        }
+      }
+
+      if (buffer.length || parts.length === 0) {
         const uploaded = await this.#client.send(new S3.UploadPartCommand({
           Bucket: this.#bucket,
           Key: this._key(key),
           UploadId: uploadId,
           PartNumber: partNumber++,
-          Body: part
+          Body: buffer
         }));
         parts.push({ ETag: uploaded.ETag, PartNumber: partNumber - 1 });
       }
-    }
 
-    if (buffer.length || parts.length === 0) {
-      const uploaded = await this.#client.send(new S3.UploadPartCommand({
+      return await this.#client.send(new S3.CompleteMultipartUploadCommand({
         Bucket: this.#bucket,
         Key: this._key(key),
         UploadId: uploadId,
-        PartNumber: partNumber++,
-        Body: buffer
+        MultipartUpload: { Parts: parts }
       }));
-      parts.push({ ETag: uploaded.ETag, PartNumber: partNumber - 1 });
+    } catch (error) {
+      await this.#abortMultipart(key, uploadId);
+      throw error;
     }
-
-    await this.#client.send(new S3.CompleteMultipartUploadCommand({
-      Bucket: this.#bucket,
-      Key: this._key(key),
-      UploadId: uploadId,
-      MultipartUpload: { Parts: parts }
-    }));
   }
 
   async delete(key) {
@@ -227,7 +284,14 @@ export class S3Storage extends StorageProvider {
           isDirectory: false,
           isFile: true,
           metadata: response.Metadata,
-          contentType: response.ContentType
+          contentType: response.ContentType,
+          // Дополнительная проверка целостности, когда S3 её предоставляет.
+          // ETag у multipart — не MD5, поэтому сравнивать его как хэш нельзя;
+          // используем только явно поименованные checksum-поля.
+          etag: response.ETag,
+          checksums: Object.fromEntries(
+            Object.entries(response).filter(([name]) => name.startsWith('Checksum') && typeof response[name] === 'string')
+          )
         }
       };
     } catch (error) {
@@ -362,9 +426,51 @@ export class S3Storage extends StorageProvider {
     if (range) {
       input.Range = `bytes=${range.start}-${range.end}`;
     }
-    const cmd = new S3.GetObjectCommand(input);
-    const response = await this.#client.send(cmd);
-    return response.Body;
+
+    const controller = new AbortController();
+    const headerTimeoutMs = getTimeoutMs('S3_GET_TIMEOUT_MS', 'S3_HEAD_TIMEOUT_MS', 4000);
+    const idleTimeoutMs = getTimeoutMs('S3_STREAM_IDLE_TIMEOUT_MS', 'S3_IDLE_TIMEOUT_MS', 30000);
+    let timer = setTimeout(() => controller.abort(timeoutError('S3 GET: заголовки не получены')), headerTimeoutMs);
+
+    let response;
+    try {
+      const cmd = new S3.GetObjectCommand(input);
+      response = await this.#client.send(cmd, { abortSignal: controller.signal });
+    } catch (error) {
+      clearTimeout(timer);
+      throw error;
+    }
+
+    const body = response.Body;
+    let finished = false;
+    const abortWith = (error) => {
+      if (finished) return;
+      controller.abort(error);
+      body?.destroy?.(error);
+    };
+    const resetIdle = () => {
+      clearTimeout(timer);
+      if (finished) return;
+      timer = setTimeout(() => {
+        abortWith(timeoutError('S3 GET: тело не передаётся'));
+      }, idleTimeoutMs);
+    };
+    const cleanup = () => {
+      finished = true;
+      clearTimeout(timer);
+    };
+
+    // 'readable' (а не 'data') не переводит поток в flowing-режим до consumer'а.
+    body.on('readable', resetIdle);
+    body.on('end', cleanup);
+    body.on('error', cleanup);
+    body.on('close', () => {
+      if (!finished) controller.abort();
+      cleanup();
+    });
+    resetIdle();
+
+    return body;
   }
 
   createWriteStream(key) {
@@ -380,6 +486,7 @@ export class S3Storage extends StorageProvider {
     }
 
     const stream = new PassThrough();
+    const abortController = new AbortController();
     const upload = new libStorage.Upload({
       client: this.#client,
       params: {
@@ -388,11 +495,29 @@ export class S3Storage extends StorageProvider {
         Body: stream
       },
       queueSize: 4,
-      partSize: 5 * 1024 * 1024
+      partSize: 5 * 1024 * 1024,
+      abortController
+    });
+
+    let completed = false;
+    const abortUpload = () => {
+      if (completed) return;
+      completed = true;
+      upload.abort();
+      if (upload.uploadId) this.#abortMultipart(key, upload.uploadId).catch(() => {});
+    };
+    stream.once('error', abortUpload);
+    stream.once('close', () => {
+      if (!stream.writableFinished) abortUpload();
     });
 
     // Пробрасываем ошибки загрузки в стрим, чтобы потребитель не получал unhandled rejection
-    upload.done().catch((err) => stream.destroy(err));
+    upload.done()
+      .then(() => { completed = true; })
+      .catch((err) => {
+        completed = true;
+        stream.destroy(err);
+      });
 
     return stream;
   }

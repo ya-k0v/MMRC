@@ -36,7 +36,8 @@ import { getFileMetadata, deleteFileMetadata, getDeviceFilesMetadata, deleteDevi
 import { setFileStatus as setGlobalFileStatus } from '../video/file-status.js';
 import { removeStreamJob } from '../streams/stream-manager.js';
 import { getTrailerPath } from '../video/trailer-generator.js';
-import { requireSpeaker, requireManager } from '../middleware/auth.js';
+import * as auth from '../middleware/auth.js';
+const { requireSpeaker, requireManager, requireAuth } = auth;
 import { getUserDevices, hasDeviceAccess, checkDeviceAccess } from '../middleware/device-access.js';
 import { validateUploadSize } from '../middleware/multer-config.js';
 import { validateFilesAsync } from '../middleware/file-validation.js';
@@ -456,6 +457,30 @@ function setSafeDownloadFileNameHeader(res, fileName = '') {
 
   // Передаем имя в ASCII-safe виде, чтобы избежать ERR_INVALID_CHAR в заголовках.
   res.setHeader('X-Download-Filename', encodeURIComponent(normalized));
+  const asciiName = normalized.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(normalized)}`
+  );
+  res.setHeader('Cache-Control', 'no-store');
+}
+
+/** Bearer для обычного запроса либо короткоживущий тикет для навигации браузера. */
+async function requireSpeakerOrDownloadTicket(req, res, next) {
+  const ticket = String(req.query.ticket || '');
+  if (!ticket) return requireAuth(req, res, next);
+
+  try {
+    const decoded = await auth.verifyDownloadTicket(ticket);
+    const deviceId = sanitizeDeviceId(req.params.id);
+    if (decoded.deviceId !== deviceId || decoded.fileName !== String(req.params.name || '')) {
+      return res.status(403).json({ error: 'Тикет выдан для другого файла' });
+    }
+    req.user = { userId: decoded.userId, username: 'download', role: decoded.role };
+    return next();
+  } catch (error) {
+    return res.status(401).json({ error: 'Недействительный тикет скачивания' });
+  }
 }
 
 function findFileOnDisk(metadataPath, deviceSubdirPath, rootPath) {
@@ -4708,9 +4733,28 @@ export function createFilesRouter(deps) {
     }
   });
 
+  // GET /api/devices/:id/files/:name/download-url — короткоживущий тикет для
+  // потокового скачивания через навигацию браузера (без blob() в памяти).
+  router.get('/:id/files/:name/download-url', readLimiter, requireSpeaker[0], requireSpeaker[1], async (req, res) => {
+    const id = sanitizeDeviceId(req.params.id);
+    const rawName = String(req.params.name || '').trim();
+    const name = sanitizeFilename(rawName);
+    if (!id || !rawName || rawName.includes('..') || /[\\/]/.test(rawName) || name !== rawName) {
+      return res.status(400).json({ error: 'Неверные параметры скачивания' });
+    }
+    if (!(await hasDeviceAccess(req.user.userId, id, req.user.role))) {
+      return res.status(403).json({ error: 'Доступ к устройству запрещен' });
+    }
+    const query = new URLSearchParams({
+      ticket: auth.generateDownloadTicket(req.user.userId, req.user.role, id, name)
+    });
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json({ url: `/api/devices/${encodeURIComponent(id)}/files/${encodeURIComponent(name)}/download?${query}` });
+  });
+
   // GET /api/devices/:id/files/:name/download - Скачать файл или папку
   // Папки скачиваются как ZIP архив
-  router.get('/:id/files/:name/download', readLimiter, requireSpeaker[0], requireSpeaker[1], async (req, res) => {
+  router.get('/:id/files/:name/download', readLimiter, requireSpeakerOrDownloadTicket, requireSpeaker[1], async (req, res) => {
     const id = sanitizeDeviceId(req.params.id);
 
     if (!id) {

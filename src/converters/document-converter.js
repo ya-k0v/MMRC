@@ -14,7 +14,9 @@ import { setFileStatus } from '../video/file-status.js';
 import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('convert');
 import { validatePath } from '../utils/path-validator.js';
-import { toStorageKey, toStoragePrefix } from '../storage/sync.js';
+import { createScratchPath, isLocalStorage, toStorageKey, toStoragePrefix } from '../storage/sync.js';
+import { probeStorageKey } from '../storage/probe.js';
+import { recordStorageEvent } from '../utils/metrics.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -93,7 +95,9 @@ export async function convertPdfToImages(pdfPath, outputDir, onProgress = null, 
     try {
       const key = toStorageKey(safePdfPath);
       const readStream = await storage.createReadStream(key);
-      const tempPdf = path.join(os.tmpdir(), `mmrc-pdf-${crypto.randomUUID()}-${path.basename(safePdfPath)}`);
+      // Рабочая копия в dataRoot/temp: её видит Docker converter и стартовая
+      // очистка scratch, в отличие от os.tmpdir().
+      const tempPdf = createScratchPath('pdf-source', path.basename(safePdfPath));
       const writeStream = fs.createWriteStream(tempPdf);
       await new Promise((resolve, reject) => {
         readStream.pipe(writeStream);
@@ -178,12 +182,20 @@ const pageCount = await getPdfPageCount(safePdfPath);
       .png()
       .toFile(imagePath);
 
-    if (storage) {
+    if (storage && !isLocalStorage(storage)) {
       try {
         const pngKey = toStorageKey(imagePath);
         await storage.write(pngKey, fs.createReadStream(imagePath));
+        const probe = await probeStorageKey(storage, pngKey);
+        recordStorageEvent('probe');
+        recordStorageEvent(probe.state);
+        if (probe.state !== 'present') {
+          throw new Error(`upload not confirmed (${probe.state})`);
+        }
       } catch (uploadErr) {
+        // Страница остаётся локально: ORM/загрузчик может повторить коммит.
         logger.warn(`[Converter] Failed to upload page ${page} to storage`, { error: uploadErr.message });
+        return;
       }
     }
 
@@ -290,7 +302,7 @@ export async function convertPptxToImages(pptxPath, outputDir, onProgress = null
     try {
       const key = toStorageKey(safePptxPath);
       const readStream = await storage.createReadStream(key);
-      const tempPptx = path.join(os.tmpdir(), `mmrc-pptx-${crypto.randomUUID()}-${path.basename(safePptxPath)}`);
+      const tempPptx = createScratchPath('pptx-source', path.basename(safePptxPath));
       const writeStream = fs.createWriteStream(tempPptx);
       await new Promise((resolve, reject) => {
         readStream.pipe(writeStream);

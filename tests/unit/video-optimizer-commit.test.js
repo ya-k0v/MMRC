@@ -21,8 +21,10 @@ function localFile(content = 'video') {
 function s3Storage({ checkState = 'present', size = 5 } = {}) {
   return {
     isLocal: false,
+    uploads: 0,
     async exists() { return false; },
     async writeStream(_key, stream) {
+      this.uploads++;
       for await (const _chunk of stream) {
         // потребляем поток, иначе fs.createReadStream откроет удалённый файл
       }
@@ -85,6 +87,23 @@ describe('ensureOriginalCommitted', () => {
     });
 
     expect(result).toMatchObject({ committed: false, reason: 'unknown' });
+  });
+
+  test('повторный коммит после рестарта не загружает файл дважды', async () => {
+    const file = localFile();
+    const storage = s3Storage({ checkState: 'present', size: 5 });
+
+    const first = await ensureOriginalCommitted(file, storage, {
+      deviceId: 'dev', fileName: 'restart.mp4'
+    });
+    const second = await ensureOriginalCommitted(file, storage, {
+      deviceId: 'dev', fileName: 'restart.mp4'
+    });
+
+    expect(first).toMatchObject({ committed: true, reason: 'synced' });
+    expect(second).toMatchObject({ committed: true, reason: 'present' });
+    expect(storage.uploads).toBe(1);
+    expect(existsSync(file)).toBe(false);
   });
 
   test('локальный backend ничего не коммитит', async () => {

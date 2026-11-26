@@ -113,6 +113,18 @@ const storage = createStorageHandle(createStorage(dataRoot));
 setCurrentStorage(storage);
 logger.info(`[Config] Storage backend: ${storage.__target?.constructor?.name || 'unknown'} (root: ${storage.root})`);
 
+// После падения оптимизатора/конвертера в temp/scratch могли остаться
+// рабочие файлы. Чистим только старые (>=6 ч), без удаления
+// свежих результатов, которые ещё может подхватить повторный коммит.
+import('./src/storage/sync.js')
+  .then(({ cleanupScratchDir }) => cleanupScratchDir())
+  .then(({ removed }) => {
+    if (removed) logger.info('[Server] Stale scratch files removed', { removed });
+  })
+  .catch((error) => {
+    logger.warn('[Server] Scratch cleanup failed', { error: error.message });
+  });
+
 // Логируем используемые директории данных
 logger.info(`[Config] Data root (contentRoot): ${dataRoot}`);
 logger.info(`[Config] Devices (content): ${devicesDir}`);
@@ -195,12 +207,13 @@ if (!isPostgres) {
   }
 }
 
-// КРИТИЧНО: Завершаем инициализацию настроек с миграцией путей после инициализации БД
-import('./src/config/settings-manager.js').then(module => {
-  module.initializeSettings().catch(err => {
+// КРИТИЧНО: Завершаем инициализацию настроек с миграцией путей после инициализации БД.
+// промис сохраняем: стартовая сверка хранилища не должна начаться до миграции путей.
+const settingsInitPromise = import('./src/config/settings-manager.js')
+  .then(module => module.initializeSettings())
+  .catch(err => {
     logger.warn('[Server] Failed to complete settings initialization', { error: err.message, stack: err.stack });
   });
-});
 
 // Инициализация данных
 let devices = {};
@@ -222,7 +235,10 @@ startReconnectWatcher(30000);
 
 const streamManager = initStreamManager({
   outputRoot: getStreamsOutputDir(),
-  publicBasePath: '/streams'
+  publicBasePath: '/streams',
+  // HLS остаётся локальным рабочим кэшем, но список/очистка старых
+  // сегментов должны идти через primary-хранилище, когда оно S3.
+  storage
 });
 
 const volumeService = createVolumeService({ devices, io, saveDeviceVolumeState });
@@ -794,6 +810,38 @@ async function hydrateDevicesFromDatabase() {
     logger.warn('[Server] Playlist loops restore failed', { error: error.message });
   }
 
+  // Стартовая сверка S3-primary: локальные файлы без подтверждённого объекта
+  // идут в очередь на коммит с ограничением параллелизма. Реплики не должны
+  // удалять локальные копии одновременно с основным процессом.
+  if (process.env.STORAGE_STARTUP_RECONCILE_ENABLED !== '0' && process.env.MMRC_HA_MODE !== 'true') {
+    try {
+      await settingsInitPromise;
+      const { reconcileStartupLocalToStorage } = await import('./src/storage/reconcile.js');
+      const report = await reconcileStartupLocalToStorage({
+        storage,
+        onProgress: ({ phase, done, total }) => {
+          if (done === total) logger.info('[Server] Startup storage commit progress', { phase, done, total });
+        }
+      });
+      logger.info('[Server] Startup storage reconciliation completed', {
+        checked: report.checked,
+        present: report.present,
+        missing: report.missing,
+        unknown: report.unknown,
+        committed: report.committed,
+        commitErrors: report.commitErrors,
+        skippedReason: report.skippedReason || null
+      });
+    } catch (error) {
+      logger.warn('[Server] Startup storage reconciliation failed', {
+        error: error.message,
+        stack: error.stack
+      });
+    }
+  } else {
+    logger.info('[Server] Startup storage reconciliation disabled');
+  }
+
   // КРИТИЧНО: Автоматическая очистка несуществующих файлов из БД при старте
   // По умолчанию ОТКЛЮЧЕНО - установите AUTO_CLEANUP_MISSING_FILES=true только после миграции путей!
   if (process.env.AUTO_CLEANUP_MISSING_FILES === 'true') {
@@ -929,6 +977,72 @@ if (UPDATE_CHECK_ENABLED) {
   });
 } else {
   logger.info('[UpdateManager] Periodic update checks disabled by UPDATE_CHECK_ENABLED=0');
+}
+
+// Периодическая сверка БД ↔ storage: только отчёт и уведомление админу,
+// без автоматического удаления метаданных или объектов.
+const STORAGE_RECONCILE_INTERVAL_MS = Number.parseInt(
+  process.env.STORAGE_RECONCILE_INTERVAL_MS || '21600000',
+  10
+);
+if (STORAGE_RECONCILE_INTERVAL_MS > 0) {
+  let reconcileRunning = false;
+
+  const runStorageReconcile = async () => {
+    if (reconcileRunning) return;
+    reconcileRunning = true;
+    try {
+      const [{ reconcileDbWithStorage }, { cleanupScratchDir }] = await Promise.all([
+        import('./src/storage/reconcile.js'),
+        import('./src/storage/sync.js')
+      ]);
+      const report = await reconcileDbWithStorage({ storage });
+      const scratch = cleanupScratchDir();
+      if (scratch.removed) {
+        logger.info('[StorageReconcile] Stale scratch files removed', { removed: scratch.removed });
+      }
+      logger.info('[StorageReconcile] Periodic report', {
+        checked: report.checked,
+        present: report.present,
+        missing: report.missing,
+        unknown: report.unknown,
+        orphanCount: report.orphanCount,
+        errors: report.errors
+      });
+      if (report.missing > 0 || report.unknown > 0 || report.orphanCount > 0) {
+        notificationsManager.add(
+          'storage_reconcile',
+          'warning',
+          'Сверка хранилища: нужна проверка',
+          `Отсутствуют ${report.missing}, не подтверждены ${report.unknown}, сирот ${report.orphanCount}`,
+          { report },
+          { key: 'storage-reconcile', source: 'storage' }
+        );
+      }
+    } catch (error) {
+      logger.warn('[StorageReconcile] Periodic check failed', { error: error.message });
+    } finally {
+      reconcileRunning = false;
+    }
+  };
+
+  timerRegistry.setTimeout(() => {
+    runStorageReconcile().catch(error => {
+      logger.warn('[StorageReconcile] Initial check failed', { error: error.message });
+    });
+  }, Math.min(60_000, STORAGE_RECONCILE_INTERVAL_MS), 'Storage reconcile initial run');
+
+  timerRegistry.setInterval(() => {
+    runStorageReconcile().catch(error => {
+      logger.warn('[StorageReconcile] Scheduled check failed', { error: error.message });
+    });
+  }, STORAGE_RECONCILE_INTERVAL_MS, 'Storage reconcile periodic run');
+
+  logger.info('[StorageReconcile] Periodic report enabled', {
+    intervalMs: STORAGE_RECONCILE_INTERVAL_MS
+  });
+} else {
+  logger.info('[StorageReconcile] Periodic report disabled by STORAGE_RECONCILE_INTERVAL_MS<=0');
 }
 
 // ========================================

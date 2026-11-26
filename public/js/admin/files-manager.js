@@ -1673,69 +1673,30 @@ export async function refreshFilesPanel(deviceId, panelEl, adminFetch, getPageSi
     };
   });
 
-  const resolveDownloadFileName = (response, fallbackName) => {
-    const explicitName = response.headers.get('x-download-filename');
-    if (explicitName) {
-      try {
-        return decodeURIComponent(explicitName);
-      } catch (_err) {
-        return explicitName;
-      }
-    }
-
-    const contentDisposition = response.headers.get('content-disposition') || '';
-    const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
-    if (utf8Match && utf8Match[1]) {
-      try {
-        return decodeURIComponent(utf8Match[1]);
-      } catch (_err) {
-        // fallback на обычный filename
-      }
-    }
-
-    const plainMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
-    if (plainMatch && plainMatch[1]) {
-      return plainMatch[1];
-    }
-
-    return fallbackName;
-  };
-
   panelEl.querySelectorAll('.downloadFileBtn').forEach(btn => {
     btn.onclick = async () => {
       const safeName = decodeURIComponent(btn.getAttribute('data-safe') || '');
-      const originalName = decodeURIComponent(btn.getAttribute('data-original') || safeName);
-      const contentTypeAttr = String(btn.getAttribute('data-content-type') || '').toLowerCase();
-      const fallbackName = contentTypeAttr === 'folder' && !/\.zip$/i.test(originalName)
-        ? `${originalName}.zip`
-        : (originalName || safeName);
 
       const originalButtonHtml = btn.innerHTML;
       btn.disabled = true;
       btn.innerHTML = toIconOnlySvg(getDownloadIcon(14));
 
       try {
-        const response = await adminFetch(`/api/devices/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(safeName)}/download`);
-
-        if (!response.ok) {
-          const error = await response.json().catch(() => ({}));
-          throw new Error(error.error || `HTTP ${response.status}`);
+        // Сервер уже отдаёт файл потоком. Вместо чтения всего ответа в память
+        // браузера получаем короткоживущий тикет и переходим по URL:
+        // Bearer-токен остаётся в заголовках adminFetch и не попадает в URL.
+        const urlResponse = await adminFetch(
+          `/api/devices/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(safeName)}/download-url`
+        );
+        if (!urlResponse.ok) {
+          const error = await urlResponse.json().catch(() => ({}));
+          throw new Error(error.error || `HTTP ${urlResponse.status}`);
         }
-
-        const blob = await response.blob();
-        const fileName = resolveDownloadFileName(response, fallbackName);
-        const blobUrl = URL.createObjectURL(blob);
-
-        const link = document.createElement('a');
-        link.href = blobUrl;
-        link.download = fileName;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-
-        setTimeout(() => {
-          URL.revokeObjectURL(blobUrl);
-        }, 1000);
+        const { url } = await urlResponse.json();
+        if (!url || typeof url !== 'string') {
+          throw new Error('Сервер не вернул URL скачивания');
+        }
+        window.location.assign(url);
       } catch (err) {
         console.error('[FilesManager] Failed to download content:', err);
         await reportFilesManagerNotification({

@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getDatabase, getDriverType } from './database.js';
 import { createModuleLogger, logFile } from '../utils/logger.js';
+import { recordStorageEvent } from '../utils/metrics.js';
 const logger = createModuleLogger('file');
 import { isRetryableDatabaseError } from '../utils/retry.js';
 import { fixEncoding } from '../utils/encoding.js';
@@ -904,15 +905,43 @@ export async function getAllFilePaths() {
   return rows.map(row => row.file_path);
 }
 
+/** Небольшой worker-pool: не более concurrency параллельных проверок/удалений. */
+async function mapWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const runners = Array.from({ length: Math.min(Math.max(1, limit), items.length || 1) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await worker(items[index]);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
+function clampOption(value, fallback, min, max) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(parsed, min), max);
+}
+
 /**
  * Проверка контента в базе данных и фактически на диске
  * Удаляет записи из БД, если файлы не существуют на диске
  * @param {Object} options - Опции проверки
  * @param {string} options.deviceId - Проверить только для конкретного устройства (опционально)
- * @param {boolean} options.dryRun - Если true, только логирует, не удаляет (по умолчанию false)
+ * @param {boolean} options.dryRun - Если true, только логирует, не удаляет.
+ *   По умолчанию true: вызов без явного разрешения не должен стирать метаданные.
  * @returns {Promise<Object>} - Статистика проверки: { checked, missing, deleted, errors }
  */
-export async function cleanupMissingFiles({ deviceId = null, dryRun = false, storage = null } = {}) {
+export async function cleanupMissingFiles({
+  deviceId = null,
+  dryRun = true,
+  storage = null,
+  batchSize = 100,
+  concurrency = 4,
+  onProgress = null
+} = {}) {
 
   const activeStorage = storage || getCurrentStorage();
   try {
@@ -945,11 +974,17 @@ export async function cleanupMissingFiles({ deviceId = null, dryRun = false, sto
     let unknown = 0;
     const errors = [];
     const missingFiles = [];
-    
-    // Проверяем каждый файл
-    for (const record of allRecords) {
+
+    const batchLimit = clampOption(
+      process.env.STORAGE_CLEANUP_BATCH_SIZE ?? batchSize, 100, 1, 1000
+    );
+    const parallelism = clampOption(
+      process.env.STORAGE_CLEANUP_CONCURRENCY ?? concurrency, 4, 1, 16
+    );
+
+    const checkRecord = async (record) => {
       checked++;
-      
+
       try {
         // Пропускаем записи без file_path
         if (!record.file_path) {
@@ -957,9 +992,9 @@ export async function cleanupMissingFiles({ deviceId = null, dryRun = false, sto
             deviceId: record.device_id,
             safeName: record.safe_name
           });
-          continue;
+          return;
         }
-        
+
         // Проверяем существование файла. S3 — основное хранилище, поэтому
         // проверка только по диску считала бы КАЖДЫЙ успешно загруженный
         // файл отсутствующим и удаляла его метаданные: один клик в админке
@@ -973,6 +1008,8 @@ export async function cleanupMissingFiles({ deviceId = null, dryRun = false, sto
           try {
             const key = toStorageKey(record.file_path);
             const probe = await probeStorageKey(activeStorage, key);
+            recordStorageEvent('probe');
+            recordStorageEvent(probe.state);
             state = probe.state;
             if (state === 'unknown') {
               logger.warn('[Cleanup] Storage check inconclusive, keeping metadata', {
@@ -986,6 +1023,7 @@ export async function cleanupMissingFiles({ deviceId = null, dryRun = false, sto
             // Хранилище недоступно или путь вне data root — не доказательство
             // отсутствия. Иначе кратковременный обрыв удалил бы метаданные.
             state = 'unknown';
+            recordStorageEvent('unknown');
             logger.warn('[Cleanup] Storage unavailable, assuming file exists', {
               deviceId: record.device_id,
               safeName: record.safe_name,
@@ -996,7 +1034,7 @@ export async function cleanupMissingFiles({ deviceId = null, dryRun = false, sto
 
         if (state === 'unknown') {
           unknown++;
-          continue;
+          return;
         }
 
         if (state === 'missing') {
@@ -1008,7 +1046,7 @@ export async function cleanupMissingFiles({ deviceId = null, dryRun = false, sto
             filePath: record.file_path,
             contentType: record.content_type
           });
-          
+
           logger.warn('[Cleanup] File not found in disk or storage', {
             deviceId: record.device_id,
             safeName: record.safe_name,
@@ -1016,8 +1054,8 @@ export async function cleanupMissingFiles({ deviceId = null, dryRun = false, sto
             filePath: record.file_path,
             contentType: record.content_type
           });
-          
-          // Удаляем запись из БД, если не dryRun
+
+          // Удаляем запись из БД, если явно разрешено (dryRun === false)
           if (!dryRun) {
             try {
               const removed = await deleteFileMetadata(record.device_id, record.safe_name);
@@ -1025,7 +1063,7 @@ export async function cleanupMissingFiles({ deviceId = null, dryRun = false, sto
                 throw new Error('deleteFileMetadata did not confirm deletion');
               }
               deleted++;
-              
+
               logger.info('[Cleanup] Deleted metadata for missing file', {
                 deviceId: record.device_id,
                 safeName: record.safe_name,
@@ -1057,6 +1095,26 @@ export async function cleanupMissingFiles({ deviceId = null, dryRun = false, sto
           filePath: record.file_path,
           error: checkError.message
         });
+      }
+    };
+
+    for (let offset = 0; offset < allRecords.length; offset += batchLimit) {
+      const batch = allRecords.slice(offset, offset + batchLimit);
+      await mapWithConcurrency(batch, parallelism, checkRecord);
+      if (typeof onProgress === 'function') {
+        try {
+          onProgress({
+            phase: 'check',
+            checked,
+            total: allRecords.length,
+            missing,
+            unknown,
+            deleted,
+            errors: errors.length
+          });
+        } catch (progressError) {
+          logger.warn('[Cleanup] Progress callback failed', { error: progressError.message });
+        }
       }
     }
     

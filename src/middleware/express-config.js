@@ -6,9 +6,13 @@
 import express from 'express';
 import path from 'node:path';
 import fs from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 import mime from 'mime';
 import { PUBLIC, ROOT } from '../config/constants.js';
 import { getDevicesPath, getStreamsOutputDir } from '../config/settings-manager.js';
+import { getCurrentStorage } from '../storage/current.js';
+import { isLocalStorage } from '../storage/sync.js';
+import { probeStorageKey } from '../storage/probe.js';
 import { requestTimeout } from './timeout.js';
 import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('http');
@@ -25,6 +29,36 @@ function sanitizePathFragment(value = '') {
   return String(value)
     .replace(/[^a-zA-Z0-9\-_.]/g, '_')
     .substring(0, 200);
+}
+
+/**
+ * Единая политика HLS: локальный streams/ — быстрый рабочий кэш, а primary
+ * storage — источник для восстановления. Если локального плейлиста/сегмента
+ * нет (например, после рестарта), материализуем его из storage обратно в кэш.
+ * unknown от storage не считается «объекта нет».
+ */
+export async function hydrateHlsFromStorage(filePath) {
+  try {
+    const storage = getCurrentStorage();
+    if (!storage || isLocalStorage(storage)) return false;
+
+    const relative = path.relative(getStreamsOutputDir(), filePath).replace(/\\/g, '/');
+    if (!relative || relative.startsWith('..')) return false;
+    const key = `streams/${relative}`;
+    const probe = await probeStorageKey(storage, key);
+    if (probe.state !== 'present') return false;
+
+    const partPath = `${filePath}.${process.pid}.part`;
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    await pipeline(await storage.createReadStream(key), fs.createWriteStream(partPath));
+    fs.renameSync(partPath, filePath);
+    return true;
+  } catch (error) {
+    logger.warn('[Express] Cannot restore HLS file from storage', {
+      filePath, error: error.message
+    });
+    return false;
+  }
 }
 
 /**
@@ -421,7 +455,12 @@ export function setupStaticFiles(app) {
       }
     }
     
-    // Повторная проверка после ожидания
+    // Повторная проверка после ожидания. S3-primary: восстанавливаем кэш из storage.
+    // eslint-disable-next-line security/detect-non-literal-fs-filename
+    if (!fs.existsSync(filePath)) {
+      await hydrateHlsFromStorage(filePath);
+    }
+
     // КРИТИЧНО: filePath валидирован через validatePath, безопасен для fs операций
     // eslint-disable-next-line security/detect-non-literal-fs-filename
     if (!fs.existsSync(filePath)) {

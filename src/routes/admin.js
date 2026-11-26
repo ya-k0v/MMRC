@@ -790,6 +790,22 @@ export function createAdminRouter(deps = {}) {
     }
   });
 
+  // POST /api/admin/storage/reconcile — отчёт БД ↔ storage, без удалений
+  router.post('/storage/reconcile', requireAdmin, async (req, res) => {
+    try {
+      const { reconcileDbWithStorage } = await import('../storage/reconcile.js');
+      const storage = getCurrentStorage();
+      const report = await reconcileDbWithStorage({
+        storage,
+        deviceId: req.body?.deviceId || null
+      });
+      res.json(report);
+    } catch (error) {
+      logger.error('[Admin] Storage reconciliation failed:', error);
+      res.status(500).json({ error: error.message || 'Не удалось выполнить сверку хранилища' });
+    }
+  });
+
   // POST /api/admin/database/wal-checkpoint
   router.post('/database/wal-checkpoint', requireAdmin, validate(schemas.walCheckpoint), (req, res) => {
     try {

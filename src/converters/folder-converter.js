@@ -2,13 +2,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile as execFileCallback } from 'node:child_process';
 import util from 'node:util';
-import crypto from 'node:crypto';
-import os from 'node:os';
 import { getDevicesPath } from '../config/settings-manager.js';
 import { getAnyFileMetadataBySafeName } from '../database/files-metadata.js';
 import { makeSafeFolderName } from '../utils/transliterate.js';
 import { createModuleLogger } from '../utils/logger.js';
-import { toStorageKey, toStoragePrefix } from '../storage/sync.js';
+import {
+  commitFolderToStorage,
+  isLocalStorage,
+  materializeToLocal,
+  toStorageKey,
+  toStoragePrefix
+} from '../storage/sync.js';
 const logger = createModuleLogger('convert');
 
 const execFileAsync = util.promisify(execFileCallback);
@@ -17,28 +21,22 @@ export async function extractZipToFolder(deviceId, zipFileName, deviceFolderName
   try {
     const devicesPath = getDevicesPath();
     const deviceFolder = path.join(devicesPath, deviceFolderName || deviceId);
-    const zipPath = path.join(deviceFolder, zipFileName);
+    const logicalZipPath = path.join(deviceFolder, zipFileName);
+    let zipPath = logicalZipPath;
     const originalFolderName = zipFileName.replace(/\.zip$/i, '');
     const folderName = makeSafeFolderName(originalFolderName);
     const outputFolder = path.join(deviceFolder, folderName);
     let needsCleanup = false;
 
     let zipAvailable = fs.existsSync(zipPath);
-    if (!zipAvailable && storage) {
-      try {
-        const key = toStorageKey(zipPath);
-        await storage.stat(key);
-        const readStream = await storage.createReadStream(key);
-        const writeStream = fs.createWriteStream(zipPath);
-        await new Promise((resolve, reject) => {
-          readStream.pipe(writeStream);
-          writeStream.on('finish', resolve);
-          writeStream.on('error', reject);
-          readStream.on('error', reject);
-        });
+    if (!zipAvailable && storage && !isLocalStorage(storage)) {
+      // Локальный диск при S3 — только рабочая область. Материализуем
+      // исходник в temp/scratch, а не в папку устройства.
+      const materialized = await materializeToLocal(logicalZipPath, storage, { fileName: zipFileName });
+      if (materialized) {
+        zipPath = materialized;
         zipAvailable = true;
         needsCleanup = true;
-      } catch {
       }
     }
 
@@ -138,26 +136,31 @@ export async function extractZipToFolder(deviceId, zipFileName, deviceFolderName
       }
     });
 
-    if (storage) {
-      const outputKey = toStorageKey(outputFolder);
-      try {
-        for (const file of allFiles) {
-          const fileKey = toStorageKey(file);
-          const fileStream = fs.createReadStream(file);
-          await storage.write(fileKey, fileStream);
+    let committed = !storage || isLocalStorage(storage);
+    if (storage && !isLocalStorage(storage)) {
+      // Результат коммитится до удаления исходного ZIP. При unknown/ошибке
+      // загрузки ZIP остаётся в S3, локальные страницы — на диске.
+      const result = await commitFolderToStorage(outputFolder, storage, { removeLocal: false });
+      if (result.synced) {
+        logger.info(`[FolderConverter] Загружено ${result.count} изображений в storage`, { deviceId, zipFileName });
+        committed = true;
+        try {
+          await storage.delete(toStorageKey(logicalZipPath));
+        } catch (deleteErr) {
+          logger.warn('[FolderConverter] Не удалось удалить ZIP из storage', {
+            error: deleteErr.message, deviceId, zipFileName
+          });
         }
-        logger.info(`[FolderConverter] Загружено ${allFiles.length} изображений в storage`, { deviceId, zipFileName });
-      } catch (uploadErr) {
-        logger.warn(`[FolderConverter] Ошибка загрузки изображений в storage`, { error: uploadErr.message, deviceId, zipFileName });
-      }
-      try {
-        const zipKey = toStorageKey(zipPath);
-        await storage.delete(zipKey);
-      } catch {
+      } else {
+        logger.warn('[FolderConverter] Коммит изображений не подтверждён, ZIP сохранён', {
+          deviceId, zipFileName, failed: result.failed.length, reason: result.reason || null
+        });
       }
     }
 
-    fs.unlinkSync(zipPath);
+    if (!needsCleanup || committed) {
+      fs.unlinkSync(zipPath);
+    }
 
     logger.info(`[FolderConverter] ZIP распакован: ${allFiles.length} изображений`, { deviceId, zipFileName, imagesCount: allFiles.length, folderName });
 

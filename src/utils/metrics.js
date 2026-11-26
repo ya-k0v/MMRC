@@ -23,6 +23,16 @@ const metrics = {
     messages: 0,
     errors: 0
   },
+  storage: {
+    probes: 0,
+    present: 0,
+    missing: 0,
+    unknown: 0,
+    commitAttempts: 0,
+    commitErrors: 0,
+    orphanObjects: 0,
+    lastReconcileAt: null
+  },
   startTime: Date.now()
 };
 
@@ -112,6 +122,41 @@ export function recordSocketEvent(event) {
 }
 
 /**
+ * Записать событие хранилища (tri-state проверки, коммиты, сироты).
+ * Счётчики нужны, чтобы по /api/metrics было видно, когда S3/Local
+ * отвечает unknown и когда коммит в primary-хранилище не подтверждён.
+ * @param {string} event
+ */
+export function recordStorageEvent(event) {
+  switch (event) {
+    case 'probe':
+      metrics.storage.probes++;
+      break;
+    case 'present':
+      metrics.storage.present++;
+      break;
+    case 'missing':
+      metrics.storage.missing++;
+      break;
+    case 'unknown':
+      metrics.storage.unknown++;
+      break;
+    case 'commit_attempt':
+      metrics.storage.commitAttempts++;
+      break;
+    case 'commit_error':
+      metrics.storage.commitErrors++;
+      break;
+    case 'orphan':
+      metrics.storage.orphanObjects++;
+      break;
+    case 'reconcile':
+      metrics.storage.lastReconcileAt = new Date().toISOString();
+      break;
+  }
+}
+
+/**
  * Получить все метрики
  * @returns {Object}
  */
@@ -165,7 +210,8 @@ export function getMetrics() {
       activeConnections: metrics.socket.connections - metrics.socket.disconnections,
       messages: metrics.socket.messages,
       errors: metrics.socket.errors
-    }
+    },
+    storage: { ...metrics.storage }
   };
 }
 
@@ -191,6 +237,16 @@ export function resetMetrics() {
     disconnections: 0,
     messages: 0,
     errors: 0
+  };
+  metrics.storage = {
+    probes: 0,
+    present: 0,
+    missing: 0,
+    unknown: 0,
+    commitAttempts: 0,
+    commitErrors: 0,
+    orphanObjects: 0,
+    lastReconcileAt: null
   };
   metrics.startTime = Date.now();
 }

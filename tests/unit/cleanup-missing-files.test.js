@@ -64,10 +64,49 @@ describe('cleanupMissingFiles', () => {
   test('доказанное missing удаляет метаданные', async () => {
     await insertFile('dev-missing', 'gone.mp4');
 
-    const result = await cleanupMissingFiles({ storage: fakeStorage('missing') });
+    const result = await cleanupMissingFiles({ storage: fakeStorage('missing'), dryRun: false });
 
     expect(result).toMatchObject({ checked: 1, missing: 1, deleted: 1, unknown: 0 });
     await expect(getFileMetadata('dev-missing', 'gone.mp4')).resolves.toBeNull();
+  });
+
+  test('вызов без dryRun ничего не удаляет', async () => {
+    await insertFile('dev-default', 'keep.mp4');
+
+    const result = await cleanupMissingFiles({ storage: fakeStorage('missing') });
+
+    expect(result).toMatchObject({ checked: 1, missing: 1, deleted: 0, dryRun: true });
+    await expect(getFileMetadata('dev-default', 'keep.mp4')).resolves.toBeTruthy();
+  });
+
+  test('прогресс приходит по батчам и учитывает лимит параллелизма', async () => {
+    for (let i = 0; i < 5; i++) await insertFile('dev-progress', `file${i}.mp4`);
+    const updates = [];
+    let active = 0;
+    let peak = 0;
+    const storage = {
+      isLocal: false,
+      async checkExists() {
+        active++;
+        peak = Math.max(peak, active);
+        await new Promise(resolve => setTimeout(resolve, 1));
+        active--;
+        return { state: 'missing' };
+      }
+    };
+
+    const result = await cleanupMissingFiles({
+      storage,
+      dryRun: false,
+      batchSize: 2,
+      concurrency: 2,
+      onProgress: (payload) => updates.push(payload)
+    });
+
+    expect(result).toMatchObject({ checked: 5, missing: 5, deleted: 5 });
+    expect(updates.length).toBe(3);
+    expect(updates.at(-1)).toMatchObject({ checked: 5, total: 5, deleted: 5 });
+    expect(peak).toBeLessThanOrEqual(2);
   });
 
   test('ошибка удаления в БД не выдаётся за успех', async () => {
@@ -77,7 +116,7 @@ describe('cleanupMissingFiles', () => {
     db.run = async () => { throw new Error('database is locked'); };
 
     try {
-      const result = await cleanupMissingFiles({ storage: fakeStorage('missing') });
+      const result = await cleanupMissingFiles({ storage: fakeStorage('missing'), dryRun: false });
       expect(result).toMatchObject({ missing: 1, deleted: 0 });
       expect(result.errors).toBeGreaterThanOrEqual(1);
       await expect(getFileMetadata('dev-db-error', 'keep.mp4')).resolves.toBeTruthy();
