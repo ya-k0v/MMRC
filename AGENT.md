@@ -19,6 +19,10 @@ original wording of the project rules and wins if the two differ.
   destructive operations.
 - Commit locally after a change is tested; use a short imperative message.
   Never publish it.
+- After **every** local commit, sync the working tree into the running app
+  container (find its name via `docker ps`, do not hardcode it): compare tracked
+  files with `/app` there and `docker cp` everything missing or changed. Never
+  overwrite bind-mounted live state such as `config/app-settings.json`.
 - Never commit secrets, local `.env`, databases or generated runtime data;
   document new configuration in `.env.example` instead.
 - When behaviour or UI modules change, update the relevant README/dev docs and
@@ -156,6 +160,11 @@ verified and which were not. If nothing was changed, say "Изменений н�
   молча. Перед разрушительными действиями спрашивать.
 - После проверки изменений сделать локальный коммит с коротким сообщением.
   Публиковать его нельзя.
+- После **каждого** локального коммита синхронизировать рабочее дерево с запущенным
+  контейнером приложения (имя узнавать через `docker ps`, не хардкодить): сравнить
+  отслеживаемые файлы с `/app` в контейнере и `docker cp` все отсутствующие или
+  отличающиеся. Не перезаписывать смонтированные живые данные, например
+  `config/app-settings.json`.
 - Не коммитить секреты, локальный `.env`, базы данных и сгенерированные данные;
   новые настройки описывать в `.env.example`.
 - При изменении поведения или UI-модулей обновлять соответствующие README/dev-доки
