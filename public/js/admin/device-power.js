@@ -27,6 +27,12 @@ let playerVersions = new Map();
 let releaseVersion = '';
 let deviceNames = new Map();
 
+/**
+ * Подписчики списка устройств, на которые можно поставить выбранную версию.
+ * Карточка APK показывает его сразу после выбора, не дожидаясь перезагрузки UI.
+ */
+const updateTargetListeners = new Set();
+
 /** Управляемые устройства текущей карточки, текущая страница списка. */
 let powerTargets = [];
 let page = 0;
@@ -108,6 +114,45 @@ function updateAvailable(id) {
   if (!current) return true;
   const comparison = compareVersions(current, releaseVersion);
   return comparison === null ? true : comparison < 0;
+}
+
+/**
+ * Устройства, на которые сервер сможет поставить выбранную версию.
+ * Те же условия, что и у кнопки обновления в строке: управляемый Android и
+ * заданный IP (сервер пропускает устройства без адреса). `versionOverride`
+ * нужен для мгновенного ответа сразу после клика по чипу, до ответа сервера.
+ */
+export function getPlayerUpdateTargets(versionOverride) {
+  const target = normalizeVersion(versionOverride || releaseVersion);
+  if (!target) return [];
+
+  return powerTargets.filter((device) => {
+    if (!device.ipAddress && !device.ip_address) return false;
+    const versions = playerVersions.get(device.device_id) || {};
+    const current = normalizeVersion(versions.currentVersion || device.appVersion || device.app_version);
+    if (!current) return true;
+    const comparison = compareVersions(current, target);
+    return comparison === null || comparison < 0;
+  }).map((device) => ({
+    id: device.device_id,
+    name: deviceNames.get(device.device_id) || device.name || device.device_id,
+    currentVersion: normalizeVersion(playerVersions.get(device.device_id)?.currentVersion)
+  }));
+}
+
+/** Подписаться на изменения списка целей; сразу возвращает текущее состояние. */
+export function subscribePlayerUpdateTargets(listener) {
+  if (typeof listener !== 'function') return () => {};
+  updateTargetListeners.add(listener);
+  listener(getPlayerUpdateTargets(), releaseVersion);
+  return () => updateTargetListeners.delete(listener);
+}
+
+function notifyUpdateTargets() {
+  const targets = getPlayerUpdateTargets();
+  updateTargetListeners.forEach((listener) => {
+    try { listener(targets, releaseVersion); } catch { /* не ломаем карточку */ }
+  });
 }
 
 /** Один источник правды для счётчиков сводки и фильтрации списка. */
@@ -360,6 +405,7 @@ function updateBadges() {
   updatePlayerUpdateButtons();
   updateSummary();
   applyBusyState();
+  notifyUpdateTargets();
 }
 
 /**
@@ -464,11 +510,14 @@ async function refreshStates(adminFetch, deviceIds) {
  * Версия, которую поставит кнопка обновления: сначала выбранная в настройках,
  * затем последний релиз GitHub, затем уже установленная на сервере APK.
  */
-export async function refreshPlayerVersions(adminFetch) {
+export async function refreshPlayerVersions(adminFetch, preloadedData = null) {
   try {
-    const response = await adminFetch(APK_VERSION_ENDPOINT);
-    if (!response?.ok) return;
-    const data = await response.json();
+    let data = preloadedData;
+    if (!data) {
+      const response = await adminFetch(APK_VERSION_ENDPOINT);
+      if (!response?.ok) return;
+      data = await response.json();
+    }
     releaseVersion = normalizeVersion(
       data.selectedVersion || data.latestVersion || data.installedVersion || data.version
     );

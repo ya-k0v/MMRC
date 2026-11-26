@@ -1030,6 +1030,18 @@ body.admin-page #grid button.settings-nav-item {
   line-height: 16px;
 }
 
+/* Сразу после выбора версии: на какие устройства её можно поставить. */
+.st-apk-targets {
+  margin-top: var(--space-2xs);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.st-apk-targets.is-error {
+  color: var(--danger);
+}
+
 /* Чипы выбора версии APK — плотные «таблетки» (ступень 28px).
    Селектор с #grid и body нужен, чтобы перебить:
    - единую шкалу body.admin-page #grid button.meta (32px),

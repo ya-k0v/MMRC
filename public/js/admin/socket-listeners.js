@@ -27,7 +27,8 @@ export function setupSocketListeners(socket, callbacks) {
     onPlayerOffline,
     onPlayersSnapshot,
     onVolumeBatch,
-    onVolumeUpdate
+    onVolumeUpdate,
+    onApkVersionSelected
   } = callbacks;
   
   // devices/updated - Обновление списка устройств.
@@ -110,6 +111,12 @@ export function setupSocketListeners(socket, callbacks) {
 
   socket.on('devices/volume/state', (payload) => {
     if (onVolumeUpdate) onVolumeUpdate(payload);
+  });
+
+  // apk-version/selected - версию поменяли в настройках или другой вкладке.
+  // Список «кого можно обновить» пересчитывается без перезагрузки страницы.
+  socket.on('apk-version/selected', (payload) => {
+    if (onApkVersionSelected) onApkVersionSelected(payload);
   });
 }
 

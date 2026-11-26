@@ -88,6 +88,10 @@ do not delete it as "generated junk".
 - Mount shared rate limiters once per prefix, not on every router: two
   `adminLimiter` mounts doubled every admin request. Repeating read-only polls
   (logs) must skip the strict admin/speed limiters.
+- A change made on the server (e.g. selected APK version) must be broadcast to
+  all admin tabs. Recompute dependent UI (update targets, filters, badges)
+  from one shared state on every path: local action, socket event, fresh device
+  snapshot. Never require a UI reload to see the consequence of a selection.
 - Settings tree: navigation lives in its own module, cards stay in the DOM and
   are hidden, `system` is the default panel; Database/LDAP entries are added
   only when applicable. Summary chips are filters driven by one shared
@@ -218,6 +222,11 @@ SQLite **и** PostgreSQL; локальный диск **и** S3/MinIO; primary *
 - Общий rate limiter монтируется один раз на префикс, а не на каждый router:
   два `adminLimiter` удваивали каждый admin-запрос. Частые read-only опросы
   (логи) должны быть исключены из строгих admin/speed лимитеров.
+- Изменение на сервере (например, выбранная версия APK) рассылается всем
+  вкладкам админки. Зависимый UI (цели обновления, фильтры, бейджи) пересчитывается
+  из одного общего состояния на всех путях: локальное действие, socket-событие,
+  свежий снимок устройств. Перезагрузка UI не должна быть нужна, чтобы увидеть
+  последствия выбора.
 - Дерево настроек: навигация в отдельном модуле, карточки остаются в DOM и
   скрываются, по умолчанию «Система»; пункты БД и LDAP добавляются только когда
   применимо. Чипы сводки — фильтры с общим источником правды.

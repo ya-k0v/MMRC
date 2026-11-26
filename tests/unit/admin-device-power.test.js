@@ -14,7 +14,9 @@ const {
   applyPowerState,
   refreshPlayerVersions,
   syncPowerDevices,
-  setPowerBusy
+  setPowerBusy,
+  getPlayerUpdateTargets,
+  subscribePlayerUpdateTargets
 } = await import('../../public/js/admin/device-power.js');
 
 const DEVICES = [
@@ -617,6 +619,39 @@ describe('обновление плеера', () => {
     expect(updateButton('tv1').hidden).toBe(false);
     expect(updateButton('tv1').title).toContain('v3.4.0 → v3.4.2');
     expect(summary('Требуют обновления')).toBe('3');
+  });
+
+  test('список целей считается сразу для ещё не сохранённой версии', async () => {
+    document.body.innerHTML = renderPowerControlsHtml(DEVICES);
+    initPowerControls({ devices: DEVICES, adminFetch: playerFetch({ apk: { selectedVersion: '3.4.0' } }) });
+    await flush();
+    await flush();
+
+    expect(getPlayerUpdateTargets()).toEqual([]);
+    expect(getPlayerUpdateTargets('3.4.2').map(target => target.id)).toEqual(['tv1', 'tv2', 'native1']);
+  });
+
+  test('подписчик получает свежий список целей после смены версии', async () => {
+    document.body.innerHTML = renderPowerControlsHtml(DEVICES);
+    initPowerControls({ devices: DEVICES, adminFetch: playerFetch({ apk: { selectedVersion: '3.4.0' } }) });
+    await flush();
+    await flush();
+
+    const onChange = jest.fn();
+    const unsubscribe = subscribePlayerUpdateTargets(onChange);
+    expect(onChange).toHaveBeenCalledWith([], '3.4.0');
+
+    await refreshPlayerVersions(playerFetch({ apk: { selectedVersion: '3.4.2' } }));
+    await flush();
+
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.arrayContaining([expect.objectContaining({ id: 'tv1', name: 'Зал' })]),
+      '3.4.2'
+    );
+    const calls = onChange.mock.calls.length;
+    unsubscribe();
+    await refreshPlayerVersions(playerFetch({ apk: { selectedVersion: '3.4.1' } }));
+    expect(onChange).toHaveBeenCalledTimes(calls);
   });
 
   test('новый список устройств подтягивается без пересоздания карточки', async () => {

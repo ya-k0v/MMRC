@@ -12,7 +12,9 @@ import {
   refreshPowerControlsLayout,
   refreshPlayerVersions,
   syncPowerDevices,
-  setPowerBusy
+  setPowerBusy,
+  getPlayerUpdateTargets,
+  subscribePlayerUpdateTargets
 } from './admin/device-power.js';
 import { initPowerConstructor, stopPowerConstructor } from './admin/power-constructor.js';
 import { loadDevices as loadDevicesModule, renderTVList as renderTVListModule, syncDeviceStatuses, updateDeviceTile, focusDeviceInList as focusDeviceInListModule } from './admin/devices-manager.js';
@@ -57,6 +59,28 @@ let nodeNames = {};
 let user = null;
 const volumeStateByDevice = new Map();
 const VOLUME_STEP = 5;
+
+// apk-version: обновление чипов и списка целей при смене версии из любой вкладки.
+let applyApkVersionFromSocket = async () => {};
+let unsubscribeApkTargets = null;
+
+/** Показывает, на какие устройства уже можно поставить выбранную версию. */
+function renderApkTargets(targets, version) {
+  const el = document.getElementById('stApkTargets');
+  if (!el) return;
+  el.classList.remove('is-error');
+  el.style.color = '';
+
+  if (!version) {
+    el.textContent = 'Версия не выбрана';
+  } else if (!targets.length) {
+    el.textContent = `На v${version}: все управляемые устройства уже актуальны`;
+  } else {
+    const shown = targets.slice(0, 5).map(target => target.name).join(', ');
+    const rest = targets.length > 5 ? ` и ещё ${targets.length - 5}` : '';
+    el.textContent = `На v${version} можно установить: ${targets.length} — ${shown}${rest}`;
+  }
+}
 
 // Контекст списка устройств. Передаётся геттерами, а не значениями,
 // чтобы обработчики и замыкания плиток всегда видели актуальное состояние
@@ -125,6 +149,9 @@ setupSocketListeners(socket, {
       clearFilesPane('Нет устройств', 'Список файлов появится после подключения устройства.');
     }
     renderTVList();
+  },
+  onApkVersionSelected: (payload) => {
+    applyApkVersionFromSocket(payload);
   },
   onPowerState: (payload) => {
     applyPowerState(payload);
@@ -571,6 +598,7 @@ function createSettingsSection() {
 
             <div class="st-sub">Установка на устройство</div>
             <div id="stApkVersion" class="meta st-actions">Загрузка...</div>
+            <div id="stApkTargets" class="st-apk-targets"></div>
             <div class="st-actions">
               <input id="stApkIp" class="input st-input-sm" placeholder="IP" />
               <input id="stApkPort" class="input st-input-xs" placeholder="Порт" value="5555" />
@@ -837,6 +865,7 @@ function createSettingsSection() {
 
       let data = null;
       let busy = false;
+      let pendingVersion = null;
 
       const render = () => {
         const summary = document.getElementById('stApkSummary');
@@ -849,7 +878,8 @@ function createSettingsSection() {
           return;
         }
 
-        const selected = data.selectedVersion || data.latestVersion || versions[0].version;
+        // Выбранный чип подсвечивается сразу после клика, не дожидаясь POST.
+        const selected = pendingVersion || data.selectedVersion || data.latestVersion || versions[0].version;
         el.innerHTML = '';
         el.style.color = '';
 
@@ -874,20 +904,28 @@ function createSettingsSection() {
         el.appendChild(group);
       };
 
-      const load = async () => {
-        try {
-          const r = await adminFetch('/api/admin/apk-version');
-          data = await r.json();
-        } catch {
-          data = { available: false, error: 'Ошибка соединения' };
+      const load = async (preloaded = null) => {
+        if (preloaded) {
+          data = preloaded;
+        } else {
+          try {
+            const r = await adminFetch('/api/admin/apk-version');
+            data = await r.json();
+          } catch {
+            data = { available: false, error: 'Ошибка соединения' };
+          }
         }
         render();
+        return data;
       };
 
       const selectVersion = async (version) => {
         if (busy) return;
         busy = true;
+        pendingVersion = version;
         render();
+        // Список целей обновления показываем мгновенно, по версии из клика.
+        renderApkTargets(getPlayerUpdateTargets(version), version);
         try {
           const r = await adminFetch('/api/admin/apk-version/select', {
             method: 'POST',
@@ -896,15 +934,33 @@ function createSettingsSection() {
           });
           const result = await r.json().catch(() => ({}));
           if (!r.ok || result.ok === false) throw new Error(result.error || 'Не удалось выбрать версию');
-          // Подсветка «Требуют обновления» и кнопки на устройствах должны
-          // сразу пересчитаться под новую выбранную версию.
-          await refreshPlayerVersions(adminFetch);
-        } catch {}
+          // Пересчитываем подсветку и кнопки на устройствах без перезагрузки UI.
+          data = await load({ ...(data || {}), selectedVersion: version });
+          await refreshPlayerVersions(adminFetch, data);
+        } catch (error) {
+          pendingVersion = null;
+          const targetsEl = document.getElementById('stApkTargets');
+          if (targetsEl) {
+            targetsEl.textContent = `Не удалось выбрать версию: ${error.message}`;
+            targetsEl.classList.add('is-error');
+          }
+        }
         busy = false;
-        await load();
+        render();
       };
 
+      // Версию могли поменять в другой вкладке или кнопкой «Скачать обновление».
+      applyApkVersionFromSocket = async ({ version } = {}) => {
+        if (!version) return;
+        await load();
+        await refreshPlayerVersions(adminFetch, data);
+      };
+
+      if (unsubscribeApkTargets) unsubscribeApkTargets();
+      unsubscribeApkTargets = subscribePlayerUpdateTargets(renderApkTargets);
+
       await load();
+      await refreshPlayerVersions(adminFetch, data);
     })();
 
 
@@ -965,6 +1021,8 @@ function createSettingsSection() {
       stopSystemMonitor();
       stopPowerControls();
       stopPowerConstructor();
+      unsubscribeApkTargets?.();
+      unsubscribeApkTargets = null;
       obs.disconnect();
     }
   });

@@ -443,6 +443,14 @@ export function createAdminRouter(deps = {}) {
 
   const router = express.Router();
 
+  /** Выбранная версия — общий для всех админов факт, рассылаем сразу. */
+  const emitApkVersionSelected = (version) => {
+    const socketIO = io || global.io;
+    if (socketIO?.emit) {
+      socketIO.emit('apk-version/selected', { version, selectedVersion: version });
+    }
+  };
+
   // POST /api/admin/install-apk
   router.post('/install-apk', longOperationTimeout(), requireAdmin, upload.single('apk'), async (req, res) => {
     const ip = req.body.ip;
@@ -997,7 +1005,10 @@ export function createAdminRouter(deps = {}) {
       syncLegacyApkAlias(latest.version, latest.tag);
 
       if (!getApkVersion()) {
-        try { setApkVersion(latest.version); } catch {}
+        try {
+          setApkVersion(latest.version);
+          emitApkVersionSelected(latest.version);
+        } catch {}
       }
 
       logger.info('[Admin] APK updated', { versions: downloaded.map((d) => d.tag), size: latest.size });
@@ -1046,6 +1057,7 @@ export function createAdminRouter(deps = {}) {
 
       setApkVersion(version);
       syncLegacyApkAlias(version, tag);
+      emitApkVersionSelected(version);
 
       res.json({ ok: true, selectedVersion: version });
     } catch (error) {
