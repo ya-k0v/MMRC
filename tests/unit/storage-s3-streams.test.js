@@ -45,7 +45,13 @@ jest.unstable_mockModule('@aws-sdk/lib-storage', () => ({
 const { S3Storage } = await import('../../src/storage/s3.js');
 
 function makeStorage() {
-  return new S3Storage({ bucket: 'bucket', root: '/app/data', endpoint: 'http://localhost:9000' });
+  return new S3Storage({
+    bucket: 'bucket',
+    root: '/app/data',
+    endpoint: 'http://localhost:9000',
+    accessKeyId: 'key',
+    secretAccessKey: 'secret'
+  });
 }
 
 const originalEnv = { ...process.env };

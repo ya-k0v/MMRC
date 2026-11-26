@@ -584,6 +584,27 @@ install_mmrc() {
         replace_or_append_env "NGINX_HTTPS_PORT" "$NGINX_HTTPS_PORT"
         replace_or_append_env "DB_TYPE" "$DB_TYPE"
         replace_or_append_env "STORAGE_BACKEND" "$STORAGE_BACKEND"
+        # Ключи хранилища могли появиться в новой версии: сохраняем заданные
+        # пользователем значения и дописываем недостающие с дефолтами.
+        for spec in \
+            "S3_ENDPOINT=http://mmrc-minio:9000" \
+            "S3_REGION=us-east-1" \
+            "S3_BUCKET=mmrc" \
+            "S3_ACCESS_KEY=minioadmin" \
+            "S3_SECRET_KEY=minioadmin" \
+            "S3_FORCE_PATH_STYLE=true" \
+            "S3_HEAD_TIMEOUT_MS=4000" \
+            "S3_GET_TIMEOUT_MS=4000" \
+            "S3_STREAM_IDLE_TIMEOUT_MS=30000" \
+            "STORAGE_STARTUP_RECONCILE_ENABLED=1" \
+            "STORAGE_RECONCILE_CONCURRENCY=4" \
+            "STORAGE_RECONCILE_INTERVAL_MS=21600000" \
+            "STORAGE_CLEANUP_BATCH_SIZE=100" \
+            "STORAGE_CLEANUP_CONCURRENCY=4"; do
+            key="${spec%%=*}"
+            default="${spec#*=}"
+            replace_or_append_env "$key" "$(read_existing_env "$key" "$default")"
+        done
         replace_or_append_env "JWT_SECRET" "$JWT_SECRET"
         replace_or_append_env "REDIS_PASSWORD" "$REDIS_PASSWORD_GEN"
         replace_or_append_env "REDIS_URL" "redis://:${REDIS_PASSWORD_GEN}@mmrc-redis:6379"
@@ -666,22 +687,22 @@ REDIS_URL=redis://:${REDIS_PASSWORD_GEN}@mmrc-redis:6379
 
 # Storage Backend: local | s3
 STORAGE_BACKEND=$STORAGE_BACKEND
-S3_ENDPOINT=http://mmrc-minio:9000
-S3_REGION=us-east-1
-S3_BUCKET=mmrc
-S3_ACCESS_KEY=$S3_ACCESS_KEY
-S3_SECRET_KEY=$S3_SECRET_KEY
-S3_FORCE_PATH_STYLE=true
+S3_ENDPOINT=${S3_ENDPOINT:-http://mmrc-minio:9000}
+S3_REGION=${S3_REGION:-us-east-1}
+S3_BUCKET=${S3_BUCKET:-mmrc}
+S3_ACCESS_KEY=${S3_ACCESS_KEY:-minioadmin}
+S3_SECRET_KEY=${S3_SECRET_KEY:-minioadmin}
+S3_FORCE_PATH_STYLE=${S3_FORCE_PATH_STYLE:-true}
 S3_HEAD_TIMEOUT_MS=${S3_HEAD_TIMEOUT_MS:-4000}
 S3_GET_TIMEOUT_MS=${S3_GET_TIMEOUT_MS:-4000}
 S3_STREAM_IDLE_TIMEOUT_MS=${S3_STREAM_IDLE_TIMEOUT_MS:-30000}
 
 # Storage reconciliation (report-only by default; startup S3-primary commit)
-STORAGE_STARTUP_RECONCILE_ENABLED=1
-STORAGE_RECONCILE_CONCURRENCY=4
-STORAGE_RECONCILE_INTERVAL_MS=21600000
-STORAGE_CLEANUP_BATCH_SIZE=100
-STORAGE_CLEANUP_CONCURRENCY=4
+STORAGE_STARTUP_RECONCILE_ENABLED=${STORAGE_STARTUP_RECONCILE_ENABLED:-1}
+STORAGE_RECONCILE_CONCURRENCY=${STORAGE_RECONCILE_CONCURRENCY:-4}
+STORAGE_RECONCILE_INTERVAL_MS=${STORAGE_RECONCILE_INTERVAL_MS:-21600000}
+STORAGE_CLEANUP_BATCH_SIZE=${STORAGE_CLEANUP_BATCH_SIZE:-100}
+STORAGE_CLEANUP_CONCURRENCY=${STORAGE_CLEANUP_CONCURRENCY:-4}
 
 # MinIO root credentials (must match S3_ACCESS_KEY/S3_SECRET_KEY)
 MINIO_ROOT_USER=$S3_ACCESS_KEY

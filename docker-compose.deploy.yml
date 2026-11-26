@@ -11,8 +11,8 @@ services:
       resources:
         limits:
           cpus: "${MMRC_CPU_LIMIT:-2.0}"
-          memory: 4G
-          pids: 512
+          memory: "${MMRC_MEMORY_LIMIT:-4G}"
+          pids: "${MMRC_PIDS_LIMIT:-512}"
     # Ротация stdout-логов контейнера, иначе json-file растёт без ограничений.
     logging:
       driver: json-file
@@ -267,8 +267,8 @@ services:
       resources:
         limits:
           cpus: "${MMRC_CPU_LIMIT:-2.0}"
-          memory: 4G
-          pids: 512
+          memory: "${MMRC_MEMORY_LIMIT:-4G}"
+          pids: "${MMRC_PIDS_LIMIT:-512}"
     logging:
       driver: json-file
       options:

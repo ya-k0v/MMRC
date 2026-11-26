@@ -51,7 +51,9 @@ describe('S3Storage.copy: кодирование CopySource', () => {
     const storage = new S3Storage({
       bucket: 'bucket',
       root: '/app/data',
-      endpoint: 'http://localhost:9000'
+      endpoint: 'http://localhost:9000',
+      accessKeyId: 'key',
+      secretAccessKey: 'secret'
     });
 
     await storage.copy('content/clip#1?.mp4', 'content/copy.mp4');
@@ -66,12 +68,16 @@ describe('S3Storage.copy: кодирование CopySource', () => {
     const source = new S3Storage({
       bucket: 'bucket',
       root: '/old/data',
-      endpoint: 'http://localhost:9000'
+      endpoint: 'http://localhost:9000',
+      accessKeyId: 'key',
+      secretAccessKey: 'secret'
     });
     const target = new S3Storage({
       bucket: 'bucket',
       root: '/new/data',
-      endpoint: 'http://localhost:9000'
+      endpoint: 'http://localhost:9000',
+      accessKeyId: 'key',
+      secretAccessKey: 'secret'
     });
 
     await target.copyFrom(source, 'content/a#b.mp4', 'content/a#b.mp4');

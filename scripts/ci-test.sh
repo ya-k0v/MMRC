@@ -43,7 +43,7 @@ trap cleanup EXIT
 
 READY=0
 for _ in {1..30}; do
-  if curl -fsS "http://127.0.0.1:3000/health" >"$HEALTH_JSON" 2>/dev/null; then
+  if curl -fsS "http://127.0.0.1:${PORT:-3000}/health" >"$HEALTH_JSON" 2>/dev/null; then
     READY=1
     break
   fi

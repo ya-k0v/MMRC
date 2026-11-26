@@ -55,6 +55,15 @@ function createStorage() {
   });
 }
 
+describe('S3Storage: конфигурация', () => {
+  test('без ключей доступа — явная ошибка вместо тихого minioadmin', () => {
+    expect(() => new S3Storage({
+      bucket: 'test',
+      endpoint: 'http://127.0.0.1:9000'
+    })).toThrow(/S3_ACCESS_KEY and S3_SECRET_KEY/);
+  });
+});
+
 describe('S3Storage.exists / checkExists', () => {
   let storage;
 

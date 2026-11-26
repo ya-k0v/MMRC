@@ -13,8 +13,8 @@ x-mmrc-service: &mmrc-service
     resources:
       limits:
         cpus: "${MMRC_CPU_LIMIT:-2.0}"
-        memory: 4G
-        pids: 512
+        memory: "${MMRC_MEMORY_LIMIT:-4G}"
+        pids: "${MMRC_PIDS_LIMIT:-512}"
   # Ротация stdout-логов контейнера, иначе json-file растёт без ограничений.
   logging:
     driver: json-file
@@ -62,6 +62,14 @@ x-mmrc-service: &mmrc-service
     - S3_ACCESS_KEY=${S3_ACCESS_KEY:-minioadmin}
     - S3_SECRET_KEY=${S3_SECRET_KEY:-minioadmin}
     - S3_FORCE_PATH_STYLE=${S3_FORCE_PATH_STYLE:-true}
+    - S3_HEAD_TIMEOUT_MS=${S3_HEAD_TIMEOUT_MS:-4000}
+    - S3_GET_TIMEOUT_MS=${S3_GET_TIMEOUT_MS:-4000}
+    - S3_STREAM_IDLE_TIMEOUT_MS=${S3_STREAM_IDLE_TIMEOUT_MS:-30000}
+    - STORAGE_STARTUP_RECONCILE_ENABLED=${STORAGE_STARTUP_RECONCILE_ENABLED:-1}
+    - STORAGE_RECONCILE_CONCURRENCY=${STORAGE_RECONCILE_CONCURRENCY:-4}
+    - STORAGE_RECONCILE_INTERVAL_MS=${STORAGE_RECONCILE_INTERVAL_MS:-21600000}
+    - STORAGE_CLEANUP_BATCH_SIZE=${STORAGE_CLEANUP_BATCH_SIZE:-100}
+    - STORAGE_CLEANUP_CONCURRENCY=${STORAGE_CLEANUP_CONCURRENCY:-4}
     - MMRC_CORS_ORIGINS=${MMRC_CORS_ORIGINS:-}
     - MMRC_ANDROID_PACKAGE=${MMRC_ANDROID_PACKAGE:-com.videocontrol.mediaplayer}
     - MMRC_ANDROID_ACTIVITY=${MMRC_ANDROID_ACTIVITY:-com.videocontrol.mediaplayer.MainActivity}

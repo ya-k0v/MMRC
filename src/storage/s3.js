@@ -59,6 +59,11 @@ export class S3Storage extends StorageProvider {
   constructor({ bucket, endpoint, region, accessKeyId, secretAccessKey, forcePathStyle = true, root = '' }) {
     super();
     if (!S3) throw new Error('@aws-sdk/client-s3 is not installed');
+    // Раньше отсутствующие ключи молча подменялись minioadmin: для внешнего
+    // S3 это выглядело как непонятный 403 вместо явной ошибки конфигурации.
+    if (!accessKeyId || !secretAccessKey) {
+      throw new Error('S3_ACCESS_KEY and S3_SECRET_KEY must be set for S3 storage');
+    }
 
     this.#bucket = bucket || 'mmrc';
     this.#root = root ? root.replace(/^\/+|\/+$/g, '') + '/' : '';
@@ -66,10 +71,7 @@ export class S3Storage extends StorageProvider {
     this.#client = new S3.S3Client({
       endpoint,
       region: region || 'us-east-1',
-      credentials: {
-        accessKeyId: accessKeyId || 'minioadmin',
-        secretAccessKey: secretAccessKey || 'minioadmin'
-      },
+      credentials: { accessKeyId, secretAccessKey },
       forcePathStyle: forcePathStyle !== false,
       // Таймаут только на установку соединения: без него зависший MinIO
       // держал HTTP-запросы бесконечно, и запросы к /api/devices/:id/placeholder
