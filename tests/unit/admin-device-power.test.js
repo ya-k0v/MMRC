@@ -375,7 +375,7 @@ describe('обновление плеера', () => {
     installedVersion: '3.4.1'
   };
 
-  test('кнопка есть у каждого устройства и зеленеет только при различии версий', async () => {
+  test('кнопка появляется только у устройств с устаревшей версией', async () => {
     document.body.innerHTML = renderPowerControlsHtml(DEVICES);
     const adminFetch = playerFetch({ apk: APK });
 
@@ -383,13 +383,15 @@ describe('обновление плеера', () => {
     await flush();
     await flush();
 
-    expect(updateButton('tv1')).not.toBeNull();
-    expect(updateButton('tv2')).not.toBeNull();
+    expect(updateButton('tv1').hidden).toBe(false);
     expect(updateButton('tv1').classList.contains('st-power-update--available')).toBe(true);
+    expect(updateButton('tv1').title).toContain('v3.4.0 → v3.4.1');
+
+    expect(updateButton('tv2').hidden).toBe(true);
     expect(updateButton('tv2').classList.contains('st-power-update--available')).toBe(false);
     // 'v3.4.1' и '3.4.1' — одна и та же версия.
+    expect(updateButton('native1').hidden).toBe(true);
     expect(updateButton('native1').classList.contains('st-power-update--available')).toBe(false);
-    expect(updateButton('tv1').title).toContain('v3.4.0 → v3.4.1');
   });
 
   test('нажатие обновляет только выбранное устройство и снимает подсветку', async () => {
@@ -410,6 +412,7 @@ describe('обновление плеера', () => {
     expect(call).toBeDefined();
     expect(bodyOf(call)).toEqual({ deviceIds: ['tv1'] });
     expect(updateButton('tv1').classList.contains('st-power-update--available')).toBe(false);
+    expect(updateButton('tv1').hidden).toBe(true);
     expect(document.getElementById('stPowerStatus').textContent).toBe('Плеер обновлён: Зал');
     expect(reportedNotification(adminFetch)).toMatchObject({
       title: 'Обновление плеера',
@@ -433,6 +436,7 @@ describe('обновление плеера', () => {
     await flush();
 
     expect(document.getElementById('stPowerStatus').textContent).toBe('adb недоступен');
+    expect(updateButton('tv1').hidden).toBe(false);
     expect(updateButton('tv1').classList.contains('st-power-update--available')).toBe(true);
     expect(reportedNotification(adminFetch)).toMatchObject({
       title: 'Обновление плеера',
@@ -448,6 +452,7 @@ describe('обновление плеера', () => {
     await flush();
     await flush();
 
+    expect(updateButton('tv1').hidden).toBe(true);
     expect(updateButton('tv1').classList.contains('st-power-update--available')).toBe(false);
     expect(updateButton('tv1').title).toBe('Обновить плеер');
   });

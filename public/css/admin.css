@@ -954,8 +954,11 @@ body.admin-page #grid button.st-btn-danger {
 .st-power-badge.is-active { background: rgba(34, 197, 94, 0.14); color: var(--success); }
 .st-power-badge.is-sleep { background: rgba(245, 158, 11, 0.16); color: var(--warning); }
 
-/* Кнопка обновления плеера подсвечивается, когда версия устройства
-   отличается от версии, которую поставит сервер. */
+/* Кнопка обновления плеера появляется только при устаревшей версии. */
+body.admin-page #grid button.st-power-btn.st-power-update[hidden] {
+  display: none;
+}
+
 body.admin-page #grid button.st-power-btn.st-power-update--available {
   color: var(--success);
   background: rgba(34, 197, 94, 0.16);
