@@ -16,7 +16,14 @@ export function setupNotificationsHandler(io) {
   notificationsManager.subscribe(({ notification, action }) => {
     // Отправляем только админам
     const unreadCount = notificationsManager.getUnreadCount();
-    
+
+    // Массовое закрытие: одно событие вместо десятков индивидуальных.
+    if (action === 'acknowledged-all') {
+      const ids = Array.isArray(notification?.ids) ? notification.ids : [];
+      io.to('admins').emit('notifications:acknowledged-all', { ids, unreadCount });
+      return;
+    }
+
     io.to('admins').emit('notification', {
       notification,
       action,

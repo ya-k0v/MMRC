@@ -80,6 +80,14 @@ do not delete it as "generated junk".
   the URL.
 - HA replicas (`MMRC_HA_MODE=true`) must not run startup/periodic reconcile,
   scratch cleanup or duplicate notifications: only the primary does.
+- Bulk UI actions must be a single backend request — never one HTTP call per
+  item: nginx allows ~20 immediate requests and then 10/s, so a fan-out of 100
+  acknowledge calls returns 429. Paginate long lists server-side instead of
+  shipping all rows. On 429, do not generate another notification/report: that
+  is a feedback loop. Keep already visible data on a failed poll.
+- Mount shared rate limiters once per prefix, not on every router: two
+  `adminLimiter` mounts doubled every admin request. Repeating read-only polls
+  (logs) must skip the strict admin/speed limiters.
 - Settings tree: navigation lives in its own module, cards stay in the DOM and
   are hidden, `system` is the default panel; Database/LDAP entries are added
   only when applicable. Summary chips are filters driven by one shared
@@ -202,6 +210,14 @@ SQLite **и** PostgreSQL; локальный диск **и** S3/MinIO; primary *
   scoped-тикет, без Bearer-токена в URL.
 - HA-реплики (`MMRC_HA_MODE=true`) не запускают стартовую/периодическую сверку,
   чистку scratch и дубли уведомлений — это делает только primary.
+- Массовые действия в UI делаются **одним** запросом, а не по запросу на каждый
+  элемент: nginx пропускает ~20 запросов сразу и затем 10/с, поэтому 100
+  acknowledge-запросов дают 429. Длинные списки режутся на страницы на сервере.
+  На 429 не создавайте новое уведомление/отчёт — это петля усиления ошибки;
+  при неудачном опросе сохраняйте уже показанные данные.
+- Общий rate limiter монтируется один раз на префикс, а не на каждый router:
+  два `adminLimiter` удваивали каждый admin-запрос. Частые read-only опросы
+  (логи) должны быть исключены из строгих admin/speed лимитеров.
 - Дерево настроек: навигация в отдельном модуле, карточки остаются в DOM и
   скрываются, по умолчанию «Система»; пункты БД и LDAP добавляются только когда
   применимо. Чипы сводки — фильтры с общим источником правды.

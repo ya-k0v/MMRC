@@ -3,9 +3,14 @@ import path from 'node:path';
 import logger from '../utils/logger.js';
 import { validatePath } from '../utils/path-validator.js';
 
-const SERVICE_LOGS_MAX_LINES = Math.max(50, Number(process.env.SERVICE_LOGS_MAX_LINES || 2000));
-const SERVICE_LOGS_DEFAULT_LINES = Math.max(20, Number(process.env.SERVICE_LOGS_DEFAULT_LINES || 200));
-const SERVICE_LOGS_MAX_CHUNK_BYTES = Math.max(64 * 1024, Number(process.env.SERVICE_LOGS_MAX_CHUNK_BYTES || 512 * 1024));
+function envInt(name, fallback, min) {
+  const parsed = Number.parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.max(min, parsed) : fallback;
+}
+
+const SERVICE_LOGS_MAX_LINES = envInt('SERVICE_LOGS_MAX_LINES', 2000, 50);
+const SERVICE_LOGS_DEFAULT_LINES = envInt('SERVICE_LOGS_DEFAULT_LINES', 200, 20);
+const SERVICE_LOGS_MAX_CHUNK_BYTES = envInt('SERVICE_LOGS_MAX_CHUNK_BYTES', 512 * 1024, 64 * 1024);
 const ADMIN_SERVICE_LOGS_FALLBACK_DIR = path.join(process.cwd(), '.tmp', 'logs');
 const SERVICE_LOG_LEVELS = ['combined', 'error', 'warn', 'info', 'debug'];
 
@@ -17,6 +22,46 @@ export function parsePositiveInt(value, fallback) {
 
 export function clampInt(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+/**
+ * Байтовый offset после последнего полного переноса строки.
+ * Хранить его как nextOffset важно: иначе следующий инкрементальный чтение
+ * начнётся с середины строки (и, возможно, с середины UTF-8-символа).
+ */
+function findLastCompleteLineOffset(fd, size) {
+  if (!size) return 0;
+
+  const chunk = Buffer.alloc(Math.min(8192, size));
+  let position = size;
+  while (position > 0) {
+    const bytesToRead = Math.min(chunk.length, position);
+    position -= bytesToRead;
+    fs.readSync(fd, chunk, 0, bytesToRead, position);
+    const newlineIndex = chunk.lastIndexOf(10, bytesToRead - 1);
+    if (newlineIndex >= 0) return position + newlineIndex + 1;
+  }
+  return 0;
+}
+
+/** Сдвинуть старт чтения к началу следующей полной строки. */
+function alignToLineStart(fd, startOffset, size) {
+  if (startOffset <= 0 || startOffset >= size) return startOffset;
+
+  const previous = Buffer.alloc(1);
+  fs.readSync(fd, previous, 0, 1, startOffset - 1);
+  if (previous[0] === 10) return startOffset;
+
+  const chunk = Buffer.alloc(Math.min(8192, size - startOffset));
+  let position = startOffset;
+  while (position < size) {
+    const bytesToRead = Math.min(chunk.length, size - position);
+    fs.readSync(fd, chunk, 0, bytesToRead, position);
+    const newlineIndex = chunk.subarray(0, bytesToRead).indexOf(10);
+    if (newlineIndex >= 0) return position + newlineIndex + 1;
+    position += bytesToRead;
+  }
+  return size;
 }
 
 export function getServiceLogsCandidateDirs(getLogsDir) {
@@ -58,14 +103,24 @@ export function resolveLatestServiceLogFilePath(level = 'combined', getLogsDir) 
     ? /^combined-\d{4}-\d{2}-\d{2}\.log$/
     : new RegExp(`^${level}-\\d{4}-\\d{2}-\\d{2}\\.log$`);
 
+  const candidates = [];
   for (const dirPath of getServiceLogsCandidateDirs(getLogsDir)) {
     try {
       const safeDirPath = validatePath(dirPath, dirPath);
       if (!fs.existsSync(safeDirPath)) continue;
 
-      const files = fs.readdirSync(safeDirPath).filter((name) => pattern.test(name)).sort();
-      if (!files.length) continue;
-      return path.join(safeDirPath, files[files.length - 1]);
+      for (const name of fs.readdirSync(safeDirPath)) {
+        if (!pattern.test(name)) continue;
+        const filePath = path.join(safeDirPath, name);
+        let mtime = 0;
+        try {
+          mtime = fs.statSync(filePath).mtimeMs;
+        } catch {
+          // Файл мог исчезнуть между readdir и stat — просто пропускаем.
+          continue;
+        }
+        candidates.push({ filePath, mtime });
+      }
     } catch (error) {
       logger.warn('[Admin] Failed to inspect logs directory', {
         dirPath: path.resolve(dirPath),
@@ -74,7 +129,10 @@ export function resolveLatestServiceLogFilePath(level = 'combined', getLogsDir) 
     }
   }
 
-  return null;
+  // Имя файла зависит от даты, но при смене contentRoot старый каталог
+  // может остаться с «правильным» именем. Берём реально свежий файл.
+  candidates.sort((a, b) => b.mtime - a.mtime || a.filePath.localeCompare(b.filePath));
+  return candidates[0]?.filePath || null;
 }
 
 export function readLastLinesFromFile(filePath, lineLimit, getLogsDir) {
@@ -89,17 +147,28 @@ export function readLastLinesFromFile(filePath, lineLimit, getLogsDir) {
     }
 
     const chunkSize = 64 * 1024;
+    const chunks = [];
     let position = stats.size;
-    let content = '';
-    let linesFound = 0;
+    let newlinesFound = 0;
 
-    while (position > 0 && linesFound <= safeLimit) {
+    // Собираем байты кусками, но декодируем уже весь буфер целиком:
+    // toString() на каждой 64 КБ-порции рвал многобайтовые символы (кириллицу).
+    while (position > 0 && newlinesFound <= safeLimit) {
       const bytesToRead = Math.min(chunkSize, position);
       position -= bytesToRead;
       const buffer = Buffer.alloc(bytesToRead);
       fs.readSync(fd, buffer, 0, bytesToRead, position);
-      content = buffer.toString('utf8') + content;
-      linesFound = content.split(/\r?\n/).length - 1;
+      for (const byte of buffer) {
+        if (byte === 10) newlinesFound += 1;
+      }
+      chunks.unshift(buffer);
+    }
+
+    let content = new TextDecoder('utf-8').decode(Buffer.concat(chunks));
+    // Первая строка может быть обрезана границей куска — выбрасываем её.
+    if (position > 0) {
+      const firstNewline = content.indexOf('\n');
+      content = firstNewline >= 0 ? content.slice(firstNewline + 1) : '';
     }
 
     const lines = content
@@ -110,51 +179,58 @@ export function readLastLinesFromFile(filePath, lineLimit, getLogsDir) {
 
     return {
       lines,
-      size: stats.size,
-      truncated: false
+      size: findLastCompleteLineOffset(fd, stats.size),
+      truncated: position > 0
     };
   } finally {
     fs.closeSync(fd);
   }
 }
 
-export function readLinesFromOffset(filePath, offset, getLogsDir) {
+export function readLinesFromOffset(filePath, offset, lineLimit, getLogsDir) {
   const safeOffset = Math.max(0, parsePositiveInt(offset, 0));
+  const safeLimit = clampInt(parsePositiveInt(lineLimit, SERVICE_LOGS_DEFAULT_LINES), 1, SERVICE_LOGS_MAX_LINES);
   const safeFilePath = validateServiceLogFilePath(filePath, getLogsDir);
   const fd = fs.openSync(safeFilePath, 'r');
 
   try {
     const stats = fs.fstatSync(fd);
-    if (safeOffset >= stats.size) {
-      return { lines: [], size: stats.size, truncated: false, reset: false };
+    const endOffset = findLastCompleteLineOffset(fd, stats.size);
+    if (endOffset <= safeOffset) {
+      return { lines: [], size: Math.max(safeOffset, endOffset), truncated: false, reset: false };
     }
 
     let startOffset = safeOffset;
     let truncated = false;
-    const unreadBytes = stats.size - startOffset;
-
-    if (unreadBytes > SERVICE_LOGS_MAX_CHUNK_BYTES) {
-      startOffset = stats.size - SERVICE_LOGS_MAX_CHUNK_BYTES;
+    if (endOffset - startOffset > SERVICE_LOGS_MAX_CHUNK_BYTES) {
+      startOffset = endOffset - SERVICE_LOGS_MAX_CHUNK_BYTES;
       truncated = true;
     }
 
-    const bytesToRead = stats.size - startOffset;
+    startOffset = alignToLineStart(fd, startOffset, endOffset);
+    const bytesToRead = endOffset - startOffset;
     if (bytesToRead <= 0) {
-      return { lines: [], size: stats.size, truncated, reset: false };
+      return { lines: [], size: endOffset, truncated, reset: false };
     }
 
     const buffer = Buffer.alloc(bytesToRead);
     fs.readSync(fd, buffer, 0, bytesToRead, startOffset);
+    const text = buffer.toString('utf8');
 
-    const lines = buffer
-      .toString('utf8')
-      .split(/\r?\n/)
-      .map((line) => line.trimEnd())
-      .filter((line) => line.length > 0);
+    const lines = [];
+    let consumed = 0;
+    for (const segment of text.split(/(?<=\n)/)) {
+      // Неполная последняя строка останется для следующего опроса.
+      if (!segment.endsWith('\n')) continue;
+      consumed += Buffer.byteLength(segment, 'utf8');
+      const line = segment.replace(/\r?\n$/, '').trimEnd();
+      if (line) lines.push(line);
+      if (lines.length >= safeLimit) break;
+    }
 
     return {
       lines,
-      size: stats.size,
+      size: startOffset + consumed,
       truncated,
       reset: false
     };

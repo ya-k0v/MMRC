@@ -11,7 +11,8 @@ jest.unstable_mockModule('../../public/js/admin/auth.js', () => ({
 }));
 
 jest.unstable_mockModule('../../public/js/admin/notifications-modal.js', () => ({
-  mountNotificationsSection: jest.fn()
+  mountNotificationsSection: jest.fn(),
+  closeNotification: jest.fn(async () => {})
 }));
 
 const { createSidebar } = await import('../../public/js/admin/sidebar.js');

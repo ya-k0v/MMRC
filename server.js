@@ -418,6 +418,10 @@ app.get('/internal/metrics', (req, res) => {
 });
 
 // Admin API (установка APK, настройки, обслуживание БД и др.)
+// Лимитер монтируем один раз на весь префикс: два router-а раньше вызывали
+// его дважды на каждый запрос и вдвое быстрее уходили в 429.
+app.use('/api/admin', adminLimiter);
+
 const adminRouter = createAdminRouter({
   io,
   devices,
@@ -429,7 +433,7 @@ const adminRouter = createAdminRouter({
   saveDevicesToDB,
   updateDeviceFilesFromDB
 });
-app.use('/api/admin', adminLimiter, adminRouter);
+app.use('/api/admin', adminRouter);
 
 // ========================================
 // FAVICON HANDLING
@@ -514,7 +518,7 @@ const adminEndpoints = createAdminEndpoints({
   io,
   manualRestartDelayMs: MANUAL_RESTART_DELAY_MS
 });
-app.use('/api/admin', adminLimiter, adminEndpoints);
+app.use('/api/admin', adminEndpoints);
 
 // Модули (только admin)
 const modulesRouter = createModulesRouter();

@@ -8,7 +8,7 @@ import { authenticateAgainstLdap } from '../auth/ldap-auth.js';
 import {
   generateAccessToken, generateRefreshToken, requireAuth, requireAdmin, requireManager, generateCsrfToken, requireCsrfToken
 } from '../middleware/auth.js';
-import { authLimiter, createLimiter, deleteLimiter, setupLimiter, adminLimiter } from '../middleware/rate-limit.js';
+import { authLimiter, createLimiter, deleteLimiter, setupLimiter } from '../middleware/rate-limit.js';
 import { auditLog, AuditAction } from '../utils/audit-logger.js';
 import { createModuleLogger, logAuth, logSecurity } from '../utils/logger.js';
 const logger = createModuleLogger('auth');

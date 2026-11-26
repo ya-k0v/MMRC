@@ -2910,7 +2910,28 @@ button.meta-lg.android-pastel {
   border-top: var(--border);
   display: flex;
   gap: var(--space-sm);
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.notification-pagination {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  color: var(--muted);
+}
+
+.notification-pagination__label {
+  min-width: 6ch;
+  text-align: center;
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.notification-pagination .notification-btn-icon:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 /* Прогресс копирования/переноса папки между устройствами.

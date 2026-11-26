@@ -95,11 +95,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project dir — для доступа к compose-файлу при обновлении.
       - .:/host:ro
-    # Запрет повышения привилегий через setuid/setcap внутри контейнера.
-    # nginx (мастер root → воркеры www-data), tini и docker CLI это не требуют,
-    # а post-pull-sync.sh запускается с SKIP_SERVICE_RESTART=1 (sudo не достигается).
-    security_opt:
-      - no-new-privileges:true
+    # Запрет повышения привилегий уже задан в базовом docker-compose.yml;
+    # повтор в override давал дубликат security_opt при docker compose config.
     # Минимальный набор capabilities: docker CLI ходит в демон по unix-сокету,
     # adb — по TCP, nginx нужен только NET_BIND_SERVICE для 80/443.
     # Если бинарник запросит отсутствующую cap — контейнер упадёт с ошибкой запуска,
@@ -337,11 +334,7 @@ services:
       # soffice в образ не входит). Без них удалите строку и INCLUDE_DOCKER_CLI.
       - /var/run/docker.sock:/var/run/docker.sock
       - .:/host:ro
-    # Запрет повышения привилегий через setuid/setcap внутри контейнера.
-    # nginx (мастер root → воркеры www-data), tini и docker CLI это не требуют,
-    # а post-pull-sync.sh запускается с SKIP_SERVICE_RESTART=1 (sudo не достигается).
-    security_opt:
-      - no-new-privileges:true
+    # security_opt наследуется от базового сервиса; дубликат ломал config.
     cap_drop:
       - ALL
     cap_add:

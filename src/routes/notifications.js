@@ -24,11 +24,32 @@ export function createNotificationsRouter() {
     return String(value || '').trim().slice(0, maxLen);
   }
 
-  // Получить все активные уведомления
+  /** Параметры страницы: злонамеренные значения не должны ломать ответ. */
+  function parsePagination(query) {
+    const rawPage = Math.floor(Number(query?.page));
+    const rawSize = Math.floor(Number(query?.pageSize));
+    return {
+      page: Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1,
+      pageSize: Number.isFinite(rawSize) && rawSize > 0 ? Math.min(rawSize, 100) : 20
+    };
+  }
+
+  function sendPage(res, result) {
+    res.json({
+      notifications: result.items,
+      count: result.items.length,
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+      totalPages: result.totalPages
+    });
+  }
+
+  // Получить страницу активных уведомлений
   router.get('/', requireAuth, (req, res) => {
     try {
-      const notifications = notificationsManager.getActive();
-      res.json({ notifications, count: notifications.length });
+      const { page, pageSize } = parsePagination(req.query);
+      sendPage(res, notificationsManager.getPage({ page, pageSize }));
     } catch (error) {
       logger.error('[Notifications API] Error getting notifications:', {
         error: error.message,
@@ -38,11 +59,11 @@ export function createNotificationsRouter() {
     }
   });
 
-  // Получить все уведомления (включая прочитанные)
+  // Получить страницу всех уведомлений (включая прочитанные)
   router.get('/all', requireAuth, (req, res) => {
     try {
-      const notifications = notificationsManager.getAll();
-      res.json({ notifications, count: notifications.length });
+      const { page, pageSize } = parsePagination(req.query);
+      sendPage(res, notificationsManager.getPage({ page, pageSize, includeAcknowledged: true }));
     } catch (error) {
       logger.error('[Notifications API] Error getting all notifications:', {
         error: error.message,
@@ -124,6 +145,21 @@ export function createNotificationsRouter() {
       res.json({ ok: true, id, notification });
     } catch (error) {
       logger.error('[Notifications API] Error reporting notification:', {
+        error: error.message,
+        stack: error.stack,
+        user: req.user?.username
+      });
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Закрыть все уведомления одним запросом (без N POST и 429 от лимитера)
+  router.post('/acknowledge-all', requireAuth, (req, res) => {
+    try {
+      const acknowledged = notificationsManager.acknowledgeAll();
+      res.json({ success: true, acknowledged });
+    } catch (error) {
+      logger.error('[Notifications API] Error acknowledging all notifications:', {
         error: error.message,
         stack: error.stack,
         user: req.user?.username

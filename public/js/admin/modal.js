@@ -387,18 +387,31 @@ function openServiceLogsModal(adminFetch) {
       module: ''
     };
 
-    const logSocket = io('/service-logs', { transports: ['websocket'] });
+    const logSocket = io('/service-logs', {
+      transports: ['websocket'],
+      auth: { token: localStorage.getItem('accessToken') }
+    });
     serviceLogsViewerState.socket = logSocket;
 
-    logSocket.on('ready', () => {
-      logSocket.emit('logs/subscribe', {
-        level: serviceLogsViewerState.level,
-        module: serviceLogsViewerState.module
+    const subscribeToServiceLogs = () => {
+      const state = serviceLogsViewerState;
+      if (!state?.socket) return;
+      state.socket.emit('logs/subscribe', {
+        level: state.level,
+        module: state.module,
+        lines: state.linesLimit
       });
-    });
+    };
+
+    logSocket.on('ready', subscribeToServiceLogs);
 
     logSocket.on('connect_error', (err) => {
       setServiceLogsStatus(`Ошибка WS: ${err.message}`, 'var(--danger)');
+    });
+
+    // Сервер шлёт 'error' при переполнении лимита зрителей/невалидном токене.
+    logSocket.on('error', (err) => {
+      setServiceLogsStatus(`Ошибка WS: ${err?.message || 'Отклонено'}`, 'var(--danger)');
     });
 
     autoscrollEl.onchange = () => {
@@ -411,10 +424,7 @@ function openServiceLogsModal(adminFetch) {
       if (!serviceLogsViewerState || !serviceLogsViewerState.socket) return;
       serviceLogsViewerState.level = levelSelect.value;
       serviceLogsViewerState.module = moduleSelect.value;
-      serviceLogsViewerState.socket.emit('logs/subscribe', {
-        level: serviceLogsViewerState.level,
-        module: serviceLogsViewerState.module
-      });
+      subscribeToServiceLogs();
     }
 
     levelSelect.onchange = onFilterChange;
@@ -423,15 +433,10 @@ function openServiceLogsModal(adminFetch) {
     linesSelectEl.onchange = () => {
       if (!serviceLogsViewerState) return;
       serviceLogsViewerState.linesLimit = clampServiceLogsLines(linesSelectEl.value);
+      subscribeToServiceLogs();
     };
 
-    refreshBtn.onclick = () => {
-      if (!serviceLogsViewerState || !serviceLogsViewerState.socket) return;
-      serviceLogsViewerState.socket.emit('logs/subscribe', {
-        level: serviceLogsViewerState.level,
-        module: serviceLogsViewerState.module
-      });
-    };
+    refreshBtn.onclick = subscribeToServiceLogs;
 
     clearBtn.onclick = () => {
       outputEl.innerHTML = '';

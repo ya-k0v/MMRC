@@ -1814,8 +1814,15 @@ function createLogsSection() {
       }
       const resp = await adminFetch(`/api/admin/service-logs?${params}`);
       if (!resp.ok) {
-        output.textContent = 'Ошибка загрузки логов';
-        return;
+        // Не затираем уже показанные логи из-за одного неудачного опроса.
+        // 429 больше не должен превращать рабочий просмотр в «Ошибка загрузки».
+        const infoEl = ql('#lgInfo');
+        if (infoEl) {
+          infoEl.textContent = resp.status === 429
+            ? 'Лимит запросов — повторю на следующем опросе'
+            : `Ошибка загрузки логов (HTTP ${resp.status})`;
+        }
+        return false;
       }
       const result = await resp.json();
       const arr = Array.isArray(result.lines) ? result.lines : [];
@@ -1851,8 +1858,10 @@ function createLogsSection() {
       if (ql('#lgAutoscroll').checked) {
         output.scrollTop = output.scrollHeight;
       }
+      return true;
     } catch (e) {
       if (initial) output.textContent = 'Ошибка соединения';
+      return false;
     }
   }
 
@@ -1900,11 +1909,12 @@ function createLogsSection() {
     ql('#lgPause').title = paused ? 'Возобновить' : 'Пауза';
   };
 
-  // Initial load + auto-poll
+  // Initial load + auto-poll. Раньше опрос каждые 2 с упирался в adminLimiter
+  // (100 запросов/15 мин) у внешних админов и раздел показывал ошибку.
   fetchLogs(true);
   logsPollTimer = setInterval(() => {
     if (!paused) fetchLogs(false);
-  }, 2000);
+  }, 5000);
 
   // Copy
   ql('#lgCopy').onclick = () => {

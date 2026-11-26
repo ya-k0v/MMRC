@@ -98,6 +98,58 @@ describe('NotificationsManager с хранилищем', () => {
     expect(store.persisted[0].acknowledged).toBe(true);
   });
 
+  test('getPage режет список на страницы и не смешивает прочитанные', async () => {
+    const manager = new NotificationsManager();
+    await manager.init(new FakeStore());
+    const now = Date.now();
+    for (let i = 0; i < 5; i += 1) {
+      const id = manager.add('test', 'info', `T${i}`, 'M', {});
+      // add использует.current timestamp; упорядочиваем через update,
+      // чтобы страницы были предсказуемыми.
+      manager.update(id, { timestamp: new Date(now + i).toISOString() }, 'updated');
+    }
+    manager.acknowledge(manager.getActive()[0].id);
+
+    const first = manager.getPage({ page: 1, pageSize: 2 });
+    expect(first.items).toHaveLength(2);
+    expect(first.total).toBe(4);
+    expect(first.totalPages).toBe(2);
+    expect(first.page).toBe(1);
+
+    const second = manager.getPage({ page: 2, pageSize: 2 });
+    expect(second.items).toHaveLength(2);
+    expect(second.items.some(item => item.id === first.items[0].id)).toBe(false);
+
+    // Запрос за границей списка возвращает последнюю существующую страницу.
+    expect(manager.getPage({ page: 99, pageSize: 2 }).page).toBe(2);
+    expect(manager.getPage({ page: 1, pageSize: 2, includeAcknowledged: true }).total).toBe(5);
+  });
+
+  test('acknowledgeAll закрывает все одним проходом и одним событием', async () => {
+    const manager = new NotificationsManager();
+    const store = new FakeStore();
+    await manager.init(store);
+    const listener = jest.fn();
+    manager.subscribe(listener);
+
+    for (let i = 0; i < 3; i += 1) {
+      manager.add('test', 'info', `T${i}`, 'M', {});
+    }
+    store.persisted.length = 0;
+    listener.mockClear(); // add() уже рассылал 'new'
+
+    expect(manager.acknowledgeAll()).toBe(3);
+    expect(manager.getUnreadCount()).toBe(0);
+    expect(store.persisted).toHaveLength(3);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener.mock.calls[0][0].action).toBe('acknowledged-all');
+    expect(listener.mock.calls[0][0].notification.ids).toHaveLength(3);
+
+    // Повторный вызов не шлёт пустых событий.
+    expect(manager.acknowledgeAll()).toBe(0);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
   test('remove и removeByKey забывают уведомление в хранилище', async () => {
     const manager = new NotificationsManager();
     const store = new FakeStore();

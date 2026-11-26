@@ -1,10 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createModuleLogger } from '../utils/logger.js';
+import { verifyAccessToken } from '../middleware/auth.js';
 import {
   resolveLatestServiceLogFilePath,
   readLastLinesFromFile,
-  SERVICE_LOG_LEVELS
+  readLinesFromOffset,
+  SERVICE_LOG_LEVELS,
+  SERVICE_LOGS_MAX_LINES
 } from '../services/service-logs.js';
 
 const logger = createModuleLogger('socket');
@@ -22,18 +25,23 @@ function filterByModule(lines, module) {
 }
 
 export function setupServiceLogsHandler(io, deps) {
-  const { requireAuth, getLogsDir } = deps;
+  const { getLogsDir } = deps;
 
   const nsp = io.of('/service-logs');
 
+  // requireAuth — async Express-мидлвар и для socket.request бесполезен:
+  // он проверял auth.user сразу же, до await db.get(), и всегда отклонял
+  // соединение. Берём токен из handshake и проверяем JWT напрямую.
   nsp.use((socket, next) => {
     try {
-      const auth = socket.request;
-      requireAuth(auth, {}, () => {});
-      if (!auth.user) {
+      const token = socket.handshake?.auth?.token
+        || socket.handshake?.auth?.accessToken
+        || (socket.request?.headers?.authorization || '').replace(/^Bearer\s+/i, '');
+      const user = token ? verifyAccessToken(token) : null;
+      if (!user || !['admin', 'hero_admin'].includes(user.role)) {
         return next(new Error('Unauthorized'));
       }
-      socket.user = auth.user;
+      socket.user = user;
       next();
     } catch {
       next(new Error('Unauthorized'));
@@ -55,6 +63,7 @@ export function setupServiceLogsHandler(io, deps) {
     let lastFileName = '';
     let currentLevel = 'combined';
     let currentModule = '';
+    let currentLines = SERVICE_LOGS_MAX_LINES;
 
     const viewerState = { socket, level: currentLevel, module: currentModule };
     activeViewers.set(socket.id, viewerState);
@@ -72,44 +81,19 @@ export function setupServiceLogsHandler(io, deps) {
           socket.emit('logs/reset', { fileName });
         }
 
-        if (lastOffset === 0) {
-          const snapshot = readLastLinesFromFile(logFilePath, 100, getLogsDir);
-          lastOffset = snapshot.size;
-          let lines = snapshot.lines;
-          if (currentModule) {
-            lines = filterByModule(lines, currentModule);
-          }
-          if (lines.length) {
-            socket.emit('logs/chunk', { lines, fileName, offset: lastOffset });
-          }
-          return;
+        const snapshot = lastOffset === 0
+          ? readLastLinesFromFile(logFilePath, currentLines, getLogsDir)
+          : readLinesFromOffset(logFilePath, lastOffset, currentLines, getLogsDir);
+
+        // offset должен указывать на начало следующей полной строки,
+        // иначе порция за порцией будут ломаться UTF-8 и переносы строк.
+        lastOffset = snapshot.size;
+        let lines = snapshot.lines;
+        if (currentModule) {
+          lines = filterByModule(lines, currentModule);
         }
-
-        const fd = fs.openSync(logFilePath, 'r');
-        try {
-          const stats = fs.fstatSync(fd);
-          if (stats.size <= lastOffset) return;
-
-          const bytesToRead = stats.size - lastOffset;
-          const buffer = Buffer.alloc(bytesToRead);
-          fs.readSync(fd, buffer, 0, bytesToRead, lastOffset);
-          lastOffset = stats.size;
-
-          const newLines = buffer.toString('utf8')
-            .split(/\r?\n/)
-            .map(l => l.trimEnd())
-            .filter(l => l.length > 0);
-
-          if (currentModule) {
-            const filtered = filterByModule(newLines, currentModule);
-            if (filtered.length) {
-              socket.emit('logs/chunk', { lines: filtered, fileName, offset: lastOffset });
-            }
-          } else if (newLines.length) {
-            socket.emit('logs/chunk', { lines: newLines, fileName, offset: lastOffset });
-          }
-        } finally {
-          fs.closeSync(fd);
+        if (lines.length) {
+          socket.emit('logs/chunk', { lines, fileName, offset: lastOffset });
         }
       } catch (error) {
         logger.error('[ServiceLogs] Error reading logs', { error: error.message });
@@ -123,6 +107,9 @@ export function setupServiceLogsHandler(io, deps) {
       if (typeof opts.module === 'string') {
         currentModule = opts.module;
       }
+      if (Number.isFinite(Number(opts.lines)) && Number(opts.lines) > 0) {
+        currentLines = Math.min(SERVICE_LOGS_MAX_LINES, Math.floor(Number(opts.lines)));
+      }
 
       lastOffset = 0;
       lastFileName = '';
@@ -131,6 +118,11 @@ export function setupServiceLogsHandler(io, deps) {
       if (pollTimer) clearInterval(pollTimer);
       pollTimer = setInterval(sendNewLines, POLL_INTERVAL_MS);
 
+      // Повторная подписка не должна оставлять старый fs.watch висящим.
+      if (watcher) {
+        watcher.close();
+        watcher = null;
+      }
       try {
         const logFilePath = resolveLatestServiceLogFilePath(currentLevel, getLogsDir);
         if (logFilePath) {

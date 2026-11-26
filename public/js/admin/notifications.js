@@ -4,6 +4,7 @@
  */
 
 import { adminFetch } from './auth.js';
+import { closeNotification } from './notifications-modal.js';
 import { getCloseIcon } from '../shared/svg-icons.js';
 import { getSeverityInfo } from '../shared/severity.js';
 
@@ -113,6 +114,11 @@ function subscribeToNotifications() {
     applyCount(count);
   });
   
+  // Все уведомления закрыты одним запросом (новый bulk-endpoint)
+  socket.on('notifications:acknowledged-all', ({ unreadCount: count }) => {
+    applyCount(count);
+  });
+
   // Уведомление удалено
   socket.on('notification:removed', ({ unreadCount: count }) => {
     applyCount(count);
@@ -268,7 +274,14 @@ function showToastNotification(notification) {
   closeButton.className = 'notification-toast__close';
   closeButton.setAttribute('aria-label', 'Закрыть');
   closeButton.innerHTML = getCloseIcon(16);
-  closeButton.onclick = () => toast.remove();
+  closeButton.onclick = async (event) => {
+    event.stopPropagation();
+    closeButton.disabled = true;
+    // Закрытие тоста должно закрывать и уведомление на сервере, иначе
+    // счётчик и список снова покажут его после перезагрузки.
+    await closeNotification(notification.id);
+    toast.remove();
+  };
 
   container.appendChild(icon);
   container.appendChild(contentDiv);

@@ -10,8 +10,11 @@ import { jest } from '@jest/globals';
 
 // showToastNotification дёргает showNotificationsModal при клике — мокаем модуль
 const mockShowNotificationsModal = jest.fn();
+const mockCloseNotification = jest.fn(async () => {});
 jest.unstable_mockModule('../../public/js/admin/notifications-modal.js', () => ({
-  showNotificationsModal: (...args) => mockShowNotificationsModal(...args)
+  showNotificationsModal: (...args) => mockShowNotificationsModal(...args),
+  closeNotification: (...args) => mockCloseNotification(...args),
+  mountNotificationsSection: jest.fn()
 }));
 
 const { showToastNotification } = await import('../../public/js/admin/notifications.js');
@@ -19,6 +22,7 @@ const { showToastNotification } = await import('../../public/js/admin/notificati
 beforeEach(() => {
   jest.useFakeTimers();
   document.body.innerHTML = '';
+  mockCloseNotification.mockClear();
 });
 afterEach(() => {
   jest.useRealTimers();
@@ -86,4 +90,14 @@ test('клик по кнопке внутри тоста не удаляет е�
   el.appendChild(btn);
   el.onclick({ target: btn });
   expect(el.isConnected).toBe(true);
+});
+
+test('кнопка закрытия тоста закрывает уведомление и на сервере', async () => {
+  fire({ id: 'n6', severity: 'info' });
+  const el = toast();
+  el.querySelector('.notification-toast__close').click();
+  await Promise.resolve();
+
+  expect(mockCloseNotification).toHaveBeenCalledWith('n6');
+  expect(toast()).toBeNull();
 });

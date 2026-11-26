@@ -35,6 +35,17 @@ function neverSkip() {
 }
 
 /**
+ * Опрос логов админки — read-only и частый (раз в несколько секунд).
+ * Его не надо засчитывать в общий admin-лимит: 100 запросов/15 мин
+ * заканчивались через пару минут и раздел показывал «Ошибка загрузки».
+ * Глобальный /api-лимитер и nginx limit_req остаются на месте.
+ */
+function isServiceLogsPoll(req) {
+  const pathname = req.originalUrl || req.url || '';
+  return /\/service-logs\/?(?:\?|$)/.test(pathname);
+}
+
+/**
  * Глобальный rate limiter для всех API запросов
  * Применяется только к внешним IP (не локальная сеть)
  */
@@ -83,7 +94,7 @@ export const adminLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
   message: { error: 'Too many admin requests, please try again later' },
-  skip: isLocalIP,
+  skip: (req) => isLocalIP(req) || isServiceLogsPoll(req),
   validate: { trustProxy: false }
 });
 
@@ -97,7 +108,7 @@ export const apiSpeedLimiter = slowDown({
   delayMs: () => 500,
   maxDelayMs: 20000,
   validate: { delayMs: false },
-  skip: isLocalIP
+  skip: (req) => isLocalIP(req) || isServiceLogsPoll(req)
 });
 
 /**

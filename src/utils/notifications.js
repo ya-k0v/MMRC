@@ -186,6 +186,36 @@ export class NotificationsManager {
   }
 
   /**
+   * Получить одну страницу уведомлений.
+   *
+   * Раньше API отдавало весь список сразу: при 100 уведомлениях это был
+   * один большой ответ плюс N-запросов «очистить все» на клиенте. Теперь
+   * список режется на страницы, а unread-count считается отдельно и не
+   * зависит от размера страницы.
+   *
+   * @param {object} [options]
+   * @param {number} [options.page=1]
+   * @param {number} [options.pageSize=20]
+   * @param {boolean} [options.includeAcknowledged=false]
+   * @returns {{items: Array, total: number, page: number, pageSize: number, totalPages: number}}
+   */
+  getPage({ page = 1, pageSize = 20, includeAcknowledged = false } = {}) {
+    const all = includeAcknowledged ? this.getAll() : this.getActive();
+    const total = all.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const start = (safePage - 1) * pageSize;
+
+    return {
+      items: all.slice(start, start + pageSize),
+      total,
+      page: safePage,
+      pageSize,
+      totalPages
+    };
+  }
+
+  /**
    * Получить уведомление по ID
    * @param {string} id
    * @returns {Object|null}
@@ -316,6 +346,29 @@ export class NotificationsManager {
       return true;
     }
     return false;
+  }
+
+  /**
+   * Отметить все непрочитанные уведомления как прочитанные одним действием.
+   *
+   * Клиент раньше дёргал acknowledge N раз parallel — на 100 уведомлений
+   * это 100 HTTP-запросов и 429 от nginx (burst 20, 10 r/s). Здесь одна
+   * операция в памяти и одно широковещательное событие вместо N.
+   *
+   * @returns {number} Сколько уведомлений закрыто
+   */
+  acknowledgeAll() {
+    const active = this.getActive();
+    if (!active.length) return 0;
+
+    for (const notification of active) {
+      notification.acknowledged = true;
+      this._persist(notification);
+    }
+
+    // Одно событие на всю пачку: сокет-хендлер сам посчитает unreadCount.
+    this.notifyListeners({ ids: active.map(n => n.id) }, 'acknowledged-all');
+    return active.length;
   }
 
   /**

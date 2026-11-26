@@ -1546,7 +1546,7 @@ export function createAdminEndpoints({
         });
       }
 
-      const chunkProbe = readAndFilter(readLinesFromOffset, logFilePath, requestedOffset, getLogsDir);
+      const chunkProbe = readAndFilter(readLinesFromOffset, logFilePath, requestedOffset, requestedLines, getLogsDir);
       const fileChanged = Boolean(requestedFileName) && requestedFileName !== fileName;
       const offsetOutOfRange = requestedOffset > chunkProbe.size;
 
