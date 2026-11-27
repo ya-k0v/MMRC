@@ -44,6 +44,7 @@ function resolveCtx(ctx) {
     sortDevices: c.sortDevices,
     openDevice: c.openDevice,
     renderFilesPane: c.renderFilesPane,
+    onDeviceSelected: c.onDeviceSelected,
     adminFetch: c.adminFetch
   };
 }
@@ -157,6 +158,9 @@ function bindTileEvents(li, ctx) {
     const currentDeviceId = ctx.getCurrentDeviceId();
     ctx.openDevice(targetDeviceId);
     ctx.renderFilesPane(targetDeviceId);
+    // Только явный выбор плитки переводит планшет/телефон в режим деталей.
+    // Автовыбор при старте и socket-события openDevice не вызывают этот хук.
+    if (typeof ctx.onDeviceSelected === 'function') ctx.onDeviceSelected(targetDeviceId);
     // Активная плитка обновляется точечно, страница не перерисовывается
     renderTVList(ctx);
   };

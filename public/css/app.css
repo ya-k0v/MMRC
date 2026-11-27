@@ -89,6 +89,9 @@ body {
   --control-height-touch: 40px;
   --control-height-sm-touch: 36px;
   --control-height-icon-touch: 36px;
+  /* Единый тап-таргет для планшетов и сенсорных экранов. Отдельный токен,
+     чтобы не менять каноническую шкалу 40/36/36 и регрессионные проверки. */
+  --touch-control-size: 44px;
   --control-min-width: 72px;
   --radius-pill: 999px;
   --focus-outline-width: 2px;
@@ -3092,6 +3095,35 @@ body.login-page .login-shell {
 body.login-page .login-card {
   max-width: 400px;
   width: 100%;
+}
+
+/* Форма начальной настройки выше экрана телефона: разрешаем прокрутку
+   только страницы входа. Исходное центрирование карточки не меняем —
+   body остаётся сеткой, как и на остальных страницах. */
+body.login-page {
+  height: auto;
+  min-height: 100dvh;
+  overflow: auto;
+}
+
+body.login-page .login-shell {
+  min-height: 100dvh;
+}
+
+.form-error {
+  min-height: 1.25em;
+}
+
+.form-error:empty {
+  display: none;
+}
+
+@media (pointer: coarse), (max-width: 767px) {
+  body.login-page .input,
+  body.login-page button {
+    min-height: 44px;
+    height: auto;
+  }
 }
 
 .form-stack {

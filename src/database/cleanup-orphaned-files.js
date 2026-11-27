@@ -5,6 +5,7 @@
 
 import { getDatabase } from './database.js';
 import { getDevicesPath, getDataRoot } from '../config/settings-manager.js';
+import { isLocalStorage } from '../storage/sync.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createModuleLogger } from '../utils/logger.js';
@@ -151,7 +152,10 @@ export async function cleanupOrphanedFiles({ dryRun = false, excludeExtensions =
     for (const file of orphanedFiles) {
       try {
         if (!dryRun) {
-          if (storage) {
+          // Для локального бэкенда storage.delete() удаляет тот же самый
+          // файл, что и unlink ниже: повтор приводил к ENOENT и deleted: 0,
+          // хотя файл уже исчезал. Объект в S3 удаляем отдельно.
+          if (storage && !isLocalStorage(storage)) {
             try {
               const root = getDataRoot();
               const rel = path.relative(root, path.resolve(file.filePath));

@@ -11,6 +11,8 @@ import {
   stopPowerControls,
   refreshPowerControlsLayout,
   refreshPlayerVersions,
+  loadApkVersionData,
+  rememberApkVersionData,
   syncPowerDevices,
   setPowerBusy,
   getPlayerUpdateTargets,
@@ -83,6 +85,13 @@ function renderApkTargets(targets, version) {
   }
 }
 
+// Портретный планшет и телефон работают как master-detail: список виден
+// первым, а панель устройства открывается по явному выбору плитки. Флаг
+// на body не влияет на desktop — все правила живут в медиазапросах.
+function setDeviceDetailView(open) {
+  document.body.classList.toggle('device-detail-open', Boolean(open));
+}
+
 // Контекст списка устройств. Передаётся геттерами, а не значениями,
 // чтобы обработчики и замыкания плиток всегда видели актуальное состояние
 // и не работали со снимком на момент рендера.
@@ -95,6 +104,7 @@ const deviceListCtx = {
   sortDevices,
   openDevice,
   renderFilesPane,
+  onDeviceSelected: () => setDeviceDetailView(true),
   adminFetch
 };
 
@@ -297,8 +307,13 @@ function handleSidebarNavigation(section, action) {
   // Удаляем старые секции
   grid.querySelectorAll('.admin-section').forEach(el => el.remove());
 
+  // Секции неdevices занимают одну колонку: трёхколоночная сетка устройств
+  // оставляла фиксированные minmax-треки и растягивала таблицы/настройки.
+  grid.classList.toggle('single-pane', section !== 'devices');
+
   switch (section) {
     case 'devices':
+      setDeviceDetailView(false);
       if (devicesPane) devicesPane.style.display = '';
       if (detailPane) detailPane.style.display = '';
       if (filesPane) filesPane.style.display = '';
@@ -322,7 +337,7 @@ function handleSidebarNavigation(section, action) {
 function createSectionWrapper(title, icon) {
   const el = document.createElement('div');
   el.className = 'admin-section card';
-  el.style.cssText = 'padding:var(--space-md); overflow-y:auto; height:100%;';
+  el.style.cssText = 'padding:var(--space-md); min-height:0; height:100%; overflow:hidden;';
   el.innerHTML = `
     <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-md);">
       ${icon}
@@ -336,7 +351,7 @@ function createSectionWrapper(title, icon) {
 function createSettingsSection() {
   const el = createSectionWrapper('Настройки сервера', getSettingsIcon(24));
   const body = el.querySelector('.admin-section-body');
-  body.style.cssText = 'display:flex; flex-direction:column; min-height:0; height:100%;';
+  body.style.cssText = 'display:flex; flex-direction:column; flex:1 1 auto; min-height:0;';
   body.innerHTML = '<div class="meta" style="padding:var(--space-md); text-align:center; color:var(--muted);">Загрузка...</div>';
 
   adminFetch('/api/admin/settings/extended').then(async r => {
@@ -585,19 +600,22 @@ function createSettingsSection() {
           <div class="st-card-b">
             <div id="stApkSummary" class="st-apk-summary"></div>
 
-            <div class="st-sub">Установка на устройство</div>
-            <div id="stApkVersion" class="meta st-actions">Загрузка...</div>
+            <!-- Версия слева, ручная установка справа от неё; лишней подписи
+                 и отдельной строки под полями больше нет. -->
+            <div class="st-apk-version-row">
+              <div id="stApkVersion" class="meta st-actions">Загрузка...</div>
+              <div class="st-apk-install-side">
+                <div class="st-actions st-apk-install-fields">
+                  <input id="stApkIp" class="input st-input-sm" placeholder="IP" aria-label="IP-адрес устройства" />
+                  <input id="stApkPort" class="input st-input-xs" placeholder="Порт" value="5555" aria-label="Порт ADB" />
+                  <input id="stApkId" class="input st-input-md" placeholder="ID устройства" aria-label="ID устройства" />
+                  <input id="stApkName" class="input st-input-sm" placeholder="Имя" aria-label="Имя устройства" />
+                  <button id="stApkInstall" class="primary">${getDownloadIcon(14)} Установить</button>
+                </div>
+                <span id="stApkStatus" class="st-status"></span>
+              </div>
+            </div>
             <div id="stApkTargets" class="st-apk-targets"></div>
-            <div class="st-actions">
-              <input id="stApkIp" class="input st-input-sm" placeholder="IP" />
-              <input id="stApkPort" class="input st-input-xs" placeholder="Порт" value="5555" />
-              <input id="stApkId" class="input st-input-md" placeholder="ID устройства" />
-              <input id="stApkName" class="input st-input-sm" placeholder="Имя" />
-              <button id="stApkInstall" class="primary">${getDownloadIcon(14)} Установить</button>
-            </div>
-            <div class="st-actions">
-              <span id="stApkStatus" class="st-status"></span>
-            </div>
           </div>
         </div>
 
@@ -793,9 +811,16 @@ function createSettingsSection() {
       const errCount = Array.isArray(result.errors) ? result.errors.length : (Number(result.errors) || 0);
       const errSuffix = errCount > 0 ? ` Ошибок: ${errCount}.` : '';
       if (kind === 'check') {
-        if (result.missingOnDisk > 0) return `Проверено файлов: ${result.checked}. Отсутствуют на диске: ${result.missingOnDisk}.${errSuffix}`;
-        if (result.missingInDB > 0) return `Проверено файлов: ${result.checked}. Лишних записей в БД: ${result.missingInDB}.${errSuffix}`;
-        return `Проверено файлов: ${result.checked}. Проблем не обнаружено.`;
+        const missingDisk = Number(result.missingOnDisk) || 0;
+        const missingDb = Number(result.missingInDB) || 0;
+        const issues = [];
+        if (missingDisk) issues.push(`Отсутствуют на диске: ${missingDisk}`);
+        if (missingDb) issues.push(`Файлов без записи в БД: ${missingDb}`);
+        if (errCount) issues.push(`Ошибок: ${errCount}`);
+        if (result.orphansUnavailable) issues.push(`Сироты недоступны: ${result.orphansUnavailable}`);
+        return issues.length
+          ? `Проверено файлов: ${result.checked}. ${issues.join('. ')}.`
+          : `Проверено файлов: ${result.checked}. Проблем не обнаружено.`;
       }
       if (kind === 'wal') {
         if (!result.success) return `Ошибка WAL: ${result.error || result.message || 'неизвестно'}`;
@@ -819,16 +844,25 @@ function createSettingsSection() {
       cleanMissing: 'Очищаю записи из БД...',
       cleanOrphaned: 'Очищаю осиротевшие файлы...'
     };
-    async function dbMaint(endpoint, kind, method = 'POST') {
+    async function dbMaint(endpoint, kind, method = 'POST', body = null) {
       if (dbMaintEl) { dbMaintEl.textContent = dbMaintBusy[kind] || 'Выполняю...'; dbMaintEl.style.color = 'var(--text-secondary)'; }
       try {
-        const opts = method === 'GET' ? {} : { method };
+        const opts = method === 'GET'
+          ? {}
+          : { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) };
         const r = await adminFetch(endpoint, opts);
         let result = {};
         try { result = await r.json(); } catch { /* нет тела ответа */ }
         if (!r.ok) throw new Error(result.error || 'Ошибка запроса');
         const text = fmtDbMaint(kind, result);
-        const color = (kind === 'wal' && !result.success) ? 'var(--danger)' : 'var(--success)';
+        const hasIssue = kind === 'check' && (
+          (Number(result.missingOnDisk) || 0) > 0 ||
+          (Number(result.missingInDB) || 0) > 0 ||
+          Boolean(result.orphansUnavailable)
+        );
+        const color = (kind === 'wal' && !result.success)
+          ? 'var(--danger)'
+          : hasIssue ? 'var(--warning)' : 'var(--success)';
         if (dbMaintEl) { dbMaintEl.textContent = text; dbMaintEl.style.color = color; }
       } catch (err) { if (dbMaintEl) { dbMaintEl.textContent = `Ошибка: ${err.message}`; dbMaintEl.style.color = 'var(--danger)'; } }
     }
@@ -844,7 +878,7 @@ function createSettingsSection() {
     const cleanupOrph = document.getElementById('stDbCleanupOrphaned');
     if (cleanupOrph) cleanupOrph.onclick = () => {
       const dryRun = !confirm('Удалить осиротевшие файлы? Нажмите OK для удаления, Cancel для сухого прогона.');
-      dbMaint(`/api/admin/database/cleanup-orphaned-files${dryRun ? '?dryRun=true' : ''}`, 'cleanOrphaned');
+      dbMaint('/api/admin/database/cleanup-orphaned-files', 'cleanOrphaned', 'POST', { dryRun });
     };
 
     // APK Version — выбор одной из последних версий релиза
@@ -893,16 +927,14 @@ function createSettingsSection() {
         el.appendChild(group);
       };
 
-      const load = async (preloaded = null) => {
+      const load = async (preloaded = null, force = false) => {
         if (preloaded) {
           data = preloaded;
+          rememberApkVersionData(data);
         } else {
-          try {
-            const r = await adminFetch('/api/admin/apk-version');
-            data = await r.json();
-          } catch {
-            data = { available: false, error: 'Ошибка соединения' };
-          }
+          // Повторное открытие раздела должно показывать кэш вкладки, а не
+          // инициировать новый запрос к серверу/GitHub.
+          data = await loadApkVersionData(adminFetch, { force });
         }
         render();
         return data;
@@ -941,7 +973,7 @@ function createSettingsSection() {
       // Версию могли поменять в другой вкладке или кнопкой «Скачать обновление».
       applyApkVersionFromSocket = async ({ version } = {}) => {
         if (!version) return;
-        await load();
+        await load(null, true);
         await refreshPlayerVersions(adminFetch, data);
       };
 
@@ -990,7 +1022,7 @@ function createSettingsSection() {
     })();
 
     // Управление питанием Android-приставок
-    initPowerControls({ devices: devicesCache, adminFetch });
+    initPowerControls({ devices: devicesCache, adminFetch, useApkCache: true });
     initPowerConstructor({ devices: devicesCache, adminFetch });
 
     // System monitor (CPU, RAM, Disk bars)
@@ -1025,15 +1057,16 @@ function createUsersSection() {
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
   `);
   const body = el.querySelector('.admin-section-body');
-  body.style.cssText = 'display:flex; flex-direction:column; min-height:0; height:100%;';
+  body.style.cssText = 'display:flex; flex-direction:column; flex:1 1 auto; min-height:0;';
+  el.classList.add('admin-section--users');
 
   body.innerHTML = `
     <div class="us-toolbar" style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; margin-bottom:var(--space-sm); padding:var(--space-sm) var(--space-sm); background:var(--panel-2); border-radius:var(--radius-sm); border:1px solid var(--border);">
       <div style="display:flex; gap:4px;">
-        <button id="usTabLocal" class="secondary meta us-tab-btn" style="background:var(--brand); color:#fff; border-color:var(--brand);">LOCAL</button>
+        <button id="usTabLocal" class="secondary meta us-tab-btn is-active">LOCAL</button>
         <button id="usTabLdap" class="secondary meta us-tab-btn">LDAP</button>
       </div>
-      <input id="usSearch" class="input" placeholder="Поиск по логину или ФИО..." style="flex:1; min-width:160px; height:32px; min-height:32px; padding:4px 10px; font-size:0.85rem;" />
+      <input id="usSearch" class="input us-search" placeholder="Поиск по логину или ФИО..." />
       <div class="meta" id="usTotalCount" style="white-space:nowrap; color:var(--muted);"></div>
       <button id="usCreateBtn" class="primary meta" style="white-space:nowrap;">${getPlusIcon(14)} Новый пользователь</button>
     </div>
@@ -1071,23 +1104,31 @@ function createUsersSection() {
 
     const overlay = document.createElement('div');
     overlay.id = 'usModalOverlay';
-    overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; display:flex; align-items:center; justify-content:center; padding:20px;';
 
     const modal = document.createElement('div');
-    modal.style.cssText = 'background:var(--panel); border-radius:var(--radius-lg); width:480px; max-height:80vh; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,0.3);';
+    modal.className = 'us-modal';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', String(title || 'Пользователь'));
 
     modal.innerHTML = `
-      <div style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
+      <div class="us-modal__header">
         <div style="font-weight:600; font-size:var(--font-size-base); display:flex; align-items:center;">${titleHtml || escapeHtml(title)}</div>
-        <button id="usModalClose" class="secondary meta" style="min-width:auto; width:28px; height:28px; padding:0; border:none; background:transparent; font-size:18px; line-height:1;">${getCloseIcon(12)}</button>
+        <button id="usModalClose" class="secondary meta us-modal__close" aria-label="Закрыть" title="Закрыть">${getCloseIcon(12)}</button>
       </div>
-      <div style="padding:var(--space-md); flex:1; overflow:auto; max-height:calc(80vh - 120px);">${bodyHtml}</div>
+      <div class="us-modal__body">${bodyHtml}</div>
     `;
 
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
+    modal.querySelector('#usModalClose').focus();
 
-    const close = () => overlay.remove();
+    const onKeyDown = (e) => { if (e.key === 'Escape') close(); };
+    const close = () => {
+      document.removeEventListener('keydown', onKeyDown);
+      overlay.remove();
+    };
+    document.addEventListener('keydown', onKeyDown);
     modal.querySelector('#usModalClose').onclick = close;
 
     // Close only if both mousedown and mouseup are on overlay
@@ -1099,8 +1140,10 @@ function createUsersSection() {
 
     const saveBtn = modal.querySelector('#usModalSave');
     if (saveBtn) {
+      const initialSaveLabel = saveBtn.textContent;
       saveBtn.onclick = async () => {
         saveBtn.disabled = true;
+        saveBtn.setAttribute('aria-busy', 'true');
         saveBtn.textContent = 'Сохранение...';
         try {
           await onSave();
@@ -1110,7 +1153,8 @@ function createUsersSection() {
           if (errEl) { errEl.textContent = e.message || 'Ошибка'; errEl.style.display = 'block'; }
         } finally {
           saveBtn.disabled = false;
-          saveBtn.textContent = 'Сохранить';
+          saveBtn.removeAttribute('aria-busy');
+          saveBtn.textContent = initialSaveLabel;
         }
       };
     }
@@ -1630,8 +1674,14 @@ function renderUsersSectionList() {
 
   const localCount = s.allUsers.filter(u => String(u.auth_source || 'local').toLowerCase() !== 'ldap').length;
   const ldapCount = s.allUsers.filter(u => String(u.auth_source || 'local').toLowerCase() === 'ldap').length;
-  if (localBtn) { localBtn.textContent = `LOCAL (${localCount})`; localBtn.style.background = s.tab !== 'ldap' ? 'var(--brand)' : ''; localBtn.style.color = s.tab !== 'ldap' ? '#fff' : ''; localBtn.style.borderColor = s.tab !== 'ldap' ? 'var(--brand)' : ''; }
-  if (ldapBtn) { ldapBtn.textContent = `LDAP (${ldapCount})`; ldapBtn.style.background = s.tab === 'ldap' ? 'var(--brand)' : ''; ldapBtn.style.color = s.tab === 'ldap' ? '#fff' : ''; ldapBtn.style.borderColor = s.tab === 'ldap' ? 'var(--brand)' : ''; }
+  if (localBtn) {
+    localBtn.textContent = `LOCAL (${localCount})`;
+    localBtn.classList.toggle('is-active', s.tab !== 'ldap');
+  }
+  if (ldapBtn) {
+    ldapBtn.textContent = `LDAP (${ldapCount})`;
+    ldapBtn.classList.toggle('is-active', s.tab === 'ldap');
+  }
 
   const totalEl = document.getElementById('usTotalCount');
   if (totalEl) totalEl.textContent = `Всего: ${s.allUsers.length}`;
@@ -1731,7 +1781,7 @@ function createLogsSection() {
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
   `);
   const body = el.querySelector('.admin-section-body');
-  body.style.cssText = 'display:flex; flex-direction:column; min-height:0; height:100%;';
+  body.style.cssText = 'display:flex; flex-direction:column; flex:1 1 auto; min-height:0;';
 
   body.innerHTML = `
     <div class="lg">
@@ -1767,7 +1817,7 @@ function createLogsSection() {
       <div id="lgInfo" class="lg-info"></div>
 
       <!-- Output -->
-      <pre id="lgOutput" class="lg-output">Загрузка...</pre>
+      <div id="lgOutput" class="lg-output" role="log" aria-live="off">Загрузка...</div>
     </div>
   `;
 
@@ -1893,13 +1943,16 @@ function createLogsSection() {
       if (result.reset || initial) {
         output.innerHTML = formatLogLines(arr);
       } else if (arr.length > 0) {
-        const newHtml = formatLogLines(arr);
-        output.insertAdjacentHTML('beforeend', newHtml);
-        const maxLogLines = 2000;
-        const children = output.children;
-        while (children.length > maxLogLines) {
-          children[0].remove();
-        }
+        // Заглушка «Загрузка...» не должна оставаться среди реальных строк.
+        output.querySelector('.lg-empty')?.remove();
+        output.insertAdjacentHTML('beforeend', formatLogLines(arr));
+      }
+
+      // Ограничение применяется и к первой загрузке, и к обновлениям.
+      const maxLogLines = 2000;
+      const children = output.children;
+      while (children.length > maxLogLines) {
+        children[0].remove();
       }
 
       if (ql('#lgAutoscroll').checked) {
@@ -2366,7 +2419,7 @@ function openDevice(id) {
 
 // renderDeviceCard перенесена в device-card.js
 function renderDeviceCard(d) {
-  return renderDeviceCardModule(d, nodeNames, readyDevices, loadDevices, renderTVList, openDevice, renderFilesPane, socket, focusDeviceInList);
+  return renderDeviceCardModule(d, nodeNames, readyDevices, loadDevices, renderTVList, openDevice, renderFilesPane, socket, focusDeviceInList, () => setDeviceDetailView(false));
 }
 
 // ------ Правая колонка: файлы выбранной ноды ------

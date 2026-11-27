@@ -27,6 +27,44 @@ let playerVersions = new Map();
 let releaseVersion = '';
 let deviceNames = new Map();
 
+/** Ответ /api/admin/apk-version живёт в памяти вкладки: раздел настроек
+ *  пересоздаётся при каждом открытии, но повторно дёргать API не нужно. */
+let apkVersionCache = null;
+let apkVersionRequest = null;
+
+export function peekApkVersionData() {
+  return apkVersionCache;
+}
+
+export function rememberApkVersionData(data) {
+  apkVersionCache = data || null;
+}
+
+/** Загружает сводку APK не чаще одного раза за жизнь вкладки (кроме force). */
+export async function loadApkVersionData(adminFetch, { force = false } = {}) {
+  if (!force && apkVersionCache) return apkVersionCache;
+  if (!force && apkVersionRequest) return apkVersionRequest;
+
+  apkVersionRequest = (async () => {
+    try {
+      const response = await adminFetch(APK_VERSION_ENDPOINT);
+      const data = response?.ok
+        ? await response.json()
+        : { available: false, error: 'Ошибка соединения' };
+      apkVersionCache = data;
+      return data;
+    } catch {
+      const data = { available: false, error: 'Ошибка соединения' };
+      apkVersionCache = data;
+      return data;
+    } finally {
+      apkVersionRequest = null;
+    }
+  })();
+
+  return apkVersionRequest;
+}
+
 /**
  * Подписчики списка устройств, на которые можно поставить выбранную версию.
  * Карточка APK показывает его сразу после выбора, не дожидаясь перезагрузки UI.
@@ -658,7 +696,7 @@ async function runPower(adminFetch, action, options = {}) {
  *
  * @param {{devices: Array, adminFetch: Function}} deps
  */
-export function initPowerControls({ devices, adminFetch }) {
+export function initPowerControls({ devices, adminFetch, useApkCache = false }) {
   const list = document.getElementById('stPowerList');
   if (!list) return;
 
@@ -726,7 +764,11 @@ export function initPowerControls({ devices, adminFetch }) {
 
   if (powerTargets.length) {
     refreshStates(adminFetch, powerTargets.map(target => target.device_id));
-    refreshPlayerVersions(adminFetch);
+    if (useApkCache) {
+      loadApkVersionData(adminFetch).then(data => refreshPlayerVersions(adminFetch, data));
+    } else {
+      refreshPlayerVersions(adminFetch);
+    }
   } else {
     setStatus('Нет Android-устройств');
   }

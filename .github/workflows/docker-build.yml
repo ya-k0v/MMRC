@@ -19,6 +19,8 @@ env:
 jobs:
   ci:
     uses: ./.github/workflows/app-test.yml
+    with:
+      skip_extra_jobs: true
     secrets: inherit
 
   codeql:
@@ -41,7 +43,7 @@ jobs:
       streamer: ${{ steps.detect.outputs.streamer }}
       minio: ${{ steps.detect.outputs.minio }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -126,7 +128,7 @@ jobs:
     needs: [ci, codeql, changes]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Read version.json
         id: version
@@ -179,10 +181,20 @@ jobs:
             type=raw,value=minio-${{ steps.version.outputs.dockerTag }}
             type=raw,value=minio-latest,enable={{is_default_branch}}
 
+      - name: Set up QEMU
+        if: needs.changes.outputs.minio == 'true'
+        uses: docker/setup-qemu-action@v4
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
       - name: Login to Docker Hub
+        if: >-
+          needs.changes.outputs.server == 'true' ||
+          needs.changes.outputs.converter == 'true' ||
+          needs.changes.outputs.ffmpeg == 'true' ||
+          needs.changes.outputs.streamer == 'true' ||
+          needs.changes.outputs.minio == 'true'
         uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}

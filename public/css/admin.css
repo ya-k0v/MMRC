@@ -416,8 +416,9 @@ body.admin-page.has-sidebar.sidebar-collapsed .admin-main {
   margin-left: 60px;
 }
 
-/* Mobile styles */
-@media (max-width: 767px) {
+/* Мобильный и портретный планшет: сайдбар выезжает поверх контента.
+   Порог согласован с MOBILE_BREAKPOINT в public/js/admin/sidebar.js. */
+@media (max-width: 1099px) {
   body.admin-page .sidebar {
     transform: translateX(-100%);
   }
@@ -451,7 +452,7 @@ body.admin-page.has-sidebar.sidebar-collapsed .admin-main {
   }
 }
 
-@media (min-width: 768px) {
+@media (min-width: 1100px) {
   body.admin-page .sidebar-menu-btn {
     display: none;
   }
@@ -1093,6 +1094,52 @@ body.admin-page #grid button.settings-nav-item {
 
 .st-apk-targets.is-error {
   color: var(--danger);
+}
+
+/* Строка APK: версия слева, ручная установка — справа от неё.
+   Правая колонка сжимается и переносит поля, но не уезжает под версию
+   и не вызывает горизонтальный скролл на узких панелях. */
+.st-apk-version-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+  align-items: start;
+  gap: var(--space-sm) var(--space-md);
+}
+
+.st-apk-version-row > #stApkVersion {
+  min-width: 0;
+}
+
+.st-apk-install-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2xs);
+  min-width: 0;
+}
+
+.st-apk-install-fields {
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.st-apk-install-fields > * {
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+
+@media (max-width: 767px) {
+  .st-apk-version-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .st-apk-install-side {
+    align-items: flex-start;
+  }
+
+  .st-apk-install-fields {
+    justify-content: flex-start;
+  }
 }
 
 /* Чипы выбора версии APK — плотные «таблетки» иконочной ступени.
@@ -2008,5 +2055,532 @@ body.admin-page .notification-toast__close {
 
   body.admin-page #grid button.st-power-btn {
     min-width: var(--control-height-icon-touch);
+  }
+}
+
+/* ===== iPad: тап-таргеты --touch-control-size =====
+   Базовая шкала (36/32/24) рассчитана на мышь. На сенсорном экране
+   плотные элементы оставались 32×32, а иконки — 28px. Поднимаем токены
+   и добираем элементы с фиксированной высотой (настройки, сайдбар, логи).
+   Ширина до 1099px добавлена в условие, чтобы режим планшета работал
+   и в браузерной эмуляции, где pointer: coarse не сообщается. */
+@media (pointer: coarse), (max-width: 1099px) {
+  body.admin-page {
+    --control-height-touch: var(--touch-control-size);
+    --control-height-sm-touch: var(--touch-control-size);
+    --control-height-icon-touch: var(--touch-control-size);
+  }
+
+  /* Инлайновые height/min-width из admin.js перебивают обычные правила —
+     поэтому в тач-режиме высота закрепляется с !important. */
+  body.admin-page button,
+  body.admin-page a[role="button"],
+  body.admin-page input:not([type="range"]):not([type="checkbox"]),
+  body.admin-page select {
+    min-height: var(--touch-control-size) !important;
+  }
+
+  body.admin-page #grid button,
+  body.admin-page #modalOverlay button,
+  body.admin-page #grid button.settings-nav-item,
+  body.admin-page #grid .input:not(.lg-field),
+  body.admin-page #modalOverlay .input:not(.lg-field),
+  body.admin-page .admin-section .input,
+  body.admin-page select.lg-field {
+    min-height: var(--touch-control-size);
+  }
+
+  body.admin-page input[type="range"] {
+    height: var(--touch-control-size) !important;
+  }
+
+  /* Только иконочные кнопки делаем квадратом; текстовые «таблетки»
+     сохраняют ширину по содержимому. */
+  body.admin-page #grid button.icon-btn,
+  body.admin-page #grid button.lg-btn-icon,
+  body.admin-page #grid button.notification-btn-icon,
+  body.admin-page #grid button.delBtn,
+  body.admin-page #devicesBtn,
+  body.admin-page #modalOverlay button.lg-btn-icon,
+  body.admin-page #modalOverlay button.notification-btn-icon,
+  body.admin-page .sidebar-menu-btn,
+  body.admin-page .sidebar-icon-btn,
+  body.admin-page .sidebar-toggle {
+    width: var(--touch-control-size) !important;
+    min-width: var(--touch-control-size) !important;
+    height: var(--touch-control-size) !important;
+    min-height: var(--touch-control-size) !important;
+    padding: 0;
+  }
+
+  /* Свёрнутый сайдбар остаётся 60px: в рельсе остаётся только кнопка
+     раскрытия. Кнопку темы убираем из потока полностью, иначе она занимает
+     44px и выталкивает шеврон за край сайдбара. */
+  body.admin-page .sidebar.collapsed .sidebar-icon-btn {
+    display: none !important;
+  }
+
+  body.admin-page .sidebar.collapsed .sidebar-toggle {
+    width: var(--touch-control-size) !important;
+    min-width: var(--touch-control-size) !important;
+    height: var(--touch-control-size) !important;
+    min-height: var(--touch-control-size) !important;
+  }
+
+  /* (60px рельса − 44px кнопки) / 2 = 8px — шеврон по центру. */
+  body.admin-page .sidebar.collapsed .sidebar-header-actions {
+    margin-right: var(--space-sm);
+  }
+
+  body.admin-page .sidebar-item {
+    min-height: var(--touch-control-size);
+  }
+
+  body.admin-page a.device-meta-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--touch-control-size);
+  }
+
+  /* Чекбокс «Авто» в логах: метка целиком становится тап-таргетом. */
+  body.admin-page .lg-check {
+    min-height: var(--touch-control-size);
+    padding: 0 var(--space-sm);
+  }
+
+  body.admin-page .lg-check input {
+    width: 20px;
+    height: 20px;
+  }
+}
+
+/* На портретном iPad навигация настроек не должна уезжать за экран
+   вместе с длинным содержимым страницы. */
+@media (min-width: 768px) and (max-width: 1099px) {
+  body.admin-page .settings-nav {
+    position: sticky;
+    top: var(--space-md);
+    z-index: 5;
+    align-self: flex-start;
+    width: 100%;
+    max-height: 40vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+/* Базовое правило display:none стоит ниже медиазапроса и перебивало его,
+   поэтому кнопка меню не появлялась на мобильных/планшетах. */
+@media (max-width: 1099px) {
+  body.admin-page .sidebar-menu-btn {
+    display: flex;
+    /* Слева в режиме деталей находится кнопка «Назад» — меню справа,
+       чтобы не перекрывать основной переход. */
+    left: auto;
+    right: var(--space-md);
+  }
+
+  /* Кнопка меню фиксирована сверху справа; освобождаем под неё место
+     в шапках, иначе она перекрывает «Добавить устройство». */
+  body.admin-page #devicesPane > .header,
+  body.admin-page .admin-section > .header,
+  body.admin-page #detailPane > .card > .header,
+  body.admin-page #filesPane > .header {
+    padding-right: calc(var(--control-height-touch) + var(--space-md));
+  }
+}
+
+body.admin-page .admin-modal-content {
+  overscroll-behavior: contain;
+}
+
+/* Разделы кроме «Устройств» не должны наследовать трёхколоночные треки
+   с минимальными ширинами — это растягивало таблицы и настройки. */
+body.admin-page #grid.single-pane {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+.admin-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-section > .admin-section-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+@media (max-width: 1023.98px) {
+  .admin-section {
+    overflow-y: auto;
+  }
+
+  .admin-section > .admin-section-body {
+    overflow: visible;
+  }
+}
+
+/* Master-detail остаётся только на телефоне. Планшеты используют
+   desktop-раскладку с масштабированием (см. блок в конце файла). */
+.device-detail-back {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  gap: var(--space-2xs);
+}
+
+@media (max-width: 767px) {
+  body.admin-page #grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  body.admin-page #devicesPane,
+  body.admin-page #detailPane,
+  body.admin-page #filesPane {
+    grid-column: 1 !important;
+    grid-row: auto !important;
+  }
+
+  body.admin-page:not(.device-detail-open) #detailPane,
+  body.admin-page:not(.device-detail-open) #filesPane {
+    display: none !important;
+  }
+
+  body.admin-page.device-detail-open #devicesPane {
+    display: none !important;
+  }
+
+  .device-detail-back {
+    display: inline-flex;
+  }
+
+  body.admin-page #detailPane,
+  body.admin-page #filesPane {
+    min-height: 380px;
+  }
+}
+
+/* Общие модалки: шапка остаётся на месте, прокручивается только содержимое.
+   Специфичный блок :has(.pc-modal) выше в файле и сохраняет свою раскладку. */
+body.admin-page #modalOverlay .admin-modal-content {
+  display: flex;
+  flex-direction: column;
+  max-height: min(90dvh, 900px);
+  overflow: hidden;
+}
+
+body.admin-page #modalOverlay .admin-modal-content > .header {
+  flex: 0 0 auto;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+}
+
+body.admin-page #modalOverlay .admin-modal-content > div:last-child {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Пустой список уведомлений центрируется, а не висит в верхней трети. */
+body.admin-page .notification-list.is-empty {
+  justify-content: center;
+}
+
+body.admin-page .notification-list__empty {
+  padding: clamp(var(--space-lg), 6vh, var(--space-3xl)) 0;
+}
+
+/* Пользователи: таблица занимает только нужную высоту и скроллится внутри
+   своей области, а не растягивает пустую карточку на весь экран. */
+.admin-section--users {
+  width: 100%;
+}
+
+#usTableWrap {
+  flex: 0 1 auto !important;
+  max-height: min(60dvh, 560px);
+  overflow: auto;
+}
+
+#usTable {
+  table-layout: fixed;
+  min-width: 620px;
+}
+
+.us-search {
+  flex: 1 1 220px;
+  min-width: 160px;
+}
+
+button.us-tab-btn.is-active {
+  background: var(--brand-solid);
+  color: #fff;
+  border-color: var(--brand-solid);
+}
+
+/* Отдельный компактный диалог пользователей: шапка фиксирована, прокрутка
+   только у содержимого, на телефоне окно не шире экрана. */
+#usModalOverlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg);
+  background: var(--overlay-bg);
+  z-index: calc(var(--z-modal) + 1);
+}
+
+.us-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(480px, 100%);
+  max-height: min(80dvh, 720px);
+  overflow: hidden;
+  background: var(--panel);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.us-modal__header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: var(--border);
+}
+
+.us-modal__close {
+  width: var(--control-height-touch);
+  min-width: var(--control-height-touch);
+  height: var(--control-height-touch);
+  min-height: var(--control-height-touch);
+  padding: 0;
+}
+
+.us-modal__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-md);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Логи: подпись автоскролла и чекбокс получают устойчивый тап-таргет. */
+.lg-check {
+  min-height: var(--control-height-sm);
+}
+
+.lg-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--brand-solid);
+}
+
+/* Планшеты: оставляем desktop-композицию и масштабируем её целиком,
+   как zoom в браузере, вместо перестроения в отдельные экраны. */
+@media (min-width: 1100px) and (max-width: 1279px) {
+  body.admin-page {
+    zoom: 0.85;
+    /* zoom уменьшает уже посчитанные px, поэтому высоту делим на него:
+       main должен занимать физическую высоту экрана, как левый сайдбар. */
+    display: flex;
+    flex-direction: column;
+    height: calc(100dvh / 0.85);
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  body.admin-page .admin-main {
+    overflow: hidden;
+  }
+
+  body.admin-page #grid {
+    height: 100%;
+    min-height: 0;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    grid-template-rows: minmax(0, 1fr) !important;
+  }
+
+  body.admin-page #grid:not(.single-pane) {
+    grid-template-columns: minmax(240px, 300px) minmax(240px, 1fr) 450px !important;
+  }
+
+  body.admin-page #devicesPane { grid-column: 1 !important; grid-row: 1 !important; }
+  body.admin-page #filesPane { grid-column: 2 !important; grid-row: 1 !important; }
+
+  body.admin-page #detailPane {
+    grid-column: 3 !important;
+    grid-row: 1 !important;
+    width: 450px;
+    min-width: 450px;
+    max-width: 450px;
+    justify-self: end;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1099px) {
+  body.admin-page {
+    zoom: 0.64;
+    display: flex;
+    flex-direction: column;
+    height: calc(100dvh / 0.64);
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  body.admin-page .admin-main {
+    margin-left: 240px;
+    overflow: hidden;
+  }
+
+  body.admin-page.has-sidebar.sidebar-collapsed .admin-main {
+    margin-left: 60px;
+  }
+
+  body.admin-page .sidebar {
+    transform: none !important;
+  }
+
+  body.admin-page #sidebarOverlay,
+  body.admin-page .sidebar-menu-btn {
+    display: none !important;
+  }
+
+  body.admin-page #grid {
+    height: 100%;
+    min-height: 0;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    grid-template-rows: minmax(0, 1fr) !important;
+  }
+
+  body.admin-page #grid:not(.single-pane) {
+    grid-template-columns: minmax(200px, 260px) minmax(220px, 1fr) 430px !important;
+  }
+
+  body.admin-page #devicesPane { grid-column: 1 !important; grid-row: 1 !important; }
+  body.admin-page #filesPane { grid-column: 2 !important; grid-row: 1 !important; }
+
+  body.admin-page #detailPane {
+    grid-column: 3 !important;
+    grid-row: 1 !important;
+    width: 430px;
+    min-width: 430px;
+    max-width: 430px;
+    justify-self: end;
+  }
+}
+
+/* Узкие экраны: все разделы (включая «Устройства») тянутся до низа экрана.
+   Раньше main и #grid имели height:auto, поэтому высота определялась
+   содержимым и внизу оставалась пустая полоса. Теперь цепочка
+   body → main → #grid → панель имеет фиксированную высоту экрана,
+   а прокрутка остаётся внутри панели/логов. */
+@media (max-width: 767px) {
+  body.admin-page {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  body.admin-page .admin-main {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  body.admin-page #grid {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+    align-content: stretch;
+  }
+
+  body.admin-page #devicesPane {
+    height: 100%;
+  }
+
+  /* Master-detail: две панели делят высоту экрана, а их содержимое
+     прокручивается внутри. Иначе список файлов и пейджер вылезают
+     за нижнюю границу экрана. */
+  body.admin-page.device-detail-open #grid {
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  body.admin-page.device-detail-open #detailPane,
+  body.admin-page.device-detail-open #filesPane {
+    height: 100%;
+    min-height: 0 !important;
+    overflow: hidden;
+  }
+
+  body.admin-page.device-detail-open #detailPane > .card,
+  body.admin-page.device-detail-open #filesPanel {
+    max-height: 100%;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+  }
+}
+
+/* Настройки на небольших экранах: разделы — горизонтальная лента вкладок,
+   а всё оставшееся место занимает содержимое выбранного раздела. */
+@media (max-width: 1023.98px) {
+  .settings-columns {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .settings-nav {
+    flex: 0 0 auto;
+    align-self: stretch;
+    width: 100%;
+    max-height: none;
+    padding: var(--space-xs);
+    overflow: visible;
+  }
+
+  .settings-nav-title {
+    display: none;
+  }
+
+  .settings-nav-list {
+    flex-direction: row;
+    gap: var(--space-2xs);
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+  }
+
+  body.admin-page #grid button.settings-nav-item {
+    flex: 0 0 auto;
+    width: auto;
+    padding: var(--space-2xs) var(--space-sm);
+    white-space: nowrap;
+  }
+
+  .settings-pages {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .st-power-list {
+    max-height: none;
   }
 }

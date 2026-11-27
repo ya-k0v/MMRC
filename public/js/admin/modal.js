@@ -480,8 +480,14 @@ function openServiceLogsModal(adminFetch) {
 export function showModal(title, content, options = {}) {
   const overlay = document.getElementById('modalOverlay');
   const modalContent = document.getElementById('modalContent');
-  
+
   if (!overlay || !modalContent) return;
+
+  // Доступность: диалог и возврат фокуса к кнопке, его открывшей.
+  modalContent.setAttribute('role', 'dialog');
+  modalContent.setAttribute('aria-modal', 'true');
+  modalContent.setAttribute('aria-label', String(title || 'Диалог'));
+  if (!window.__mmrcModalReturnFocus) window.__mmrcModalReturnFocus = document.activeElement;
 
   const isNestedModal = overlay.style.display === 'flex' && modalContent.childNodes.length > 0;
   if (!isNestedModal) {
@@ -627,7 +633,13 @@ export function closeModal() {
   const overlay = document.getElementById('modalOverlay');
   if (overlay) {
     overlay.style.display = 'none';
+    overlay.scrollTop = 0;
   }
+
+  if (window.__mmrcModalReturnFocus && typeof window.__mmrcModalReturnFocus.focus === 'function') {
+    window.__mmrcModalReturnFocus.focus();
+  }
+  delete window.__mmrcModalReturnFocus;
 
   modalHistoryStack.length = 0;
   if (activeModalEscHandler) {

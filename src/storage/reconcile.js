@@ -225,6 +225,66 @@ export async function reconcileStartupLocalToStorage({
   return report;
 }
 
+/** Записи БД, которые участвуют в сверке контента (без потоков). */
+export async function getTrackedFileRecords({ deviceId = null } = {}) {
+  let query = `
+    SELECT device_id, safe_name, file_path, content_type
+    FROM files_metadata
+    WHERE content_type != 'streaming' AND file_path IS NOT NULL AND file_path != ''
+  `;
+  const params = [];
+  if (deviceId) {
+    query += ' AND device_id = ?';
+    params.push(deviceId);
+  }
+  return getDatabase().query(query, params);
+}
+
+/** Ключи хранилища, которые уже учтены в БД. */
+export async function getTrackedStorageKeys(options = {}) {
+  const records = await getTrackedFileRecords(options);
+  const keys = new Set();
+  for (const record of records) {
+    try {
+      keys.add(toStorageKey(record.file_path));
+    } catch {
+      // Путь вне data root не даёт ключа; ошибка будет учтена при самой сверке.
+    }
+  }
+  return keys;
+}
+
+/**
+ * Файлы в хранилище, про которые нет записи в БД. Общая точка для отчёта
+ * сверки и проверки файлов в разделе БД: обе проверки должны показывать
+ * одно и то же число сирот.
+ */
+export async function collectStorageOrphans({
+  storage = getCurrentStorage(),
+  dbKeys = null,
+  deviceId = null,
+  sampleLimit = 20
+} = {}) {
+  const result = { orphanCount: 0, samples: [], error: null };
+  if (!storage) return result;
+
+  try {
+    const tracked = dbKeys || await getTrackedStorageKeys({ deviceId });
+    if (isLocalStorage(storage)) {
+      // LocalStorage.list — плоский и не обходит подпапки устройств.
+      const files = await walkLocalFiles(getDevicesPath());
+      const keys = files.map((file) => toStorageKey(file)).filter(Boolean);
+      result.orphanCount = countOrphans(keys, tracked, result.samples, sampleLimit);
+    } else {
+      const objects = await storage.list('');
+      result.orphanCount = countOrphans(objects, tracked, result.samples, sampleLimit);
+    }
+  } catch (error) {
+    result.error = error.message;
+  }
+  return result;
+}
+
 /**
  * Сверка БД ↔ storage. Только отчёт: никаких DELETE и изменений файлов.
  * Для локального бэкенда сироты ищутся рекурсивно (LocalStorage.list — плоский).
@@ -246,18 +306,7 @@ export async function reconcileDbWithStorage({
     samples: { missing: [], unknown: [], orphans: [] }
   };
 
-  let query = `
-    SELECT device_id, safe_name, file_path, content_type
-    FROM files_metadata
-    WHERE content_type != 'streaming' AND file_path IS NOT NULL AND file_path != ''
-  `;
-  const params = [];
-  if (deviceId) {
-    query += ' AND device_id = ?';
-    params.push(deviceId);
-  }
-
-  const records = await getDatabase().query(query, params);
+  const records = await getTrackedFileRecords({ deviceId });
   report.checked = records.length;
   const dbKeys = new Set();
 
@@ -292,24 +341,14 @@ export async function reconcileDbWithStorage({
     reportProgress(onProgress, { phase: 'db', done, total: records.length });
   }
 
-  if (includeOrphans && storage && !isLocalStorage(storage)) {
-    try {
-      const objects = await storage.list('');
-      report.orphanCount = countOrphans(objects, dbKeys, report.samples.orphans, sampleLimit);
-    } catch (error) {
+  if (includeOrphans && storage) {
+    const orphans = await collectStorageOrphans({ storage, dbKeys, sampleLimit });
+    report.orphanCount = orphans.orphanCount;
+    report.samples.orphans = orphans.samples;
+    if (orphans.error) {
       report.errors++;
-      report.orphansUnavailable = error.message;
-      logger.warn('[StorageReconcile] Cannot list storage objects', { error: error.message });
-    }
-  } else if (includeOrphans && storage && isLocalStorage(storage)) {
-    try {
-      const localFiles = await walkLocalFiles(getDevicesPath());
-      const keys = localFiles.map((file) => toStorageKey(file)).filter(Boolean);
-      report.orphanCount = countOrphans(keys, dbKeys, report.samples.orphans, sampleLimit);
-    } catch (error) {
-      report.errors++;
-      report.orphansUnavailable = error.message;
-      logger.warn('[StorageReconcile] Cannot enumerate local files', { error: error.message });
+      report.orphansUnavailable = orphans.error;
+      logger.warn('[StorageReconcile] Cannot enumerate storage objects', { error: orphans.error });
     }
   }
 

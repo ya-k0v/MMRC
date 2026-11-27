@@ -303,16 +303,45 @@ function readInstalledApkVersion() {
   }
 }
 
-async function fetchApkReleases(limit = APK_MAX_VERSIONS) {
-  const response = await fetch(`https://api.github.com/repos/${APK_REPO}/releases?per_page=${limit}`, {
-    headers: { 'Accept': 'application/vnd.github.v3+json' }
-  });
+// GitHub отдаёт 403 для анонимных запросов после исчерпания лимита (60/час
+// на IP). Открытие раздела настроек не должно каждый раз дёргать API: держим
+// последний удачно полученный список releases в памяти процесса.
+const APK_RELEASE_CACHE_TTL = 30 * 60 * 1000;
+const APK_RELEASE_RETRY_DELAY = 5 * 60 * 1000;
+let apkReleaseCache = null;
 
-  if (!response.ok) {
-    throw new Error(`GitHub API ${response.status}`);
+async function fetchApkReleases(limit = APK_MAX_VERSIONS, { force = false } = {}) {
+  const now = Date.now();
+  if (!force && apkReleaseCache && now - apkReleaseCache.at < APK_RELEASE_CACHE_TTL) {
+    return apkReleaseCache.releases;
   }
 
-  return normalizeApkReleases(await response.json(), limit);
+  try {
+    const response = await fetch(`https://api.github.com/repos/${APK_REPO}/releases?per_page=${limit}`, {
+      headers: { 'Accept': 'application/vnd.github.v3+json' }
+    });
+
+    if (!response.ok) {
+      throw new Error(`GitHub API ${response.status}`);
+    }
+
+    const releases = normalizeApkReleases(await response.json(), limit);
+    apkReleaseCache = { at: now, releases, error: null };
+    return releases;
+  } catch (error) {
+    // Если данные уже были получены раньше, показываем их, а повторяем
+    // запрос позже — временный 403 не должен очищать карточку версий.
+    if (apkReleaseCache?.releases?.length) {
+      apkReleaseCache.error = error.message;
+      apkReleaseCache.at = now - APK_RELEASE_CACHE_TTL + APK_RELEASE_RETRY_DELAY;
+      return apkReleaseCache.releases;
+    }
+    throw error;
+  }
+}
+
+function getApkReleaseError() {
+  return apkReleaseCache?.error || null;
 }
 
 async function downloadApkRelease(release) {
@@ -796,13 +825,19 @@ export function createAdminRouter(deps = {}) {
   router.get('/database/check-files', requireAdmin, async (req, res) => {
     try {
       const { cleanupMissingFiles } = await import('../database/files-metadata.js');
+      const { collectStorageOrphans } = await import('../storage/reconcile.js');
       
       const result = await cleanupMissingFiles({ deviceId: null, dryRun: true });
+      // Та же логика сирот, что и в сверке хранилища: проверка БД не должна
+      // показывать «проблем не обнаружено», если на диске есть лишние файлы.
+      const orphans = await collectStorageOrphans({ storage: getCurrentStorage() });
       
       res.json({
         checked: result.checked,
         missingOnDisk: result.missing,
-        missingInDB: 0,
+        missingInDB: orphans.orphanCount,
+        orphanSamples: orphans.samples,
+        orphansUnavailable: orphans.error,
         errors: result.errors
       });
     } catch (error) {
@@ -905,7 +940,13 @@ export function createAdminRouter(deps = {}) {
   // POST /api/admin/database/cleanup-orphaned-files
   router.post('/database/cleanup-orphaned-files', requireAdmin, validate(schemas.cleanupOrphaned), async (req, res) => {
     try {
-      const { dryRun = false, excludeExtensions = [] } = req.body || {};
+      // Клиент передаёт dryRun и в теле, и в query — поддерживаем оба вида,
+      // иначе «отмена» в диалоге всё равно удаляла бы файлы.
+      const rawDryRun = req.body?.dryRun ?? req.query?.dryRun ?? false;
+      const dryRun = typeof rawDryRun === 'string'
+        ? rawDryRun.toLowerCase() === 'true'
+        : Boolean(rawDryRun);
+      const excludeExtensions = Array.isArray(req.body?.excludeExtensions) ? req.body.excludeExtensions : [];
       const { cleanupOrphanedFiles } = await import('../database/cleanup-orphaned-files.js');
       
       logger.info('[Admin] Starting orphaned files cleanup', { dryRun, excludeExtensions });
@@ -949,6 +990,12 @@ export function createAdminRouter(deps = {}) {
         releasesError = error.message;
       }
 
+      // При 403 показываем последний удачно полученный список без тревожной
+      // надписи; ошибка остаётся только если данных нет вообще.
+      if (!versions.length && !releasesError) {
+        releasesError = getApkReleaseError();
+      }
+
       const latest = versions[0] || null;
 
       res.json({
@@ -977,7 +1024,8 @@ export function createAdminRouter(deps = {}) {
     try {
       let releases;
       try {
-        releases = await fetchApkReleases(APK_MAX_VERSIONS);
+        // Явное действие пользователя — обновляем список принудительно.
+        releases = await fetchApkReleases(APK_MAX_VERSIONS, { force: true });
       } catch (error) {
         return res.status(500).json({ ok: false, error: error.message });
       }
@@ -1042,7 +1090,7 @@ export function createAdminRouter(deps = {}) {
       if (!apkPath || !fs.existsSync(apkPath)) {
         let releases;
         try {
-          releases = await fetchApkReleases(APK_MAX_VERSIONS);
+          releases = await fetchApkReleases(APK_MAX_VERSIONS, { force: true });
         } catch (error) {
           return res.status(500).json({ ok: false, error: error.message });
         }

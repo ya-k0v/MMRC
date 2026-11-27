@@ -38,6 +38,8 @@ jobs:
   quality_gate:
     name: Quality gate (CI)
     uses: ./.github/workflows/app-test.yml
+    with:
+      skip_extra_jobs: true
     secrets: inherit
 
   resolve_target:
@@ -80,6 +82,7 @@ jobs:
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: resolve_target
     environment: ${{ needs.resolve_target.outputs.environment }}
 

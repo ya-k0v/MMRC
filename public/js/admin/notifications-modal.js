@@ -156,6 +156,7 @@ function renderNotificationsModalContent() {
   if (!listEl) return;
 
   setElementHtml(listEl, buildNotificationsListHtml());
+  listEl.classList.toggle('is-empty', !currentNotifications.length);
   renderPaginationFooter();
   setupNotificationHandlers();
 }

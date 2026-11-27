@@ -8,7 +8,7 @@ import path from 'node:path';
 const { initDatabase, closeDatabase, getDatabase } = await import('../../src/database/database.js');
 const { saveFileMetadata, getFileMetadata } = await import('../../src/database/files-metadata.js');
 const { getDevicesPath, getDataRoot } = await import('../../src/config/settings-manager.js');
-const { reconcileStartupLocalToStorage, reconcileDbWithStorage } = await import('../../src/storage/reconcile.js');
+const { reconcileStartupLocalToStorage, reconcileDbWithStorage, collectStorageOrphans } = await import('../../src/storage/reconcile.js');
 const { getMetrics, resetMetrics } = await import('../../src/utils/metrics.js');
 
 const devicesPath = getDevicesPath();
@@ -199,5 +199,32 @@ describe('reconcileDbWithStorage', () => {
     const report = await reconcileDbWithStorage({ storage });
 
     expect(report.orphanCount).toBe(0);
+  });
+});
+
+describe('collectStorageOrphans', () => {
+  test('возвращает те же сироты, что и отчёт сверки, и не трогает папки-префиксы', async () => {
+    const storage = {
+      isLocal: false,
+      async list() { return ['content/known.mp4', 'content/orphan.mp4', 'content/deck']; }
+    };
+    const dbKeys = new Set(['content/known.mp4', 'content/deck/page.png']);
+
+    const result = await collectStorageOrphans({ storage, dbKeys });
+
+    expect(result).toMatchObject({ orphanCount: 1, error: null });
+    expect(result.samples).toEqual(['content/orphan.mp4']);
+  });
+
+  test('недоступность листинга не превращается в ноль сирот без ошибки', async () => {
+    const storage = {
+      isLocal: false,
+      async list() { throw new Error('list timeout'); }
+    };
+
+    const result = await collectStorageOrphans({ storage, dbKeys: new Set() });
+
+    expect(result.orphanCount).toBe(0);
+    expect(result.error).toBe('list timeout');
   });
 });

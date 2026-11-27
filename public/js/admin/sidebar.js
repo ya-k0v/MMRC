@@ -11,6 +11,10 @@ import { initThemeToggle } from '../theme.js';
 const SIDEBAR_WIDTH_EXPANDED = 240;
 const SIDEBAR_WIDTH_COLLAPSED = 60;
 const STORAGE_KEY = 'mmrc_sidebar_collapsed';
+// Портретный iPad (834/1024 CSS px) не должен отдавать 240px постоянному
+// сайдбару: детали устройств и файлы схлопывались до ~250px. До этой ширины
+// меню работает как выезжающая панель поверх контента (см. admin.css).
+const MOBILE_BREAKPOINT = 1100;
 
 /**
  * Create and initialize the sidebar
@@ -218,8 +222,8 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
       item.classList.toggle('active', item.dataset.section === sectionId);
     });
 
-    // On mobile, close sidebar after selection
-    if (window.innerWidth < 768) {
+    // On mobile/tablet portrait, close sidebar after selection
+    if (window.innerWidth < MOBILE_BREAKPOINT) {
       closeMobile();
     }
 
@@ -236,7 +240,7 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
     // На мобильных сайдбар — выезжающая панель поверх контента, поэтому
     // основной блок занимает всю ширину. Инлайновый margin-left перебивал
     // правило медиазапроса и оставлял пустую полосу шириной сайдбара.
-    if (window.innerWidth < 768) {
+    if (window.innerWidth < MOBILE_BREAKPOINT) {
       mainContent.style.marginLeft = '';
       return;
     }
@@ -287,11 +291,11 @@ export function createSidebar({ adminFetch, user, onNavigate }) {
     await loadModules();
     render();
 
-    // При переходе через границу 768px пересчитываем отступ: убираем
-    // «залипший» сдвиг контента при уходе в мобильный режим и закрываем
-    // выехавшее меню при возврате на широкий экран.
+    // При переходе через MOBILE_BREAKPOINT пересчитываем отступ: убираем
+    // «залипший» сдвиг контента при уходе в режим выезжающего меню и
+    // закрываем выехавшее меню при возврате на широкий экран.
     window.addEventListener('resize', () => {
-      if (window.innerWidth >= 768 && sidebar.classList.contains('mobile-open')) {
+      if (window.innerWidth >= MOBILE_BREAKPOINT && sidebar.classList.contains('mobile-open')) {
         closeMobile();
       }
       updateLayout();

@@ -73,7 +73,7 @@
             />
           </div>
           
-          <div id="setupError" class="form-error" style="display:none;"></div>
+          <div id="setupError" class="form-error" role="alert" aria-live="assertive" style="display:none;"></div>
           
           <button type="submit" class="primary full-width" id="setupBtn">
             Создать администратора
@@ -107,7 +107,7 @@
           />
         </div>
         
-        <div id="error" class="form-error" style="display:none;"></div>
+        <div id="error" class="form-error" role="alert" aria-live="assertive" style="display:none;"></div>
         
         <button type="submit" class="primary full-width" id="loginBtn">
           Войти
@@ -131,11 +131,13 @@
 
     function setLoginButtonLoading(isLoading) {
       loginBtn.disabled = isLoading;
+      loginBtn.setAttribute('aria-busy', String(isLoading));
       loginBtn.textContent = isLoading ? 'Вход...' : 'Войти';
     }
 
     function setSetupButtonLoading(isLoading) {
       setupBtn.disabled = isLoading;
+      setupBtn.setAttribute('aria-busy', String(isLoading));
       setupBtn.textContent = isLoading ? 'Создание...' : 'Создать администратора';
     }
     

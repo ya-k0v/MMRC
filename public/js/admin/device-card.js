@@ -1,7 +1,7 @@
 // device-card.js - ПОЛНЫЙ код renderDeviceCard из admin.js
 import { DEVICE_ICONS, DEVICE_TYPE_NAMES } from '../shared/constants.js';
 import { escapeHtml } from '../shared/utils.js';
-import { getCheckIcon, getCrossIcon, getFileIcon, getFolderIcon, getMoonIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon } from '../shared/svg-icons.js';
+import { getCheckIcon, getChevronLeftIcon, getCrossIcon, getFileIcon, getFolderIcon, getMoonIcon, getVolumeMutedIcon, getVolumeOnIcon, getVolumeUnknownIcon } from '../shared/svg-icons.js';
 import { adminFetch } from './auth.js';
 import { clearDetail, clearFilesPane } from './ui-helpers.js';
 import { setupUploadUI } from './upload-ui.js';
@@ -47,7 +47,7 @@ export function deviceCardSignature(d, readyDevices, nodeNames = {}) {
   ].join('\u0001');
 }
 
-export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, renderTVList, openDevice, renderFilesPane, socket, focusDeviceInList) {
+export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, renderTVList, openDevice, renderFilesPane, socket, focusDeviceInList, onBack) {
   const did = encodeURIComponent(d.device_id);
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const isAdmin = user.role === 'admin';
@@ -73,7 +73,20 @@ export function renderDeviceCard(d, nodeNames, readyDevices, loadDevices, render
   
   const headerInner = document.createElement('div');
   headerInner.style.cssText = 'flex:1; display:flex; align-items:stretch; gap:var(--space-sm)';
-  
+
+  // Кнопка возврата к списку нужна только в master-detail режиме планшета
+  // и телефона. На desktop она скрыта CSS и не занимает место.
+  if (typeof onBack === 'function') {
+    const backBtn = document.createElement('button');
+    backBtn.type = 'button';
+    backBtn.className = 'secondary meta-lg device-detail-back';
+    backBtn.title = 'Назад к списку устройств';
+    backBtn.setAttribute('aria-label', 'Назад к списку устройств');
+    backBtn.innerHTML = getChevronLeftIcon(18);
+    backBtn.addEventListener('click', onBack);
+    headerInner.appendChild(backBtn);
+  }
+
   const deviceNameEl = document.createElement('div');
   deviceNameEl.className = 'title';
   deviceNameEl.id = 'deviceName';

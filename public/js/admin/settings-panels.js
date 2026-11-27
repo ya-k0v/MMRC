@@ -316,7 +316,9 @@ export function renderApkSummary(data = {}) {
   ];
   let html = renderDefs(rows);
   if (data.error) {
-    html += `<div class="meta st-apk-error">GitHub недоступен: ${escapeHtml(data.error)}</div>`;
+    // Кэш релизов уже показан в сводке; подробность оставляем в подсказке,
+    // чтобы открытие раздела не пугало ошибкой GitHub API 403.
+    html += `<div class="meta st-apk-error" title="${escapeHtml(data.error)}">Релизы GitHub недоступны — показаны локальные данные.</div>`;
   }
   return html;
 }
