@@ -470,7 +470,7 @@ describe('обновление плеера', () => {
     installedVersion: '3.4.1'
   };
 
-  test('кнопка появляется только у устройств с устаревшей версией', async () => {
+  test('кнопка появляется только у устройств с версией, отличной от выбранной', async () => {
     document.body.innerHTML = renderPowerControlsHtml(DEVICES);
     const adminFetch = playerFetch({ apk: APK });
 
@@ -488,10 +488,10 @@ describe('обновление плеера', () => {
     expect(updateButton('native1').hidden).toBe(true);
     expect(updateButton('native1').classList.contains('st-power-update--available')).toBe(false);
     expect(summary('Всего')).toBe('3');
-    expect(summary('Требуют обновления')).toBe('1');
+    expect(summary('Другая версия')).toBe('1');
   });
 
-  test('фильтр «Требуют обновления» оставляет только устройства со старой версией', async () => {
+  test('фильтр «Другая версия» оставляет устройства со старой или новой версией', async () => {
     document.body.innerHTML = renderPowerControlsHtml(DEVICES);
     const adminFetch = playerFetch({ apk: APK });
 
@@ -504,7 +504,7 @@ describe('обновление плеера', () => {
     expect(row('tv1')).not.toBeNull();
     expect(row('tv2')).toBeNull();
     expect(row('native1')).toBeNull();
-    expect(summary('Требуют обновления')).toBe('1');
+    expect(summary('Другая версия')).toBe('1');
   });
 
   test('нажатие обновляет только выбранное устройство и снимает подсветку', async () => {
@@ -526,7 +526,7 @@ describe('обновление плеера', () => {
     expect(bodyOf(call)).toEqual({ deviceIds: ['tv1'] });
     expect(updateButton('tv1').classList.contains('st-power-update--available')).toBe(false);
     expect(updateButton('tv1').hidden).toBe(true);
-    expect(summary('Требуют обновления')).toBe('0');
+    expect(summary('Другая версия')).toBe('0');
     expect(document.getElementById('stPowerStatus').textContent).toBe('Плеер обновлён: Зал');
     expect(reportedNotification(adminFetch)).toMatchObject({
       title: 'Обновление плеера',
@@ -584,9 +584,12 @@ describe('обновление плеера', () => {
     await flush();
     await flush();
 
-    expect(updateButton('tv1').hidden).toBe(true);
+    // 3.4.2 → 3.4.1 — даунгрейд, 3.4.1-rc1 → 3.4.1 — апгрейд.
+    expect(updateButton('tv1').hidden).toBe(false);
+    expect(updateButton('tv1').title).toContain('Понизить версию плеера: v3.4.2 → v3.4.1');
     expect(updateButton('tv2').hidden).toBe(false);
-    expect(summary('Требуют обновления')).toBe('1');
+    expect(updateButton('tv2').title).toContain('Обновить плеер: v3.4.1-rc1 → v3.4.1');
+    expect(summary('Другая версия')).toBe('2');
   });
 
   test('устройство с неизвестной версией не попадает в обновление', async () => {
@@ -603,7 +606,7 @@ describe('обновление плеера', () => {
     expect(updateButton('tv1').classList.contains('st-power-update--available')).toBe(false);
     expect(updateButton('tv1').title).toContain('Версия плеера неизвестна');
     expect(getPlayerUpdateTargets().map(target => target.id)).not.toContain('tv1');
-    expect(summary('Требуют обновления')).toBe('0');
+    expect(summary('Другая версия')).toBe('0');
   });
 
   test('смена выбранной версии сразу пересчитывает подсветку', async () => {
@@ -620,7 +623,7 @@ describe('обновление плеера', () => {
 
     expect(updateButton('tv1').hidden).toBe(false);
     expect(updateButton('tv1').title).toContain('v3.4.0 → v3.4.2');
-    expect(summary('Требуют обновления')).toBe('3');
+    expect(summary('Другая версия')).toBe('3');
   });
 
   test('список целей считается сразу для ещё не сохранённой версии', async () => {
@@ -629,8 +632,27 @@ describe('обновление плеера', () => {
     await flush();
     await flush();
 
-    expect(getPlayerUpdateTargets()).toEqual([]);
+    expect(getPlayerUpdateTargets().map(target => target.id)).toEqual(['tv2', 'native1']);
     expect(getPlayerUpdateTargets('3.4.2').map(target => target.id)).toEqual(['tv1', 'tv2', 'native1']);
+  });
+
+  test('даунгрейд доступен: более новые версии тоже попадают в список целей', async () => {
+    document.body.innerHTML = renderPowerControlsHtml(DEVICES);
+    initPowerControls({ devices: DEVICES, adminFetch: playerFetch({ apk: { selectedVersion: '3.4.0' } }) });
+    await flush();
+    await flush();
+
+    expect(getPlayerUpdateTargets('3.4.0').map(target => target.id)).toEqual(['tv2', 'native1']);
+    expect(getPlayerUpdateTargets('3.4.0').map(target => target.currentVersion)).toEqual(['3.4.1', '3.4.1']);
+
+    await refreshPlayerVersions(playerFetch({ apk: { selectedVersion: '3.4.0' } }));
+    await flush();
+
+    expect(updateButton('tv2').hidden).toBe(false);
+    expect(updateButton('tv2').title).toContain('Понизить версию плеера');
+    expect(updateButton('native1').hidden).toBe(false);
+    expect(updateButton('tv1').hidden).toBe(true);
+    expect(summary('Другая версия')).toBe('2');
   });
 
   test('подписчик получает свежий список целей после смены версии', async () => {
@@ -641,7 +663,10 @@ describe('обновление плеера', () => {
 
     const onChange = jest.fn();
     const unsubscribe = subscribePlayerUpdateTargets(onChange);
-    expect(onChange).toHaveBeenCalledWith([], '3.4.0');
+    expect(onChange).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ id: 'tv2' }), expect.objectContaining({ id: 'native1' })]),
+      '3.4.0'
+    );
 
     await refreshPlayerVersions(playerFetch({ apk: { selectedVersion: '3.4.2' } }));
     await flush();
@@ -671,7 +696,7 @@ describe('обновление плеера', () => {
     expect(row('native1')).toBeNull();
     expect(row('tv1').textContent).toContain('Новый зал');
     expect(summary('Всего')).toBe('1');
-    expect(summary('Требуют обновления')).toBe('0');
+    expect(summary('Другая версия')).toBe('0');
   });
 
   test('занятость сохраняется после перерисовки списка фильтром', async () => {

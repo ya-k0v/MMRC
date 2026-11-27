@@ -75,7 +75,7 @@ function renderApkTargets(targets, version) {
   if (!version) {
     el.textContent = 'Версия не выбрана';
   } else if (!targets.length) {
-    el.textContent = `На v${version}: обновлять нечего — подходящих устройств нет`;
+    el.textContent = `На v${version}: подходящих устройств нет`;
   } else {
     const shown = targets.slice(0, 5).map(target => target.name).join(', ');
     const rest = targets.length > 5 ? ` и ещё ${targets.length - 5}` : '';
@@ -130,7 +130,7 @@ setupSocketListeners(socket, {
     await loadDevices();
     updateDevicesCount(); // Обновляем счетчик после загрузки устройств
     // Карточка питания живёт в DOM постоянно: подтягиваем в неё свежий список,
-    // иначе имена, версии и чип «Требуют обновления» остаются от прошлого опроса.
+    // иначе имена, версии и чип «Другая версия» остаются от прошлого опроса.
     if (document.getElementById('stPowerList')) syncPowerDevices(devicesCache);
     let hasSelection = false;
     if (prev && devicesCache.find(d => d.device_id === prev)) {

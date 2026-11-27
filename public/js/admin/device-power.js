@@ -51,7 +51,7 @@ const SUMMARY_FILTERS = [
   { key: 'sleeping', label: 'Спят', tone: 'is-warning' },
   { key: 'unreachable', label: 'Нет ответа', tone: 'is-danger' },
   { key: 'unknown', label: 'Не опрошены', tone: '' },
-  { key: 'outdated', label: 'Требуют обновления', tone: 'is-success' }
+  { key: 'outdated', label: 'Другая версия', tone: 'is-success' }
 ];
 
 /** Отступ между рядами в списке, px (должен совпадать с .st-power-list). */
@@ -107,22 +107,24 @@ function compareVersions(current, target) {
   return 0;
 }
 
-function updateAvailable(id) {
+function versionChangeAvailable(id) {
   const versions = playerVersions.get(id);
   if (!versions || !releaseVersion) return false;
   const current = normalizeVersion(versions.currentVersion);
   if (!current) return false;
   const comparison = compareVersions(current, releaseVersion);
-  // Неизвестную или неразбираемую версию не трогаем: обновление предлагаем
-  // только тогда, когда точно знаем, что установленная версия старше.
-  return comparison !== null && comparison < 0;
+  // Неизвестную или неразбираемую версию не трогаем. Остальные устройства
+  // подходят для смены версии: и апгрейд, и даунгрейд (adb install -r -d).
+  return comparison !== null && comparison !== 0;
 }
 
 /**
  * Устройства, на которые сервер сможет поставить выбранную версию.
- * Те же условия, что и у кнопки обновления в строке: управляемый Android и
- * заданный IP (сервер пропускает устройства без адреса). `versionOverride`
- * нужен для мгновенного ответа сразу после клика по чипу, до ответа сервера.
+ * Те же условия, что и у кнопки смены версии в строке: управляемый Android и
+ * заданный IP (сервер пропускает устройства без адреса). В список попадают
+ * и более старые, и более новые установленные версии — даунгрейд поддерживается
+ * тем же `adb install -r -d`. `versionOverride` нужен для мгновенного ответа
+ * сразу после клика по чипу, до ответа сервера.
  */
 export function getPlayerUpdateTargets(versionOverride) {
   const target = normalizeVersion(versionOverride || releaseVersion);
@@ -134,7 +136,7 @@ export function getPlayerUpdateTargets(versionOverride) {
     const current = normalizeVersion(versions.currentVersion || device.appVersion || device.app_version);
     if (!current) return false;
     const comparison = compareVersions(current, target);
-    return comparison !== null && comparison < 0;
+    return comparison !== null && comparison !== 0;
   }).map((device) => ({
     id: device.device_id,
     name: deviceNames.get(device.device_id) || device.name || device.device_id,
@@ -161,7 +163,7 @@ function notifyUpdateTargets() {
 function deviceMatchesFilter(device, filter) {
   const id = device.device_id;
   if (filter === 'all') return true;
-  if (filter === 'outdated') return updateAvailable(id);
+  if (filter === 'outdated') return versionChangeAvailable(id);
 
   const state = powerStates.get(id);
   if (filter === 'active') return Boolean(state?.ok && state.awake);
@@ -359,10 +361,12 @@ function updatePlayerUpdateButtons() {
   document.querySelectorAll('[data-player-update]').forEach((el) => {
     const id = el.getAttribute('data-player-update');
     const versions = playerVersions.get(id) || {};
-    const available = updateAvailable(id);
+    const available = versionChangeAvailable(id);
     const current = normalizeVersion(versions.currentVersion);
+    const isDowngrade = available && compareVersions(current, releaseVersion) > 0;
+    const action = isDowngrade ? 'Понизить версию плеера' : 'Обновить плеер';
     const title = available
-      ? `Обновить плеер: v${current} → v${releaseVersion} (настройки сохранятся)`
+      ? `${action}: v${current} → v${releaseVersion} (настройки сохранятся)`
       : !current
         ? 'Версия плеера неизвестна — обновление не предлагается'
         : releaseVersion
